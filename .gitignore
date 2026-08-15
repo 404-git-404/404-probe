@@ -1,0 +1,6 @@
+/build/
+/.tools/
+*.db
+*.db-shm
+*.db-wal
+*.log

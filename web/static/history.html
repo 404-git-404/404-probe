@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>404-probe · 24 小时历史</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header><div><a class="back" href="/">← 返回</a><h1 id="title">Agent 历史</h1><p>最近 24 小时 · 1 分钟聚合</p></div></header>
+  <main class="history-grid">
+    <article class="chart"><h2>CPU %</h2><canvas id="cpu"></canvas></article>
+    <article class="chart"><h2>RAM %</h2><canvas id="ram"></canvas></article>
+    <article class="chart"><h2>RX / s</h2><canvas id="rx"></canvas></article>
+    <article class="chart"><h2>TX / s</h2><canvas id="tx"></canvas></article>
+    <div id="history-empty" class="empty">正在加载历史数据</div>
+  </main>
+  <script src="/history.js" defer></script>
+</body>
+</html>

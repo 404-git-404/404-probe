@@ -1,0 +1,442 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+
+	"404-probe/internal/auth"
+	"404-probe/internal/protocol"
+	_ "modernc.org/sqlite"
+)
+
+var ErrUnauthorized = errors.New("unauthorized")
+
+type Store struct{ db *sql.DB }
+
+type Agent struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Revoked   bool   `json:"revoked"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+type State struct {
+	AgentID     string  `json:"agent_id"`
+	Name        string  `json:"name"`
+	Epoch       uint64  `json:"-"`
+	SessionID   string  `json:"-"`
+	Sequence    uint64  `json:"sequence"`
+	BootID      string  `json:"boot_id"`
+	Hostname    string  `json:"hostname"`
+	OS          string  `json:"os"`
+	Arch        string  `json:"arch"`
+	Uptime      uint64  `json:"uptime"`
+	CPUPercent  float64 `json:"cpu_percent"`
+	Load1       float64 `json:"load1"`
+	Load5       float64 `json:"load5"`
+	Load15      float64 `json:"load15"`
+	RAMUsed     uint64  `json:"ram_used"`
+	RAMTotal    uint64  `json:"ram_total"`
+	RAMPercent  float64 `json:"ram_percent"`
+	SwapUsed    uint64  `json:"swap_used"`
+	SwapTotal   uint64  `json:"swap_total"`
+	SwapPercent float64 `json:"swap_percent"`
+	DiskUsed    uint64  `json:"disk_used"`
+	DiskTotal   uint64  `json:"disk_total"`
+	DiskPercent float64 `json:"disk_percent"`
+	RXBytes     uint64  `json:"raw_rx"`
+	TXBytes     uint64  `json:"raw_tx"`
+	RXRate      float64 `json:"rx_rate"`
+	TXRate      float64 `json:"tx_rate"`
+	RXTotal     uint64  `json:"rx_total"`
+	TXTotal     uint64  `json:"tx_total"`
+	CollectedAt int64   `json:"collected_at"`
+	LastSeen    int64   `json:"last_seen"`
+}
+
+type HistoryPoint struct {
+	Timestamp   int64   `json:"timestamp"`
+	CPU         float64 `json:"cpu"`
+	RAMPercent  float64 `json:"ram_percent"`
+	SwapPercent float64 `json:"swap_percent"`
+	DiskPercent float64 `json:"disk_percent"`
+	Load1       float64 `json:"load1"`
+	Load5       float64 `json:"load5"`
+	Load15      float64 `json:"load15"`
+	RXRate      float64 `json:"rx_rate"`
+	TXRate      float64 `json:"tx_rate"`
+	RXTotal     uint64  `json:"rx_total"`
+	TXTotal     uint64  `json:"tx_total"`
+}
+
+func Open(ctx context.Context, path string) (*Store, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("database path is required")
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	s := &Store{db: db}
+	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("%s: %w", pragma, err)
+		}
+	}
+	if err := s.migrate(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) migrate(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS agents (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
+			revoked INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_agents_active_token_hash ON agents(token_hash) WHERE revoked=0`,
+		`CREATE TABLE IF NOT EXISTS agent_sessions (
+			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL, started_at INTEGER NOT NULL, active INTEGER NOT NULL, first_seen INTEGER NOT NULL,
+			PRIMARY KEY(agent_id, session_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS agent_state (
+			agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL, session_started_at INTEGER NOT NULL, sequence INTEGER NOT NULL, boot_id TEXT NOT NULL,
+			hostname TEXT NOT NULL, os TEXT NOT NULL, arch TEXT NOT NULL, uptime INTEGER NOT NULL,
+			cpu REAL NOT NULL, load1 REAL NOT NULL, load5 REAL NOT NULL, load15 REAL NOT NULL,
+			ram_used INTEGER NOT NULL, ram_total INTEGER NOT NULL, ram_percent REAL NOT NULL,
+			swap_used INTEGER NOT NULL, swap_total INTEGER NOT NULL, swap_percent REAL NOT NULL,
+			disk_used INTEGER NOT NULL, disk_total INTEGER NOT NULL, disk_percent REAL NOT NULL,
+			raw_rx INTEGER NOT NULL, raw_tx INTEGER NOT NULL, rx_rate REAL NOT NULL, tx_rate REAL NOT NULL,
+			rx_total INTEGER NOT NULL, tx_total INTEGER NOT NULL,
+			collected_at INTEGER NOT NULL, last_seen INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS minute_metrics (
+			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE, bucket INTEGER NOT NULL,
+			samples INTEGER NOT NULL, cpu_sum REAL NOT NULL, ram_sum REAL NOT NULL, swap_sum REAL NOT NULL,
+			disk_sum REAL NOT NULL, load1_sum REAL NOT NULL, load5_sum REAL NOT NULL, load15_sum REAL NOT NULL,
+			rx_rate_sum REAL NOT NULL, tx_rate_sum REAL NOT NULL, rx_total INTEGER NOT NULL, tx_total INTEGER NOT NULL,
+			PRIMARY KEY(agent_id, bucket)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_minute_metrics_bucket ON minute_metrics(bucket)`,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, unixepoch())`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("migration: %w", err)
+		}
+	}
+	var version int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version < 2 {
+		for _, statement := range []string{
+			`ALTER TABLE agent_sessions ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE agent_state ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(2, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 2: %w", err)
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
+	var version int
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version)
+	return version, err
+}
+
+func (s *Store) AddAgent(ctx context.Context, id, name string, tokenHash []byte, now time.Time) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(name) == "" || len(tokenHash) == 0 {
+		return errors.New("invalid agent")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agents(id,name,token_hash,created_at,updated_at) VALUES(?,?,?,?,?)`, id, name, tokenHash, now.UnixMilli(), now.UnixMilli())
+	return err
+}
+
+func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,revoked,created_at FROM agents ORDER BY name,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []Agent
+	for rows.Next() {
+		var a Agent
+		var revoked int
+		if err := rows.Scan(&a.ID, &a.Name, &revoked, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		a.Revoked = revoked != 0
+		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) RevokeAgent(ctx context.Context, id string, now time.Time) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE agents SET revoked=1,updated_at=? WHERE id=? AND revoked=0`, now.UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
+func (s *Store) Authenticate(ctx context.Context, token string) (string, error) {
+	want := auth.Hash(token)
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM agents WHERE token_hash=? AND revoked=0`, want).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrUnauthorized
+	}
+	return id, err
+}
+
+func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r protocol.Report, received time.Time) (State, bool, string, error) {
+	if authenticatedID != r.AgentID {
+		return State{}, false, "agent ID does not match token", ErrUnauthorized
+	}
+	if r.Epoch > math.MaxInt64 || r.Sequence > math.MaxInt64 || exceedsInt64(r) {
+		return State{}, false, "counter is too large", errors.New("report value exceeds SQLite integer range")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return State{}, false, "", err
+	}
+	defer tx.Rollback()
+	var name string
+	var revoked int
+	if err := tx.QueryRowContext(ctx, `SELECT name,revoked FROM agents WHERE id=?`, authenticatedID).Scan(&name, &revoked); err != nil || revoked != 0 {
+		if err == nil {
+			err = ErrUnauthorized
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrUnauthorized
+		}
+		return State{}, false, "unauthorized", err
+	}
+	previous, exists, err := readStateTx(ctx, tx, authenticatedID, name)
+	if err != nil {
+		return State{}, false, "", err
+	}
+	if exists {
+		if r.Epoch < previous.Epoch {
+			return previous, false, "stale epoch", nil
+		}
+		if r.Epoch == previous.Epoch {
+			if r.SessionID != previous.SessionID {
+				return previous, false, "session does not match epoch", nil
+			}
+			if r.Sequence <= previous.Sequence {
+				return previous, false, "duplicate or stale sequence", nil
+			}
+		} else {
+			if _, err = tx.ExecContext(ctx, `UPDATE agent_sessions SET active=0 WHERE agent_id=?`, authenticatedID); err != nil {
+				return State{}, false, "", err
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO agent_sessions(agent_id,session_id,started_at,active,first_seen,epoch) VALUES(?,?,?,1,?,?)`, authenticatedID, r.SessionID, r.CollectedAt, received.UnixMilli(), int64(r.Epoch)); err != nil {
+				return State{}, false, "", err
+			}
+		}
+	} else {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_sessions(agent_id,session_id,started_at,active,first_seen,epoch) VALUES(?,?,?,1,?,?)`, authenticatedID, r.SessionID, r.CollectedAt, received.UnixMilli(), int64(r.Epoch)); err != nil {
+			return State{}, false, "", err
+		}
+	}
+	state, err := calculateState(name, previous, exists, r, received)
+	if err != nil {
+		return State{}, false, "", err
+	}
+	if err := writeStateTx(ctx, tx, state); err != nil {
+		return State{}, false, "", err
+	}
+	if err := aggregateMinuteTx(ctx, tx, state); err != nil {
+		return State{}, false, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return State{}, false, "", err
+	}
+	return state, true, "", nil
+}
+
+func exceedsInt64(r protocol.Report) bool {
+	max := uint64(math.MaxInt64)
+	return r.Uptime > max || r.RAMUsed > max || r.RAMTotal > max || r.SwapUsed > max || r.SwapTotal > max || r.DiskUsed > max || r.DiskTotal > max || r.RXBytes > max || r.TXBytes > max
+}
+
+func calculateState(name string, old State, exists bool, r protocol.Report, received time.Time) (State, error) {
+	rxTotal, txTotal := old.RXTotal, old.TXTotal
+	var rxRate, txRate float64
+	if exists {
+		rxDelta, rxReset := delta(old.RXBytes, r.RXBytes, old.BootID != r.BootID)
+		txDelta, txReset := delta(old.TXBytes, r.TXBytes, old.BootID != r.BootID)
+		max := uint64(math.MaxInt64)
+		if rxTotal > max || txTotal > max || rxDelta > max-rxTotal || txDelta > max-txTotal {
+			return State{}, errors.New("permanent traffic counter exceeds SQLite integer range")
+		}
+		rxTotal += rxDelta
+		txTotal += txDelta
+		dt := float64(received.UnixMilli()-old.LastSeen) / 1000
+		if dt > 0 {
+			if !rxReset {
+				rxRate = float64(rxDelta) / dt
+			}
+			if !txReset {
+				txRate = float64(txDelta) / dt
+			}
+		}
+	}
+	return State{
+		AgentID: r.AgentID, Name: name, Epoch: r.Epoch, SessionID: r.SessionID, Sequence: r.Sequence, BootID: r.BootID,
+		Hostname: r.Hostname, OS: r.OS, Arch: r.Arch, Uptime: r.Uptime, CPUPercent: r.CPUPercent,
+		Load1: r.Load1, Load5: r.Load5, Load15: r.Load15, RAMUsed: r.RAMUsed, RAMTotal: r.RAMTotal, RAMPercent: r.RAMPercent,
+		SwapUsed: r.SwapUsed, SwapTotal: r.SwapTotal, SwapPercent: r.SwapPercent, DiskUsed: r.DiskUsed, DiskTotal: r.DiskTotal, DiskPercent: r.DiskPercent,
+		RXBytes: r.RXBytes, TXBytes: r.TXBytes, RXRate: rxRate, TXRate: txRate, RXTotal: rxTotal, TXTotal: txTotal,
+		CollectedAt: r.CollectedAt, LastSeen: received.UnixMilli(),
+	}, nil
+}
+
+func delta(previous, current uint64, bootChanged bool) (uint64, bool) {
+	if bootChanged || current < previous {
+		return current, true
+	}
+	return current - previous, false
+}
+
+func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool, error) {
+	s := State{AgentID: id, Name: name}
+	var epoch, sequence, uptime, ramUsed, ramTotal, swapUsed, swapTotal, diskUsed, diskTotal, rawRX, rawTX, rxTotal, txTotal int64
+	err := tx.QueryRowContext(ctx, `SELECT epoch,session_id,sequence,boot_id,hostname,os,arch,uptime,cpu,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen FROM agent_state WHERE agent_id=?`, id).Scan(
+		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &uptime, &s.CPUPercent, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return State{}, false, nil
+	}
+	if err != nil {
+		return State{}, false, err
+	}
+	assignUnsigned(&s, epoch, sequence, uptime, ramUsed, ramTotal, swapUsed, swapTotal, diskUsed, diskTotal, rawRX, rawTX, rxTotal, txTotal)
+	return s, true, nil
+}
+
+func assignUnsigned(s *State, v ...int64) {
+	s.Epoch = uint64(v[0])
+	s.Sequence = uint64(v[1])
+	s.Uptime = uint64(v[2])
+	s.RAMUsed = uint64(v[3])
+	s.RAMTotal = uint64(v[4])
+	s.SwapUsed = uint64(v[5])
+	s.SwapTotal = uint64(v[6])
+	s.DiskUsed = uint64(v[7])
+	s.DiskTotal = uint64(v[8])
+	s.RXBytes = uint64(v[9])
+	s.TXBytes = uint64(v[10])
+	s.RXTotal = uint64(v[11])
+	s.TXTotal = uint64(v[12])
+}
+
+func writeStateTx(ctx context.Context, tx *sql.Tx, s State) error {
+	if err := validatePermanentTotals(s); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,uptime,cpu,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,epoch)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,sequence=excluded.sequence,boot_id=excluded.boot_id,hostname=excluded.hostname,os=excluded.os,arch=excluded.arch,uptime=excluded.uptime,cpu=excluded.cpu,load1=excluded.load1,load5=excluded.load5,load15=excluded.load15,ram_used=excluded.ram_used,ram_total=excluded.ram_total,ram_percent=excluded.ram_percent,swap_used=excluded.swap_used,swap_total=excluded.swap_total,swap_percent=excluded.swap_percent,disk_used=excluded.disk_used,disk_total=excluded.disk_total,disk_percent=excluded.disk_percent,raw_rx=excluded.raw_rx,raw_tx=excluded.raw_tx,rx_rate=excluded.rx_rate,tx_rate=excluded.tx_rate,rx_total=excluded.rx_total,tx_total=excluded.tx_total,collected_at=excluded.collected_at,last_seen=excluded.last_seen,epoch=excluded.epoch`,
+		s.AgentID, s.SessionID, s.CollectedAt, int64(s.Sequence), s.BootID, s.Hostname, s.OS, s.Arch, int64(s.Uptime), s.CPUPercent, s.Load1, s.Load5, s.Load15, int64(s.RAMUsed), int64(s.RAMTotal), s.RAMPercent, int64(s.SwapUsed), int64(s.SwapTotal), s.SwapPercent, int64(s.DiskUsed), int64(s.DiskTotal), s.DiskPercent, int64(s.RXBytes), int64(s.TXBytes), s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), s.CollectedAt, s.LastSeen, int64(s.Epoch))
+	return err
+}
+
+func aggregateMinuteTx(ctx context.Context, tx *sql.Tx, s State) error {
+	if err := validatePermanentTotals(s); err != nil {
+		return err
+	}
+	bucket := (s.LastSeen / 60000) * 60000
+	_, err := tx.ExecContext(ctx, `INSERT INTO minute_metrics(agent_id,bucket,samples,cpu_sum,ram_sum,swap_sum,disk_sum,load1_sum,load5_sum,load15_sum,rx_rate_sum,tx_rate_sum,rx_total,tx_total) VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?,?)
+	ON CONFLICT(agent_id,bucket) DO UPDATE SET samples=samples+1,cpu_sum=cpu_sum+excluded.cpu_sum,ram_sum=ram_sum+excluded.ram_sum,swap_sum=swap_sum+excluded.swap_sum,disk_sum=disk_sum+excluded.disk_sum,load1_sum=load1_sum+excluded.load1_sum,load5_sum=load5_sum+excluded.load5_sum,load15_sum=load15_sum+excluded.load15_sum,rx_rate_sum=rx_rate_sum+excluded.rx_rate_sum,tx_rate_sum=tx_rate_sum+excluded.tx_rate_sum,rx_total=excluded.rx_total,tx_total=excluded.tx_total`,
+		s.AgentID, bucket, s.CPUPercent, s.RAMPercent, s.SwapPercent, s.DiskPercent, s.Load1, s.Load5, s.Load15, s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal))
+	return err
+}
+
+func validatePermanentTotals(s State) error {
+	max := uint64(math.MaxInt64)
+	if s.RXTotal > max || s.TXTotal > max {
+		return errors.New("permanent traffic counter exceeds SQLite integer range")
+	}
+	return nil
+}
+
+func (s *Store) ListStates(ctx context.Context) ([]State, error) {
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]State, 0, len(agents))
+	for _, a := range agents {
+		if a.Revoked {
+			continue
+		}
+		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return nil, err
+		}
+		state, exists, readErr := readStateTx(ctx, tx, a.ID, a.Name)
+		rollbackErr := tx.Rollback()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			return nil, rollbackErr
+		}
+		if exists {
+			result = append(result, state)
+		} else {
+			result = append(result, State{AgentID: a.ID, Name: a.Name})
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) History(ctx context.Context, id string, since time.Time) ([]HistoryPoint, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT bucket,cpu_sum/samples,ram_sum/samples,swap_sum/samples,disk_sum/samples,load1_sum/samples,load5_sum/samples,load15_sum/samples,rx_rate_sum/samples,tx_rate_sum/samples,rx_total,tx_total FROM minute_metrics WHERE agent_id=? AND bucket>=? ORDER BY bucket`, id, since.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var points []HistoryPoint
+	for rows.Next() {
+		var p HistoryPoint
+		var rx, tx int64
+		if err := rows.Scan(&p.Timestamp, &p.CPU, &p.RAMPercent, &p.SwapPercent, &p.DiskPercent, &p.Load1, &p.Load5, &p.Load15, &p.RXRate, &p.TXRate, &rx, &tx); err != nil {
+			return nil, err
+		}
+		p.RXTotal = uint64(rx)
+		p.TXTotal = uint64(tx)
+		points = append(points, p)
+	}
+	return points, rows.Err()
+}
+
+func (s *Store) CleanupHistory(ctx context.Context, before time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM minute_metrics WHERE bucket < ?`, before.UnixMilli())
+	return err
+}
