@@ -3,8 +3,10 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +43,7 @@ func TestMigrationAndAuthentication(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	version, err := s.SchemaVersion(ctx)
-	if err != nil || version != 2 {
+	if err != nil || version != 3 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	got, err := s.Authenticate(ctx, token)
@@ -54,6 +56,88 @@ func TestMigrationAndAuthentication(t *testing.T) {
 	agents, err := s.ListAgents(ctx)
 	if err != nil || len(agents) != 1 {
 		t.Fatalf("agents=%v err=%v", agents, err)
+	}
+}
+
+func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v4.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
+		`INSERT INTO schema_migrations(version,applied_at) VALUES(4,4000)`,
+		`CREATE TABLE future_fixture (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO future_fixture(id,value) VALUES(1,'future-data')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	var objectsBefore int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objectsBefore); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(context.Background(), path)
+	if store != nil {
+		store.Close()
+		t.Fatal("future schema was opened")
+	}
+	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 4") {
+		t.Fatalf("future schema error=%v", err)
+	}
+
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version int
+	var appliedAt int64
+	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 4 || appliedAt != 4000 {
+		t.Fatalf("migration metadata changed: version=%d applied_at=%d err=%v", version, appliedAt, err)
+	}
+	var fixtureValue string
+	if err := db.QueryRow(`SELECT value FROM future_fixture WHERE id=1`).Scan(&fixtureValue); err != nil || fixtureValue != "future-data" {
+		t.Fatalf("future fixture changed: value=%q err=%v", fixtureValue, err)
+	}
+	var objectsAfter int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objectsAfter); err != nil || objectsAfter != objectsBefore {
+		t.Fatalf("schema side effects: before=%d after=%d err=%v", objectsBefore, objectsAfter, err)
+	}
+	var agentsTable int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='agents'`).Scan(&agentsTable); err != nil || agentsTable != 0 {
+		t.Fatalf("old binary created agents table: count=%d err=%v", agentsTable, err)
+	}
+	var journalMode string
+	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil || journalMode != "delete" {
+		t.Fatalf("future schema journal mode changed: mode=%q err=%v", journalMode, err)
+	}
+}
+
+func TestOpenExistingV3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v3.db")
+	store, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if version, err := store.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version=%d err=%v", version, err)
 	}
 }
 
@@ -253,7 +337,7 @@ func TestPermanentTrafficSQLiteBoundaryIsAtomic(t *testing.T) {
 	}
 }
 
-func TestMigratesV1StateToV2(t *testing.T) {
+func TestMigratesV1StateToV3(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v1.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -284,7 +368,7 @@ func TestMigratesV1StateToV2(t *testing.T) {
 	}
 	defer s.Close()
 	version, err := s.SchemaVersion(context.Background())
-	if err != nil || version != 2 {
+	if err != nil || version != 3 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	states, err := s.ListStates(context.Background())

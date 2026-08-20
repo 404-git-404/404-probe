@@ -14,7 +14,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrUnauthorized = errors.New("unauthorized")
+const currentSchemaVersion = 3
+
+var (
+	ErrUnauthorized             = errors.New("unauthorized")
+	ErrUnsupportedSchemaVersion = errors.New("unsupported newer schema version")
+)
 
 type Store struct{ db *sql.DB }
 
@@ -84,6 +89,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
+	if err := checkSupportedSchemaVersion(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
 		if _, err := db.ExecContext(ctx, pragma); err != nil {
 			db.Close()
@@ -100,13 +109,25 @@ func Open(ctx context.Context, path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate(ctx context.Context) error {
+	if err := checkSupportedSchemaVersion(ctx, s.db); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
+		return fmt.Errorf("migration metadata: %w", err)
+	}
+	var version int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version > currentSchemaVersion {
+		return unsupportedSchemaVersionError(version)
+	}
 	statements := []string{
-		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS agents (
 			id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,
 			revoked INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -144,10 +165,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration: %w", err)
 		}
 	}
-	var version int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return fmt.Errorf("read schema version: %w", err)
-	}
 	if version < 2 {
 		for _, statement := range []string{
 			`ALTER TABLE agent_sessions ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0`,
@@ -159,7 +176,98 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	if version < 3 {
+		for _, statement := range []string{
+			`CREATE TABLE probe_schedules (
+				id TEXT PRIMARY KEY,
+				agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+				name TEXT NOT NULL,
+				probe_type TEXT NOT NULL,
+				config_json TEXT NOT NULL,
+				timeout_ms INTEGER NOT NULL CHECK(timeout_ms BETWEEN 100 AND 30000),
+				interval_seconds INTEGER NOT NULL CHECK(interval_seconds BETWEEN 30 AND 604800),
+				enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+				next_run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)`,
+			`CREATE TABLE probe_jobs (
+				id TEXT PRIMARY KEY,
+				schedule_id TEXT REFERENCES probe_schedules(id) ON DELETE SET NULL,
+				agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+				probe_type TEXT NOT NULL,
+				config_json TEXT NOT NULL,
+				timeout_ms INTEGER NOT NULL CHECK(timeout_ms BETWEEN 100 AND 30000),
+				created_at INTEGER NOT NULL,
+				scheduled_for INTEGER NOT NULL,
+				not_before INTEGER NOT NULL,
+				expires_at INTEGER NOT NULL,
+				status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','leased','finished','expired')),
+				attempt INTEGER NOT NULL DEFAULT 0 CHECK(typeof(attempt) = 'integer' AND attempt >= 0),
+				lease_token TEXT,
+				lease_epoch INTEGER,
+				lease_session_id TEXT,
+				leased_at INTEGER,
+				lease_until INTEGER,
+				finished_at INTEGER,
+				CHECK(expires_at > not_before)
+			)`,
+			`CREATE TABLE probe_results (
+				job_id TEXT PRIMARY KEY REFERENCES probe_jobs(id) ON DELETE CASCADE,
+				attempt INTEGER NOT NULL CHECK(typeof(attempt) = 'integer' AND attempt > 0),
+				received_at INTEGER NOT NULL,
+				agent_epoch INTEGER NOT NULL CHECK(agent_epoch >= 0),
+				session_id TEXT NOT NULL,
+				agent_started_at INTEGER NOT NULL,
+				agent_finished_at INTEGER NOT NULL,
+				duration_ms REAL NOT NULL CHECK(duration_ms >= 0),
+				success INTEGER NOT NULL CHECK(success IN (0,1)),
+				resolved_ip TEXT,
+				error_category TEXT,
+				error_message TEXT,
+				payload_json TEXT NOT NULL,
+				result_hash BLOB NOT NULL
+			)`,
+			`CREATE INDEX idx_probe_schedules_due ON probe_schedules(next_run_at) WHERE enabled=1`,
+			`CREATE UNIQUE INDEX idx_probe_jobs_schedule_slot ON probe_jobs(schedule_id,scheduled_for) WHERE schedule_id IS NOT NULL`,
+			`CREATE INDEX idx_probe_jobs_claim ON probe_jobs(agent_id,not_before,created_at) WHERE status='queued'`,
+			`CREATE INDEX idx_probe_jobs_lease_expiry ON probe_jobs(agent_id,lease_until) WHERE status='leased'`,
+			`CREATE UNIQUE INDEX idx_probe_jobs_one_active_lease ON probe_jobs(agent_id) WHERE status='leased'`,
+			`CREATE INDEX idx_probe_jobs_expiry ON probe_jobs(expires_at) WHERE status IN ('queued','leased')`,
+			`CREATE INDEX idx_probe_jobs_agent_finished ON probe_jobs(agent_id,finished_at DESC) WHERE status='finished'`,
+			`CREATE INDEX idx_probe_jobs_schedule_finished ON probe_jobs(schedule_id,finished_at DESC) WHERE status='finished'`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(3, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 3: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
+}
+
+func checkSupportedSchemaVersion(ctx context.Context, db *sql.DB) error {
+	var exists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'
+	)`).Scan(&exists); err != nil {
+		return fmt.Errorf("inspect schema version: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version > currentSchemaVersion {
+		return unsupportedSchemaVersionError(version)
+	}
+	return nil
+}
+
+func unsupportedSchemaVersionError(version int) error {
+	return fmt.Errorf("%w: database is version %d, binary supports up to version %d", ErrUnsupportedSchemaVersion, version, currentSchemaVersion)
 }
 
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
