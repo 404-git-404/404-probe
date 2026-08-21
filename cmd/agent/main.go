@@ -26,13 +26,14 @@ func run() error {
 	id := flag.String("agent-id", env("PROBE_404_AGENT_ID", ""), "agent ID created by the server")
 	token := flag.String("token", env("PROBE_404_TOKEN", ""), "per-agent token (prefer environment variable)")
 	interval := flag.Duration("interval", 10*time.Second, "report interval")
+	jobInterval := flag.Duration("job-interval", agent.DefaultJobInterval, "job claim interval")
 	timeout := flag.Duration("timeout", 8*time.Second, "HTTP request timeout")
 	insecure := flag.Bool("allow-insecure-http", false, "allow plain HTTP for localhost/development")
 	state := flag.String("state", env("PROBE_404_STATE", "404-probe-agent.state"), "persistent agent epoch state file")
 	include := flag.String("network-include", "", "comma-separated interface glob patterns")
 	exclude := flag.String("network-exclude", "", "comma-separated additional interface glob patterns")
 	flag.Parse()
-	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude)}, slog.Default())
+	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude)}, slog.Default())
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}

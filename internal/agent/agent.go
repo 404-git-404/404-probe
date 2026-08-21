@@ -24,6 +24,7 @@ type Config struct {
 	AgentID           string
 	Token             string
 	Interval          time.Duration
+	JobInterval       time.Duration
 	Timeout           time.Duration
 	AllowInsecureHTTP bool
 	StatePath         string
@@ -42,8 +43,8 @@ func (c Config) Validate() error {
 	if u.Scheme != "https" && !(u.Scheme == "http" && c.AllowInsecureHTTP) {
 		return errors.New("server URL must use HTTPS; pass --allow-insecure-http only for local development")
 	}
-	if c.Interval <= 0 || c.Timeout <= 0 {
-		return errors.New("interval and timeout must be positive")
+	if c.Interval <= 0 || c.JobInterval < 0 || c.Timeout <= 0 {
+		return errors.New("report interval and timeout must be positive; job interval must not be negative")
 	}
 	if strings.TrimSpace(c.StatePath) == "" {
 		return errors.New("state path is required")
@@ -58,11 +59,24 @@ type Runner struct {
 	logger    *slog.Logger
 	epoch     uint64
 	sessionID string
+	executor  Executor
 }
 
 func New(config Config, logger *slog.Logger) (*Runner, error) {
+	return NewWithExecutor(config, logger, UnsupportedExecutor{})
+}
+
+// NewWithExecutor constructs a runner with an explicitly supplied job
+// executor. New uses UnsupportedExecutor until real probes are implemented.
+func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Runner, error) {
+	if config.JobInterval == 0 {
+		config.JobInterval = DefaultJobInterval
+	}
 	if err := config.Validate(); err != nil {
 		return nil, err
+	}
+	if executor == nil {
+		return nil, errors.New("executor is required")
 	}
 	epoch, err := nextEpoch(config.StatePath)
 	if err != nil {
@@ -78,10 +92,23 @@ func New(config Config, logger *slog.Logger) (*Runner, error) {
 	return &Runner{
 		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
+		executor:  executor,
 	}, nil
 }
 
 func (r *Runner) Run(ctx context.Context) error {
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		r.runJobWorker(ctx)
+	}()
+
+	err := r.runReports(ctx)
+	<-workerDone
+	return err
+}
+
+func (r *Runner) runReports(ctx context.Context) error {
 	var sequence uint64
 	report := func() {
 		measurement, err := r.collector.Collect(ctx)
