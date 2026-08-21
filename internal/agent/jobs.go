@@ -39,8 +39,8 @@ type Executor interface {
 	Execute(context.Context, protocol.Job) (Execution, error)
 }
 
-// UnsupportedExecutor is the Phase 4A production executor. Real network
-// probes are deliberately deferred to a later phase.
+// UnsupportedExecutor advertises no capabilities and returns a stable error
+// if called directly.
 type UnsupportedExecutor struct{}
 
 func (UnsupportedExecutor) SupportedProbeTypes() []protocol.ProbeType { return nil }
