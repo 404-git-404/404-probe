@@ -22,6 +22,7 @@ var (
 	ErrJobExpired       = errors.New("probe job expired")
 	ErrAttemptExhausted = errors.New("probe job attempt exhausted")
 	ErrResultConflict   = errors.New("probe job result conflicts with stored result")
+	ErrInvalidJobResult = errors.New("invalid probe job result")
 	ErrCorruptProbeData = errors.New("stored probe data is corrupt")
 )
 
@@ -471,7 +472,7 @@ func requireActiveAgentTx(ctx context.Context, tx *sql.Tx, agentID string) error
 
 func validateResultAgainstConfig(job ProbeJobRecord, result protocol.JobResult) error {
 	if job.ProbeType == protocol.ProbeTypeICMPPing && result.Result.ICMPPing.Sent != job.Config.ICMPPing.Count {
-		return errors.New("ICMP result sent count does not match job config")
+		return fmt.Errorf("%w: ICMP sent count does not match job config", ErrInvalidJobResult)
 	}
 	return nil
 }

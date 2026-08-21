@@ -84,8 +84,10 @@ func TestStrictConfigAndJobJSON(t *testing.T) {
 	if _, err := DecodeProbeConfig(ProbeType("shell"), []byte(`{}`)); err == nil {
 		t.Fatal("unknown probe type accepted")
 	}
-	if _, err := DecodeProbeResult(ProbeTypeTCPConnect, []byte(`null`)); err == nil {
-		t.Fatal("null typed result accepted")
+	for _, probeType := range []ProbeType{ProbeTypeICMPPing, ProbeTypeTCPConnect, ProbeTypeHTTP} {
+		if _, err := DecodeProbeResult(probeType, []byte(`null`)); err == nil {
+			t.Fatalf("null %s result accepted", probeType)
+		}
 	}
 
 	job := validJob()

@@ -356,6 +356,38 @@ func TestStaleLeaseAndWrongAgentResultsAreRejected(t *testing.T) {
 	}
 }
 
+func TestInvalidJobResultClassificationPreservesFencing(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	if err := store.CreateOneShotJob(ctx, oneShot("icmp-job", agentID, at, protocol.ProbeTypeICMPPing)); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session", protocol.ProbeTypeICMPPing), at, time.Minute)
+	if err != nil || job == nil {
+		t.Fatalf("claim=%+v err=%v", job, err)
+	}
+	invalid := resultFor(job, true)
+	invalid.Result.ICMPPing.Sent = 3
+	invalid.Result.ICMPPing.Received = 3
+	wrongToken := invalid
+	wrongToken.LeaseToken = "wrong-lease-token"
+	if _, err := store.SubmitJobResult(ctx, agentID, job.JobID, wrongToken, at.Add(time.Second)); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("wrong token did not retain fencing priority: %v", err)
+	}
+	if _, err := store.SubmitJobResult(ctx, agentID, job.JobID, invalid, at.Add(time.Second)); !errors.Is(err, ErrInvalidJobResult) {
+		t.Fatalf("config mismatch error=%v", err)
+	}
+	record, err := store.GetProbeJob(ctx, job.JobID)
+	if err != nil || record.Status != JobStatusLeased || record.Attempt != job.Attempt || record.LeaseToken != job.LeaseToken {
+		t.Fatalf("invalid result mutated job: %+v err=%v", record, err)
+	}
+	if _, err := store.GetProbeResult(ctx, job.JobID); !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("invalid result persisted: %v", err)
+	}
+}
+
 func TestClaimDoesNotReplayFinishedOrExpiredLease(t *testing.T) {
 	t.Run("finished lease advances", func(t *testing.T) {
 		store, agentID, _ := testStore(t, ":memory:")

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
@@ -34,7 +35,14 @@ type App struct {
 	handler        http.Handler
 }
 
-const maxSSESubscribers = 64
+const (
+	maxSSESubscribers  = 64
+	maxClaimBodyBytes  = 8 << 10
+	maxResultBodyBytes = 16 << 10
+	jobLeaseDuration   = 30 * time.Second
+)
+
+var errRequestTooLarge = errors.New("request body is too large")
 
 type agentView struct {
 	storage.State
@@ -66,6 +74,10 @@ func (a *App) Handler() http.Handler { return a.handler }
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/report", a.handleReport)
+	mux.HandleFunc("POST /api/v1/agent/jobs/claim", a.handleClaimJob)
+	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
+	mux.HandleFunc("POST /api/v1/agent/jobs/{job_id}/result", a.handleJobResult)
+	mux.HandleFunc("/api/v1/agent/jobs/{job_id}/result", requirePost)
 	mux.HandleFunc("GET /api/v1/agents", a.handleAgents)
 	mux.HandleFunc("GET /api/v1/agents/{id}/history", a.handleHistory)
 	mux.HandleFunc("GET /api/v1/events", a.handleEvents)
@@ -74,7 +86,24 @@ func (a *App) routes() http.Handler {
 		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(static)))
-	return securityHeaders(mux)
+	return securityHeaders(rejectAmbiguousJobPaths(mux))
+}
+
+func requirePost(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Allow", http.MethodPost)
+	writeJobError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method must be POST")
+}
+
+func rejectAmbiguousJobPaths(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.ToLower(r.URL.EscapedPath())
+		if strings.HasPrefix(path, "/api/v1/agent/jobs/") &&
+			(strings.Contains(path, "//") || strings.Contains(path, "%2f") || strings.Contains(path, "%5c")) {
+			writeJobError(w, http.StatusNotFound, "job_not_found", "job not found")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -136,6 +165,177 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 		a.publishState(state)
 	}
 	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason})
+}
+
+func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := a.authenticateJobRequest(w, r, "claim job")
+	if !ok {
+		return
+	}
+	if !hasJSONContentType(r) {
+		writeJobError(w, http.StatusUnsupportedMediaType, "invalid_content_type", "Content-Type must be application/json")
+		return
+	}
+	body, err := readBoundedBody(w, r, maxClaimBodyBytes)
+	if err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	request, err := protocol.DecodeClaimRequest(body)
+	if err != nil {
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid claim request")
+		return
+	}
+	job, err := a.store.ClaimJob(r.Context(), agentID, request, a.now(), jobLeaseDuration)
+	if err != nil {
+		a.writeClaimError(w, agentID, err)
+		return
+	}
+	if job == nil {
+		w.Header().Set("Retry-After", "10")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (a *App) handleJobResult(w http.ResponseWriter, r *http.Request) {
+	agentID, ok := a.authenticateJobRequest(w, r, "submit job result")
+	if !ok {
+		return
+	}
+	if !hasJSONContentType(r) {
+		writeJobError(w, http.StatusUnsupportedMediaType, "invalid_content_type", "Content-Type must be application/json")
+		return
+	}
+	jobID := r.PathValue("job_id")
+	if !validPathJobID(jobID) {
+		writeJobError(w, http.StatusNotFound, "job_not_found", "job not found")
+		return
+	}
+	job, err := a.store.GetProbeJob(r.Context(), jobID)
+	if err != nil {
+		if errors.Is(err, storage.ErrJobNotFound) {
+			writeJobError(w, http.StatusNotFound, "job_not_found", "job not found")
+			return
+		}
+		a.logger.Error("read job for result", "agent_id", agentID, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not process job result")
+		return
+	}
+	if job.AgentID != agentID {
+		writeJobError(w, http.StatusNotFound, "job_not_found", "job not found")
+		return
+	}
+	body, err := readBoundedBody(w, r, maxResultBodyBytes)
+	if err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	result, err := protocol.DecodeJobResult(body, job.ProbeType)
+	if err != nil {
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid job result")
+		return
+	}
+	ack, err := a.store.SubmitJobResult(r.Context(), agentID, jobID, result, a.now())
+	if err != nil {
+		a.writeResultError(w, agentID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Accepted  bool   `json:"accepted"`
+		Duplicate bool   `json:"duplicate"`
+		JobStatus string `json:"job_status"`
+	}{Accepted: true, Duplicate: ack.Duplicate, JobStatus: string(storage.JobStatusFinished)})
+}
+
+func (a *App) authenticateJobRequest(w http.ResponseWriter, r *http.Request, operation string) (string, bool) {
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		writeJobError(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
+		return "", false
+	}
+	agentID, err := a.store.Authenticate(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, storage.ErrUnauthorized) {
+			writeJobError(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
+			return "", false
+		}
+		a.logger.Error(operation, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not authenticate agent")
+		return "", false
+	}
+	return agentID, true
+}
+
+func (a *App) writeClaimError(w http.ResponseWriter, agentID string, err error) {
+	switch {
+	case errors.Is(err, storage.ErrUnauthorized):
+		writeJobError(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
+	case errors.Is(err, storage.ErrAttemptExhausted):
+		writeJobError(w, http.StatusConflict, "attempt_exhausted", "job attempt limit exhausted")
+	default:
+		a.logger.Error("claim job", "agent_id", agentID, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not claim job")
+	}
+}
+
+func (a *App) writeResultError(w http.ResponseWriter, agentID string, err error) {
+	switch {
+	case errors.Is(err, storage.ErrUnauthorized):
+		writeJobError(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
+	case errors.Is(err, storage.ErrJobNotFound):
+		writeJobError(w, http.StatusNotFound, "job_not_found", "job not found")
+	case errors.Is(err, storage.ErrLeaseLost):
+		writeJobError(w, http.StatusConflict, "lease_lost", "job lease is no longer valid")
+	case errors.Is(err, storage.ErrResultConflict):
+		writeJobError(w, http.StatusConflict, "result_conflict", "job result conflicts with the stored result")
+	case errors.Is(err, storage.ErrJobExpired):
+		writeJobError(w, http.StatusGone, "job_expired", "job has expired")
+	case errors.Is(err, storage.ErrInvalidJobResult):
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid job result")
+	default:
+		a.logger.Error("submit job result", "agent_id", agentID, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not process job result")
+	}
+}
+
+func hasJSONContentType(r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mediaType == "application/json"
+}
+
+func readBoundedBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return nil, errRequestTooLarge
+		}
+		return nil, err
+	}
+	return body, nil
+}
+
+func writeBodyError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errRequestTooLarge) {
+		writeJobError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body is too large")
+		return
+	}
+	writeJobError(w, http.StatusBadRequest, "invalid_request", "could not read request body")
+}
+
+func validPathJobID(value string) bool {
+	if value == "" || len(value) > 128 || !utf8.ValidString(value) || strings.TrimSpace(value) != value || strings.ContainsAny(value, "/\\%?#") {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) publishState(state storage.State) bool {
@@ -274,6 +474,19 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
+
+func writeJobError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{Error: struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}{Code: code, Message: message}})
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
