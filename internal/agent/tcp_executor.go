@@ -129,18 +129,23 @@ func remoteIP(address net.Addr) string {
 }
 
 // ProbeExecutor dispatches the production probe types implemented by the
-// agent. Its capability list is intentionally fixed and excludes ICMP.
+// agent. ICMP is advertised only when its runtime socket backend is available.
 type ProbeExecutor struct {
 	http Executor
 	tcp  Executor
+	icmp Executor
 }
 
 func NewProbeExecutor() *ProbeExecutor {
-	return &ProbeExecutor{http: NewHTTPExecutor(), tcp: NewTCPExecutor()}
+	return &ProbeExecutor{http: NewHTTPExecutor(), tcp: NewTCPExecutor(), icmp: NewICMPExecutor()}
 }
 
-func (*ProbeExecutor) SupportedProbeTypes() []protocol.ProbeType {
-	return []protocol.ProbeType{protocol.ProbeTypeHTTP, protocol.ProbeTypeTCPConnect}
+func (e *ProbeExecutor) SupportedProbeTypes() []protocol.ProbeType {
+	capabilities := []protocol.ProbeType{protocol.ProbeTypeHTTP, protocol.ProbeTypeTCPConnect}
+	if e != nil && e.icmp != nil && supportsProbeType(e.icmp, protocol.ProbeTypeICMPPing) {
+		capabilities = append(capabilities, protocol.ProbeTypeICMPPing)
+	}
+	return capabilities
 }
 
 func (e *ProbeExecutor) Execute(ctx context.Context, job protocol.Job) (Execution, error) {
@@ -149,7 +154,21 @@ func (e *ProbeExecutor) Execute(ctx context.Context, job protocol.Job) (Executio
 		return e.http.Execute(ctx, job)
 	case protocol.ProbeTypeTCPConnect:
 		return e.tcp.Execute(ctx, job)
+	case protocol.ProbeTypeICMPPing:
+		if e.icmp != nil && supportsProbeType(e.icmp, protocol.ProbeTypeICMPPing) {
+			return e.icmp.Execute(ctx, job)
+		}
+		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	default:
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	}
+}
+
+func supportsProbeType(executor Executor, probeType protocol.ProbeType) bool {
+	for _, supported := range executor.SupportedProbeTypes() {
+		if supported == probeType {
+			return true
+		}
+	}
+	return false
 }

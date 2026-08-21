@@ -199,6 +199,7 @@ func TestProbeExecutorCapabilitiesAndDispatch(t *testing.T) {
 			tcpCalls.Add(1)
 			return Execution{Success: true, Result: protocol.ProbeResult{TCPConnect: &protocol.TCPConnectResult{}}}, nil
 		}},
+		icmp: UnsupportedExecutor{},
 	}
 	capabilities := executor.SupportedProbeTypes()
 	if len(capabilities) != 2 || capabilities[0] != protocol.ProbeTypeHTTP || capabilities[1] != protocol.ProbeTypeTCPConnect {
@@ -218,6 +219,32 @@ func TestProbeExecutorCapabilitiesAndDispatch(t *testing.T) {
 	}
 	if httpCalls.Load() != 1 || tcpCalls.Load() != 1 {
 		t.Fatalf("dispatch calls: HTTP=%d TCP=%d", httpCalls.Load(), tcpCalls.Load())
+	}
+}
+
+func TestProbeExecutorConditionallyDispatchesICMP(t *testing.T) {
+	var icmpCalls atomic.Int32
+	executor := &ProbeExecutor{
+		http: UnsupportedExecutor{},
+		tcp:  UnsupportedExecutor{},
+		icmp: fakeExecutor{
+			capabilities: []protocol.ProbeType{protocol.ProbeTypeICMPPing},
+			execute: func(context.Context, protocol.Job) (Execution, error) {
+				icmpCalls.Add(1)
+				return Execution{Success: true, Result: protocol.ProbeResult{ICMPPing: &protocol.ICMPPingResult{Sent: 1, Received: 1}}}, nil
+			},
+		},
+	}
+	capabilities := executor.SupportedProbeTypes()
+	if len(capabilities) != 3 || capabilities[0] != protocol.ProbeTypeHTTP || capabilities[1] != protocol.ProbeTypeTCPConnect || capabilities[2] != protocol.ProbeTypeICMPPing {
+		t.Fatalf("capabilities = %v", capabilities)
+	}
+	job := validICMPExecutorJob("127.0.0.1", 1)
+	if _, err := executor.Execute(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if icmpCalls.Load() != 1 {
+		t.Fatalf("ICMP calls = %d", icmpCalls.Load())
 	}
 }
 
@@ -349,7 +376,10 @@ func TestNewUsesHTTPAndTCPExecutors(t *testing.T) {
 		t.Fatal(err)
 	}
 	capabilities := runner.executor.SupportedProbeTypes()
-	if len(capabilities) != 2 || capabilities[0] != protocol.ProbeTypeHTTP || capabilities[1] != protocol.ProbeTypeTCPConnect {
+	if len(capabilities) < 2 || len(capabilities) > 3 || capabilities[0] != protocol.ProbeTypeHTTP || capabilities[1] != protocol.ProbeTypeTCPConnect {
+		t.Fatalf("capabilities = %v", capabilities)
+	}
+	if len(capabilities) == 3 && capabilities[2] != protocol.ProbeTypeICMPPing {
 		t.Fatalf("capabilities = %v", capabilities)
 	}
 	if _, ok := runner.executor.(*ProbeExecutor); !ok {

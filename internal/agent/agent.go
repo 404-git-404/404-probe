@@ -67,7 +67,8 @@ func New(config Config, logger *slog.Logger) (*Runner, error) {
 }
 
 // NewWithExecutor constructs a runner with an explicitly supplied job
-// executor. New uses the production HTTP and TCP executor.
+// executor. New uses the production HTTP, TCP, and conditionally available
+// ICMP executor.
 func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Runner, error) {
 	if config.JobInterval == 0 {
 		config.JobInterval = DefaultJobInterval

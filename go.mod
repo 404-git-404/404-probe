@@ -4,6 +4,7 @@ go 1.23.0
 
 require (
 	github.com/shirou/gopsutil/v4 v4.25.6
+	golang.org/x/net v0.42.0
 	golang.org/x/sys v0.34.0
 	modernc.org/sqlite v1.38.2
 )
