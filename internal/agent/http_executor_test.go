@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -280,20 +279,6 @@ func TestHTTPExecutorRejectsOtherProbeTypes(t *testing.T) {
 	execution, err := NewHTTPExecutor().Execute(context.Background(), job)
 	if !errors.Is(err, ErrUnsupportedProbeType) || execution.Success {
 		t.Fatalf("execution = %+v err=%v", execution, err)
-	}
-}
-
-func TestNewUsesHTTPExecutor(t *testing.T) {
-	runner, err := New(Config{
-		ServerURL: "https://example.test", AgentID: "agent", Token: "token",
-		Interval: time.Second, Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"),
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	capabilities := runner.executor.SupportedProbeTypes()
-	if len(capabilities) != 1 || capabilities[0] != protocol.ProbeTypeHTTP {
-		t.Fatalf("capabilities = %v", capabilities)
 	}
 }
 

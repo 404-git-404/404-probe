@@ -63,11 +63,11 @@ type Runner struct {
 }
 
 func New(config Config, logger *slog.Logger) (*Runner, error) {
-	return NewWithExecutor(config, logger, NewHTTPExecutor())
+	return NewWithExecutor(config, logger, NewProbeExecutor())
 }
 
 // NewWithExecutor constructs a runner with an explicitly supplied job
-// executor. New uses the production HTTP executor.
+// executor. New uses the production HTTP and TCP executor.
 func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Runner, error) {
 	if config.JobInterval == 0 {
 		config.JobInterval = DefaultJobInterval
