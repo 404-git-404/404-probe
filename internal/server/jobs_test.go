@@ -157,8 +157,9 @@ func TestClaimJobHTTP(t *testing.T) {
 		t.Fatalf("stored job=%+v err=%v", record, err)
 	}
 
+	now = now.Add(10 * time.Second)
 	replayed, replay := claimHTTPJob(t, app, token, validClaimRequest(1, "session-1"))
-	if replay.Code != http.StatusOK || replayed == nil || replayed.Attempt != job.Attempt || replayed.LeaseToken != job.LeaseToken {
+	if replay.Code != http.StatusOK || replayed == nil || replayed.Attempt != job.Attempt || replayed.LeaseToken != job.LeaseToken || replayed.LeaseExpiresAt != job.LeaseExpiresAt {
 		t.Fatalf("replayed=%+v status=%d body=%s", replayed, replay.Code, replay.Body.String())
 	}
 
@@ -476,6 +477,37 @@ func assertResultACK(t *testing.T, response *httptest.ResponseRecorder, duplicat
 }
 
 func TestSubmitJobResultHTTPFencingAndExpiry(t *testing.T) {
+	t.Run("maximum timeout has submission grace", func(t *testing.T) {
+		app, store, agentID, token := testApp(t)
+		defer store.Close()
+		claimedAt := time.Unix(1000, 0)
+		now := claimedAt
+		app.now = func() time.Time { return now }
+		err := store.CreateOneShotJob(context.Background(), storage.CreateOneShotJobParams{
+			ID: "job", AgentID: agentID, ProbeType: protocol.ProbeTypeTCPConnect,
+			Config:    protocol.ProbeConfig{TCPConnect: &protocol.TCPConnectConfig{Host: "example.com", Port: 443}},
+			TimeoutMS: protocol.MaxProbeTimeoutMS, CreatedAt: now.UnixMilli(), NotBefore: now.UnixMilli(), ExpiresAt: now.Add(5 * time.Minute).UnixMilli(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, claimed := claimHTTPJob(t, app, token, validClaimRequest(1, "session-1"))
+		if claimed.Code != http.StatusOK || job == nil {
+			t.Fatalf("claim status=%d body=%s", claimed.Code, claimed.Body.String())
+		}
+		wantLeaseDuration := time.Duration(protocol.MaxProbeTimeoutMS)*time.Millisecond + jobResultSubmissionGrace
+		if jobLeaseDuration != wantLeaseDuration || jobLeaseDuration != 60*time.Second {
+			t.Fatalf("job lease duration=%s want=%s", jobLeaseDuration, wantLeaseDuration)
+		}
+		if job.LeaseExpiresAt != claimedAt.Add(jobLeaseDuration).UnixMilli() {
+			t.Fatalf("lease_expires_at=%d want=%d", job.LeaseExpiresAt, claimedAt.Add(jobLeaseDuration).UnixMilli())
+		}
+
+		now = claimedAt.Add(time.Duration(protocol.MaxProbeTimeoutMS)*time.Millisecond + time.Millisecond)
+		response := jobHTTPResponse(t, app, http.MethodPost, "/api/v1/agent/jobs/job/result", token, "application/json", validHTTPJobResult(job))
+		assertResultACK(t, response, false)
+	})
+
 	t.Run("stale attempt and wrong token", func(t *testing.T) {
 		app, store, agentID, token := testApp(t)
 		defer store.Close()
@@ -500,6 +532,40 @@ func TestSubmitJobResultHTTPFencingAndExpiry(t *testing.T) {
 		}
 	})
 
+	for _, test := range []struct {
+		name       string
+		offset     time.Duration
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "just before lease boundary is accepted", offset: jobLeaseDuration - time.Millisecond, wantStatus: http.StatusOK},
+		{name: "exact lease boundary is lost", offset: jobLeaseDuration, wantStatus: http.StatusConflict, wantCode: "lease_lost"},
+		{name: "after lease boundary is lost", offset: jobLeaseDuration + time.Millisecond, wantStatus: http.StatusConflict, wantCode: "lease_lost"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app, store, agentID, token := testApp(t)
+			defer store.Close()
+			claimedAt := time.Unix(1000, 0)
+			now := claimedAt
+			app.now = func() time.Time { return now }
+			createHTTPTestJob(t, store, "job", agentID, now, 5*time.Minute)
+			job, claimed := claimHTTPJob(t, app, token, validClaimRequest(1, "session-1"))
+			if claimed.Code != http.StatusOK || job == nil {
+				t.Fatalf("claim status=%d body=%s", claimed.Code, claimed.Body.String())
+			}
+
+			now = claimedAt.Add(test.offset)
+			response := jobHTTPResponse(t, app, http.MethodPost, "/api/v1/agent/jobs/job/result", token, "application/json", validHTTPJobResult(job))
+			if test.wantStatus == http.StatusOK {
+				assertResultACK(t, response, false)
+				return
+			}
+			if response.Code != test.wantStatus || jobErrorCode(t, response) != test.wantCode {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+
 	t.Run("job expiry does not shorten lease", func(t *testing.T) {
 		app, store, agentID, token := testApp(t)
 		defer store.Close()
@@ -510,20 +576,6 @@ func TestSubmitJobResultHTTPFencingAndExpiry(t *testing.T) {
 		now = now.Add(20 * time.Second)
 		response := jobHTTPResponse(t, app, http.MethodPost, "/api/v1/agent/jobs/job/result", token, "application/json", validHTTPJobResult(job))
 		assertResultACK(t, response, false)
-	})
-
-	t.Run("exact lease boundary is lost", func(t *testing.T) {
-		app, store, agentID, token := testApp(t)
-		defer store.Close()
-		now := time.Unix(1000, 0)
-		app.now = func() time.Time { return now }
-		createHTTPTestJob(t, store, "job", agentID, now, time.Minute)
-		job, _ := claimHTTPJob(t, app, token, validClaimRequest(1, "session"))
-		now = now.Add(jobLeaseDuration)
-		response := jobHTTPResponse(t, app, http.MethodPost, "/api/v1/agent/jobs/job/result", token, "application/json", validHTTPJobResult(job))
-		if response.Code != http.StatusConflict || jobErrorCode(t, response) != "lease_lost" {
-			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-		}
 	})
 
 	t.Run("expired job", func(t *testing.T) {

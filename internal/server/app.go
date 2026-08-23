@@ -36,10 +36,11 @@ type App struct {
 }
 
 const (
-	maxSSESubscribers  = 64
-	maxClaimBodyBytes  = 8 << 10
-	maxResultBodyBytes = 16 << 10
-	jobLeaseDuration   = 30 * time.Second
+	maxSSESubscribers        = 64
+	maxClaimBodyBytes        = 8 << 10
+	maxResultBodyBytes       = 16 << 10
+	jobResultSubmissionGrace = 30 * time.Second
+	jobLeaseDuration         = time.Duration(protocol.MaxProbeTimeoutMS)*time.Millisecond + jobResultSubmissionGrace
 )
 
 var errRequestTooLarge = errors.New("request body is too large")
