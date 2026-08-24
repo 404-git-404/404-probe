@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -51,15 +55,24 @@ func serve(args []string) error {
 	listen := flags.String("listen", ":8080", "listen address")
 	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
 	offline := flags.Duration("offline-timeout", 30*time.Second, "offline threshold")
+	controlTokenFile := flags.String("control-token-file", "", "path to the control API token file")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	var appOptions []appserver.Option
+	if *controlTokenFile != "" {
+		hash, err := loadControlTokenHash(*controlTokenFile)
+		if err != nil {
+			return err
+		}
+		appOptions = append(appOptions, appserver.WithControlTokenHash(hash))
 	}
 	store, err := openStore(*dbPath)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	app, err := appserver.NewApp(store, *offline, slog.Default())
+	app, err := appserver.NewApp(store, *offline, slog.Default(), appOptions...)
 	if err != nil {
 		return err
 	}
@@ -164,6 +177,49 @@ func agentCommand(args []string) error {
 }
 
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }
+
+func loadControlTokenHash(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open control token file: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect control token file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("control token file must be a regular file")
+	}
+	if info.Size() > 1024 {
+		return nil, errors.New("control token file is too large")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("control token file permissions must not allow group or other access")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, 1025))
+	if err != nil {
+		return nil, errors.New("read control token file")
+	}
+	if len(content) > 1024 {
+		return nil, errors.New("control token file is too large")
+	}
+	token := string(content)
+	if strings.HasSuffix(token, "\r\n") {
+		token = strings.TrimSuffix(token, "\r\n")
+	} else if strings.HasSuffix(token, "\n") {
+		token = strings.TrimSuffix(token, "\n")
+	}
+	if len(token) != 43 || strings.ContainsAny(token, "\r\n\t ") {
+		return nil, errors.New("control token file contains an invalid token")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != token {
+		return nil, errors.New("control token file contains an invalid token")
+	}
+	return auth.Hash(token), nil
+}
+
 func openStore(path string) (*storage.Store, error) {
 	if path != ":memory:" {
 		dir := filepath.Dir(path)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
@@ -17,14 +18,19 @@ import (
 )
 
 var (
-	ErrJobNotFound      = errors.New("probe job not found")
-	ErrLeaseLost        = errors.New("probe job lease lost")
-	ErrJobExpired       = errors.New("probe job expired")
-	ErrAttemptExhausted = errors.New("probe job attempt exhausted")
-	ErrResultConflict   = errors.New("probe job result conflicts with stored result")
-	ErrInvalidJobResult = errors.New("invalid probe job result")
-	ErrCorruptProbeData = errors.New("stored probe data is corrupt")
+	ErrJobNotFound         = errors.New("probe job not found")
+	ErrLeaseLost           = errors.New("probe job lease lost")
+	ErrJobExpired          = errors.New("probe job expired")
+	ErrAttemptExhausted    = errors.New("probe job attempt exhausted")
+	ErrResultConflict      = errors.New("probe job result conflicts with stored result")
+	ErrInvalidJobResult    = errors.New("invalid probe job result")
+	ErrCorruptProbeData    = errors.New("stored probe data is corrupt")
+	ErrAgentNotFound       = errors.New("active agent not found")
+	ErrJobIDConflict       = errors.New("probe job ID conflicts with existing job")
+	ErrOutstandingJobsFull = errors.New("probe job outstanding queue is full")
 )
+
+const MaxOutstandingJobsPerAgent = 64
 
 type JobStatus string
 
@@ -79,21 +85,9 @@ type SubmitResultAck struct {
 }
 
 func (s *Store) CreateOneShotJob(ctx context.Context, params CreateOneShotJobParams) error {
-	if !validStorageID(params.ID, 128) || !validStorageID(params.AgentID, 128) {
-		return errors.New("job ID and agent ID are required and must be reasonably sized")
-	}
-	if err := params.ProbeType.Validate(); err != nil {
-		return err
-	}
-	configJSON, err := protocol.MarshalProbeConfig(params.ProbeType, params.Config)
+	configJSON, err := validateOneShotJobParams(params)
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
-	}
-	if params.TimeoutMS < protocol.MinProbeTimeoutMS || params.TimeoutMS > protocol.MaxProbeTimeoutMS {
-		return fmt.Errorf("timeout_ms must be between %d and %d", protocol.MinProbeTimeoutMS, protocol.MaxProbeTimeoutMS)
-	}
-	if params.CreatedAt <= 0 || params.NotBefore < params.CreatedAt || params.ExpiresAt <= params.NotBefore {
-		return errors.New("job timestamps are invalid")
+		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -112,6 +106,138 @@ func (s *Store) CreateOneShotJob(ctx context.Context, params CreateOneShotJobPar
 		return err
 	}
 	return tx.Commit()
+}
+
+// CreateOneShotJobIdempotent creates a control-plane one-shot job or replays
+// an identical request. Queue cleanup, capacity enforcement, and insertion are
+// performed in one transaction.
+func (s *Store) CreateOneShotJobIdempotent(ctx context.Context, params CreateOneShotJobParams) (ProbeJobRecord, bool, error) {
+	configJSON, err := validateOneShotJobParams(params)
+	if err != nil {
+		return ProbeJobRecord{}, false, err
+	}
+	if params.NotBefore != params.CreatedAt {
+		return ProbeJobRecord{}, false, errors.New("idempotent one-shot job must be immediately eligible")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ProbeJobRecord{}, false, err
+	}
+	defer tx.Rollback()
+	existing, exists, err := readJobTx(ctx, tx, params.ID)
+	if err != nil {
+		return ProbeJobRecord{}, false, fmt.Errorf("%w: %v", ErrCorruptProbeData, err)
+	}
+	if exists {
+		identical, err := sameOneShotJobRequest(existing, params, configJSON)
+		if err != nil {
+			return ProbeJobRecord{}, false, err
+		}
+		if !identical {
+			return ProbeJobRecord{}, false, ErrJobIDConflict
+		}
+		if err := cleanupExpiredJobsTx(ctx, tx, existing.AgentID, params.CreatedAt); err != nil {
+			return ProbeJobRecord{}, false, err
+		}
+		existing, exists, err = readJobTx(ctx, tx, params.ID)
+		if err != nil {
+			return ProbeJobRecord{}, false, fmt.Errorf("%w: %v", ErrCorruptProbeData, err)
+		}
+		if !exists {
+			return ProbeJobRecord{}, false, ErrJobNotFound
+		}
+		if err := tx.Commit(); err != nil {
+			return ProbeJobRecord{}, false, err
+		}
+		return existing, false, nil
+	}
+	if err := requireActiveAgentTx(ctx, tx, params.AgentID); err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return ProbeJobRecord{}, false, ErrAgentNotFound
+		}
+		return ProbeJobRecord{}, false, err
+	}
+	if err := cleanupExpiredJobsTx(ctx, tx, params.AgentID, params.CreatedAt); err != nil {
+		return ProbeJobRecord{}, false, err
+	}
+	var outstanding int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM probe_jobs
+		WHERE agent_id=? AND status IN ('queued','leased')`, params.AgentID).Scan(&outstanding); err != nil {
+		return ProbeJobRecord{}, false, err
+	}
+	if outstanding >= MaxOutstandingJobsPerAgent {
+		return ProbeJobRecord{}, false, ErrOutstandingJobsFull
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO probe_jobs(
+		id,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt
+	) VALUES(?,NULL,?,?,?,?,?,?,?,?, 'queued',0)`,
+		params.ID, params.AgentID, string(params.ProbeType), string(configJSON), params.TimeoutMS,
+		params.CreatedAt, params.CreatedAt, params.NotBefore, params.ExpiresAt); err != nil {
+		return ProbeJobRecord{}, false, err
+	}
+	record, exists, err := readJobTx(ctx, tx, params.ID)
+	if err != nil {
+		return ProbeJobRecord{}, false, err
+	}
+	if !exists {
+		return ProbeJobRecord{}, false, ErrJobNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return ProbeJobRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+func validateOneShotJobParams(params CreateOneShotJobParams) ([]byte, error) {
+	if !validStorageID(params.ID, 128) || !validStorageID(params.AgentID, 128) {
+		return nil, errors.New("job ID and agent ID are required and must be reasonably sized")
+	}
+	if err := params.ProbeType.Validate(); err != nil {
+		return nil, err
+	}
+	configJSON, err := protocol.MarshalProbeConfig(params.ProbeType, params.Config)
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	if params.TimeoutMS < protocol.MinProbeTimeoutMS || params.TimeoutMS > protocol.MaxProbeTimeoutMS {
+		return nil, fmt.Errorf("timeout_ms must be between %d and %d", protocol.MinProbeTimeoutMS, protocol.MaxProbeTimeoutMS)
+	}
+	if params.CreatedAt <= 0 || params.NotBefore < params.CreatedAt || params.ExpiresAt <= params.NotBefore {
+		return nil, errors.New("job timestamps are invalid")
+	}
+	return configJSON, nil
+}
+
+func sameOneShotJobRequest(existing ProbeJobRecord, params CreateOneShotJobParams, configJSON []byte) (bool, error) {
+	if existing.ExpiresAt <= existing.CreatedAt {
+		return false, fmt.Errorf("%w: stored one-shot job TTL is invalid", ErrCorruptProbeData)
+	}
+	storedConfig, err := protocol.MarshalProbeConfig(existing.ProbeType, existing.Config)
+	if err != nil {
+		return false, fmt.Errorf("%w: stored one-shot config is invalid", ErrCorruptProbeData)
+	}
+	return existing.ScheduleID == "" &&
+		existing.AgentID == params.AgentID &&
+		existing.ProbeType == params.ProbeType &&
+		bytes.Equal(storedConfig, configJSON) &&
+		existing.TimeoutMS == params.TimeoutMS &&
+		existing.ScheduledFor == existing.CreatedAt &&
+		existing.NotBefore == existing.CreatedAt &&
+		existing.ExpiresAt-existing.CreatedAt == params.ExpiresAt-params.CreatedAt, nil
+}
+
+func cleanupExpiredJobsTx(ctx context.Context, tx *sql.Tx, agentID string, nowMillis int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET
+		status=CASE WHEN expires_at>? THEN 'queued' ELSE 'expired' END,
+		lease_token=NULL,lease_epoch=NULL,lease_session_id=NULL,leased_at=NULL,lease_until=NULL
+		WHERE agent_id=? AND status='leased' AND lease_until<=?`, nowMillis, agentID, nowMillis); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET status='expired'
+		WHERE agent_id=? AND status='queued' AND expires_at<=?`, agentID, nowMillis); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ClaimJob leases at most one Job for an Agent. A retry from the same active
@@ -142,14 +268,7 @@ func (s *Store) ClaimJob(ctx context.Context, agentID string, request protocol.C
 		return nil, err
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET
-		status=CASE WHEN expires_at>? THEN 'queued' ELSE 'expired' END,
-		lease_token=NULL,lease_epoch=NULL,lease_session_id=NULL,leased_at=NULL,lease_until=NULL
-		WHERE agent_id=? AND status='leased' AND lease_until<=?`, nowMillis, agentID, nowMillis); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET status='expired'
-		WHERE agent_id=? AND status='queued' AND expires_at<=?`, agentID, nowMillis); err != nil {
+	if err := cleanupExpiredJobsTx(ctx, tx, agentID, nowMillis); err != nil {
 		return nil, err
 	}
 
@@ -356,7 +475,91 @@ func (s *Store) GetProbeJob(ctx context.Context, jobID string) (ProbeJobRecord, 
 	return record, nil
 }
 
+// GetProbeJobSnapshot returns an effective Job state and its finished result
+// from one transaction. Expired queued or leased states are normalized before
+// the snapshot is read.
+func (s *Store) GetProbeJobSnapshot(ctx context.Context, jobID string, now time.Time) (ProbeJobRecord, *ProbeResultRecord, error) {
+	if !validStorageID(jobID, 128) {
+		return ProbeJobRecord{}, nil, ErrJobNotFound
+	}
+	nowMillis := now.UnixMilli()
+	if nowMillis <= 0 {
+		return ProbeJobRecord{}, nil, errors.New("snapshot timestamp is invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ProbeJobRecord{}, nil, err
+	}
+	defer tx.Rollback()
+	var agentID string
+	if err := tx.QueryRowContext(ctx, `SELECT agent_id FROM probe_jobs WHERE id=?`, jobID).Scan(&agentID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ProbeJobRecord{}, nil, ErrJobNotFound
+		}
+		return ProbeJobRecord{}, nil, err
+	}
+	if err := cleanupExpiredJobsTx(ctx, tx, agentID, nowMillis); err != nil {
+		return ProbeJobRecord{}, nil, err
+	}
+	job, exists, err := readJobTx(ctx, tx, jobID)
+	if err != nil {
+		return ProbeJobRecord{}, nil, fmt.Errorf("%w: %v", ErrCorruptProbeData, err)
+	}
+	if !exists {
+		return ProbeJobRecord{}, nil, ErrJobNotFound
+	}
+	var result *ProbeResultRecord
+	if job.Status == JobStatusFinished {
+		stored, exists, err := readProbeResultTx(ctx, tx, job)
+		if err != nil {
+			return ProbeJobRecord{}, nil, err
+		}
+		if !exists {
+			return ProbeJobRecord{}, nil, fmt.Errorf("%w: finished job has no result", ErrCorruptProbeData)
+		}
+		result = &stored
+	} else {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM probe_results WHERE job_id=?)`, jobID).Scan(&exists); err != nil {
+			return ProbeJobRecord{}, nil, err
+		}
+		if exists {
+			return ProbeJobRecord{}, nil, fmt.Errorf("%w: unfinished job has a result", ErrCorruptProbeData)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return ProbeJobRecord{}, nil, err
+	}
+	return job, result, nil
+}
+
 func (s *Store) GetProbeResult(ctx context.Context, jobID string) (ProbeResultRecord, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return ProbeResultRecord{}, err
+	}
+	defer tx.Rollback()
+	job, exists, err := readJobTx(ctx, tx, jobID)
+	if err != nil {
+		return ProbeResultRecord{}, err
+	}
+	if !exists {
+		return ProbeResultRecord{}, ErrJobNotFound
+	}
+	record, exists, err := readProbeResultTx(ctx, tx, job)
+	if err != nil {
+		return ProbeResultRecord{}, err
+	}
+	if !exists {
+		return ProbeResultRecord{}, ErrJobNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return ProbeResultRecord{}, err
+	}
+	return record, nil
+}
+
+func readProbeResultTx(ctx context.Context, tx *sql.Tx, job ProbeJobRecord) (ProbeResultRecord, bool, error) {
 	var record ProbeResultRecord
 	var attempt int64
 	var epoch int64
@@ -366,27 +569,26 @@ func (s *Store) GetProbeResult(ctx context.Context, jobID string) (ProbeResultRe
 	var success int
 	var resolvedIP, category, message sql.NullString
 	var payload string
-	err := s.db.QueryRowContext(ctx, `SELECT job_id,attempt,received_at,agent_epoch,session_id,
+	err := tx.QueryRowContext(ctx, `SELECT job_id,attempt,received_at,agent_epoch,session_id,
 		agent_started_at,agent_finished_at,duration_ms,success,resolved_ip,error_category,error_message,payload_json,result_hash
-		FROM probe_results WHERE job_id=?`, jobID).Scan(
+		FROM probe_results WHERE job_id=?`, job.ID).Scan(
 		&record.JobID, &attempt, &record.ReceivedAt, &epoch, &session, &startedAt, &finishedAt, &duration,
 		&success, &resolvedIP, &category, &message, &payload, &record.Hash)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ProbeResultRecord{}, ErrJobNotFound
+		return ProbeResultRecord{}, false, nil
 	}
 	if err != nil {
-		return ProbeResultRecord{}, err
+		return ProbeResultRecord{}, false, err
 	}
 	if epoch < 0 {
-		return ProbeResultRecord{}, fmt.Errorf("%w: probe_results.agent_epoch is negative", ErrCorruptProbeData)
+		return ProbeResultRecord{}, false, fmt.Errorf("%w: probe_results.agent_epoch is negative", ErrCorruptProbeData)
 	}
-	job, err := s.GetProbeJob(ctx, jobID)
-	if err != nil {
-		return ProbeResultRecord{}, err
+	if attempt != job.Attempt || len(record.Hash) != sha256.Size {
+		return ProbeResultRecord{}, false, fmt.Errorf("%w: stored result metadata is invalid", ErrCorruptProbeData)
 	}
 	typedPayload, err := protocol.DecodeProbeResult(job.ProbeType, []byte(payload))
 	if err != nil {
-		return ProbeResultRecord{}, err
+		return ProbeResultRecord{}, false, fmt.Errorf("%w: invalid stored result payload", ErrCorruptProbeData)
 	}
 	record.Result = protocol.JobResult{
 		ProtocolVersion: protocol.JobProtocolVersion, LeaseToken: job.LeaseToken, Attempt: attempt,
@@ -394,7 +596,14 @@ func (s *Store) GetProbeResult(ctx context.Context, jobID string) (ProbeResultRe
 		DurationMS: duration, Success: success != 0, ResolvedIP: resolvedIP.String,
 		ErrorCategory: category.String, ErrorMessage: message.String, Result: typedPayload,
 	}
-	return record, nil
+	if err := record.Result.Validate(job.ProbeType); err != nil {
+		return ProbeResultRecord{}, false, fmt.Errorf("%w: invalid stored result", ErrCorruptProbeData)
+	}
+	_, expectedHash, err := protocol.CanonicalResult(job.ProbeType, record.Result)
+	if err != nil || subtle.ConstantTimeCompare(record.Hash, expectedHash[:]) != 1 {
+		return ProbeResultRecord{}, false, fmt.Errorf("%w: stored result hash does not match payload", ErrCorruptProbeData)
+	}
+	return record, true, nil
 }
 
 func readActiveLeaseTx(ctx context.Context, tx *sql.Tx, agentID string, nowMillis int64) (ProbeJobRecord, bool, error) {

@@ -23,16 +23,17 @@ import (
 )
 
 type App struct {
-	store          *storage.Store
-	offlineTimeout time.Duration
-	logger         *slog.Logger
-	now            func() time.Time
-	shutdown       context.Context
-	cancel         context.CancelFunc
-	mu             sync.RWMutex
-	states         map[string]storage.State
-	hub            *hub
-	handler        http.Handler
+	store            *storage.Store
+	offlineTimeout   time.Duration
+	logger           *slog.Logger
+	now              func() time.Time
+	controlTokenHash []byte
+	shutdown         context.Context
+	cancel           context.CancelFunc
+	mu               sync.RWMutex
+	states           map[string]storage.State
+	hub              *hub
+	handler          http.Handler
 }
 
 const (
@@ -50,7 +51,7 @@ type agentView struct {
 	Online bool `json:"online"`
 }
 
-func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Logger) (*App, error) {
+func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Logger, options ...Option) (*App, error) {
 	if offlineTimeout <= 0 {
 		return nil, errors.New("offline timeout must be positive")
 	}
@@ -63,6 +64,16 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 	}
 	shutdown, cancel := context.WithCancel(context.Background())
 	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers)}
+	for _, option := range options {
+		if option == nil {
+			cancel()
+			return nil, errors.New("server option must not be nil")
+		}
+		if err := option(a); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	for _, state := range states {
 		a.states[state.AgentID] = state
 	}
@@ -79,6 +90,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/{job_id}/result", a.handleJobResult)
 	mux.HandleFunc("/api/v1/agent/jobs/{job_id}/result", requirePost)
+	mux.HandleFunc("PUT /api/v1/control/jobs/{job_id}", a.handlePutControlJob)
+	mux.HandleFunc("GET /api/v1/control/jobs/{job_id}", a.handleGetControlJob)
+	mux.HandleFunc("/api/v1/control/jobs/{job_id}", a.handleControlJobMethodNotAllowed)
+	mux.HandleFunc("/api/v1/control/jobs", a.handleControlCollectionNotFound)
+	mux.HandleFunc("/api/v1/control/jobs/", a.handleControlInvalidPath)
 	mux.HandleFunc("GET /api/v1/agents", a.handleAgents)
 	mux.HandleFunc("GET /api/v1/agents/{id}/history", a.handleHistory)
 	mux.HandleFunc("GET /api/v1/events", a.handleEvents)
@@ -87,7 +103,7 @@ func (a *App) routes() http.Handler {
 		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(static)))
-	return securityHeaders(rejectAmbiguousJobPaths(mux))
+	return securityHeaders(a.rejectAmbiguousJobPaths(mux))
 }
 
 func requirePost(w http.ResponseWriter, _ *http.Request) {
@@ -95,9 +111,16 @@ func requirePost(w http.ResponseWriter, _ *http.Request) {
 	writeJobError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method must be POST")
 }
 
-func rejectAmbiguousJobPaths(next http.Handler) http.Handler {
+func (a *App) rejectAmbiguousJobPaths(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.ToLower(r.URL.EscapedPath())
+		if strings.HasPrefix(path, controlJobPathPrefix) && ambiguousControlJobPath(path) {
+			if !a.authenticateControlRequest(w, r) {
+				return
+			}
+			writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid job ID")
+			return
+		}
 		if strings.HasPrefix(path, "/api/v1/agent/jobs/") &&
 			(strings.Contains(path, "//") || strings.Contains(path, "%2f") || strings.Contains(path, "%5c")) {
 			writeJobError(w, http.StatusNotFound, "job_not_found", "job not found")
@@ -105,6 +128,12 @@ func rejectAmbiguousJobPaths(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func ambiguousControlJobPath(path string) bool {
+	suffix := strings.TrimPrefix(path, controlJobPathPrefix)
+	return strings.Contains(suffix, "//") || strings.Contains(suffix, "%2f") ||
+		strings.Contains(suffix, "%5c") || strings.Contains(suffix, ".") || strings.Contains(suffix, "%2e")
 }
 
 func securityHeaders(next http.Handler) http.Handler {

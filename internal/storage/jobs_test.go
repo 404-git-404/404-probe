@@ -86,6 +86,260 @@ func TestCreateOneShotJob(t *testing.T) {
 	}
 }
 
+func TestCreateOneShotJobIdempotent(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	params := oneShot("0123456789abcdef0123456789abcdef", agentID, at, protocol.ProbeTypeTCPConnect)
+	first, created, err := store.CreateOneShotJobIdempotent(ctx, params)
+	if err != nil || !created {
+		t.Fatalf("first create record=%+v created=%t err=%v", first, created, err)
+	}
+	replayParams := params
+	replayParams.CreatedAt = at.Add(time.Minute).UnixMilli()
+	replayParams.NotBefore = replayParams.CreatedAt
+	replayParams.ExpiresAt = at.Add(11 * time.Minute).UnixMilli()
+	replayed, created, err := store.CreateOneShotJobIdempotent(ctx, replayParams)
+	if err != nil || created {
+		t.Fatalf("replay record=%+v created=%t err=%v", replayed, created, err)
+	}
+	if replayed.CreatedAt != params.CreatedAt || replayed.NotBefore != params.NotBefore || replayed.ExpiresAt != params.ExpiresAt || replayed.Attempt != 0 {
+		t.Fatalf("replay changed original job: %+v", replayed)
+	}
+
+	conflicts := []struct {
+		name   string
+		mutate func(*CreateOneShotJobParams)
+	}{
+		{name: "active agent", mutate: func(value *CreateOneShotJobParams) { value.AgentID = "different-agent" }},
+		{name: "missing agent", mutate: func(value *CreateOneShotJobParams) { value.AgentID = "missing-agent" }},
+		{name: "probe type", mutate: func(value *CreateOneShotJobParams) {
+			value.ProbeType = protocol.ProbeTypeHTTP
+			value.Config = protocol.ProbeConfig{HTTP: &protocol.HTTPConfig{URL: "https://example.com", Method: "GET"}}
+		}},
+		{name: "config", mutate: func(value *CreateOneShotJobParams) { value.Config.TCPConnect.Port = 80 }},
+		{name: "timeout", mutate: func(value *CreateOneShotJobParams) { value.TimeoutMS++ }},
+		{name: "ttl", mutate: func(value *CreateOneShotJobParams) { value.ExpiresAt++ }},
+	}
+	for _, test := range conflicts {
+		t.Run(test.name, func(t *testing.T) {
+			value := params
+			if value.Config.TCPConnect != nil {
+				config := *value.Config.TCPConnect
+				value.Config.TCPConnect = &config
+			}
+			test.mutate(&value)
+			if test.name == "active agent" {
+				_, hash, _ := auth.NewToken()
+				if err := store.AddAgent(ctx, value.AgentID, "different", hash, at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := store.CreateOneShotJobIdempotent(ctx, value); !errors.Is(err, ErrJobIDConflict) {
+				t.Fatalf("conflict error=%v", err)
+			}
+		})
+	}
+	if changed, err := store.RevokeAgent(ctx, agentID, at.Add(time.Hour)); err != nil || !changed {
+		t.Fatalf("revoke changed=%t err=%v", changed, err)
+	}
+	replayed, created, err = store.CreateOneShotJobIdempotent(ctx, replayParams)
+	if err != nil || created || replayed.ID != params.ID || replayed.CreatedAt != params.CreatedAt {
+		t.Fatalf("revoked agent replay=%+v created=%t err=%v", replayed, created, err)
+	}
+}
+
+func TestCreateOneShotJobIdempotentQueueLimitAndConcurrency(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	params := make([]CreateOneShotJobParams, MaxOutstandingJobsPerAgent+16)
+	for i := range params {
+		params[i] = oneShot(fmt.Sprintf("%032x", i+1), agentID, at, protocol.ProbeTypeTCPConnect)
+	}
+	var wait sync.WaitGroup
+	var lock sync.Mutex
+	created := 0
+	full := 0
+	unexpected := []error{}
+	for i := range params {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			_, wasCreated, err := store.CreateOneShotJobIdempotent(ctx, params[index])
+			lock.Lock()
+			defer lock.Unlock()
+			switch {
+			case err == nil && wasCreated:
+				created++
+			case errors.Is(err, ErrOutstandingJobsFull):
+				full++
+			default:
+				unexpected = append(unexpected, err)
+			}
+		}(i)
+	}
+	wait.Wait()
+	if created != MaxOutstandingJobsPerAgent || full != len(params)-MaxOutstandingJobsPerAgent || len(unexpected) != 0 {
+		t.Fatalf("created=%d full=%d unexpected=%v", created, full, unexpected)
+	}
+	var outstanding int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM probe_jobs WHERE agent_id=? AND status IN ('queued','leased')`, agentID).Scan(&outstanding); err != nil || outstanding != MaxOutstandingJobsPerAgent {
+		t.Fatalf("outstanding=%d err=%v", outstanding, err)
+	}
+	var existing CreateOneShotJobParams
+	for _, candidate := range params {
+		if _, err := store.GetProbeJob(ctx, candidate.ID); err == nil {
+			existing = candidate
+			break
+		}
+	}
+	if _, wasCreated, err := store.CreateOneShotJobIdempotent(ctx, existing); err != nil || wasCreated {
+		t.Fatalf("queue-full replay created=%t err=%v", wasCreated, err)
+	}
+	if _, err := store.db.Exec(`UPDATE probe_jobs SET status='expired' WHERE id=?`, existing.ID); err != nil {
+		t.Fatal(err)
+	}
+	newParams := oneShot("ffffffffffffffffffffffffffffffff", agentID, at, protocol.ProbeTypeTCPConnect)
+	if _, wasCreated, err := store.CreateOneShotJobIdempotent(ctx, newParams); err != nil || !wasCreated {
+		t.Fatalf("released slot create=%t err=%v", wasCreated, err)
+	}
+	claimed, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session-1", protocol.ProbeTypeTCPConnect), at, time.Minute)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim for finished slot=%+v err=%v", claimed, err)
+	}
+	if _, err := store.SubmitJobResult(ctx, agentID, claimed.JobID, resultFor(claimed, true), at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	afterFinished := oneShot("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", agentID, at, protocol.ProbeTypeTCPConnect)
+	if _, wasCreated, err := store.CreateOneShotJobIdempotent(ctx, afterFinished); err != nil || !wasCreated {
+		t.Fatalf("finished slot create=%t err=%v", wasCreated, err)
+	}
+}
+
+func TestCreateOneShotJobIdempotentAgentAndExpiryCleanup(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	missing := oneShot("0123456789abcdef0123456789abcdef", "missing-agent", at, protocol.ProbeTypeTCPConnect)
+	if _, _, err := store.CreateOneShotJobIdempotent(ctx, missing); !errors.Is(err, ErrAgentNotFound) {
+		t.Fatalf("missing agent error=%v", err)
+	}
+	queued := oneShot("11111111111111111111111111111111", agentID, at, protocol.ProbeTypeTCPConnect)
+	queued.ExpiresAt = at.Add(time.Minute).UnixMilli()
+	if err := store.CreateOneShotJob(ctx, queued); err != nil {
+		t.Fatal(err)
+	}
+	createAt := at.Add(2 * time.Minute)
+	newParams := oneShot("22222222222222222222222222222222", agentID, createAt, protocol.ProbeTypeTCPConnect)
+	if _, created, err := store.CreateOneShotJobIdempotent(ctx, newParams); err != nil || !created {
+		t.Fatalf("create after cleanup created=%t err=%v", created, err)
+	}
+	expired, err := store.GetProbeJob(ctx, queued.ID)
+	if err != nil || expired.Status != JobStatusExpired {
+		t.Fatalf("expired queued job=%+v err=%v", expired, err)
+	}
+}
+
+func TestGetProbeJobSnapshotEffectiveStatesAndResult(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	queued := oneShot("11111111111111111111111111111111", agentID, at, protocol.ProbeTypeTCPConnect)
+	queued.ExpiresAt = at.Add(time.Minute).UnixMilli()
+	if err := store.CreateOneShotJob(ctx, queued); err != nil {
+		t.Fatal(err)
+	}
+	job, result, err := store.GetProbeJobSnapshot(ctx, queued.ID, at.Add(time.Minute))
+	if err != nil || job.Status != JobStatusExpired || result != nil {
+		t.Fatalf("expired snapshot job=%+v result=%+v err=%v", job, result, err)
+	}
+
+	leased := oneShot("22222222222222222222222222222222", agentID, at.Add(2*time.Minute), protocol.ProbeTypeTCPConnect)
+	if err := store.CreateOneShotJob(ctx, leased); err != nil {
+		t.Fatal(err)
+	}
+	claimAt := at.Add(2 * time.Minute)
+	claimed, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session-1", protocol.ProbeTypeTCPConnect), claimAt, time.Minute)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim=%+v err=%v", claimed, err)
+	}
+	job, result, err = store.GetProbeJobSnapshot(ctx, leased.ID, claimAt.Add(30*time.Second))
+	if err != nil || job.Status != JobStatusLeased || result != nil || job.LeaseToken == "" {
+		t.Fatalf("leased snapshot job=%+v result=%+v err=%v", job, result, err)
+	}
+	job, result, err = store.GetProbeJobSnapshot(ctx, leased.ID, claimAt.Add(time.Minute))
+	if err != nil || job.Status != JobStatusQueued || result != nil || job.LeaseToken != "" || job.Attempt != 1 {
+		t.Fatalf("requeued snapshot job=%+v result=%+v err=%v", job, result, err)
+	}
+
+	claimed, err = store.ClaimJob(ctx, agentID, claimRequest(2, "session-2", protocol.ProbeTypeTCPConnect), claimAt.Add(time.Minute), time.Minute)
+	if err != nil || claimed == nil {
+		t.Fatalf("second claim=%+v err=%v", claimed, err)
+	}
+	finishedAt := claimAt.Add(time.Minute + time.Second)
+	if _, err := store.SubmitJobResult(ctx, agentID, leased.ID, resultFor(claimed, true), finishedAt); err != nil {
+		t.Fatal(err)
+	}
+	job, result, err = store.GetProbeJobSnapshot(ctx, leased.ID, finishedAt)
+	if err != nil || job.Status != JobStatusFinished || result == nil || result.Result.Result.TCPConnect == nil {
+		t.Fatalf("finished snapshot job=%+v result=%+v err=%v", job, result, err)
+	}
+
+	short := oneShot("33333333333333333333333333333333", agentID, at.Add(4*time.Minute), protocol.ProbeTypeTCPConnect)
+	short.ExpiresAt = at.Add(4*time.Minute + 30*time.Second).UnixMilli()
+	if err := store.CreateOneShotJob(ctx, short); err != nil {
+		t.Fatal(err)
+	}
+	shortClaimAt := at.Add(4 * time.Minute)
+	shortClaim, err := store.ClaimJob(ctx, agentID, claimRequest(3, "session-3", protocol.ProbeTypeTCPConnect), shortClaimAt, time.Minute)
+	if err != nil || shortClaim == nil {
+		t.Fatalf("short claim=%+v err=%v", shortClaim, err)
+	}
+	job, result, err = store.GetProbeJobSnapshot(ctx, short.ID, shortClaimAt.Add(time.Minute))
+	if err != nil || job.Status != JobStatusExpired || result != nil || job.LeaseToken != "" {
+		t.Fatalf("expired lease snapshot job=%+v result=%+v err=%v", job, result, err)
+	}
+}
+
+func TestGetProbeJobSnapshotRejectsResultHashMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		statement string
+	}{
+		{name: "valid payload altered", statement: `UPDATE probe_results SET payload_json='{"connect_ms":21}' WHERE job_id='job'`},
+		{name: "hash altered", statement: `UPDATE probe_results SET result_hash=zeroblob(32) WHERE job_id='job'`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, agentID, _ := testStore(t, ":memory:")
+			defer store.Close()
+			ctx := context.Background()
+			at := time.Unix(1000, 0)
+			if err := store.CreateOneShotJob(ctx, oneShot("job", agentID, at, protocol.ProbeTypeTCPConnect)); err != nil {
+				t.Fatal(err)
+			}
+			job, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session-1", protocol.ProbeTypeTCPConnect), at, time.Minute)
+			if err != nil || job == nil {
+				t.Fatalf("claim=%+v err=%v", job, err)
+			}
+			finishedAt := at.Add(time.Second)
+			if _, err := store.SubmitJobResult(ctx, agentID, job.JobID, resultFor(job, true), finishedAt); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec(test.statement); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.GetProbeJobSnapshot(ctx, job.JobID, finishedAt); !errors.Is(err, ErrCorruptProbeData) {
+				t.Fatalf("snapshot error=%v", err)
+			}
+		})
+	}
+}
+
 func TestClaimAndDuplicateClaimReplay(t *testing.T) {
 	store, agentID, _ := testStore(t, ":memory:")
 	defer store.Close()
