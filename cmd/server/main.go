@@ -53,7 +53,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe run --agent-id <id> --type <icmp_ping|tcp_connect|http> [probe flags] [--db path] | schedule list --agent-id <id> [--db path]")
+	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe run --agent-id <id> --type <icmp_ping|tcp_connect|http> [probe flags] [--db path] | schedule <add|list|enable|disable|delete> [flags]")
 }
 
 func serve(args []string) error {
@@ -296,17 +296,30 @@ func validCLIHexID(value string) bool {
 }
 
 func scheduleCommand(args []string) error {
-	return runScheduleCommand(args, os.Stdout)
+	return runScheduleCommand(args, time.Now, auth.NewID, os.Stdout)
 }
 
-func runScheduleCommand(args []string, output io.Writer) error {
-	if len(args) == 0 || args[0] != "list" {
+func runScheduleCommand(args []string, now func() time.Time, newID func() (string, error), output io.Writer) error {
+	if len(args) == 0 {
 		return usageError()
 	}
+	switch args[0] {
+	case "add":
+		return runScheduleAdd(args[1:], now, newID, output)
+	case "list":
+		return runScheduleList(args[1:], output)
+	case "enable", "disable", "delete":
+		return runScheduleMutation(args[0], args[1:], now, output)
+	default:
+		return usageError()
+	}
+}
+
+func runScheduleList(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("schedule list", flag.ContinueOnError)
 	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
 	agentID := flags.String("agent-id", "", "Agent ID")
-	if err := flags.Parse(args[1:]); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -335,6 +348,146 @@ func runScheduleCommand(args []string, output io.Writer) error {
 		}
 	}
 	return w.Flush()
+}
+
+func runScheduleAdd(args []string, now func() time.Time, newID func() (string, error), output io.Writer) error {
+	flags := flag.NewFlagSet("schedule add", flag.ContinueOnError)
+	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
+	agentID := flags.String("agent-id", "", "Agent ID")
+	name := flags.String("name", "", "schedule name")
+	probeTypeValue := flags.String("type", "", "probe type")
+	timeout := flags.Duration("timeout", 5*time.Second, "probe timeout")
+	interval := flags.Duration("interval", time.Minute, "fixed interval")
+	enabled := flags.Bool("enabled", true, "enable schedule")
+	target := flags.String("target", "", "ICMP target")
+	count := flags.Int("count", 4, "ICMP packet count")
+	host := flags.String("host", "", "TCP host")
+	port := flags.Int("port", 0, "TCP port")
+	urlValue := flags.String("url", "", "HTTP URL")
+	method := flags.String("method", "GET", "HTTP method")
+	expectedStatus := flags.Int("expected-status", 0, "optional expected HTTP status")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("schedule add does not accept positional arguments")
+	}
+	probeType := protocol.ProbeType(*probeTypeValue)
+	if err := probeType.Validate(); err != nil {
+		return err
+	}
+	if !validCLIHexID(*agentID) {
+		return errors.New("agent-id must be 32 lowercase hexadecimal characters")
+	}
+	setFlags := make(map[string]bool)
+	flags.Visit(func(value *flag.Flag) { setFlags[value.Name] = true })
+	allowed := map[string]bool{"db": true, "agent-id": true, "name": true, "type": true, "timeout": true, "interval": true, "enabled": true}
+	var config protocol.ProbeConfig
+	switch probeType {
+	case protocol.ProbeTypeICMPPing:
+		allowed["target"], allowed["count"] = true, true
+		config.ICMPPing = &protocol.ICMPPingConfig{Target: *target, Count: *count}
+	case protocol.ProbeTypeTCPConnect:
+		allowed["host"], allowed["port"] = true, true
+		config.TCPConnect = &protocol.TCPConnectConfig{Host: *host, Port: *port}
+	case protocol.ProbeTypeHTTP:
+		allowed["url"], allowed["method"], allowed["expected-status"] = true, true, true
+		var expected *int
+		if setFlags["expected-status"] {
+			expected = expectedStatus
+		}
+		config.HTTP = &protocol.HTTPConfig{URL: *urlValue, Method: *method, ExpectedStatus: expected}
+	}
+	for flagName := range setFlags {
+		if !allowed[flagName] {
+			return fmt.Errorf("flag --%s is not valid for probe type %s", flagName, probeType)
+		}
+	}
+	if err := config.Validate(probeType); err != nil {
+		return err
+	}
+	timeoutMillis := timeout.Milliseconds()
+	intervalSeconds := int64(*interval / time.Second)
+	if *timeout <= 0 || time.Duration(timeoutMillis)*time.Millisecond != *timeout || timeoutMillis < protocol.MinProbeTimeoutMS || timeoutMillis > protocol.MaxProbeTimeoutMS {
+		return fmt.Errorf("timeout must be between %dms and %dms in whole milliseconds", protocol.MinProbeTimeoutMS, protocol.MaxProbeTimeoutMS)
+	}
+	if *interval < 30*time.Second || *interval > 7*24*time.Hour || time.Duration(intervalSeconds)*time.Second != *interval {
+		return errors.New("interval must be between 30s and 168h in whole seconds")
+	}
+	at := now().UnixMilli()
+	if at <= 0 {
+		return errors.New("schedule time is outside the supported range")
+	}
+	scheduleID, err := newID()
+	if err != nil {
+		return err
+	}
+	store, err := openStore(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	_, _, err = store.PutProbeSchedule(context.Background(), storage.PutScheduleParams{
+		ID: scheduleID, AgentID: *agentID, Name: *name, ProbeType: probeType, Config: config,
+		TimeoutMS: int(timeoutMillis), IntervalSeconds: int(intervalSeconds), Enabled: *enabled, Now: at,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(output, "Schedule ID: %s\n", scheduleID)
+	return err
+}
+
+func runScheduleMutation(command string, args []string, now func() time.Time, output io.Writer) error {
+	if len(args) == 0 || startsFlag(args[0]) || !validCLIHexID(args[0]) {
+		return errors.New("schedule ID must be 32 lowercase hexadecimal characters")
+	}
+	scheduleID := args[0]
+	flags := flag.NewFlagSet("schedule "+command, flag.ContinueOnError)
+	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("schedule %s accepts exactly one schedule ID", command)
+	}
+	var at int64
+	if command != "delete" {
+		at = now().UnixMilli()
+		if at <= 0 {
+			return errors.New("schedule time is outside the supported range")
+		}
+	}
+	store, err := openStore(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if command == "delete" {
+		if err := store.DeleteProbeSchedule(context.Background(), scheduleID); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(output, "Deleted schedule %s\n", scheduleID)
+		return err
+	}
+	record, err := store.GetProbeSchedule(context.Background(), scheduleID)
+	if err != nil {
+		return err
+	}
+	enabled := command == "enable"
+	_, _, err = store.PutProbeSchedule(context.Background(), storage.PutScheduleParams{
+		ID: record.ID, AgentID: record.AgentID, Name: record.Name, ProbeType: record.ProbeType, Config: record.Config,
+		TimeoutMS: record.TimeoutMS, IntervalSeconds: record.IntervalSeconds, Enabled: enabled, Now: at,
+	})
+	if err != nil {
+		return err
+	}
+	verb := "Disabled"
+	if enabled {
+		verb = "Enabled"
+	}
+	_, err = fmt.Fprintf(output, "%s schedule %s\n", verb, scheduleID)
+	return err
 }
 
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }

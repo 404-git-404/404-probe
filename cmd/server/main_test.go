@@ -205,8 +205,14 @@ func TestRunScheduleCommandListsStableRedactedRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentID, _ := auth.NewID()
-	_, hash, _ := auth.NewToken()
+	agentID, err := auth.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	at := time.Unix(12_000, 0)
 	if err := store.AddAgent(ctx, agentID, "test", hash, at); err != nil {
 		t.Fatal(err)
@@ -228,7 +234,7 @@ func TestRunScheduleCommandListsStableRedactedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := runScheduleCommand([]string{"list", "--db", path, "--agent-id", agentID}, &output); err != nil {
+	if err := runScheduleCommand([]string{"list", "--db", path, "--agent-id", agentID}, time.Now, auth.NewID, &output); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()
@@ -244,9 +250,223 @@ func TestRunScheduleCommandListsStableRedactedRows(t *testing.T) {
 
 func TestRunScheduleCommandRejectsInvalidInvocation(t *testing.T) {
 	for _, arguments := range [][]string{{}, {"get"}, {"list"}, {"list", "--agent-id", "bad"}, {"list", "--agent-id", strings.Repeat("a", 32), "extra"}} {
-		if err := runScheduleCommand(arguments, &bytes.Buffer{}); err == nil {
+		if err := runScheduleCommand(arguments, time.Now, auth.NewID, &bytes.Buffer{}); err == nil {
 			t.Fatalf("arguments=%v accepted", arguments)
 		}
+	}
+}
+
+func TestRunScheduleCommandAddToggleDeleteLifecycle(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "schedule-lifecycle.db")
+	store, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID, _ := auth.NewID()
+	_, hash, _ := auth.NewToken()
+	createdAt := time.Unix(13_000, 0)
+	if err := store.AddAgent(ctx, agentID, "test", hash, createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	scheduleID := strings.Repeat("d", 32)
+	var output bytes.Buffer
+	add := []string{"add", "--db", path, "--agent-id", agentID, "--name", "edge tcp", "--type", "tcp_connect", "--host", "example.com", "--port", "443", "--timeout", "2500ms", "--interval", "2m"}
+	if err := runScheduleCommand(add, func() time.Time { return createdAt }, func() (string, error) { return scheduleID, nil }, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "Schedule ID: "+scheduleID+"\n" {
+		t.Fatalf("add output=%q", output.String())
+	}
+	store, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetProbeSchedule(ctx, scheduleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.AgentID != agentID || record.Name != "edge tcp" || record.ProbeType != protocol.ProbeTypeTCPConnect ||
+		record.Config.TCPConnect == nil || record.Config.TCPConnect.Host != "example.com" || record.Config.TCPConnect.Port != 443 ||
+		record.TimeoutMS != 2500 || record.IntervalSeconds != 120 || !record.Enabled || record.NextRunAt != createdAt.UnixMilli() {
+		t.Fatalf("created=%+v", record)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	output.Reset()
+	disabledAt := createdAt.Add(10 * time.Second)
+	if err := runScheduleCommand([]string{"disable", scheduleID, "--db", path}, func() time.Time { return disabledAt }, auth.NewID, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "Disabled schedule "+scheduleID+"\n" {
+		t.Fatalf("disable output=%q", output.String())
+	}
+	store, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := store.GetProbeSchedule(ctx, scheduleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if disabled.Enabled || disabled.NextRunAt != record.NextRunAt || disabled.UpdatedAt != disabledAt.UnixMilli() {
+		t.Fatalf("disabled=%+v", disabled)
+	}
+	if err := runScheduleCommand([]string{"disable", scheduleID, "--db", path}, func() time.Time { return disabledAt.Add(time.Second) }, auth.NewID, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	store, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := store.GetProbeSchedule(ctx, scheduleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replayed, disabled) {
+		t.Fatalf("disable replay=%+v want=%+v", replayed, disabled)
+	}
+
+	enabledAt := createdAt.Add(30 * time.Second)
+	if err := runScheduleCommand([]string{"enable", scheduleID, "--db", path}, func() time.Time { return enabledAt }, auth.NewID, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	store, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled, err := store.GetProbeSchedule(ctx, scheduleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.Enabled || enabled.NextRunAt != enabledAt.UnixMilli() || enabled.UpdatedAt != enabledAt.UnixMilli() {
+		t.Fatalf("enabled=%+v", enabled)
+	}
+	output.Reset()
+	if err := runScheduleCommand([]string{"delete", scheduleID, "--db", path}, time.Now, auth.NewID, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "Deleted schedule "+scheduleID+"\n" {
+		t.Fatalf("delete output=%q", output.String())
+	}
+	store, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.GetProbeSchedule(ctx, scheduleID); !errors.Is(err, storage.ErrScheduleNotFound) {
+		t.Fatalf("deleted error=%v", err)
+	}
+}
+
+func TestRunScheduleCommandAddCreatesICMPAndHTTPSchedules(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "schedule-types.db")
+	store, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID, err := auth.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(14_000, 0)
+	if err := store.AddAgent(ctx, agentID, "test", hash, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		id        string
+		arguments []string
+		check     func(storage.ProbeScheduleRecord) bool
+	}{
+		{
+			id: strings.Repeat("e", 32),
+			arguments: []string{"add", "--db", path, "--agent-id", agentID, "--name", "edge ping", "--type", "icmp_ping",
+				"--target", "1.1.1.1", "--count", "3", "--interval", "30s", "--enabled=false"},
+			check: func(record storage.ProbeScheduleRecord) bool {
+				return record.ProbeType == protocol.ProbeTypeICMPPing && record.Config.ICMPPing != nil &&
+					record.Config.ICMPPing.Target == "1.1.1.1" && record.Config.ICMPPing.Count == 3 &&
+					!record.Enabled && record.IntervalSeconds == 30
+			},
+		},
+		{
+			id: strings.Repeat("f", 32),
+			arguments: []string{"add", "--db", path, "--agent-id", agentID, "--name", "edge http", "--type", "http",
+				"--url", "https://example.com/health", "--method", "HEAD", "--expected-status", "204"},
+			check: func(record storage.ProbeScheduleRecord) bool {
+				return record.ProbeType == protocol.ProbeTypeHTTP && record.Config.HTTP != nil &&
+					record.Config.HTTP.URL == "https://example.com/health" && record.Config.HTTP.Method == "HEAD" &&
+					record.Config.HTTP.ExpectedStatus != nil && *record.Config.HTTP.ExpectedStatus == 204
+			},
+		},
+	}
+	for _, test := range tests {
+		if err := runScheduleCommand(test.arguments, func() time.Time { return at }, func() (string, error) { return test.id, nil }, &bytes.Buffer{}); err != nil {
+			t.Fatalf("id=%s: %v", test.id, err)
+		}
+		store, err = storage.Open(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record, err := store.GetProbeSchedule(ctx, test.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if !test.check(record) {
+			t.Fatalf("id=%s record=%+v", test.id, record)
+		}
+	}
+}
+
+func TestRunScheduleMutationRejectsInvalidTimeBeforeOpeningDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "must-not-exist.db")
+	err := runScheduleCommand([]string{"enable", strings.Repeat("a", 32), "--db", path}, func() time.Time {
+		return time.UnixMilli(0)
+	}, auth.NewID, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("invalid time accepted")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("database side effect: %v", statErr)
+	}
+}
+
+func TestRunScheduleCommandRejectsTypeMismatchBeforeIDGeneration(t *testing.T) {
+	called := false
+	err := runScheduleCommand([]string{
+		"add", "--agent-id", strings.Repeat("a", 32), "--name", "bad", "--type", "tcp_connect",
+		"--host", "example.com", "--port", "443", "--url", "https://example.com",
+	}, time.Now, func() (string, error) {
+		called = true
+		return strings.Repeat("b", 32), nil
+	}, &bytes.Buffer{})
+	if err == nil || called {
+		t.Fatalf("called=%t err=%v", called, err)
 	}
 }
 
