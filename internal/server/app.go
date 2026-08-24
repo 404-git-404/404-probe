@@ -95,6 +95,12 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/v1/control/jobs/{job_id}", a.handleControlJobMethodNotAllowed)
 	mux.HandleFunc("/api/v1/control/jobs", a.handleControlCollectionNotFound)
 	mux.HandleFunc("/api/v1/control/jobs/", a.handleControlInvalidPath)
+	mux.HandleFunc("PUT /api/v1/control/schedules/{schedule_id}", a.handlePutControlSchedule)
+	mux.HandleFunc("GET /api/v1/control/schedules/{schedule_id}", a.handleGetControlSchedule)
+	mux.HandleFunc("DELETE /api/v1/control/schedules/{schedule_id}", a.handleDeleteControlSchedule)
+	mux.HandleFunc("/api/v1/control/schedules/{schedule_id}", a.handleControlScheduleMethodNotAllowed)
+	mux.HandleFunc("/api/v1/control/schedules", a.handleControlCollectionNotFound)
+	mux.HandleFunc("/api/v1/control/schedules/", a.handleControlInvalidPath)
 	mux.HandleFunc("GET /api/v1/agents", a.handleAgents)
 	mux.HandleFunc("GET /api/v1/agents/{id}/history", a.handleHistory)
 	mux.HandleFunc("GET /api/v1/events", a.handleEvents)
@@ -114,11 +120,17 @@ func requirePost(w http.ResponseWriter, _ *http.Request) {
 func (a *App) rejectAmbiguousJobPaths(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.ToLower(r.URL.EscapedPath())
-		if strings.HasPrefix(path, controlJobPathPrefix) && ambiguousControlJobPath(path) {
+		controlPrefix := ""
+		if strings.HasPrefix(path, controlJobPathPrefix) {
+			controlPrefix = controlJobPathPrefix
+		} else if strings.HasPrefix(path, controlSchedulePathPrefix) {
+			controlPrefix = controlSchedulePathPrefix
+		}
+		if controlPrefix != "" && ambiguousControlItemPath(path, controlPrefix) {
 			if !a.authenticateControlRequest(w, r) {
 				return
 			}
-			writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid job ID")
+			writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid control path")
 			return
 		}
 		if strings.HasPrefix(path, "/api/v1/agent/jobs/") &&
@@ -130,9 +142,9 @@ func (a *App) rejectAmbiguousJobPaths(next http.Handler) http.Handler {
 	})
 }
 
-func ambiguousControlJobPath(path string) bool {
-	suffix := strings.TrimPrefix(path, controlJobPathPrefix)
-	return strings.Contains(suffix, "//") || strings.Contains(suffix, "%2f") ||
+func ambiguousControlItemPath(path, prefix string) bool {
+	suffix := strings.TrimPrefix(path, prefix)
+	return strings.HasPrefix(suffix, "/") || strings.Contains(suffix, "//") || strings.Contains(suffix, "%2f") ||
 		strings.Contains(suffix, "%5c") || strings.Contains(suffix, ".") || strings.Contains(suffix, "%2e")
 }
 

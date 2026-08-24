@@ -127,6 +127,9 @@ func TestControlAPIDisabledAndAuthentication(t *testing.T) {
 		"/api/v1/control/jobs/%2e%2e/x",
 		"/api/v1/control/jobs/./" + firstControlJobID,
 		"/api/v1/control/jobs/%2e/" + firstControlJobID,
+		"/api/v1/control/jobs//" + firstControlJobID,
+		controlJobPathPrefix + "0123456789abcdef%2f123456789abcdef",
+		controlJobPathPrefix + "0123456789abcdef%5c123456789abcdef",
 	} {
 		if response := controlHTTPResponse(t, disabled, http.MethodGet, ambiguous, "", "", nil); response.Code != http.StatusNotFound {
 			t.Fatalf("disabled ambiguous path=%q status=%d location=%q body=%s", ambiguous, response.Code, response.Header().Get("Location"), response.Body.String())
@@ -156,6 +159,9 @@ func TestControlAPIDisabledAndAuthentication(t *testing.T) {
 		"/api/v1/control/jobs/%2e%2e/x",
 		"/api/v1/control/jobs/./" + firstControlJobID,
 		"/api/v1/control/jobs/%2e/" + firstControlJobID,
+		"/api/v1/control/jobs//" + firstControlJobID,
+		controlJobPathPrefix + "0123456789abcdef%2f123456789abcdef",
+		controlJobPathPrefix + "0123456789abcdef%5c123456789abcdef",
 	} {
 		for _, token := range []string{"", "wrong"} {
 			response := controlHTTPResponse(t, app, http.MethodGet, ambiguous, token, "", nil)
