@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/protocol"
 	appserver "404-probe/internal/server"
 	"404-probe/internal/storage"
 )
@@ -39,6 +41,8 @@ func run(args []string) error {
 		return serve(args[1:])
 	case "agent":
 		return agentCommand(args[1:])
+	case "probe":
+		return probeCommand(args[1:])
 	case "help", "-h", "--help":
 		return usageError()
 	default:
@@ -47,7 +51,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path]")
+	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe run --agent-id <id> --type <icmp_ping|tcp_connect|http> [probe flags] [--db path]")
 }
 
 func serve(args []string) error {
@@ -180,6 +184,113 @@ func agentCommand(args []string) error {
 	default:
 		return usageError()
 	}
+}
+
+func probeCommand(args []string) error {
+	return runProbeCommand(args, time.Now, auth.NewID, os.Stdout)
+}
+
+func runProbeCommand(args []string, now func() time.Time, newID func() (string, error), output io.Writer) error {
+	if len(args) == 0 || args[0] != "run" {
+		return usageError()
+	}
+	flags := flag.NewFlagSet("probe run", flag.ContinueOnError)
+	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
+	agentID := flags.String("agent-id", "", "target agent ID")
+	probeTypeValue := flags.String("type", "", "probe type")
+	timeout := flags.Duration("timeout", 5*time.Second, "probe timeout")
+	expiresIn := flags.Duration("expires-in", 5*time.Minute, "job lifetime")
+	target := flags.String("target", "", "ICMP target")
+	count := flags.Int("count", 4, "ICMP packet count")
+	host := flags.String("host", "", "TCP host")
+	port := flags.Int("port", 0, "TCP port")
+	urlValue := flags.String("url", "", "HTTP URL")
+	method := flags.String("method", "GET", "HTTP method")
+	expectedStatus := flags.Int("expected-status", 0, "optional expected HTTP status")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("probe run does not accept positional arguments")
+	}
+	probeType := protocol.ProbeType(*probeTypeValue)
+	if err := probeType.Validate(); err != nil {
+		return err
+	}
+	if !validCLIHexID(*agentID) {
+		return errors.New("agent-id must be 32 lowercase hexadecimal characters")
+	}
+	setFlags := make(map[string]bool)
+	flags.Visit(func(value *flag.Flag) { setFlags[value.Name] = true })
+	allowed := map[string]bool{"db": true, "agent-id": true, "type": true, "timeout": true, "expires-in": true}
+	var config protocol.ProbeConfig
+	switch probeType {
+	case protocol.ProbeTypeICMPPing:
+		allowed["target"], allowed["count"] = true, true
+		config.ICMPPing = &protocol.ICMPPingConfig{Target: *target, Count: *count}
+	case protocol.ProbeTypeTCPConnect:
+		allowed["host"], allowed["port"] = true, true
+		config.TCPConnect = &protocol.TCPConnectConfig{Host: *host, Port: *port}
+	case protocol.ProbeTypeHTTP:
+		allowed["url"], allowed["method"], allowed["expected-status"] = true, true, true
+		var expected *int
+		if setFlags["expected-status"] {
+			expected = expectedStatus
+		}
+		config.HTTP = &protocol.HTTPConfig{URL: *urlValue, Method: *method, ExpectedStatus: expected}
+	}
+	for name := range setFlags {
+		if !allowed[name] {
+			return fmt.Errorf("flag --%s is not valid for probe type %s", name, probeType)
+		}
+	}
+	if err := config.Validate(probeType); err != nil {
+		return err
+	}
+	timeoutMillis := timeout.Milliseconds()
+	lifetimeMillis := expiresIn.Milliseconds()
+	if *timeout <= 0 || time.Duration(timeoutMillis)*time.Millisecond != *timeout ||
+		timeoutMillis < protocol.MinProbeTimeoutMS || timeoutMillis > protocol.MaxProbeTimeoutMS {
+		return fmt.Errorf("timeout must be between %dms and %dms in whole milliseconds", protocol.MinProbeTimeoutMS, protocol.MaxProbeTimeoutMS)
+	}
+	if *expiresIn < time.Minute || *expiresIn > 24*time.Hour || time.Duration(lifetimeMillis)*time.Millisecond != *expiresIn {
+		return errors.New("expires-in must be between 1m and 24h in whole milliseconds")
+	}
+	at := now()
+	nowMillis := at.UnixMilli()
+	if nowMillis <= 0 || lifetimeMillis > math.MaxInt64-nowMillis {
+		return errors.New("job time is outside the supported range")
+	}
+	jobID, err := newID()
+	if err != nil {
+		return err
+	}
+	store, err := openStore(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	_, _, err = store.CreateOneShotJobIdempotent(context.Background(), storage.CreateOneShotJobParams{
+		ID: jobID, AgentID: *agentID, ProbeType: probeType, Config: config, TimeoutMS: int(timeoutMillis),
+		CreatedAt: nowMillis, NotBefore: nowMillis, ExpiresAt: nowMillis + lifetimeMillis,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(output, "Job ID: %s\n", jobID)
+	return err
+}
+
+func validCLIHexID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }
