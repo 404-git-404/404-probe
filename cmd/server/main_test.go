@@ -198,6 +198,58 @@ func TestRunProbeCommandEnforcesCapacityAndRevocation(t *testing.T) {
 	})
 }
 
+func TestRunScheduleCommandListsStableRedactedRows(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "schedules.db")
+	store, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID, _ := auth.NewID()
+	_, hash, _ := auth.NewToken()
+	at := time.Unix(12_000, 0)
+	if err := store.AddAgent(ctx, agentID, "test", hash, at); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []struct {
+		id, name string
+		enabled  bool
+	}{{strings.Repeat("b", 32), "beta", false}, {strings.Repeat("a", 32), "alpha", true}} {
+		_, _, err := store.PutProbeSchedule(ctx, storage.PutScheduleParams{
+			ID: value.id, AgentID: agentID, Name: value.name, ProbeType: protocol.ProbeTypeHTTP,
+			Config:    protocol.ProbeConfig{HTTP: &protocol.HTTPConfig{URL: "https://secret.example/path", Method: "GET"}},
+			TimeoutMS: 5000, IntervalSeconds: 60, Enabled: value.enabled, Now: at.UnixMilli(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runScheduleCommand([]string{"list", "--db", path, "--agent-id", agentID}, &output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if strings.Contains(text, "secret.example") || strings.Index(text, strings.Repeat("a", 32)) > strings.Index(text, strings.Repeat("b", 32)) {
+		t.Fatalf("output=%q", text)
+	}
+	for _, expected := range []string{"ID", "NAME", "TYPE", "ENABLED", "INTERVAL", "NEXT RUN", "alpha", "beta", "http", "60s"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing %q in %q", expected, text)
+		}
+	}
+}
+
+func TestRunScheduleCommandRejectsInvalidInvocation(t *testing.T) {
+	for _, arguments := range [][]string{{}, {"get"}, {"list"}, {"list", "--agent-id", "bad"}, {"list", "--agent-id", strings.Repeat("a", 32), "extra"}} {
+		if err := runScheduleCommand(arguments, &bytes.Buffer{}); err == nil {
+			t.Fatalf("arguments=%v accepted", arguments)
+		}
+	}
+}
+
 func intPointer(value int) *int { return &value }
 
 func TestLoadControlTokenHashRejectsInvalidFiles(t *testing.T) {

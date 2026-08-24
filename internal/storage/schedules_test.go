@@ -310,3 +310,43 @@ func TestDeleteProbeSchedulePreservesJobsAndResults(t *testing.T) {
 		})
 	}
 }
+
+func TestListProbeSchedulesStableSnapshotAndCorruption(t *testing.T) {
+	ctx := context.Background()
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	at := time.Unix(11_000, 0)
+	for _, value := range []struct{ id, name string }{{"schedule-c", "beta"}, {"schedule-b", "alpha"}, {"schedule-a", "alpha"}} {
+		params := scheduleParams(value.id, agentID, at)
+		params.Name = value.name
+		if _, _, err := store.PutProbeSchedule(ctx, params); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := store.ListProbeSchedules(ctx, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("record count=%d", len(records))
+	}
+	ids := []string{records[0].ID, records[1].ID, records[2].ID}
+	if !reflect.DeepEqual(ids, []string{"schedule-a", "schedule-b", "schedule-c"}) {
+		t.Fatalf("order=%v", ids)
+	}
+	if changed, err := store.RevokeAgent(ctx, agentID, at.Add(time.Second)); err != nil || !changed {
+		t.Fatalf("revoke changed=%t err=%v", changed, err)
+	}
+	if records, err := store.ListProbeSchedules(ctx, agentID); err != nil || len(records) != 3 {
+		t.Fatalf("revoked records=%v err=%v", records, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE probe_schedules SET config_json='{}' WHERE id='schedule-b'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListProbeSchedules(ctx, agentID); !errors.Is(err, ErrCorruptProbeData) {
+		t.Fatalf("corruption error=%v", err)
+	}
+	if records, err := store.ListProbeSchedules(ctx, "missing-agent"); err != nil || len(records) != 0 || records == nil {
+		t.Fatalf("empty records=%v err=%v", records, err)
+	}
+}

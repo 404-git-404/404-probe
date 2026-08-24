@@ -164,6 +164,55 @@ func (s *Store) GetProbeSchedule(ctx context.Context, scheduleID string) (ProbeS
 	return record, nil
 }
 
+// ListProbeSchedules returns one Agent's schedules in stable name/ID order.
+// The transaction ensures every returned record is read from one database
+// snapshot, and stored corruption is never silently skipped.
+func (s *Store) ListProbeSchedules(ctx context.Context, agentID string) ([]ProbeScheduleRecord, error) {
+	if !validStorageID(agentID, 128) {
+		return nil, errors.New("agent ID is invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM probe_schedules WHERE agent_id=? ORDER BY name,id`, agentID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	records := make([]ProbeScheduleRecord, 0, len(ids))
+	for _, id := range ids {
+		record, exists, err := readScheduleTx(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, ErrScheduleNotFound
+		}
+		records = append(records, record)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 func (s *Store) DeleteProbeSchedule(ctx context.Context, scheduleID string) error {
 	if !validStorageID(scheduleID, 128) {
 		return ErrScheduleNotFound

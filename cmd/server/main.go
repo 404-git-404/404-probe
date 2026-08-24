@@ -43,6 +43,8 @@ func run(args []string) error {
 		return agentCommand(args[1:])
 	case "probe":
 		return probeCommand(args[1:])
+	case "schedule":
+		return scheduleCommand(args[1:])
 	case "help", "-h", "--help":
 		return usageError()
 	default:
@@ -51,7 +53,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe run --agent-id <id> --type <icmp_ping|tcp_connect|http> [probe flags] [--db path]")
+	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe run --agent-id <id> --type <icmp_ping|tcp_connect|http> [probe flags] [--db path] | schedule list --agent-id <id> [--db path]")
 }
 
 func serve(args []string) error {
@@ -291,6 +293,48 @@ func validCLIHexID(value string) bool {
 		}
 	}
 	return true
+}
+
+func scheduleCommand(args []string) error {
+	return runScheduleCommand(args, os.Stdout)
+}
+
+func runScheduleCommand(args []string, output io.Writer) error {
+	if len(args) == 0 || args[0] != "list" {
+		return usageError()
+	}
+	flags := flag.NewFlagSet("schedule list", flag.ContinueOnError)
+	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
+	agentID := flags.String("agent-id", "", "Agent ID")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("schedule list does not accept positional arguments")
+	}
+	if !validCLIHexID(*agentID) {
+		return errors.New("agent-id must be 32 lowercase hexadecimal characters")
+	}
+	store, err := openStore(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	records, err := store.ListProbeSchedules(context.Background(), *agentID)
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tTYPE\tENABLED\tINTERVAL\tNEXT RUN"); err != nil {
+		return err
+	}
+	for _, record := range records {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%ds\t%s\n", record.ID, record.Name, record.ProbeType,
+			record.Enabled, record.IntervalSeconds, time.UnixMilli(record.NextRunAt).UTC().Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
 }
 
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }
