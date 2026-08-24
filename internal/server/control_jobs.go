@@ -144,7 +144,7 @@ func (a *App) handleGetControlJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := r.PathValue("job_id")
-	if !validControlJobRequestPath(r, jobID) {
+	if !validControlJobReadRequestPath(r, jobID) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid job ID")
 		return
 	}
@@ -255,8 +255,23 @@ func validControlJobRequestPath(r *http.Request, jobID string) bool {
 	return validControlJobID(jobID) && r.URL.EscapedPath() == controlJobPathPrefix+jobID
 }
 
+func validControlJobReadRequestPath(r *http.Request, jobID string) bool {
+	return validLowerHexID(jobID, 32, 64) && r.URL.EscapedPath() == controlJobPathPrefix+jobID
+}
+
 func validControlJobID(value string) bool {
-	if len(value) != 32 {
+	return validLowerHexID(value, 32)
+}
+
+func validLowerHexID(value string, lengths ...int) bool {
+	validLength := false
+	for _, length := range lengths {
+		if len(value) == length {
+			validLength = true
+			break
+		}
+	}
+	if !validLength {
 		return false
 	}
 	for _, char := range value {

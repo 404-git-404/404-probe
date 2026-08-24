@@ -78,13 +78,19 @@ func serve(args []string) error {
 	}
 	httpServer := &http.Server{Addr: *listen, Handler: app.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	cleanupDone := make(chan struct{})
+	schedulerDone := make(chan struct{})
 	go func() {
 		defer close(cleanupDone)
 		app.CleanupLoop()
 	}()
+	go func() {
+		defer close(schedulerDone)
+		app.SchedulerLoop()
+	}()
 	defer func() {
 		app.Shutdown()
 		<-cleanupDone
+		<-schedulerDone
 	}()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -255,27 +255,27 @@ func readScheduleTx(ctx context.Context, tx *sql.Tx, scheduleID string) (ProbeSc
 		return ProbeScheduleRecord{}, false, err
 	}
 	if !validStorageID(record.ID, 128) || !validStorageID(record.AgentID, 128) || !validScheduleName(record.Name) {
-		return ProbeScheduleRecord{}, false, errors.New("stored schedule identity is invalid")
+		return ProbeScheduleRecord{}, false, fmt.Errorf("%w: stored schedule identity is invalid", ErrCorruptProbeData)
 	}
 	record.ProbeType = protocol.ProbeType(probeType)
 	if err := record.ProbeType.Validate(); err != nil {
-		return ProbeScheduleRecord{}, false, errors.New("stored schedule probe type is invalid")
+		return ProbeScheduleRecord{}, false, fmt.Errorf("%w: stored schedule probe type is invalid", ErrCorruptProbeData)
 	}
 	config, err := protocol.DecodeProbeConfig(record.ProbeType, []byte(configJSON))
 	if err != nil {
-		return ProbeScheduleRecord{}, false, fmt.Errorf("decode stored schedule config: %w", err)
+		return ProbeScheduleRecord{}, false, fmt.Errorf("%w: decode stored schedule config: %v", ErrCorruptProbeData, err)
 	}
 	record.Config = config
 	if record.TimeoutMS < protocol.MinProbeTimeoutMS || record.TimeoutMS > protocol.MaxProbeTimeoutMS ||
 		record.IntervalSeconds < 30 || record.IntervalSeconds > 604800 {
-		return ProbeScheduleRecord{}, false, errors.New("stored schedule bounds are invalid")
+		return ProbeScheduleRecord{}, false, fmt.Errorf("%w: stored schedule bounds are invalid", ErrCorruptProbeData)
 	}
 	if enabled != 0 && enabled != 1 {
-		return ProbeScheduleRecord{}, false, errors.New("stored schedule enabled value is invalid")
+		return ProbeScheduleRecord{}, false, fmt.Errorf("%w: stored schedule enabled value is invalid", ErrCorruptProbeData)
 	}
 	record.Enabled = enabled == 1
 	if record.CreatedAt <= 0 || record.UpdatedAt < record.CreatedAt || record.NextRunAt < record.CreatedAt {
-		return ProbeScheduleRecord{}, false, errors.New("stored schedule timestamps are invalid")
+		return ProbeScheduleRecord{}, false, fmt.Errorf("%w: stored schedule timestamps are invalid", ErrCorruptProbeData)
 	}
 	return record, true, nil
 }
