@@ -268,7 +268,7 @@ func TestControlPutGetAndIdempotency(t *testing.T) {
 		t.Fatalf("collection unauthorized status=%d body=%s", collectionUnauthorized.Code, collectionUnauthorized.Body.String())
 	}
 	collection := controlHTTPResponse(t, app, http.MethodGet, "/api/v1/control/jobs", controlToken, "", nil)
-	if collection.Code != http.StatusNotFound {
+	if collection.Code != http.StatusOK || !strings.Contains(collection.Body.String(), firstControlJobID) {
 		t.Fatalf("collection status=%d body=%s", collection.Code, collection.Body.String())
 	}
 	invalidPath := controlHTTPResponse(t, app, http.MethodGet, "/api/v1/control/jobs/", controlToken, "", nil)

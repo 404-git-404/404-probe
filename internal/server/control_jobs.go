@@ -77,6 +77,7 @@ type controlJobResultView struct {
 }
 
 func (a *App) handlePutControlJob(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}
@@ -140,12 +141,17 @@ func (a *App) handlePutControlJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleGetControlJob(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}
 	jobID := r.PathValue("job_id")
 	if !validControlJobReadRequestPath(r, jobID) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid job ID")
+		return
+	}
+	if _, err := parseControlQuery(r); err != nil {
+		writeControlCollectionError(w, err)
 		return
 	}
 	job, result, err := a.store.GetProbeJobSnapshot(r.Context(), jobID, a.now())
@@ -168,6 +174,7 @@ func (a *App) handleGetControlJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleControlJobMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}
@@ -177,13 +184,6 @@ func (a *App) handleControlJobMethodNotAllowed(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("Allow", "GET, PUT")
 	writeJobError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method must be GET or PUT")
-}
-
-func (a *App) handleControlCollectionNotFound(w http.ResponseWriter, r *http.Request) {
-	if !a.authenticateControlRequest(w, r) {
-		return
-	}
-	http.NotFound(w, r)
 }
 
 func (a *App) handleControlInvalidPath(w http.ResponseWriter, r *http.Request) {
