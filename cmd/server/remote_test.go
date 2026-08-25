@@ -176,7 +176,7 @@ func TestRemoteCommandValidationAndIsolation(t *testing.T) {
 		args []string
 	}{
 		{name: "empty"},
-		{name: "schedule namespace", args: []string{"schedule", "list"}},
+		{name: "probe namespace", args: []string{"probe", "list"}},
 		{name: "unknown operation", args: []string{"agent", "delete"}},
 		{name: "DB isolation", args: append(append([]string{}, base...), "--db", "x")},
 		{name: "inline token forbidden", args: append(append([]string{}, base...), "--token", "secret")},

@@ -98,17 +98,26 @@ func remoteCommand(args []string) error {
 }
 
 func runRemoteCommand(args []string, options remoteClientOptions, output io.Writer) error {
-	if len(args) < 2 || args[0] != "agent" {
+	if len(args) < 2 {
 		return usageError()
 	}
-	switch args[1] {
-	case "list":
-		return runRemoteAgentList(args[2:], options, output)
-	case "get":
-		return runRemoteAgentGet(args[2:], options, output)
-	default:
-		return usageError()
+	switch args[0] {
+	case "agent":
+		switch args[1] {
+		case "list":
+			return runRemoteAgentList(args[2:], options, output)
+		case "get":
+			return runRemoteAgentGet(args[2:], options, output)
+		}
+	case "schedule":
+		switch args[1] {
+		case "list":
+			return runRemoteScheduleList(args[2:], options, output)
+		case "get":
+			return runRemoteScheduleGet(args[2:], options, output)
+		}
 	}
+	return usageError()
 }
 
 func addRemoteCommandFlags(flags *flag.FlagSet) remoteCommandFlags {
