@@ -44,6 +44,7 @@ type controlScheduleView struct {
 }
 
 func (a *App) handlePutControlSchedule(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}
@@ -95,12 +96,17 @@ func (a *App) handlePutControlSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleGetControlSchedule(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}
 	scheduleID := r.PathValue("schedule_id")
 	if !validControlScheduleRequestPath(r, scheduleID) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid schedule ID")
+		return
+	}
+	if _, err := parseControlQuery(r); err != nil {
+		writeControlCollectionError(w, err)
 		return
 	}
 	record, err := a.store.GetProbeSchedule(r.Context(), scheduleID)
@@ -123,6 +129,7 @@ func (a *App) handleGetControlSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDeleteControlSchedule(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}
@@ -144,6 +151,7 @@ func (a *App) handleDeleteControlSchedule(w http.ResponseWriter, r *http.Request
 }
 
 func (a *App) handleControlScheduleMethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}

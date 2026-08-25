@@ -171,7 +171,7 @@ func TestControlSchedulePutGetUpdateDelete(t *testing.T) {
 		t.Fatalf("collection unauthorized status=%d", collectionUnauthorized.Code)
 	}
 	collection := controlHTTPResponse(t, app, http.MethodGet, "/api/v1/control/schedules", controlToken, "", nil)
-	if collection.Code != http.StatusNotFound {
+	if collection.Code != http.StatusOK || collection.Body.String() != "{\"items\":[],\"next_cursor\":null}\n" {
 		t.Fatalf("collection status=%d body=%s", collection.Code, collection.Body.String())
 	}
 }
