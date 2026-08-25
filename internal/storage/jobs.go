@@ -586,7 +586,7 @@ func (s *Store) ListProbeJobs(ctx context.Context, agentID string, now time.Time
 		if !exists || record.AgentID != agentID {
 			return nil, fmt.Errorf("%w: listed job disappeared", ErrCorruptProbeData)
 		}
-		if err := validateListedJobTx(ctx, tx, record); err != nil {
+		if _, err := readValidatedListedJobTx(ctx, tx, record); err != nil {
 			return nil, err
 		}
 		records = append(records, record)
@@ -597,40 +597,41 @@ func (s *Store) ListProbeJobs(ctx context.Context, agentID string, now time.Time
 	return records, nil
 }
 
-func validateListedJobTx(ctx context.Context, tx *sql.Tx, job ProbeJobRecord) error {
+func readValidatedListedJobTx(ctx context.Context, tx *sql.Tx, job ProbeJobRecord) (*ProbeResultRecord, error) {
 	if job.CreatedAt <= 0 || job.NotBefore < job.CreatedAt || job.ExpiresAt <= job.NotBefore ||
 		job.ScheduledFor <= 0 || job.Attempt < 0 || job.TimeoutMS < protocol.MinProbeTimeoutMS || job.TimeoutMS > protocol.MaxProbeTimeoutMS {
-		return fmt.Errorf("%w: listed job metadata is invalid", ErrCorruptProbeData)
+		return nil, fmt.Errorf("%w: listed job metadata is invalid", ErrCorruptProbeData)
 	}
 	switch job.Status {
 	case JobStatusQueued, JobStatusExpired:
 		if job.LeaseToken != "" || job.LeaseEpoch != 0 || job.LeaseSessionID != "" || job.LeasedAt != 0 || job.LeaseUntil != 0 || job.FinishedAt != 0 {
-			return fmt.Errorf("%w: inactive job has lease or finish data", ErrCorruptProbeData)
+			return nil, fmt.Errorf("%w: inactive job has lease or finish data", ErrCorruptProbeData)
 		}
 	case JobStatusLeased:
 		if job.Attempt < 1 || job.LeaseToken == "" || job.LeaseEpoch == 0 || job.LeaseSessionID == "" ||
 			job.LeasedAt <= 0 || job.LeaseUntil <= job.LeasedAt || job.FinishedAt != 0 {
-			return fmt.Errorf("%w: leased job metadata is invalid", ErrCorruptProbeData)
+			return nil, fmt.Errorf("%w: leased job metadata is invalid", ErrCorruptProbeData)
 		}
 	case JobStatusFinished:
 		if job.Attempt < 1 || job.FinishedAt <= 0 {
-			return fmt.Errorf("%w: finished job metadata is invalid", ErrCorruptProbeData)
+			return nil, fmt.Errorf("%w: finished job metadata is invalid", ErrCorruptProbeData)
 		}
 	default:
-		return fmt.Errorf("%w: listed job status is invalid", ErrCorruptProbeData)
+		return nil, fmt.Errorf("%w: listed job status is invalid", ErrCorruptProbeData)
 	}
 	result, hasResult, err := readProbeResultTx(ctx, tx, job)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if job.Status == JobStatusFinished {
 		if !hasResult || result.ReceivedAt != job.FinishedAt {
-			return fmt.Errorf("%w: finished job is missing result data", ErrCorruptProbeData)
+			return nil, fmt.Errorf("%w: finished job is missing result data", ErrCorruptProbeData)
 		}
+		return &result, nil
 	} else if hasResult {
-		return fmt.Errorf("%w: unfinished job has result data", ErrCorruptProbeData)
+		return nil, fmt.Errorf("%w: unfinished job has result data", ErrCorruptProbeData)
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *Store) GetProbeResult(ctx context.Context, jobID string) (ProbeResultRecord, error) {
