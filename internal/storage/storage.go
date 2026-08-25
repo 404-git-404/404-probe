@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -240,6 +240,26 @@ func (s *Store) migrate(ctx context.Context) error {
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migration 3: %w", err)
+			}
+		}
+	}
+	if version < 4 {
+		for _, statement := range []string{
+			`CREATE INDEX idx_agents_created_id ON agents(created_at DESC,id DESC)`,
+			`CREATE INDEX idx_agents_revoked_created_id ON agents(revoked,created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_schedules_created_id ON probe_schedules(created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_schedules_agent_created_id ON probe_schedules(agent_id,created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_schedules_enabled_created_id ON probe_schedules(enabled,created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_schedules_type_created_id ON probe_schedules(probe_type,created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_jobs_created_id ON probe_jobs(created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_jobs_agent_created_id ON probe_jobs(agent_id,created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_jobs_schedule_created_id ON probe_jobs(schedule_id,created_at DESC,id DESC) WHERE schedule_id IS NOT NULL`,
+			`CREATE INDEX idx_probe_jobs_type_created_id ON probe_jobs(probe_type,created_at DESC,id DESC)`,
+			`CREATE INDEX idx_probe_jobs_status_created_id ON probe_jobs(status,created_at DESC,id DESC)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(4, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 4: %w", err)
 			}
 		}
 	}

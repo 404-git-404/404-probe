@@ -1129,7 +1129,7 @@ func TestSubmitResultRollsBackWhenJobUpdateFails(t *testing.T) {
 	}
 }
 
-func TestMigratesV2ToV3WithoutChangingV01Data(t *testing.T) {
+func TestMigratesV2ToV4WithoutChangingV01Data(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v2.db")
 	prepareV2Database(t, path)
 	store, err := Open(context.Background(), path)
@@ -1138,7 +1138,7 @@ func TestMigratesV2ToV3WithoutChangingV01Data(t *testing.T) {
 	}
 	defer store.Close()
 	version, err := store.SchemaVersion(context.Background())
-	if err != nil || version != 3 {
+	if err != nil || version != currentSchemaVersion {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	states, err := store.ListStates(context.Background())

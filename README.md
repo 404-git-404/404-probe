@@ -16,7 +16,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-se
 
 ## Upgrade an existing database
 
-Stop the server and back up the database before opening it with the new binary. V1 and V2 databases are migrated to schema V3 on open; newer schemas are rejected.
+Stop the server and back up the database before opening it with the new binary. V1, V2, and V3 databases are migrated to schema V4 on open; newer schemas are rejected.
 
 ```bash
 sudo systemctl stop 404-probe-server

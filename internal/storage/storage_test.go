@@ -43,7 +43,7 @@ func TestMigrationAndAuthentication(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	version, err := s.SchemaVersion(ctx)
-	if err != nil || version != 3 {
+	if err != nil || version != currentSchemaVersion {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	got, err := s.Authenticate(ctx, token)
@@ -60,14 +60,14 @@ func TestMigrationAndAuthentication(t *testing.T) {
 }
 
 func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v4.db")
+	path := filepath.Join(t.TempDir(), "v5.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
 		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
-		`INSERT INTO schema_migrations(version,applied_at) VALUES(4,4000)`,
+		`INSERT INTO schema_migrations(version,applied_at) VALUES(5,5000)`,
 		`CREATE TABLE future_fixture (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`,
 		`INSERT INTO future_fixture(id,value) VALUES(1,'future-data')`,
 	} {
@@ -90,7 +90,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 		store.Close()
 		t.Fatal("future schema was opened")
 	}
-	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 4") {
+	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 5") {
 		t.Fatalf("future schema error=%v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	defer db.Close()
 	var version int
 	var appliedAt int64
-	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 4 || appliedAt != 4000 {
+	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 5 || appliedAt != 5000 {
 		t.Fatalf("migration metadata changed: version=%d applied_at=%d err=%v", version, appliedAt, err)
 	}
 	var fixtureValue string
@@ -122,8 +122,8 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	}
 }
 
-func TestOpenExistingV3(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v3.db")
+func TestOpenExistingV4(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v4.db")
 	store, err := Open(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +337,7 @@ func TestPermanentTrafficSQLiteBoundaryIsAtomic(t *testing.T) {
 	}
 }
 
-func TestMigratesV1StateToV3(t *testing.T) {
+func TestMigratesV1StateToV4(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v1.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -368,7 +368,7 @@ func TestMigratesV1StateToV3(t *testing.T) {
 	}
 	defer s.Close()
 	version, err := s.SchemaVersion(context.Background())
-	if err != nil || version != 3 {
+	if err != nil || version != currentSchemaVersion {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	states, err := s.ListStates(context.Background())
