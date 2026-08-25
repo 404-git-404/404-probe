@@ -101,6 +101,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/v1/control/schedules/{schedule_id}", a.handleControlScheduleMethodNotAllowed)
 	mux.HandleFunc("/api/v1/control/schedules", a.handleControlCollectionNotFound)
 	mux.HandleFunc("/api/v1/control/schedules/", a.handleControlInvalidPath)
+	mux.HandleFunc("GET /api/v1/control/agents/{agent_id}", a.handleGetControlAgent)
+	mux.HandleFunc("/api/v1/control/agents/{agent_id}", a.handleControlAgentMethodNotAllowed)
+	mux.HandleFunc("GET /api/v1/control/agents", a.handleGetControlAgents)
+	mux.HandleFunc("/api/v1/control/agents", a.handleControlAgentCollectionMethodNotAllowed)
+	mux.HandleFunc("/api/v1/control/agents/", a.handleControlInvalidPath)
 	mux.HandleFunc("GET /api/v1/agents", a.handleAgents)
 	mux.HandleFunc("GET /api/v1/agents/{id}/history", a.handleHistory)
 	mux.HandleFunc("GET /api/v1/events", a.handleEvents)
@@ -125,8 +130,11 @@ func (a *App) rejectAmbiguousJobPaths(next http.Handler) http.Handler {
 			controlPrefix = controlJobPathPrefix
 		} else if strings.HasPrefix(path, controlSchedulePathPrefix) {
 			controlPrefix = controlSchedulePathPrefix
+		} else if strings.HasPrefix(path, controlAgentPathPrefix) {
+			controlPrefix = controlAgentPathPrefix
 		}
 		if controlPrefix != "" && ambiguousControlItemPath(path, controlPrefix) {
+			setControlNoStore(w)
 			if !a.authenticateControlRequest(w, r) {
 				return
 			}

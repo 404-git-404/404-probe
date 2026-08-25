@@ -187,6 +187,7 @@ func (a *App) handleControlCollectionNotFound(w http.ResponseWriter, r *http.Req
 }
 
 func (a *App) handleControlInvalidPath(w http.ResponseWriter, r *http.Request) {
+	setControlNoStore(w)
 	if !a.authenticateControlRequest(w, r) {
 		return
 	}
