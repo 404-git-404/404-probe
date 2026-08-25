@@ -116,6 +116,13 @@ func runRemoteCommand(args []string, options remoteClientOptions, output io.Writ
 		case "get":
 			return runRemoteScheduleGet(args[2:], options, output)
 		}
+	case "probe":
+		switch args[1] {
+		case "list":
+			return runRemoteProbeList(args[2:], options, output)
+		case "get":
+			return runRemoteProbeGet(args[2:], options, output)
+		}
 	}
 	return usageError()
 }
