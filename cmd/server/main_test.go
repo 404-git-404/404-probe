@@ -198,6 +198,188 @@ func TestRunProbeCommandEnforcesCapacityAndRevocation(t *testing.T) {
 	})
 }
 
+func TestRunProbeCommandGetShowsLeasedAndFinishedSnapshotsWithoutFencingSecrets(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "probe-get.db")
+	store, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID, err := auth.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(15_000, 0)
+	if err := store.AddAgent(ctx, agentID, "test", hash, at); err != nil {
+		t.Fatal(err)
+	}
+	jobID := strings.Repeat("b", 64)
+	if err := store.CreateOneShotJob(ctx, storage.CreateOneShotJobParams{
+		ID: jobID, AgentID: agentID, ProbeType: protocol.ProbeTypeTCPConnect,
+		Config:    protocol.ProbeConfig{TCPConnect: &protocol.TCPConnectConfig{Host: "example.com", Port: 443}},
+		TimeoutMS: 2500, CreatedAt: at.UnixMilli(), NotBefore: at.UnixMilli(), ExpiresAt: at.Add(10 * time.Minute).UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimJob(ctx, agentID, protocol.ClaimRequest{
+		ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: 7, SessionID: "session-secret",
+		SupportedProbeTypes: []protocol.ProbeType{protocol.ProbeTypeTCPConnect},
+	}, at, time.Minute)
+	if err != nil || claim == nil {
+		t.Fatalf("claim=%+v error=%v", claim, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := runProbeCommand([]string{"get", jobID, "--db", path}, func() time.Time { return at.Add(time.Second) }, auth.NewID, &output); err != nil {
+		t.Fatal(err)
+	}
+	leased := output.String()
+	for _, want := range []string{"STATUS", "leased", "ATTEMPT", "1", "LEASED AT", "LEASE UNTIL"} {
+		if !strings.Contains(leased, want) {
+			t.Fatalf("leased output missing %q: %q", want, leased)
+		}
+	}
+	for _, secret := range []string{claim.LeaseToken, "session-secret"} {
+		if strings.Contains(leased, secret) {
+			t.Fatalf("leased output exposed secret %q: %q", secret, leased)
+		}
+	}
+
+	store, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := protocol.JobResult{
+		ProtocolVersion: protocol.JobProtocolVersion, LeaseToken: claim.LeaseToken, Attempt: claim.Attempt,
+		AgentEpoch: 7, SessionID: "session-secret", StartedAt: 1_000, FinishedAt: 1_025, DurationMS: 25,
+		Success: false, ResolvedIP: "192.0.2.1", ErrorCategory: "connection_refused", ErrorMessage: "sensitive endpoint detail",
+		Result: protocol.ProbeResult{TCPConnect: &protocol.TCPConnectResult{ConnectMS: 20}},
+	}
+	if _, err := store.SubmitJobResult(ctx, agentID, jobID, result, at.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	output.Reset()
+	if err := runProbeCommand([]string{"get", jobID, "--db", path}, func() time.Time { return at.Add(3 * time.Second) }, auth.NewID, &output); err != nil {
+		t.Fatal(err)
+	}
+	finished := output.String()
+	for _, want := range []string{"STATUS", "finished", "SUCCESS", "false", "RESOLVED IP", "192.0.2.1", "ERROR CATEGORY", "connection_refused", "CONNECT", "20ms"} {
+		if !strings.Contains(finished, want) {
+			t.Fatalf("finished output missing %q: %q", want, finished)
+		}
+	}
+	for _, secret := range []string{claim.LeaseToken, "session-secret", "sensitive endpoint detail"} {
+		if strings.Contains(finished, secret) {
+			t.Fatalf("finished output exposed secret %q: %q", secret, finished)
+		}
+	}
+}
+
+func TestRunProbeCommandGetNormalizesExpiry(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "probe-expiry.db")
+	store, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID, err := auth.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(16_000, 0)
+	if err := store.AddAgent(ctx, agentID, "test", hash, at); err != nil {
+		t.Fatal(err)
+	}
+	jobID := strings.Repeat("c", 32)
+	expiresAt := at.Add(time.Minute)
+	if err := store.CreateOneShotJob(ctx, storage.CreateOneShotJobParams{
+		ID: jobID, AgentID: agentID, ProbeType: protocol.ProbeTypeHTTP,
+		Config:    protocol.ProbeConfig{HTTP: &protocol.HTTPConfig{URL: "https://example.com/health", Method: "GET"}},
+		TimeoutMS: 5000, CreatedAt: at.UnixMilli(), NotBefore: at.UnixMilli(), ExpiresAt: expiresAt.UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runProbeCommand([]string{"get", jobID, "--db", path}, func() time.Time { return expiresAt }, auth.NewID, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "expired") {
+		t.Fatalf("output=%q", output.String())
+	}
+	store, err = storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	job, err := store.GetProbeJob(ctx, jobID)
+	if err != nil || job.Status != storage.JobStatusExpired {
+		t.Fatalf("job=%+v error=%v", job, err)
+	}
+}
+
+func TestRunProbeCommandGetRejectsInvalidInputBeforeOpeningDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "must-not-exist.db")
+	tests := [][]string{
+		{"get"},
+		{"get", "bad", "--db", path},
+		{"get", strings.Repeat("a", 32), "extra", "--db", path},
+	}
+	for _, arguments := range tests {
+		if err := runProbeCommand(arguments, time.Now, auth.NewID, &bytes.Buffer{}); err == nil {
+			t.Fatalf("arguments=%v accepted", arguments)
+		}
+	}
+	err := runProbeCommand([]string{"get", strings.Repeat("a", 32), "--db", path}, func() time.Time {
+		return time.UnixMilli(0)
+	}, auth.NewID, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("invalid time accepted")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("database side effect: %v", statErr)
+	}
+}
+
+func TestWriteProbeSnapshotRejectsCorruptState(t *testing.T) {
+	tests := []struct {
+		name   string
+		job    storage.ProbeJobRecord
+		result *storage.ProbeResultRecord
+	}{
+		{name: "unknown status", job: storage.ProbeJobRecord{Status: storage.JobStatus("broken")}},
+		{name: "invalid lease", job: storage.ProbeJobRecord{Status: storage.JobStatusLeased, LeasedAt: 2, LeaseUntil: 2}},
+		{name: "missing finished result", job: storage.ProbeJobRecord{Status: storage.JobStatusFinished, FinishedAt: 1}},
+		{name: "result on queued", job: storage.ProbeJobRecord{Status: storage.JobStatusQueued}, result: &storage.ProbeResultRecord{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			err := writeProbeSnapshot(&output, test.job, test.result)
+			if !errors.Is(err, storage.ErrCorruptProbeData) || output.Len() != 0 {
+				t.Fatalf("error=%v output=%q", err, output.String())
+			}
+		})
+	}
+}
+
 func TestRunScheduleCommandListsStableRedactedRows(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "schedules.db")

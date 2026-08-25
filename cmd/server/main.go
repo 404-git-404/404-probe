@@ -53,7 +53,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe run --agent-id <id> --type <icmp_ping|tcp_connect|http> [probe flags] [--db path] | schedule <add|list|enable|disable|delete> [flags]")
+	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get> [flags] | schedule <add|list|enable|disable|delete> [flags]")
 }
 
 func serve(args []string) error {
@@ -193,9 +193,20 @@ func probeCommand(args []string) error {
 }
 
 func runProbeCommand(args []string, now func() time.Time, newID func() (string, error), output io.Writer) error {
-	if len(args) == 0 || args[0] != "run" {
+	if len(args) == 0 {
 		return usageError()
 	}
+	switch args[0] {
+	case "run":
+		return runProbeCreate(args[1:], now, newID, output)
+	case "get":
+		return runProbeGet(args[1:], now, output)
+	default:
+		return usageError()
+	}
+}
+
+func runProbeCreate(args []string, now func() time.Time, newID func() (string, error), output io.Writer) error {
 	flags := flag.NewFlagSet("probe run", flag.ContinueOnError)
 	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
 	agentID := flags.String("agent-id", "", "target agent ID")
@@ -209,7 +220,7 @@ func runProbeCommand(args []string, now func() time.Time, newID func() (string, 
 	urlValue := flags.String("url", "", "HTTP URL")
 	method := flags.String("method", "GET", "HTTP method")
 	expectedStatus := flags.Int("expected-status", 0, "optional expected HTTP status")
-	if err := flags.Parse(args[1:]); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -283,10 +294,128 @@ func runProbeCommand(args []string, now func() time.Time, newID func() (string, 
 	return err
 }
 
-func validCLIHexID(value string) bool {
-	if len(value) != 32 {
-		return false
+func runProbeGet(args []string, now func() time.Time, output io.Writer) error {
+	if len(args) == 0 || startsFlag(args[0]) || !validCLIJobID(args[0]) {
+		return errors.New("job ID must be 32 or 64 lowercase hexadecimal characters")
 	}
+	jobID := args[0]
+	flags := flag.NewFlagSet("probe get", flag.ContinueOnError)
+	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("probe get accepts exactly one job ID")
+	}
+	at := now()
+	if at.UnixMilli() <= 0 {
+		return errors.New("snapshot time is outside the supported range")
+	}
+	store, err := openStore(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	job, result, err := store.GetProbeJobSnapshot(context.Background(), jobID, at)
+	if err != nil {
+		return err
+	}
+	return writeProbeSnapshot(output, job, result)
+}
+
+func writeProbeSnapshot(output io.Writer, job storage.ProbeJobRecord, result *storage.ProbeResultRecord) error {
+	switch job.Status {
+	case storage.JobStatusQueued, storage.JobStatusExpired:
+	case storage.JobStatusLeased:
+		if job.LeasedAt <= 0 || job.LeaseUntil <= job.LeasedAt {
+			return fmt.Errorf("%w: leased job has invalid lease timestamps", storage.ErrCorruptProbeData)
+		}
+	case storage.JobStatusFinished:
+		if job.FinishedAt <= 0 || result == nil || result.ReceivedAt != job.FinishedAt {
+			return fmt.Errorf("%w: finished job is missing result data", storage.ErrCorruptProbeData)
+		}
+	default:
+		return fmt.Errorf("%w: invalid job status", storage.ErrCorruptProbeData)
+	}
+	if job.Status != storage.JobStatusFinished && result != nil {
+		return fmt.Errorf("%w: unfinished job has result data", storage.ErrCorruptProbeData)
+	}
+	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	write := func(label, value string) error {
+		_, err := fmt.Fprintf(w, "%s\t%s\n", label, value)
+		return err
+	}
+	fields := [][2]string{
+		{"JOB ID", job.ID},
+		{"AGENT ID", job.AgentID},
+		{"TYPE", string(job.ProbeType)},
+		{"STATUS", string(job.Status)},
+		{"ATTEMPT", fmt.Sprint(job.Attempt)},
+		{"TIMEOUT", fmt.Sprintf("%dms", job.TimeoutMS)},
+		{"CREATED", formatCLIUnixMilli(job.CreatedAt)},
+		{"NOT BEFORE", formatCLIUnixMilli(job.NotBefore)},
+		{"EXPIRES", formatCLIUnixMilli(job.ExpiresAt)},
+	}
+	if job.ScheduleID != "" {
+		fields = append(fields, [2]string{"SCHEDULE ID", job.ScheduleID}, [2]string{"SCHEDULED FOR", formatCLIUnixMilli(job.ScheduledFor)})
+	}
+	if job.Status == storage.JobStatusLeased {
+		fields = append(fields, [2]string{"LEASED AT", formatCLIUnixMilli(job.LeasedAt)}, [2]string{"LEASE UNTIL", formatCLIUnixMilli(job.LeaseUntil)})
+	}
+	if job.Status == storage.JobStatusFinished && result != nil {
+		value := result.Result
+		fields = append(fields,
+			[2]string{"FINISHED", formatCLIUnixMilli(job.FinishedAt)},
+			[2]string{"RESULT RECEIVED", formatCLIUnixMilli(result.ReceivedAt)},
+			[2]string{"RESULT STARTED", formatCLIUnixMilli(value.StartedAt)},
+			[2]string{"RESULT FINISHED", formatCLIUnixMilli(value.FinishedAt)},
+			[2]string{"DURATION", fmt.Sprintf("%gms", value.DurationMS)},
+			[2]string{"SUCCESS", fmt.Sprint(value.Success)},
+		)
+		if value.ResolvedIP != "" {
+			fields = append(fields, [2]string{"RESOLVED IP", value.ResolvedIP})
+		}
+		if value.ErrorCategory != "" {
+			fields = append(fields, [2]string{"ERROR CATEGORY", value.ErrorCategory})
+		}
+		switch job.ProbeType {
+		case protocol.ProbeTypeICMPPing:
+			measurement := value.Result.ICMPPing
+			fields = append(fields,
+				[2]string{"PACKETS", fmt.Sprintf("%d/%d", measurement.Received, measurement.Sent)},
+				[2]string{"PACKET LOSS", fmt.Sprintf("%g%%", measurement.PacketLossPercent)},
+				[2]string{"LATENCY AVG", fmt.Sprintf("%gms", measurement.LatencyAvgMS)},
+			)
+		case protocol.ProbeTypeTCPConnect:
+			fields = append(fields, [2]string{"CONNECT", fmt.Sprintf("%gms", value.Result.TCPConnect.ConnectMS)})
+		case protocol.ProbeTypeHTTP:
+			fields = append(fields,
+				[2]string{"HTTP STATUS", fmt.Sprint(value.Result.HTTP.StatusCode)},
+				[2]string{"HTTP TOTAL", fmt.Sprintf("%gms", value.Result.HTTP.TotalMS)},
+			)
+		}
+	}
+	for _, field := range fields {
+		if err := write(field[0], field[1]); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
+}
+
+func formatCLIUnixMilli(value int64) string {
+	return time.UnixMilli(value).UTC().Format(time.RFC3339Nano)
+}
+
+func validCLIJobID(value string) bool {
+	return (len(value) == 32 || len(value) == 64) && validCLILowerHex(value)
+}
+
+func validCLIHexID(value string) bool {
+	return len(value) == 32 && validCLILowerHex(value)
+}
+
+func validCLILowerHex(value string) bool {
 	for _, char := range value {
 		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
 			return false
