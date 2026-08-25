@@ -45,6 +45,8 @@ func run(args []string) error {
 		return probeCommand(args[1:])
 	case "schedule":
 		return scheduleCommand(args[1:])
+	case "remote":
+		return remoteCommand(args[1:])
 	case "help", "-h", "--help":
 		return usageError()
 	default:
@@ -53,7 +55,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags]")
+	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote agent <list|get> [flags]")
 }
 
 func serve(args []string) error {
@@ -671,30 +673,38 @@ func runScheduleMutation(command string, args []string, now func() time.Time, ou
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }
 
 func loadControlTokenHash(path string) ([]byte, error) {
+	token, err := loadControlToken(path)
+	if err != nil {
+		return nil, err
+	}
+	return auth.Hash(token), nil
+}
+
+func loadControlToken(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open control token file: %w", err)
+		return "", fmt.Errorf("open control token file: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("inspect control token file: %w", err)
+		return "", fmt.Errorf("inspect control token file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("control token file must be a regular file")
+		return "", errors.New("control token file must be a regular file")
 	}
 	if info.Size() > 1024 {
-		return nil, errors.New("control token file is too large")
+		return "", errors.New("control token file is too large")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("control token file permissions must not allow group or other access")
+		return "", errors.New("control token file permissions must not allow group or other access")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, 1025))
 	if err != nil {
-		return nil, errors.New("read control token file")
+		return "", errors.New("read control token file")
 	}
 	if len(content) > 1024 {
-		return nil, errors.New("control token file is too large")
+		return "", errors.New("control token file is too large")
 	}
 	token := string(content)
 	if strings.HasSuffix(token, "\r\n") {
@@ -703,13 +713,13 @@ func loadControlTokenHash(path string) ([]byte, error) {
 		token = strings.TrimSuffix(token, "\n")
 	}
 	if len(token) != 43 || strings.ContainsAny(token, "\r\n\t ") {
-		return nil, errors.New("control token file contains an invalid token")
+		return "", errors.New("control token file contains an invalid token")
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != token {
-		return nil, errors.New("control token file contains an invalid token")
+		return "", errors.New("control token file contains an invalid token")
 	}
-	return auth.Hash(token), nil
+	return token, nil
 }
 
 func openStore(path string) (*storage.Store, error) {
