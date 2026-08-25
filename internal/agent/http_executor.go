@@ -44,7 +44,7 @@ func NewHTTPExecutor() *HTTPExecutor {
 			if len(via) > maxHTTPRedirects {
 				return errHTTPRedirectLimit
 			}
-			redirectConfig := protocol.ProbeConfig{HTTP: &protocol.HTTPConfig{URL: request.URL.String(), Method: http.MethodGet}}
+			redirectConfig := protocol.ProbeConfig{HTTP: &protocol.HTTPConfig{URL: request.URL.String(), Method: request.Method}}
 			if err := redirectConfig.Validate(protocol.ProbeTypeHTTP); err != nil {
 				return errHTTPUnsafeRedirect
 			}
@@ -66,16 +66,13 @@ func (e *HTTPExecutor) Execute(ctx context.Context, job protocol.Job) (Execution
 		return failedHTTPExecution("invalid_config", "HTTP probe configuration is invalid", protocol.HTTPResult{}), nil
 	}
 	config := job.Config.HTTP
-	if config.Method != http.MethodGet {
-		return failedHTTPExecution("unsupported_method", "HTTP probe supports only GET", protocol.HTTPResult{}), nil
-	}
 
 	parsed, err := url.Parse(config.URL)
 	if err != nil {
 		return failedHTTPExecution("invalid_config", "HTTP probe configuration is invalid", protocol.HTTPResult{}), nil
 	}
 	timings := newHTTPProbeTimings(parsed.Hostname())
-	request, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, timings.trace()), http.MethodGet, config.URL, nil)
+	request, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, timings.trace()), config.Method, config.URL, nil)
 	if err != nil {
 		return failedHTTPExecution("invalid_config", "HTTP probe configuration is invalid", protocol.HTTPResult{}), nil
 	}

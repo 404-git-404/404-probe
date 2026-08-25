@@ -540,6 +540,71 @@ func TestControlTCPJobEndToEnd(t *testing.T) {
 	}
 }
 
+func TestControlHTTPHEADJobEndToEnd(t *testing.T) {
+	app, store, agentID, agentToken, controlToken := newControlTestApp(t)
+	defer store.Close()
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodHead {
+			t.Errorf("method = %q", request.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		_, _ = io.WriteString(w, "HEAD responses must not expose a body")
+	}))
+	defer target.Close()
+	httpServer := httptest.NewServer(app.Handler())
+	defer httpServer.Close()
+
+	expected := http.StatusNoContent
+	request := validControlTestRequest(agentID, protocol.ProbeTypeHTTP)
+	request.Config = protocol.HTTPConfig{URL: target.URL, Method: http.MethodHead, ExpectedStatus: &expected}
+	path := controlJobPathPrefix + firstControlJobID
+	if response := controlHTTPResponse(t, app, http.MethodPut, path, controlToken, "application/json", request); response.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	runner, err := agent.New(agent.Config{
+		ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
+		Interval: time.Hour, JobInterval: 10 * time.Millisecond, Timeout: 2 * time.Second,
+		AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "agent.state"),
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	runnerDone := make(chan error, 1)
+	go func() { runnerDone <- runner.Run(ctx) }()
+
+	var finished controlJobView
+	for ctx.Err() == nil {
+		response := controlHTTPResponse(t, app, http.MethodGet, path, controlToken, "", nil)
+		if response.Code != http.StatusOK {
+			t.Fatalf("get status=%d body=%s", response.Code, response.Body.String())
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &finished); err != nil {
+			t.Fatal(err)
+		}
+		if finished.Status == storage.JobStatusFinished {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if finished.Status != storage.JobStatusFinished || finished.Result == nil || !finished.Result.Success {
+		t.Fatalf("job did not finish successfully: %+v context=%v", finished, ctx.Err())
+	}
+	var measurement protocol.HTTPResult
+	if err := json.Unmarshal(finished.Result.Measurement, &measurement); err != nil {
+		t.Fatal(err)
+	}
+	if measurement.StatusCode != http.StatusNoContent || measurement.BodyBytes != 0 || measurement.BodyTruncated {
+		t.Fatalf("measurement = %+v", measurement)
+	}
+	cancel()
+	if err := <-runnerDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestControlGetRejectsCorruptStoredData(t *testing.T) {
 	t.Run("invalid config", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "corrupt-config.db")

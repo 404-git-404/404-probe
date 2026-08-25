@@ -82,18 +82,40 @@ func TestHTTPExecutorStatusMapping(t *testing.T) {
 	}
 }
 
-func TestHTTPExecutorRejectsUnsupportedMethodWithoutRequest(t *testing.T) {
+func TestHTTPExecutorSuccessfulHEAD(t *testing.T) {
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		requests.Add(1)
+		if request.Method != http.MethodHead {
+			t.Errorf("method = %q", request.Method)
+		}
+		if request.URL.Path == "/start" {
+			http.Redirect(w, request, "/final", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		_, _ = io.WriteString(w, "must not become a HEAD response body")
 	}))
 	defer server.Close()
-	job := validHTTPExecutorJob(server.URL, nil)
+	expected := http.StatusNoContent
+	job := validHTTPExecutorJob(server.URL+"/start", &expected)
 	job.Config.HTTP.Method = http.MethodHead
 
 	execution, err := NewHTTPExecutor().Execute(context.Background(), job)
-	if err != nil || execution.Success || execution.ErrorCategory != "unsupported_method" || requests.Load() != 0 {
+	if err != nil || !execution.Success || execution.ErrorCategory != "" || requests.Load() != 2 {
 		t.Fatalf("execution = %+v err=%v requests=%d", execution, err, requests.Load())
+	}
+	result := execution.Result.HTTP
+	if result == nil || result.StatusCode != http.StatusNoContent || result.BodyBytes != 0 || result.BodyTruncated {
+		t.Fatalf("result = %+v", result)
+	}
+
+	mismatchStatus := http.StatusOK
+	mismatchJob := validHTTPExecutorJob(server.URL+"/final", &mismatchStatus)
+	mismatchJob.Config.HTTP.Method = http.MethodHead
+	mismatch, err := NewHTTPExecutor().Execute(context.Background(), mismatchJob)
+	if err != nil || mismatch.Success || mismatch.ErrorCategory != "unexpected_status" || mismatch.Result.HTTP.StatusCode != http.StatusNoContent {
+		t.Fatalf("mismatch = %+v err=%v", mismatch, err)
 	}
 }
 
@@ -262,6 +284,22 @@ func TestHTTPExecutorNetworkAndTLSFailuresAreResults(t *testing.T) {
 		}
 	})
 
+	t.Run("HEAD network", func(t *testing.T) {
+		executor := NewHTTPExecutor()
+		executor.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Method != http.MethodHead {
+				t.Errorf("method = %q", request.Method)
+			}
+			return nil, &url.Error{Op: "Head", URL: request.URL.String(), Err: errors.New("connection refused")}
+		})}
+		job := validHTTPExecutorJob("http://example.test", nil)
+		job.Config.HTTP.Method = http.MethodHead
+		execution, err := executor.Execute(context.Background(), job)
+		if err != nil || execution.Success || execution.ErrorCategory != "network_error" {
+			t.Fatalf("execution = %+v err=%v", execution, err)
+		}
+	})
+
 	t.Run("default TLS verification", func(t *testing.T) {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
@@ -283,11 +321,15 @@ func TestHTTPExecutorRejectsOtherProbeTypes(t *testing.T) {
 }
 
 func TestHTTPExecutorWorkerIntegration(t *testing.T) {
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodHead {
+			t.Errorf("method = %q", request.Method)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer target.Close()
 	job := validHTTPExecutorJob(target.URL, nil)
+	job.Config.HTTP.Method = http.MethodHead
 	resultReceived := make(chan protocol.JobResult, 1)
 	var claims atomic.Int32
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
