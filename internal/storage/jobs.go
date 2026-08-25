@@ -32,6 +32,8 @@ var (
 
 const MaxOutstandingJobsPerAgent = 64
 
+const MaxProbeJobListLimit = 100
+
 type JobStatus string
 
 const (
@@ -531,6 +533,104 @@ func (s *Store) GetProbeJobSnapshot(ctx context.Context, jobID string, now time.
 		return ProbeJobRecord{}, nil, err
 	}
 	return job, result, nil
+}
+
+// ListProbeJobs returns one Agent's newest jobs from a single effective-state
+// snapshot. Expiry cleanup, stable ordering, and stored-data validation share
+// the same transaction.
+func (s *Store) ListProbeJobs(ctx context.Context, agentID string, now time.Time, limit int) ([]ProbeJobRecord, error) {
+	if !validStorageID(agentID, 128) {
+		return nil, errors.New("agent ID is invalid")
+	}
+	nowMillis := now.UnixMilli()
+	if nowMillis <= 0 {
+		return nil, errors.New("snapshot timestamp is invalid")
+	}
+	if limit <= 0 || limit > MaxProbeJobListLimit {
+		return nil, fmt.Errorf("limit must be between 1 and %d", MaxProbeJobListLimit)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if err := cleanupExpiredJobsTx(ctx, tx, agentID, nowMillis); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM probe_jobs
+		WHERE agent_id=? ORDER BY created_at DESC,id DESC LIMIT ?`, agentID, limit)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, limit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	records := make([]ProbeJobRecord, 0, len(ids))
+	for _, id := range ids {
+		record, exists, err := readJobTx(ctx, tx, id)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrCorruptProbeData, err)
+		}
+		if !exists || record.AgentID != agentID {
+			return nil, fmt.Errorf("%w: listed job disappeared", ErrCorruptProbeData)
+		}
+		if err := validateListedJobTx(ctx, tx, record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func validateListedJobTx(ctx context.Context, tx *sql.Tx, job ProbeJobRecord) error {
+	if job.CreatedAt <= 0 || job.NotBefore < job.CreatedAt || job.ExpiresAt <= job.NotBefore ||
+		job.ScheduledFor <= 0 || job.Attempt < 0 || job.TimeoutMS < protocol.MinProbeTimeoutMS || job.TimeoutMS > protocol.MaxProbeTimeoutMS {
+		return fmt.Errorf("%w: listed job metadata is invalid", ErrCorruptProbeData)
+	}
+	switch job.Status {
+	case JobStatusQueued, JobStatusExpired:
+		if job.LeaseToken != "" || job.LeaseEpoch != 0 || job.LeaseSessionID != "" || job.LeasedAt != 0 || job.LeaseUntil != 0 || job.FinishedAt != 0 {
+			return fmt.Errorf("%w: inactive job has lease or finish data", ErrCorruptProbeData)
+		}
+	case JobStatusLeased:
+		if job.Attempt < 1 || job.LeaseToken == "" || job.LeaseEpoch == 0 || job.LeaseSessionID == "" ||
+			job.LeasedAt <= 0 || job.LeaseUntil <= job.LeasedAt || job.FinishedAt != 0 {
+			return fmt.Errorf("%w: leased job metadata is invalid", ErrCorruptProbeData)
+		}
+	case JobStatusFinished:
+		if job.Attempt < 1 || job.FinishedAt <= 0 {
+			return fmt.Errorf("%w: finished job metadata is invalid", ErrCorruptProbeData)
+		}
+	default:
+		return fmt.Errorf("%w: listed job status is invalid", ErrCorruptProbeData)
+	}
+	result, hasResult, err := readProbeResultTx(ctx, tx, job)
+	if err != nil {
+		return err
+	}
+	if job.Status == JobStatusFinished {
+		if !hasResult || result.ReceivedAt != job.FinishedAt {
+			return fmt.Errorf("%w: finished job is missing result data", ErrCorruptProbeData)
+		}
+	} else if hasResult {
+		return fmt.Errorf("%w: unfinished job has result data", ErrCorruptProbeData)
+	}
+	return nil
 }
 
 func (s *Store) GetProbeResult(ctx context.Context, jobID string) (ProbeResultRecord, error) {

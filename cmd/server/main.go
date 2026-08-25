@@ -53,7 +53,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get> [flags] | schedule <add|list|enable|disable|delete> [flags]")
+	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags]")
 }
 
 func serve(args []string) error {
@@ -201,6 +201,8 @@ func runProbeCommand(args []string, now func() time.Time, newID func() (string, 
 		return runProbeCreate(args[1:], now, newID, output)
 	case "get":
 		return runProbeGet(args[1:], now, output)
+	case "list":
+		return runProbeList(args[1:], now, output)
 	default:
 		return usageError()
 	}
@@ -321,6 +323,53 @@ func runProbeGet(args []string, now func() time.Time, output io.Writer) error {
 		return err
 	}
 	return writeProbeSnapshot(output, job, result)
+}
+
+func runProbeList(args []string, now func() time.Time, output io.Writer) error {
+	flags := flag.NewFlagSet("probe list", flag.ContinueOnError)
+	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
+	agentID := flags.String("agent-id", "", "Agent ID")
+	limit := flags.Int("limit", 20, "maximum jobs to return")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("probe list does not accept positional arguments")
+	}
+	if !validCLIHexID(*agentID) {
+		return errors.New("agent-id must be 32 lowercase hexadecimal characters")
+	}
+	if *limit <= 0 || *limit > storage.MaxProbeJobListLimit {
+		return fmt.Errorf("limit must be between 1 and %d", storage.MaxProbeJobListLimit)
+	}
+	at := now()
+	if at.UnixMilli() <= 0 {
+		return errors.New("snapshot time is outside the supported range")
+	}
+	store, err := openStore(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	records, err := store.ListProbeJobs(context.Background(), *agentID, at, *limit)
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "ID\tTYPE\tSTATUS\tATTEMPT\tCREATED\tSCHEDULE"); err != nil {
+		return err
+	}
+	for _, record := range records {
+		scheduleID := "-"
+		if record.ScheduleID != "" {
+			scheduleID = record.ScheduleID
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n", record.ID, record.ProbeType, record.Status,
+			record.Attempt, formatCLIUnixMilli(record.CreatedAt), scheduleID); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
 }
 
 func writeProbeSnapshot(output io.Writer, job storage.ProbeJobRecord, result *storage.ProbeResultRecord) error {

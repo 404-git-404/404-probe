@@ -340,6 +340,65 @@ func TestGetProbeJobSnapshotRejectsResultHashMismatch(t *testing.T) {
 	}
 }
 
+func TestListProbeJobsStableSnapshotLimitAndCorruption(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1_500, 0)
+
+	expired := oneShot("job-a", agentID, at, protocol.ProbeTypeTCPConnect)
+	expired.ExpiresAt = at.Add(time.Minute).UnixMilli()
+	if err := store.CreateOneShotJob(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	finishedParams := oneShot("job-d", agentID, at.Add(2*time.Minute), protocol.ProbeTypeTCPConnect)
+	if err := store.CreateOneShotJob(ctx, finishedParams); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session", protocol.ProbeTypeTCPConnect), at.Add(2*time.Minute), time.Minute)
+	if err != nil || claimed == nil || claimed.JobID != finishedParams.ID {
+		t.Fatalf("claim=%+v err=%v", claimed, err)
+	}
+	if _, err := store.SubmitJobResult(ctx, agentID, claimed.JobID, resultFor(claimed, true), at.Add(2*time.Minute+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"job-b", "job-c"} {
+		if err := store.CreateOneShotJob(ctx, oneShot(id, agentID, at.Add(4*time.Minute), protocol.ProbeTypeTCPConnect)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := at.Add(5 * time.Minute)
+	records, err := store.ListProbeJobs(ctx, agentID, now, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].ID != "job-c" || records[1].ID != "job-b" {
+		t.Fatalf("records=%+v", records)
+	}
+	all, err := store.ListProbeJobs(ctx, agentID, now, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 4 || all[2].ID != "job-d" || all[2].Status != JobStatusFinished || all[3].Status != JobStatusExpired {
+		t.Fatalf("all=%+v", all)
+	}
+	if empty, err := store.ListProbeJobs(ctx, "missing-agent", now, 10); err != nil || len(empty) != 0 || empty == nil {
+		t.Fatalf("empty=%+v err=%v", empty, err)
+	}
+	if _, err := store.ListProbeJobs(ctx, agentID, now, 0); err == nil {
+		t.Fatal("zero limit accepted")
+	}
+	if _, err := store.ListProbeJobs(ctx, agentID, time.UnixMilli(0), 10); err == nil {
+		t.Fatal("invalid time accepted")
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE probe_results SET result_hash=zeroblob(32) WHERE job_id='job-d'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListProbeJobs(ctx, agentID, now, 10); !errors.Is(err, ErrCorruptProbeData) {
+		t.Fatalf("corruption error=%v", err)
+	}
+}
+
 func TestClaimAndDuplicateClaimReplay(t *testing.T) {
 	store, agentID, _ := testStore(t, ":memory:")
 	defer store.Close()

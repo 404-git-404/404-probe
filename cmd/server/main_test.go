@@ -380,6 +380,97 @@ func TestWriteProbeSnapshotRejectsCorruptState(t *testing.T) {
 	}
 }
 
+func TestRunProbeCommandListShowsStableRedactedSummaries(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "probe-list.db")
+	store, err := storage.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentID, err := auth.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(17_000, 0)
+	if err := store.AddAgent(ctx, agentID, "test", hash, at); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{strings.Repeat("a", 32), strings.Repeat("b", 32)} {
+		if err := store.CreateOneShotJob(ctx, storage.CreateOneShotJobParams{
+			ID: id, AgentID: agentID, ProbeType: protocol.ProbeTypeTCPConnect,
+			Config:    protocol.ProbeConfig{TCPConnect: &protocol.TCPConnectConfig{Host: "secret.example", Port: 443}},
+			TimeoutMS: 5000, CreatedAt: at.UnixMilli(), NotBefore: at.UnixMilli(), ExpiresAt: at.Add(10 * time.Minute).UnixMilli(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim, err := store.ClaimJob(ctx, agentID, protocol.ClaimRequest{
+		ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: 9, SessionID: "private-session",
+		SupportedProbeTypes: []protocol.ProbeType{protocol.ProbeTypeTCPConnect},
+	}, at, time.Minute)
+	if err != nil || claim == nil {
+		t.Fatalf("claim=%+v error=%v", claim, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := runProbeCommand([]string{"list", "--db", path, "--agent-id", agentID}, func() time.Time { return at.Add(time.Second) }, auth.NewID, &output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "ID") || !strings.Contains(text, "STATUS") || !strings.Contains(text, "leased") || !strings.Contains(text, "queued") {
+		t.Fatalf("output=%q", text)
+	}
+	bID := strings.Repeat("b", 32)
+	aID := strings.Repeat("a", 32)
+	if strings.Index(text, bID) >= strings.Index(text, aID) {
+		t.Fatalf("unstable order: %q", text)
+	}
+	for _, secret := range []string{"secret.example", claim.LeaseToken, "private-session", agentID} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("output exposed %q: %q", secret, text)
+		}
+	}
+
+	output.Reset()
+	if err := runProbeCommand([]string{"list", "--db", path, "--agent-id", agentID, "--limit", "1"}, func() time.Time { return at.Add(time.Second) }, auth.NewID, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), bID) || strings.Contains(output.String(), aID) {
+		t.Fatalf("limited output=%q", output.String())
+	}
+}
+
+func TestRunProbeCommandListRejectsInvalidInputBeforeOpeningDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "must-not-exist.db")
+	tests := [][]string{
+		{"list", "--db", path},
+		{"list", "--db", path, "--agent-id", "bad"},
+		{"list", "--db", path, "--agent-id", strings.Repeat("a", 32), "--limit", "0"},
+		{"list", "--db", path, "--agent-id", strings.Repeat("a", 32), "extra"},
+	}
+	for _, arguments := range tests {
+		if err := runProbeCommand(arguments, time.Now, auth.NewID, &bytes.Buffer{}); err == nil {
+			t.Fatalf("arguments=%v accepted", arguments)
+		}
+	}
+	err := runProbeCommand([]string{"list", "--db", path, "--agent-id", strings.Repeat("a", 32)}, func() time.Time {
+		return time.UnixMilli(0)
+	}, auth.NewID, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("invalid time accepted")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("database side effect: %v", statErr)
+	}
+}
+
 func TestRunScheduleCommandListsStableRedactedRows(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "schedules.db")
