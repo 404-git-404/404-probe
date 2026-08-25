@@ -20,7 +20,7 @@ Stop the server and back up the database before opening it with the new binary. 
 
 ```bash
 sudo systemctl stop 404-probe-server
-sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.2
+sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.3
 sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
 ```
 
@@ -43,7 +43,7 @@ chmod 600 "$PROBE_404_CONTROL_TOKEN_FILE"
   --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE"
 ```
 
-Use HTTPS at the public edge. Plain HTTP is intended only for localhost or isolated development.
+Use HTTPS at the public edge. The Control token is a high-privilege administrator secret: the Control API can create network probes on connected Agents even though the `remote` CLI described below is read-only. Do not place this token in a URL, browser, shell argument, or log. Plain HTTP is intended only for loopback development.
 
 ## Register and start an agent
 
@@ -160,39 +160,223 @@ PROBE_404_SCHEDULE_ID="$(printf '%s\n' "$PROBE_404_SCHEDULE_OUTPUT" | sed -n 's/
 ./404-probe-server schedule delete "$PROBE_404_SCHEDULE_ID" --db "$PROBE_404_DB"
 ```
 
-## Optional control API
+## Observe a server remotely
+
+The explicit `remote` namespace is a read-only Control API client. It never opens SQLite and does not provide remote `run`, `add`, `enable`, `disable`, `delete`, or `revoke` operations. Existing commands using `--db` remain the local compatibility and management path; their filters intentionally do not match every remote filter in V0.3.
+
+The remote client accepts the Control credential only through `--control-token-file`. The file must contain the same canonical 32-byte unpadded base64url token accepted by `serve`, must be a regular file, and on Unix must not be accessible by group or other users.
+
+Set the HTTPS origin and the private token file available on the administrator machine:
 
 ```bash
-PROBE_404_CONTROL_TOKEN="$(cat "$PROBE_404_CONTROL_TOKEN_FILE")"
+export PROBE_404_SERVER=https://probe.example.com
+export PROBE_404_CONTROL_TOKEN_FILE="$PWD/run/admin/control.token"
+chmod 600 "$PROBE_404_CONTROL_TOKEN_FILE"
+```
+
+`--server` must be an origin such as `https://host` or `https://host:port`; credentials, path prefixes, queries, and fragments are rejected. The client uses the system CA store and normal hostname verification. It refuses every redirect, has a fixed 15-second total timeout, accepts at most 2 MiB of JSON response data, and does not retry.
+
+For local development only, loopback HTTP requires an explicit exception:
+
+```bash
+./404-probe-server remote agent list \
+  --server http://127.0.0.1:8080 \
+  --allow-insecure-http \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE"
+```
+
+`--allow-insecure-http` does not permit private-LAN or other non-loopback HTTP servers.
+
+### Remote Agent queries
+
+```bash
+./404-probe-server remote agent list \
+  --server "$PROBE_404_SERVER" \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --status online \
+  --limit 50
+
+./404-probe-server remote agent get "$PROBE_404_AGENT_ID" \
+  --server "$PROBE_404_SERVER" \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --json
+```
+
+`--status` accepts `online`, `offline`, or `revoked`.
+
+### Remote Schedule queries
+
+```bash
+./404-probe-server remote schedule list \
+  --server "$PROBE_404_SERVER" \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --agent-id "$PROBE_404_AGENT_ID" \
+  --enabled true \
+  --probe-type http \
+  --limit 50
+
+./404-probe-server remote schedule get "$PROBE_404_SCHEDULE_ID" \
+  --server "$PROBE_404_SERVER" \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --json
+```
+
+`--enabled` accepts `true` or `false`; `--probe-type` accepts `http`, `tcp_connect`, or `icmp_ping`. Schedule detail contains its probe target/configuration and is sensitive operational data.
+
+### Remote Probe queries
+
+```bash
+./404-probe-server remote probe list \
+  --server "$PROBE_404_SERVER" \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --agent-id "$PROBE_404_AGENT_ID" \
+  --schedule-id "$PROBE_404_SCHEDULE_ID" \
+  --probe-type http \
+  --status finished \
+  --success false \
+  --limit 50
+
+./404-probe-server remote probe get "$PROBE_404_JOB_ID" \
+  --server "$PROBE_404_SERVER" \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --json
+```
+
+Probe filters are:
+
+- `--agent-id` and `--schedule-id`;
+- `--probe-type http|tcp_connect|icmp_ping`;
+- `--status queued|leased|finished|expired`;
+- `--success true|false`;
+- `--created-after`, `--created-before`, `--finished-after`, and `--finished-before`, expressed as positive Unix millisecond timestamps.
+
+An after timestamp must be lower than its matching before timestamp. Success and finished-time filters may be combined only with `--status finished` or with no status filter. Probe list output contains only a bounded result summary; `remote probe get` returns the complete typed HTTP, TCP, or ICMP measurement and sensitive target configuration. There is no separate `/results` resource.
+
+### Pagination and JSON output
+
+Every remote list command requests exactly one page. The default limit is 50 and the accepted range is 1 through 100. If the table has another page, it ends with:
+
+```text
+next_cursor: <opaque cursor>
+```
+
+Pass that value back with the same command and filters:
+
+```bash
+./404-probe-server remote probe list \
+  --server "$PROBE_404_SERVER" \
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --status finished \
+  --limit 50 \
+  --cursor "$PROBE_404_NEXT_CURSOR"
+```
+
+Cursors are opaque and are bound to their endpoint and filters. The CLI does not decode them and does not provide `--all` or automatic pagination. With `--json`, a list retains the pagination envelope:
+
+```json
+{"items":[],"next_cursor":null}
+```
+
+A `get --json` command emits one allowlisted resource object. Normal table/JSON output and `next_cursor` are written to stdout; errors are written to stderr with a nonzero exit status.
+
+### Remote diagnostic workflow
+
+Use the read path from broad state to the typed result without SSH or direct SQLite access:
+
+```bash
+./404-probe-server remote agent list --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --status offline
+./404-probe-server remote schedule list --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --agent-id "$PROBE_404_AGENT_ID"
+./404-probe-server remote probe list --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --agent-id "$PROBE_404_AGENT_ID" --status finished --success false
+./404-probe-server remote probe get "$PROBE_404_JOB_ID" --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --json
+```
+
+Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; future Web authentication must not reuse this token in client-side code.
+
+## Capacity runbook
+
+V0.3 keeps Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
+
+```bash
+du -h "$PROBE_404_DB"
+
+sqlite3 -readonly "$PROBE_404_DB" \
+  "SELECT 'agents', COUNT(*) FROM agents
+   UNION ALL SELECT 'schedules', COUNT(*) FROM probe_schedules
+   UNION ALL SELECT 'jobs', COUNT(*) FROM probe_jobs
+   UNION ALL SELECT 'results', COUNT(*) FROM probe_results;"
+```
+
+Back up the database before maintenance. V0.3 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
+
+## Control credential incident response
+
+If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.3 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
+
+## Optional Control API
+
+Prefer the `remote` CLI for read operations because it keeps the token out of command-line arguments and enforces the V0.3 transport policy. Direct API clients authenticate with `Authorization: Bearer <control-token>` and must apply equivalent HTTPS and secret-handling controls.
+
+The read plane is:
+
+```text
+GET /api/v1/control/agents
+GET /api/v1/control/agents/{agent_id}
+GET /api/v1/control/schedules
+GET /api/v1/control/schedules/{schedule_id}
+GET /api/v1/control/jobs
+GET /api/v1/control/jobs/{job_id}
+```
+
+All Control responses use `Cache-Control: no-store`. Authentication is checked before query validation. Collections use stable `(created_at DESC, id DESC)` keyset pagination, a default limit of 50, a maximum limit of 100, and endpoint/filter-bound cursors. Agent collections accept `status`; Schedule collections accept `agent_id`, `enabled`, and `probe_type`; Job collections accept `agent_id`, `schedule_id`, `probe_type`, `status`, `success`, and the documented created/finished time bounds. Job collections expose only `result_summary`; Job detail exposes the complete typed measurement. Dedicated response DTOs exclude token hashes, lease credentials, Agent epoch/session fencing data, result hashes, and raw storage fields.
+
+The following direct API examples include both reads and trusted-administrator writes. Writes remain intentionally unavailable through the read-only `remote` CLI. Create a private curl header file so the token is not included directly in curl's arguments:
+
+```bash
 PROBE_404_CONTROL_BASE=http://127.0.0.1:8080
 PROBE_404_CONTROL_JOB_ID="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+PROBE_404_CONTROL_AUTH_HEADER_FILE="$PWD/run/server/control-auth.header"
+umask 077
+printf 'Authorization: Bearer %s\n' "$(cat "$PROBE_404_CONTROL_TOKEN_FILE")" > "$PROBE_404_CONTROL_AUTH_HEADER_FILE"
+chmod 600 "$PROBE_404_CONTROL_AUTH_HEADER_FILE"
+trap 'rm -f "$PROBE_404_CONTROL_AUTH_HEADER_FILE"' EXIT
+
+curl --fail-with-body \
+  -H @"$PROBE_404_CONTROL_AUTH_HEADER_FILE" \
+  "$PROBE_404_CONTROL_BASE/api/v1/control/agents?limit=50"
+
+curl --fail-with-body \
+  -H @"$PROBE_404_CONTROL_AUTH_HEADER_FILE" \
+  "$PROBE_404_CONTROL_BASE/api/v1/control/jobs?agent_id=$PROBE_404_AGENT_ID&status=finished&limit=50"
 
 curl --fail-with-body \
   -X PUT "$PROBE_404_CONTROL_BASE/api/v1/control/jobs/$PROBE_404_CONTROL_JOB_ID" \
-  -H "Authorization: Bearer $PROBE_404_CONTROL_TOKEN" \
+  -H @"$PROBE_404_CONTROL_AUTH_HEADER_FILE" \
   -H 'Content-Type: application/json' \
   --data "{\"agent_id\":\"$PROBE_404_AGENT_ID\",\"probe_type\":\"tcp_connect\",\"config\":{\"host\":\"example.com\",\"port\":443},\"timeout_ms\":5000,\"expires_in_seconds\":300}"
 
 curl --fail-with-body \
-  -H "Authorization: Bearer $PROBE_404_CONTROL_TOKEN" \
+  -H @"$PROBE_404_CONTROL_AUTH_HEADER_FILE" \
   "$PROBE_404_CONTROL_BASE/api/v1/control/jobs/$PROBE_404_CONTROL_JOB_ID"
 
 PROBE_404_CONTROL_SCHEDULE_ID="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
 curl --fail-with-body \
   -X PUT "$PROBE_404_CONTROL_BASE/api/v1/control/schedules/$PROBE_404_CONTROL_SCHEDULE_ID" \
-  -H "Authorization: Bearer $PROBE_404_CONTROL_TOKEN" \
+  -H @"$PROBE_404_CONTROL_AUTH_HEADER_FILE" \
   -H 'Content-Type: application/json' \
   --data "{\"agent_id\":\"$PROBE_404_AGENT_ID\",\"name\":\"homepage\",\"probe_type\":\"http\",\"config\":{\"url\":\"https://example.com/\",\"method\":\"GET\",\"expected_status\":200},\"timeout_ms\":5000,\"interval_seconds\":60,\"enabled\":true}"
 
 curl --fail-with-body \
-  -H "Authorization: Bearer $PROBE_404_CONTROL_TOKEN" \
+  -H @"$PROBE_404_CONTROL_AUTH_HEADER_FILE" \
   "$PROBE_404_CONTROL_BASE/api/v1/control/schedules/$PROBE_404_CONTROL_SCHEDULE_ID"
 
 curl --fail-with-body \
   -X DELETE \
-  -H "Authorization: Bearer $PROBE_404_CONTROL_TOKEN" \
+  -H @"$PROBE_404_CONTROL_AUTH_HEADER_FILE" \
   "$PROBE_404_CONTROL_BASE/api/v1/control/schedules/$PROBE_404_CONTROL_SCHEDULE_ID"
+
+rm -f "$PROBE_404_CONTROL_AUTH_HEADER_FILE"
+trap - EXIT
 ```
 
 ## Revoke an agent
