@@ -20,7 +20,7 @@ Stop the server and back up the database before opening it with the new binary. 
 
 ```bash
 sudo systemctl stop 404-probe-server
-sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.3
+sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.4
 sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
 ```
 
@@ -327,11 +327,11 @@ Use the read path from broad state to the typed result without SSH or direct SQL
 ./404-probe-server remote probe get "$PROBE_404_JOB_ID" --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --json
 ```
 
-Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; future Web authentication must not reuse this token in client-side code.
+Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; V0.4 Web authentication uses a separate password and server-side session boundary.
 
 ## Capacity runbook
 
-V0.3 keeps Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
+V0.4 keeps Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
 
 ```bash
 du -h "$PROBE_404_DB"
@@ -343,15 +343,15 @@ sqlite3 -readonly "$PROBE_404_DB" \
    UNION ALL SELECT 'results', COUNT(*) FROM probe_results;"
 ```
 
-Back up the database before maintenance. V0.3 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
+Back up the database before maintenance. V0.4 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
 
 ## Control credential incident response
 
-If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.3 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
+If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.4 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
 
 ## Optional Control API
 
-Prefer the `remote` CLI for read operations because it keeps the token out of command-line arguments and enforces the V0.3 transport policy. Direct API clients authenticate with `Authorization: Bearer <control-token>` and must apply equivalent HTTPS and secret-handling controls.
+Prefer the `remote` CLI for read operations because it keeps the token out of command-line arguments and enforces the current transport policy. Direct API clients authenticate with `Authorization: Bearer <control-token>` and must apply equivalent HTTPS and secret-handling controls.
 
 The read plane is:
 
