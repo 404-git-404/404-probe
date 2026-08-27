@@ -46,9 +46,13 @@ GET /api/v1/web/agents
 GET /api/v1/web/agents/{agent_id}
 GET /api/v1/web/agents/{agent_id}/history?hours=24
 GET /api/v1/web/events
+GET /api/v1/web/schedules
+GET /api/v1/web/schedules/{schedule_id}
 ```
 
-The collection accepts `status=online|offline|revoked`, `limit=1..100`, and an opaque `cursor`. History accepts `hours=1..720`. These responses are `no-store` and use an explicit browser-safe DTO: agent tokens, the Control token, epochs, session IDs, report sequences, boot IDs, and raw network counters are not exposed. The SSE feed uses the same whitelist. Legacy V0.1 browser data routes are unavailable, and Web JavaScript never calls `/api/v1/control/*`.
+The Agent collection accepts `status=online|offline|revoked`; the Schedule collection accepts `agent_id`, `enabled=true|false`, and `probe_type=http|tcp_connect|icmp_ping`. Both collections accept `limit=1..100` and an opaque endpoint/filter-bound `cursor`. History accepts `hours=1..720`.
+
+These responses are `no-store` and use explicit browser-safe DTOs: agent tokens, the Control token, epochs, session IDs, report sequences, boot IDs, raw network counters, and storage-only fields are not exposed. The SSE feed uses the same whitelist. Schedule targets and configurations are sensitive operational data visible only after Web authentication. The Web Schedule surface is strictly read-only; legacy V0.1 browser data routes are unavailable, and Web JavaScript never calls `/api/v1/control/*`.
 
 ## Start the server
 
