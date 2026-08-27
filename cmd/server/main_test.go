@@ -37,6 +37,52 @@ func TestLoadControlTokenHash(t *testing.T) {
 	}
 }
 
+func TestLoadWebPasswordHash(t *testing.T) {
+	encoded, err := auth.HashPassword([]byte("test-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "\n", "\r\n"} {
+		path := filepath.Join(t.TempDir(), "web-password.hash")
+		if err := os.WriteFile(path, []byte(encoded+suffix), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadWebPasswordHash(path)
+		if err != nil || got != encoded {
+			t.Fatalf("hash=%q err=%v", got, err)
+		}
+	}
+	for _, content := range []string{"", "not-a-hash", encoded + "\n\n", strings.Repeat("x", 1025)} {
+		path := filepath.Join(t.TempDir(), "invalid-web-password.hash")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := loadWebPasswordHash(path); err == nil || (content != "" && strings.Contains(err.Error(), content)) || got != "" {
+			t.Fatalf("content length=%d hash=%q err=%v", len(content), got, err)
+		}
+	}
+}
+
+func TestLoadWebPasswordHashRejectsBroadUnixPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions are not available")
+	}
+	encoded, err := auth.HashPassword([]byte("test-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "web-password.hash")
+	if err := os.WriteFile(path, []byte(encoded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loadWebPasswordHash(path); err == nil || got != "" || strings.Contains(err.Error(), encoded) {
+		t.Fatalf("hash=%q err=%v", got, err)
+	}
+}
+
 func TestRunProbeCommandCreatesTypedOneShotJobs(t *testing.T) {
 	tests := []struct {
 		name      string

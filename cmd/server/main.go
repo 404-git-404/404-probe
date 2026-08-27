@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -18,6 +19,8 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+
+	"golang.org/x/term"
 
 	"404-probe/internal/auth"
 	"404-probe/internal/protocol"
@@ -47,6 +50,8 @@ func run(args []string) error {
 		return scheduleCommand(args[1:])
 	case "remote":
 		return remoteCommand(args[1:])
+	case "web":
+		return webCommand(args[1:])
 	case "help", "-h", "--help":
 		return usageError()
 	default:
@@ -55,7 +60,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags]")
+	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
 }
 
 func serve(args []string) error {
@@ -64,6 +69,9 @@ func serve(args []string) error {
 	dbPath := flags.String("db", "404-probe.db", "SQLite database path")
 	offline := flags.Duration("offline-timeout", 30*time.Second, "offline threshold")
 	controlTokenFile := flags.String("control-token-file", "", "path to the control API token file")
+	webPasswordHashFile := flags.String("web-password-hash-file", "", "path to the Web administrator Argon2id password hash file")
+	webPublicOrigin := flags.String("web-public-origin", "", "public Web origin, normally HTTPS")
+	webAllowInsecureHTTP := flags.Bool("web-allow-insecure-http", false, "allow Web login over plain HTTP only at a loopback public origin")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -74,6 +82,22 @@ func serve(args []string) error {
 			return err
 		}
 		appOptions = append(appOptions, appserver.WithControlTokenHash(hash))
+	}
+	webConfigured := *webPasswordHashFile != "" || *webPublicOrigin != ""
+	if (*webPasswordHashFile == "") != (*webPublicOrigin == "") {
+		return errors.New("web-password-hash-file and web-public-origin must be configured together")
+	}
+	if *webAllowInsecureHTTP && !webConfigured {
+		return errors.New("web-allow-insecure-http requires Web authentication configuration")
+	}
+	if webConfigured {
+		passwordHash, err := loadWebPasswordHash(*webPasswordHashFile)
+		if err != nil {
+			return err
+		}
+		appOptions = append(appOptions, appserver.WithWebAuthentication(appserver.WebAuthenticationConfig{
+			PasswordHash: passwordHash, PublicOrigin: *webPublicOrigin, AllowInsecureHTTP: *webAllowInsecureHTTP,
+		}))
 	}
 	store, err := openStore(*dbPath)
 	if err != nil {
@@ -672,12 +696,80 @@ func runScheduleMutation(command string, args []string, now func() time.Time, ou
 
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }
 
+func webCommand(args []string) error {
+	if len(args) != 1 || args[0] != "password-hash" {
+		return usageError()
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return errors.New("web password-hash requires an interactive terminal")
+	}
+	fmt.Fprint(os.Stderr, "Password: ")
+	password, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return errors.New("read password")
+	}
+	fmt.Fprint(os.Stderr, "Confirm password: ")
+	confirmation, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return errors.New("read password confirmation")
+	}
+	if subtle.ConstantTimeCompare(password, confirmation) != 1 {
+		return errors.New("passwords do not match")
+	}
+	encoded, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, encoded)
+	return err
+}
+
 func loadControlTokenHash(path string) ([]byte, error) {
 	token, err := loadControlToken(path)
 	if err != nil {
 		return nil, err
 	}
 	return auth.Hash(token), nil
+}
+
+func loadWebPasswordHash(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open Web password hash file: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("inspect Web password hash file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("Web password hash file must be a regular file")
+	}
+	if info.Size() > 1024 {
+		return "", errors.New("Web password hash file is too large")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return "", errors.New("Web password hash file permissions must not allow group or other access")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, 1025))
+	if err != nil {
+		return "", errors.New("read Web password hash file")
+	}
+	if len(content) > 1024 {
+		return "", errors.New("Web password hash file is too large")
+	}
+	encoded := string(content)
+	if strings.HasSuffix(encoded, "\r\n") {
+		encoded = strings.TrimSuffix(encoded, "\r\n")
+	} else if strings.HasSuffix(encoded, "\n") {
+		encoded = strings.TrimSuffix(encoded, "\n")
+	}
+	if err := auth.ParsePasswordHash(encoded); err != nil {
+		return "", errors.New("Web password hash file contains an invalid password hash")
+	}
+	return encoded, nil
 }
 
 func loadControlToken(path string) (string, error) {

@@ -24,6 +24,21 @@ sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v
 sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
 ```
 
+## Configure Web authentication
+
+The Web UI and its read APIs are disabled unless an independent administrator password hash and public origin are configured. Generate an Argon2id hash at an interactive terminal; the command reads the password without echoing it and writes only the hash to stdout:
+
+```bash
+install -d -m 700 "$PWD/run/server"
+umask 077
+./404-probe-server web password-hash > "$PWD/run/server/web-password.hash"
+chmod 600 "$PWD/run/server/web-password.hash"
+```
+
+The browser receives only an opaque `HttpOnly`, `Secure`, `SameSite=Strict` session cookie. Web sessions expire after 30 minutes idle or 12 hours total and are invalidated by logout or Server restart. The password hash and session boundary are independent from the Control token: never put a Control token in browser storage, JavaScript, HTML, a URL, or a Web request.
+
+Production deployments must provide an exact HTTPS origin and terminate TLS at the public edge. Bind the Server to loopback when a reverse proxy is used. Plain HTTP Web login requires both an explicit exception and a loopback public origin and is only for local development.
+
 ## Start the server
 
 The control API is optional. Its token must be 32 random bytes encoded as unpadded base64url, stored in a private regular file.
@@ -32,15 +47,18 @@ The control API is optional. Its token must be 32 random bytes encoded as unpadd
 install -d -m 700 "$PWD/run/server"
 export PROBE_404_DB="$PWD/run/server/404-probe.db"
 export PROBE_404_CONTROL_TOKEN_FILE="$PWD/run/server/control.token"
+export PROBE_404_WEB_PASSWORD_HASH_FILE="$PWD/run/server/web-password.hash"
 umask 077
 head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n' > "$PROBE_404_CONTROL_TOKEN_FILE"
 chmod 600 "$PROBE_404_CONTROL_TOKEN_FILE"
 
 ./404-probe-server serve \
-  --listen :8080 \
+  --listen 127.0.0.1:8080 \
   --db "$PROBE_404_DB" \
   --offline-timeout 30s \
-  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE"
+  --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" \
+  --web-password-hash-file "$PROBE_404_WEB_PASSWORD_HASH_FILE" \
+  --web-public-origin "https://probe.example.com"
 ```
 
 Use HTTPS at the public edge. The Control token is a high-privilege administrator secret: the Control API can create network probes on connected Agents even though the `remote` CLI described below is read-only. Do not place this token in a URL, browser, shell argument, or log. Plain HTTP is intended only for loopback development.

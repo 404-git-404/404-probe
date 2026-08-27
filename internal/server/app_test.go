@@ -16,6 +16,23 @@ import (
 	"404-probe/internal/storage"
 )
 
+var (
+	testWebHashOnce sync.Once
+	testWebHash     string
+	testWebHashErr  error
+)
+
+func webTestPasswordHash(t *testing.T) string {
+	t.Helper()
+	testWebHashOnce.Do(func() {
+		testWebHash, testWebHashErr = auth.HashPassword([]byte("test-password"))
+	})
+	if testWebHashErr != nil {
+		t.Fatal(testWebHashErr)
+	}
+	return testWebHash
+}
+
 func testApp(t *testing.T) (*App, *storage.Store, string, string) {
 	t.Helper()
 	store, err := storage.Open(context.Background(), ":memory:")
@@ -27,11 +44,37 @@ func testApp(t *testing.T) (*App, *storage.Store, string, string) {
 	if err := store.AddAgent(context.Background(), id, "test", hash, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	app, err := NewApp(store, 30*time.Second, nil)
+	app, err := NewApp(store, 30*time.Second, nil, WithWebAuthentication(WebAuthenticationConfig{
+		PasswordHash: webTestPasswordHash(t), PublicOrigin: "https://probe.test",
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return app, store, id, token
+}
+
+func addTestWebSession(t *testing.T, app *App, request *http.Request) *webSession {
+	t.Helper()
+	plain, session, err := app.webAuth.createSession(app.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.AddCookie(&http.Cookie{Name: app.webAuth.sessionCookieName(), Value: plain})
+	return session
+}
+
+func getTestWeb(t *testing.T, app *App, client *http.Client, target string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addTestWebSession(t, app, request)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
 }
 
 func reportFor(id string, seq uint64) protocol.Report {
@@ -89,6 +132,7 @@ func TestOnlineOfflineOnline(t *testing.T) {
 func assertOnline(t *testing.T, app *App, want bool) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	addTestWebSession(t, app, request)
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
 	var agents []struct {
@@ -112,6 +156,7 @@ func TestMalformedReportDoesNotPanic(t *testing.T) {
 		}
 	}
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	addTestWebSession(t, app, request)
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -196,11 +241,7 @@ func TestActiveSSEExitsBeforeHTTPShutdown(t *testing.T) {
 		app.CleanupLoop()
 	}()
 	server := httptest.NewServer(app.Handler())
-	response, err := server.Client().Get(server.URL + "/api/v1/events")
-	if err != nil {
-		server.Close()
-		t.Fatal(err)
-	}
+	response := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
 		server.Close()
@@ -230,19 +271,12 @@ func TestSSESubscriberLimitAndRelease(t *testing.T) {
 	app.hub = newHub(1)
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
-	first, err := server.Client().Get(server.URL + "/api/v1/events")
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
 	if first.StatusCode != http.StatusOK {
 		first.Body.Close()
 		t.Fatalf("first SSE status=%d", first.StatusCode)
 	}
-	second, err := server.Client().Get(server.URL + "/api/v1/events")
-	if err != nil {
-		first.Body.Close()
-		t.Fatal(err)
-	}
+	second := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
 	if second.StatusCode != http.StatusServiceUnavailable {
 		second.Body.Close()
 		first.Body.Close()
@@ -251,10 +285,7 @@ func TestSSESubscriberLimitAndRelease(t *testing.T) {
 	second.Body.Close()
 	first.Body.Close()
 	waitForSubscribers(t, app.hub, 0)
-	third, err := server.Client().Get(server.URL + "/api/v1/events")
-	if err != nil {
-		t.Fatal(err)
-	}
+	third := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
 	if third.StatusCode != http.StatusOK {
 		third.Body.Close()
 		t.Fatalf("SSE after release status=%d", third.StatusCode)
@@ -284,6 +315,7 @@ func TestDashboardIsEmbedded(t *testing.T) {
 	app, store, _, _ := testApp(t)
 	defer store.Close()
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	addTestWebSession(t, app, request)
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte("404-probe")) {

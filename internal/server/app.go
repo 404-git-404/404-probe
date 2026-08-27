@@ -33,6 +33,7 @@ type App struct {
 	mu               sync.RWMutex
 	states           map[string]storage.State
 	hub              *hub
+	webAuth          *webAuthenticator
 	handler          http.Handler
 }
 
@@ -108,14 +109,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/control/agents", a.handleGetControlAgents)
 	mux.HandleFunc("/api/v1/control/agents", a.handleControlAgentCollectionMethodNotAllowed)
 	mux.HandleFunc("/api/v1/control/agents/", a.handleControlInvalidPath)
-	mux.HandleFunc("GET /api/v1/agents", a.handleAgents)
-	mux.HandleFunc("GET /api/v1/agents/{id}/history", a.handleHistory)
-	mux.HandleFunc("GET /api/v1/events", a.handleEvents)
 	static, err := fs.Sub(web.Files, "static")
 	if err != nil {
 		panic(err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(static)))
+	a.webRoutes(mux, http.FileServer(http.FS(static)))
 	return securityHeaders(a.rejectAmbiguousJobPaths(mux))
 }
 
@@ -163,7 +161,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -452,13 +452,14 @@ func (a *App) handleHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
+	session := webSessionFromContext(r.Context())
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	setWebNoStore(w)
 	w.Header().Set("Connection", "keep-alive")
 	ch, ok := a.hub.subscribe()
 	if !ok {
@@ -470,11 +471,35 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
+	var sessionTimer *time.Timer
+	var sessionExpiry <-chan time.Time
+	if session != nil && a.webAuth != nil {
+		deadline := a.webAuth.sessionDeadline(session)
+		delay := deadline.Sub(a.now())
+		if delay < 0 {
+			delay = 0
+		}
+		sessionTimer = time.NewTimer(delay)
+		sessionExpiry = sessionTimer.C
+		defer sessionTimer.Stop()
+	}
 	for {
 		select {
 		case <-a.shutdown.Done():
 			return
 		case <-r.Context().Done():
+			return
+		case <-sessionExpiry:
+			deadline, active := a.webAuth.sessionStillActive(session, a.now())
+			if !active {
+				return
+			}
+			delay := deadline.Sub(a.now())
+			if delay < 0 {
+				delay = 0
+			}
+			sessionTimer.Reset(delay)
+		case <-sessionDone(session):
 			return
 		case message := <-ch:
 			_, _ = fmt.Fprintf(w, "event: agent\ndata: %s\n\n", message)
@@ -486,7 +511,19 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *App) Shutdown() { a.cancel() }
+func sessionDone(session *webSession) <-chan struct{} {
+	if session == nil {
+		return nil
+	}
+	return session.done
+}
+
+func (a *App) Shutdown() {
+	if a.webAuth != nil {
+		a.webAuth.shutdown()
+	}
+	a.cancel()
+}
 
 func (a *App) CleanupLoop() {
 	ticker := time.NewTicker(time.Hour)
