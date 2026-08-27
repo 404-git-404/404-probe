@@ -95,7 +95,7 @@ func TestWebAuthenticationDisabledIsFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/", "/login", "/api/v1/agents", "/api/v1/web/agents", "/api/v1/web/schedules", "/api/v1/web/events"} {
+	for _, path := range []string{"/", "/login", "/api/v1/agents", "/api/v1/web/agents", "/api/v1/web/schedules", "/api/v1/web/jobs", "/api/v1/web/events"} {
 		response := webRequest(app, http.MethodGet, path, nil, nil)
 		if response.Code != http.StatusNotFound || response.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("path=%s status=%d cache=%q", path, response.Code, response.Header().Get("Cache-Control"))

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>404-probe · Probe Jobs</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header><div><a class="back" href="/">← Agents</a><h1>Probe Jobs</h1><p>结果摘要与 typed measurements</p></div><div class="header-actions"><a class="nav-link" href="/schedules.html">Schedules</a><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
+  <main>
+    <div id="job-empty" class="empty">正在加载 Probe Jobs</div>
+    <section id="jobs" class="job-list" aria-live="polite"></section>
+    <button id="load-more" class="load-more hidden" type="button">加载更多</button>
+  </main>
+  <footer>Probe Job 与 Result 仅供观察，Web 不提供执行或修改操作</footer>
+  <script src="/jobs.js" defer></script>
+  <script src="/session.js" defer></script>
+</body>
+</html>
