@@ -39,6 +39,17 @@ The browser receives only an opaque `HttpOnly`, `Secure`, `SameSite=Strict` sess
 
 Production deployments must provide an exact HTTPS origin and terminate TLS at the public edge. Bind the Server to loopback when a reverse proxy is used. Plain HTTP Web login requires both an explicit exception and a loopback public origin and is only for local development.
 
+After login, the dashboard observes Agents only through the authenticated Web read surface:
+
+```text
+GET /api/v1/web/agents
+GET /api/v1/web/agents/{agent_id}
+GET /api/v1/web/agents/{agent_id}/history?hours=24
+GET /api/v1/web/events
+```
+
+The collection accepts `status=online|offline|revoked`, `limit=1..100`, and an opaque `cursor`. History accepts `hours=1..720`. These responses are `no-store` and use an explicit browser-safe DTO: agent tokens, the Control token, epochs, session IDs, report sequences, boot IDs, and raw network counters are not exposed. The SSE feed uses the same whitelist. Legacy V0.1 browser data routes are unavailable, and Web JavaScript never calls `/api/v1/control/*`.
+
 ## Start the server
 
 The control API is optional. Its token must be 32 random bytes encoded as unpadded base64url, stored in a private regular file.

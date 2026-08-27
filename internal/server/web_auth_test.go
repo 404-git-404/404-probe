@@ -95,7 +95,7 @@ func TestWebAuthenticationDisabledIsFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/", "/login", "/api/v1/agents", "/api/v1/web/agents", "/api/v1/events"} {
+	for _, path := range []string{"/", "/login", "/api/v1/agents", "/api/v1/web/agents", "/api/v1/web/events"} {
 		response := webRequest(app, http.MethodGet, path, nil, nil)
 		if response.Code != http.StatusNotFound || response.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("path=%s status=%d cache=%q", path, response.Code, response.Header().Get("Cache-Control"))
@@ -230,7 +230,7 @@ func TestWebLogoutClosesAuthenticatedSSE(t *testing.T) {
 	defer server.Close()
 	client := server.Client()
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	eventRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/events", nil)
+	eventRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/web/events", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

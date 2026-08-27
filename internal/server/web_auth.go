@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"404-probe/internal/auth"
-	"404-probe/internal/storage"
 )
 
 const (
@@ -75,14 +74,6 @@ type webSessionContextKey struct{}
 type webLoginPageView struct {
 	CSRFToken string
 	Failed    bool
-}
-
-type webAgentProofView struct {
-	AgentID  string `json:"agent_id"`
-	Name     string `json:"name"`
-	Revoked  bool   `json:"revoked"`
-	Online   bool   `json:"online"`
-	LastSeen *int64 `json:"last_seen"`
 }
 
 func WithWebAuthentication(config WebAuthenticationConfig) Option {
@@ -146,12 +137,19 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	mux.HandleFunc("POST /login", a.handleWebLogin)
 	mux.Handle("POST /logout", a.requireWebSession(http.HandlerFunc(a.handleWebLogout), true))
 	mux.Handle("GET /api/v1/web/session", a.requireWebSession(http.HandlerFunc(a.handleWebSession), true))
-	mux.Handle("GET /api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleWebAgentProof), true))
-	mux.Handle("GET /api/v1/agents", a.requireWebSession(http.HandlerFunc(a.handleAgents), true))
-	mux.Handle("GET /api/v1/agents/{id}/history", a.requireWebSession(http.HandlerFunc(a.handleHistory), true))
-	mux.Handle("GET /api/v1/events", a.requireWebSession(http.HandlerFunc(a.handleEvents), true))
+	mux.Handle("GET /api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgents), true))
+	mux.Handle("/api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleWebAgentCollectionMethodNotAllowed), true))
+	mux.Handle("GET /api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgentHistory), true))
+	mux.Handle("/api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleWebAgentHistoryMethodNotAllowed), true))
+	mux.Handle("GET /api/v1/web/agents/{agent_id}", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgent), true))
+	mux.Handle("/api/v1/web/agents/{agent_id}", a.requireWebSession(http.HandlerFunc(a.handleWebAgentMethodNotAllowed), true))
+	mux.Handle("GET /api/v1/web/events", a.requireWebSession(http.HandlerFunc(a.handleEvents), true))
+	mux.Handle("/api/v1/web/events", a.requireWebSession(http.HandlerFunc(a.handleWebEventsMethodNotAllowed), true))
 	mux.Handle("/api/v1/web/", a.requireWebSession(http.NotFoundHandler(), true))
+	mux.Handle("/api/v1/agents", a.requireWebSession(http.NotFoundHandler(), true))
 	mux.Handle("/api/v1/agents/", a.requireWebSession(http.NotFoundHandler(), true))
+	mux.Handle("/api/v1/events", a.requireWebSession(http.NotFoundHandler(), true))
+	mux.Handle("/api/v1/events/", a.requireWebSession(http.NotFoundHandler(), true))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		setWebNoStore(w)
 		http.NotFound(w, r)
@@ -301,34 +299,6 @@ func (a *App) handleWebSession(w http.ResponseWriter, r *http.Request) {
 		CSRFToken string `json:"csrf_token"`
 		ExpiresAt int64  `json:"expires_at"`
 	}{Principal: "admin", CSRFToken: session.csrfToken, ExpiresAt: deadline.UnixMilli()})
-}
-
-func (a *App) handleWebAgentProof(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawQuery != "" {
-		writeJobError(w, http.StatusBadRequest, "invalid_query", "invalid agent query")
-		return
-	}
-	records, next, err := a.store.QueryAgents(r.Context(), storage.AgentQuery{
-		Limit: 1, Now: a.now(), OfflineTimeout: a.offlineTimeout,
-	})
-	if err != nil {
-		a.logger.Error("query Web agent proof", "error", err)
-		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not query agents")
-		return
-	}
-	items := make([]webAgentProofView, 0, len(records))
-	for _, record := range records {
-		view := webAgentProofView{AgentID: record.Agent.ID, Name: record.Agent.Name, Revoked: record.Agent.Revoked, Online: record.Online}
-		if record.State != nil {
-			lastSeen := record.State.LastSeen
-			view.LastSeen = &lastSeen
-		}
-		items = append(items, view)
-	}
-	writeJSON(w, http.StatusOK, struct {
-		Items     []webAgentProofView `json:"items"`
-		Truncated bool                `json:"truncated"`
-	}{Items: items, Truncated: next != nil})
 }
 
 func exactWebForm(values url.Values, names ...string) bool {

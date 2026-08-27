@@ -120,29 +120,29 @@ func TestOnlineOfflineOnline(t *testing.T) {
 	if response := postReport(t, app, token, reportFor(id, 1)); response.Code != http.StatusOK {
 		t.Fatal(response.Body.String())
 	}
-	assertOnline(t, app, true)
+	assertOnline(t, app, id, true)
 	now = now.Add(31 * time.Second)
-	assertOnline(t, app, false)
+	assertOnline(t, app, id, false)
 	if response := postReport(t, app, token, reportFor(id, 2)); response.Code != http.StatusOK {
 		t.Fatal(response.Body.String())
 	}
-	assertOnline(t, app, true)
+	assertOnline(t, app, id, true)
 }
 
-func assertOnline(t *testing.T, app *App, want bool) {
+func assertOnline(t *testing.T, app *App, agentID string, want bool) {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	request := httptest.NewRequest(http.MethodGet, webAgentPathPrefix+agentID, nil)
 	addTestWebSession(t, app, request)
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
-	var agents []struct {
+	var agent struct {
 		Online bool `json:"online"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &agents); err != nil {
+	if err := json.Unmarshal(response.Body.Bytes(), &agent); err != nil {
 		t.Fatal(err)
 	}
-	if len(agents) != 1 || agents[0].Online != want {
-		t.Fatalf("agents=%s want online=%t", response.Body.String(), want)
+	if agent.Online != want {
+		t.Fatalf("agent=%s want online=%t", response.Body.String(), want)
 	}
 }
 
@@ -155,7 +155,7 @@ func TestMalformedReportDoesNotPanic(t *testing.T) {
 			t.Fatalf("body=%q status=%d response=%s", body, response.Code, response.Body.String())
 		}
 	}
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/web/agents", nil)
 	addTestWebSession(t, app, request)
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
@@ -218,10 +218,11 @@ func TestConcurrentPublicationCannotRegressMemoryOrSSE(t *testing.T) {
 	}
 	select {
 	case payload := <-ch:
-		var view agentView
-		if err := json.Unmarshal(payload, &view); err != nil || view.Sequence != newer.Sequence || view.RXTotal != newer.RXTotal {
+		var view webAgentEventView
+		if err := json.Unmarshal(payload, &view); err != nil || view.State == nil || view.State.RXTotal != newer.RXTotal {
 			t.Fatalf("SSE payload=%s err=%v", payload, err)
 		}
+		assertNoWebAgentSecrets(t, string(payload))
 	case <-time.After(time.Second):
 		t.Fatal("missing SSE publication")
 	}
@@ -241,7 +242,7 @@ func TestActiveSSEExitsBeforeHTTPShutdown(t *testing.T) {
 		app.CleanupLoop()
 	}()
 	server := httptest.NewServer(app.Handler())
-	response := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
+	response := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/web/events")
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
 		server.Close()
@@ -271,12 +272,12 @@ func TestSSESubscriberLimitAndRelease(t *testing.T) {
 	app.hub = newHub(1)
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
-	first := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
+	first := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/web/events")
 	if first.StatusCode != http.StatusOK {
 		first.Body.Close()
 		t.Fatalf("first SSE status=%d", first.StatusCode)
 	}
-	second := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
+	second := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/web/events")
 	if second.StatusCode != http.StatusServiceUnavailable {
 		second.Body.Close()
 		first.Body.Close()
@@ -285,7 +286,7 @@ func TestSSESubscriberLimitAndRelease(t *testing.T) {
 	second.Body.Close()
 	first.Body.Close()
 	waitForSubscribers(t, app.hub, 0)
-	third := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/events")
+	third := getTestWeb(t, app, server.Client(), server.URL+"/api/v1/web/events")
 	if third.StatusCode != http.StatusOK {
 		third.Body.Close()
 		t.Fatalf("SSE after release status=%d", third.StatusCode)

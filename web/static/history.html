@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header><div><a class="back" href="/">← 返回</a><h1 id="title">Agent 历史</h1><p>最近 24 小时 · 1 分钟聚合</p></div></header>
+  <header><div><a class="back" href="/">← 返回</a><h1 id="title">Agent 历史</h1><p>最近 24 小时 · 1 分钟聚合</p></div><button id="logout" class="logout" type="button" disabled>退出</button></header>
   <main class="history-grid">
     <article class="chart"><h2>CPU %</h2><canvas id="cpu"></canvas></article>
     <article class="chart"><h2>RAM %</h2><canvas id="ram"></canvas></article>
@@ -16,5 +16,6 @@
     <div id="history-empty" class="empty">正在加载历史数据</div>
   </main>
   <script src="/history.js" defer></script>
+  <script src="/session.js" defer></script>
 </body>
 </html>

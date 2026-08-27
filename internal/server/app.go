@@ -10,8 +10,6 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,11 +44,6 @@ const (
 )
 
 var errRequestTooLarge = errors.New("request body is too large")
-
-type agentView struct {
-	storage.State
-	Online bool `json:"online"`
-}
 
 func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Logger, options ...Option) (*App, error) {
 	if offlineTimeout <= 0 {
@@ -398,7 +391,7 @@ func (a *App) publishState(state storage.State) bool {
 		return false
 	}
 	a.states[state.AgentID] = state
-	payload, _ := json.Marshal(agentView{State: state, Online: true})
+	payload, _ := json.Marshal(newWebAgentEventView(state))
 	a.hub.publish(payload)
 	a.mu.Unlock()
 	return true
@@ -411,47 +404,11 @@ func stateAfter(candidate, current storage.State) bool {
 	return candidate.SessionID == current.SessionID && candidate.Sequence > current.Sequence
 }
 
-func (a *App) handleAgents(w http.ResponseWriter, r *http.Request) {
-	now := a.now()
-	a.mu.RLock()
-	views := make([]agentView, 0, len(a.states))
-	for _, state := range a.states {
-		views = append(views, agentView{State: state, Online: state.LastSeen > 0 && now.Sub(time.UnixMilli(state.LastSeen)) <= a.offlineTimeout})
-	}
-	a.mu.RUnlock()
-	sort.Slice(views, func(i, j int) bool {
-		if views[i].Name == views[j].Name {
-			return views[i].AgentID < views[j].AgentID
-		}
-		return views[i].Name < views[j].Name
-	})
-	writeJSON(w, http.StatusOK, views)
-}
-
-func (a *App) handleHistory(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	hours := 24
-	if value := r.URL.Query().Get("hours"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 24*30 {
-			writeError(w, http.StatusBadRequest, "hours must be between 1 and 720")
-			return
-		}
-		hours = parsed
-	}
-	points, err := a.store.History(r.Context(), id, a.now().Add(-time.Duration(hours)*time.Hour))
-	if err != nil {
-		a.logger.Error("read history", "error", err)
-		writeError(w, http.StatusInternalServerError, "could not read history")
+func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if _, err := parseControlQuery(r); err != nil {
+		writeControlCollectionError(w, err)
 		return
 	}
-	if points == nil {
-		points = []storage.HistoryPoint{}
-	}
-	writeJSON(w, http.StatusOK, points)
-}
-
-func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	session := webSessionFromContext(r.Context())
 	flusher, ok := w.(http.Flusher)
 	if !ok {
