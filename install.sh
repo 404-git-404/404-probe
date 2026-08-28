@@ -337,18 +337,71 @@ prompt_web_origin() {
   printf '%s\n' "${value}"
 }
 
+show_service_diagnostics() {
+  local unit="$1"
+  systemctl --no-pager --full status "${unit}" || true
+  if command -v journalctl >/dev/null 2>&1; then
+    journalctl --no-pager -u "${unit}" -n 50 || true
+  fi
+}
+
 wait_for_service() {
   local unit="$1"
   local attempts=20
+  local service_state
   while (( attempts > 0 )); do
-    if systemctl is-active --quiet "${unit}"; then
+    service_state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+    if [[ "${service_state}" == "active" ]]; then
       return
     fi
-    sleep 1
+    case "${service_state}" in
+      activating|reloading) ;;
+      *)
+        show_service_diagnostics "${unit}"
+        die "${unit} entered terminal state ${service_state:-unknown}"
+        ;;
+    esac
     attempts=$((attempts - 1))
+    if (( attempts > 0 )); then
+      sleep 1
+    fi
   done
-  systemctl --no-pager --full status "${unit}" || true
+  show_service_diagnostics "${unit}"
   die "${unit} did not become active"
+}
+
+wait_for_server_readiness() {
+  local unit="$1"
+  local attempts=20
+  local service_state status_code
+  while (( attempts > 0 )); do
+    service_state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
+    case "${service_state}" in
+      active|activating|reloading) ;;
+      *)
+        show_service_diagnostics "${unit}"
+        die "${unit} entered terminal state ${service_state:-unknown} before application readiness"
+        ;;
+    esac
+
+    status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --connect-timeout 1 --max-time 1 --request POST \
+      http://127.0.0.1:8080/api/v1/agent/jobs/claim || true)"
+    case "${status_code}" in
+      401) return ;;
+      ""|000) ;;
+      *)
+        show_service_diagnostics "${unit}"
+        die "Server HTTP verification failed (expected HTTP 401, received ${status_code})"
+        ;;
+    esac
+
+    attempts=$((attempts - 1))
+    if (( attempts > 0 )); then
+      sleep 0.5
+    fi
+  done
+  show_service_diagnostics "${unit}"
+  die "Server application readiness timed out (expected HTTP 401)"
 }
 
 install_server() {
@@ -428,12 +481,7 @@ EOF
   chmod 0644 "${SERVER_UNIT}"
   systemctl daemon-reload
   systemctl enable --now 404-probe-server.service
-  wait_for_service 404-probe-server.service
-
-  local status_code
-  status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --connect-timeout 5 --max-time 15 --request POST \
-    http://127.0.0.1:8080/api/v1/agent/jobs/claim || true)"
-  [[ "${status_code}" == "401" ]] || die "Server HTTP verification failed (expected HTTP 401, received ${status_code:-no response})"
+  wait_for_server_readiness 404-probe-server.service
   commit_install_transaction
 
   note "404-probe Server is installed and running."
