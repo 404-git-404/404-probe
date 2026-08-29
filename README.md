@@ -1,5 +1,21 @@
 # 404-probe
 
+## Quick Start
+
+On a fresh Linux VPS with systemd, run the unified installer and choose Server or Agent:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo bash
+```
+
+For a Server, enter its public Web URL (for example, `https://probe.example.com`) and set the Web administrator password. The installer exposes `http://127.0.0.1:8080` as cloudflared's local origin, but 404-probe does not provision or manage Cloudflare Tunnel; Tunnel configuration remains external. Create each Agent's one-time enrollment value on the Server:
+
+```bash
+sudo 404-probe-install enroll singapore-01
+```
+
+For an Agent, run the same installer and enter only the Server URL and the enrollment value. Agent names remain server-authoritative. Non-loopback connections require HTTPS.
+
 ## Build and test
 
 ```bash
