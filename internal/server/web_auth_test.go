@@ -103,6 +103,42 @@ func TestWebAuthenticationDisabledIsFailClosed(t *testing.T) {
 	}
 }
 
+func TestWebLoginPagePreservesSameOriginForFormSubmission(t *testing.T) {
+	app, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+
+	_, _, response := webLoginPage(t, app)
+	if policy := response.Header().Get("Referrer-Policy"); policy != "same-origin" {
+		t.Fatalf("Referrer-Policy=%q want same-origin", policy)
+	}
+}
+
+func TestWebLoginFaviconDoesNotRotateCSRFToken(t *testing.T) {
+	app, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+
+	loginCookie, token, _ := webLoginPage(t, app)
+	favicon := webRequest(app, http.MethodGet, "/favicon.ico", nil, loginCookie)
+	if favicon.Code != http.StatusNoContent || favicon.Header().Get("Location") != "" {
+		t.Fatalf("favicon status=%d location=%q body=%s", favicon.Code, favicon.Header().Get("Location"), favicon.Body.String())
+	}
+	if cookies := favicon.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("favicon unexpectedly changed cookies: %v", cookies)
+	}
+
+	form := url.Values{"csrf_token": {token}, "password": {"wrong"}}
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", "https://probe.test")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	request.AddCookie(loginCookie)
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "login-error") {
+		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWebLoginSessionProofAndCookieSecurity(t *testing.T) {
 	app, store, agentID := newWebAuthenticationTestApp(t)
 	defer store.Close()
@@ -135,6 +171,9 @@ func TestWebLoginSessionProofAndCookieSecurity(t *testing.T) {
 			t.Fatalf("missing security header %s", header)
 		}
 	}
+	if policy := sessionResponse.Header().Get("Referrer-Policy"); policy != "same-origin" {
+		t.Fatalf("Referrer-Policy=%q want same-origin", policy)
+	}
 }
 
 func TestWebAuthenticationPrecedesQueryValidation(t *testing.T) {
@@ -159,6 +198,10 @@ func TestWebLoginRejectsOriginCSRFAndReplays(t *testing.T) {
 	wrongOrigin := postWebLogin(t, app, "test-password", "https://attacker.test")
 	if wrongOrigin.Code != http.StatusForbidden {
 		t.Fatalf("wrong origin status=%d body=%s", wrongOrigin.Code, wrongOrigin.Body.String())
+	}
+	nullOrigin := postWebLogin(t, app, "test-password", "null")
+	if nullOrigin.Code != http.StatusForbidden {
+		t.Fatalf("null origin status=%d body=%s", nullOrigin.Code, nullOrigin.Body.String())
 	}
 	loginCookie, token, _ := webLoginPage(t, app)
 	form := url.Values{"csrf_token": {token}, "password": {"wrong"}}

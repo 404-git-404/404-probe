@@ -135,6 +135,10 @@ func webLoopbackHost(host string) bool {
 func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	mux.HandleFunc("GET /login", a.handleWebLoginPage)
 	mux.HandleFunc("POST /login", a.handleWebLogin)
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.Handle("POST /logout", a.requireWebSession(http.HandlerFunc(a.handleWebLogout), true))
 	mux.Handle("GET /api/v1/web/session", a.requireWebSession(http.HandlerFunc(a.handleWebSession), true))
 	mux.Handle("GET /api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgents), true))
