@@ -1,7 +1,19 @@
 const container = document.querySelector('#agents');
 const empty = document.querySelector('#empty');
 const stream = document.querySelector('#stream');
+const addAgentButton = document.querySelector('#add-agent');
+const addAgentDialog = document.querySelector('#add-agent-dialog');
+const addAgentCreate = document.querySelector('#add-agent-create');
+const addAgentResult = document.querySelector('#add-agent-result');
+const addAgentForm = document.querySelector('#add-agent-form');
+const addAgentName = document.querySelector('#add-agent-name');
+const addAgentSubmit = document.querySelector('#add-agent-submit');
+const addAgentError = document.querySelector('#add-agent-error');
+const createdAgentID = document.querySelector('#created-agent-id');
+const createdInstallCommand = document.querySelector('#created-install-command');
+const createdEnrollment = document.querySelector('#created-enrollment');
 const agents = new Map();
+let mutationCSRFToken = '';
 
 const bytes = (value, rate = false) => {
   let number = Number(value || 0);
@@ -33,6 +45,84 @@ async function readJSON(path) {
   }
   if (!response.ok) throw new Error(response.statusText);
   return response.json();
+}
+
+async function loadMutationSession() {
+  try {
+    const session = await readJSON('/api/v1/web/session');
+    mutationCSRFToken = session.csrf_token || '';
+    addAgentButton.disabled = !mutationCSRFToken;
+  } catch (error) {
+    mutationCSRFToken = '';
+    addAgentButton.disabled = true;
+  }
+}
+
+function clearEnrollmentDialog() {
+  createdAgentID.textContent = '';
+  createdInstallCommand.textContent = '';
+  createdEnrollment.textContent = '';
+  addAgentForm.reset();
+  addAgentError.classList.add('hidden');
+  addAgentCreate.classList.remove('hidden');
+  addAgentResult.classList.add('hidden');
+  addAgentSubmit.disabled = false;
+}
+
+addAgentButton.addEventListener('click', () => {
+  clearEnrollmentDialog();
+  addAgentDialog.showModal();
+  addAgentName.focus();
+});
+
+document.querySelector('#add-agent-cancel').addEventListener('click', () => addAgentDialog.close());
+document.querySelector('#add-agent-done').addEventListener('click', () => addAgentDialog.close());
+addAgentDialog.addEventListener('close', clearEnrollmentDialog);
+
+addAgentForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!mutationCSRFToken) return;
+  addAgentSubmit.disabled = true;
+  addAgentError.classList.add('hidden');
+  try {
+    const response = await fetch('/api/v1/web/agents', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
+      body: JSON.stringify({name: addAgentName.value}),
+    });
+    if (response.status === 401) {
+      location.assign('/login');
+      return;
+    }
+    if (!response.ok) throw new Error(response.statusText);
+    const enrollment = await response.json();
+    createdAgentID.textContent = enrollment.agent.agent_id;
+    createdInstallCommand.textContent = enrollment.install_command;
+    createdEnrollment.textContent = enrollment.enrollment_value;
+    addAgentCreate.classList.add('hidden');
+    addAgentResult.classList.remove('hidden');
+    await refresh();
+  } catch (error) {
+    addAgentError.classList.remove('hidden');
+    addAgentSubmit.disabled = false;
+  }
+});
+
+for (const button of document.querySelectorAll('[data-copy-target]')) {
+  button.addEventListener('click', async () => {
+    const target = document.querySelector(`#${button.dataset.copyTarget}`);
+    if (!target || !target.textContent) return;
+    const label = button.textContent;
+    try {
+      await navigator.clipboard.writeText(target.textContent);
+      button.textContent = '已复制';
+      setTimeout(() => { button.textContent = label; }, 1200);
+    } catch (error) {
+      button.textContent = '复制失败';
+      setTimeout(() => { button.textContent = label; }, 1200);
+    }
+  });
 }
 
 function metric(label, value) {
@@ -156,6 +246,7 @@ async function refresh() {
   }
 }
 
+loadMutationSession();
 refresh();
 setInterval(refresh, 15000);
 

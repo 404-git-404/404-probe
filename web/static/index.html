@@ -7,9 +7,33 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header><div><h1>404-probe</h1><p>已认证 Agent 观测</p></div><div class="header-actions"><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
+  <header><div><h1>404-probe</h1><p>已认证 Agent 观测</p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
   <main><div id="empty" class="empty">尚无 Agent 上报</div><section id="agents" class="grid" aria-live="polite"></section></main>
-  <footer>V0.4 · 数据通过 Server 安全汇总</footer>
+  <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
+    <div id="add-agent-create">
+      <h2 id="add-agent-title">添加 Agent</h2>
+      <p>创建现有 404-probe Agent 身份并生成安全安装信息。</p>
+      <form id="add-agent-form" autocomplete="off">
+        <label for="add-agent-name">名称</label>
+        <input id="add-agent-name" name="name" type="text" maxlength="128" required autofocus>
+        <div id="add-agent-error" class="dialog-error hidden" role="alert">创建失败，请重试。</div>
+        <div class="dialog-actions"><button id="add-agent-cancel" type="button">取消</button><button id="add-agent-submit" class="primary-action" type="submit">创建</button></div>
+      </form>
+    </div>
+    <div id="add-agent-result" class="hidden">
+      <h2>Agent 已创建</h2>
+      <p class="secret-warning">Enrollment credential 仅显示这一次。关闭后无法再次查看。</p>
+      <label>Agent ID</label>
+      <div class="copy-row"><code id="created-agent-id"></code><button type="button" data-copy-target="created-agent-id">复制</button></div>
+      <label>安装命令</label>
+      <div class="copy-block"><code id="created-install-command"></code><button type="button" data-copy-target="created-install-command">复制命令</button></div>
+      <p class="install-note">在目标 Linux 主机执行命令，然后在隐藏提示中粘贴下面的 enrollment value。复制 credential 会将其留在系统剪贴板，使用后请清除。</p>
+      <label>Enrollment value</label>
+      <div class="copy-block secret-value"><code id="created-enrollment"></code><button type="button" data-copy-target="created-enrollment">复制 credential</button></div>
+      <div class="dialog-actions"><button id="add-agent-done" class="primary-action" type="button">完成并关闭</button></div>
+    </div>
+  </dialog>
+  <footer>V0.5 · 数据通过 Server 安全汇总</footer>
   <script src="/app.js" defer></script>
   <script src="/session.js" defer></script>
 </body>

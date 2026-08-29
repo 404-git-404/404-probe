@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.4.1"
+readonly DEFAULT_VERSION="v0.5.0"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -36,6 +36,7 @@ usage() {
   cat <<'EOF'
 Usage:
   404-probe-install                 interactive Server/Agent installation
+  404-probe-install agent --server <origin>
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install uninstall <server|agent>
 
@@ -545,13 +546,15 @@ install_agent() {
     || die "existing Agent state was found; refusing to alter it"
   [[ ! -e "${AGENT_BINARY}" ]] || die "${AGENT_BINARY} already exists; refusing to overwrite it"
 
-  local server_url enrollment credentials agent_id agent_token insecure_option
-  printf 'Server URL: ' >/dev/tty
-  IFS= read -r server_url </dev/tty
+  local server_url="${1:-}" enrollment credentials agent_id agent_token insecure_option
+  if [[ -z "${server_url}" ]]; then
+    printf 'Server URL: ' >/dev/tty
+    IFS= read -r server_url </dev/tty
+  fi
   valid_agent_server_url "${server_url}" \
     || die "Server URL must be an HTTPS origin, or loopback HTTP, without credentials, path, query, or fragment"
   server_url="${server_url%/}"
-  printf 'Enrollment token: ' >/dev/tty
+  printf 'Enrollment value: ' >/dev/tty
   IFS= read -r -s enrollment </dev/tty
   printf '\n' >/dev/tty
   credentials="$(decode_enrollment_token "${enrollment}")"
@@ -627,6 +630,13 @@ EOF
   systemctl --no-pager --full status 404-probe-agent.service || true
 }
 
+install_agent_command() {
+  require_root_linux_systemd
+  [[ $# -eq 2 && "$1" == "--server" ]] \
+    || die "usage: 404-probe-install agent --server <origin>"
+  install_agent "$2"
+}
+
 enroll_agent() {
   require_root_linux_systemd
   [[ $# -eq 1 ]] || die "usage: 404-probe-install enroll <agent-name>"
@@ -680,7 +690,7 @@ interactive_install() {
   require_root_linux_systemd
   local choice
   cat >/dev/tty <<'EOF'
-Install 404-probe V0.4.1
+Install 404-probe V0.5.0
 
   1) Server
   2) Agent
@@ -697,6 +707,10 @@ EOF
 
 main() {
   case "${1:-}" in
+    agent)
+      shift
+      install_agent_command "$@"
+      ;;
     enroll)
       shift
       enroll_agent "$@"

@@ -141,6 +141,7 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	})
 	mux.Handle("POST /logout", a.requireWebSession(http.HandlerFunc(a.handleWebLogout), true))
 	mux.Handle("GET /api/v1/web/session", a.requireWebSession(http.HandlerFunc(a.handleWebSession), true))
+	mux.Handle("POST /api/v1/web/agents", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebAgent)))
 	mux.Handle("GET /api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgents), true))
 	mux.Handle("/api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleWebAgentCollectionMethodNotAllowed), true))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgentHistory), true))
@@ -168,6 +169,22 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	})
 	mux.Handle("GET /style.css", static)
 	mux.Handle("/", a.requireWebSession(static, false))
+}
+
+func (a *App) requireWebMutation(next http.Handler) http.Handler {
+	return a.requireWebSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session := webSessionFromContext(r.Context())
+		originValues := r.Header.Values("Origin")
+		fetchSiteValues := r.Header.Values("Sec-Fetch-Site")
+		csrfValues := r.Header.Values("X-CSRF-Token")
+		if session == nil || len(originValues) != 1 || len(fetchSiteValues) != 1 || fetchSiteValues[0] != "same-origin" ||
+			!a.webAuth.sameOriginRequest(r) || len(csrfValues) != 1 ||
+			subtle.ConstantTimeCompare([]byte(csrfValues[0]), []byte(session.csrfToken)) != 1 {
+			writeJobError(w, http.StatusForbidden, "forbidden", "request rejected")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}), true)
 }
 
 func (a *App) requireWebSession(next http.Handler, api bool) http.Handler {

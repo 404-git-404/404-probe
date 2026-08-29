@@ -137,7 +137,6 @@ func TestWebAgentDetailHistoryWhitelistAndRouting(t *testing.T) {
 		{http.MethodGet, webAgentPathPrefix + "dddddddddddddddddddddddddddddddd", http.StatusNotFound, "agent_not_found"},
 		{http.MethodGet, webAgentPathPrefix + "bad", http.StatusBadRequest, "invalid_request"},
 		{http.MethodPost, detailPath, http.StatusMethodNotAllowed, "method_not_allowed"},
-		{http.MethodPost, "/api/v1/web/agents", http.StatusMethodNotAllowed, "method_not_allowed"},
 		{http.MethodGet, detailPath + "/history?hours=0", http.StatusBadRequest, "invalid_query"},
 		{http.MethodGet, detailPath + "/history?hours=721", http.StatusBadRequest, "invalid_query"},
 		{http.MethodGet, detailPath + "/history?x=1", http.StatusBadRequest, "invalid_query"},
