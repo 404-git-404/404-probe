@@ -168,6 +168,34 @@ removeAgentForm.addEventListener('submit', async event => {
   }
 });
 
+async function setAgentDisabled(agent, disabled, button) {
+  if (!mutationCSRFToken || agent.revoked) return;
+  button.disabled = true;
+  const action = disabled ? 'disable' : 'enable';
+  try {
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agent.agent_id)}/${action}`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
+      body: '{}',
+    });
+    if (response.status === 401) {
+      location.assign('/login');
+      return;
+    }
+    if (!response.ok) throw new Error(response.statusText);
+    const changed = await response.json();
+    if (!changed.agent || changed.agent.revoked || Boolean(changed.agent.disabled_at) !== disabled) {
+      throw new Error('Agent state did not change');
+    }
+    agents.set(agent.agent_id, {...agent, ...changed.agent});
+    render();
+    await refresh();
+  } catch (error) {
+    button.disabled = false;
+  }
+}
+
 for (const button of document.querySelectorAll('[data-copy-target]')) {
   button.addEventListener('click', async () => {
     const target = document.querySelector(`#${button.dataset.copyTarget}`);
@@ -223,10 +251,10 @@ function render() {
     setReadableText(name, agent.name || agent.agent_id);
     title.append(heading, name);
     const status = document.createElement('span');
-    const stateName = agent.revoked ? 'revoked' : agent.online ? 'online' : 'offline';
+    const stateName = agent.revoked ? 'revoked' : agent.disabled_at ? 'paused' : agent.online ? 'online' : 'offline';
     status.className = `status ${stateName}`;
     status.dataset.agentState = stateName;
-    status.textContent = agent.revoked ? '● REVOKED' : agent.online ? '● ONLINE' : '● OFFLINE';
+    status.textContent = agent.revoked ? '● REVOKED' : agent.disabled_at ? '● PAUSED' : agent.online ? '● ONLINE' : '● OFFLINE';
     head.append(title, status);
     card.append(head);
 
@@ -276,12 +304,24 @@ function render() {
     remove.className = 'remove-agent';
     remove.dataset.agentId = agent.agent_id;
     remove.type = 'button';
-    remove.textContent = '移除 Agent';
+    remove.textContent = '永久移除';
     remove.disabled = !mutationCSRFToken;
     remove.addEventListener('click', () => openRemoveAgentDialog(agent));
+    const stateAction = document.createElement('button');
+    stateAction.className = 'agent-state-action';
+    stateAction.dataset.agentId = agent.agent_id;
+    stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
+    stateAction.type = 'button';
+    stateAction.textContent = agent.disabled_at ? '恢复' : '暂停';
+    stateAction.disabled = !mutationCSRFToken || agent.revoked;
+    stateAction.addEventListener('click', () => setAgentDisabled(agent, !agent.disabled_at, stateAction));
+    const management = document.createElement('div');
+    management.className = 'agent-actions';
+    if (!agent.revoked) management.append(stateAction);
+    management.append(remove);
     const actions = document.createElement('div');
     actions.className = 'card-actions';
-    actions.append(link, remove);
+    actions.append(link, management);
     card.append(actions);
     container.append(card);
   }

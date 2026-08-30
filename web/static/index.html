@@ -37,7 +37,7 @@
     <h2 id="remove-agent-title">移除 Agent</h2>
     <p>这会立即撤销 Agent credential，并将它移出默认活动视图。</p>
     <div class="remove-agent-identity"><strong id="remove-agent-name"></strong><code id="remove-agent-id"></code></div>
-    <p class="remove-warning">历史 telemetry、Schedules、Probe Jobs/Results 会保留。此操作不会远程卸载 Agent。</p>
+    <p class="remove-warning">此操作会永久撤销 Agent credential，无法通过恢复操作撤销。历史 telemetry、Schedules、Probe Jobs/Results 会保留，且不会远程卸载 Agent。</p>
     <form id="remove-agent-form">
       <div id="remove-agent-error" class="dialog-error hidden" role="alert">移除失败，请重试。</div>
       <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">撤销并移除</button></div>

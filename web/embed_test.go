@@ -64,7 +64,7 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 	javascript := string(jsBytes)
 	for _, required := range []string{
 		`id="remove-agent-dialog"`, `id="remove-agent-form"`, `id="remove-agent-id"`,
-		`历史 telemetry、Schedules、Probe Jobs/Results 会保留`, `不会远程卸载 Agent`,
+		`永久撤销 Agent credential`, `历史 telemetry、Schedules、Probe Jobs/Results 会保留`, `不会远程卸载 Agent`,
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("dashboard missing revoke UI %q", required)
@@ -82,6 +82,40 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 	for _, forbidden := range []string{"remote uninstall", "/api/v1/control/"} {
 		if strings.Contains(javascript, forbidden) {
 			t.Fatalf("dashboard revoke flow contains forbidden behavior %q", forbidden)
+		}
+	}
+}
+
+func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsBytes, err := fs.ReadFile(static, "app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssBytes, err := fs.ReadFile(static, "style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(jsBytes)
+	stylesheet := string(cssBytes)
+	for _, required := range []string{
+		`agent.revoked ? 'revoked' : agent.disabled_at ? 'paused'`,
+		`agent.disabled_at ? '● PAUSED'`,
+		`stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable'`,
+		`stateAction.textContent = agent.disabled_at ? '恢复' : '暂停'`,
+		"/${action}`", `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`,
+		`if (!agent.revoked) management.append(stateAction)`,
+	} {
+		if !strings.Contains(javascript, required) {
+			t.Fatalf("dashboard script missing pause/resume behavior %q", required)
+		}
+	}
+	for _, required := range []string{`.paused{color:#ffd58a}`, `.agent-state-action{`, `.agent-actions{`} {
+		if !strings.Contains(stylesheet, required) {
+			t.Fatalf("dashboard stylesheet missing paused state %q", required)
 		}
 	}
 }
