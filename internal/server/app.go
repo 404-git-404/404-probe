@@ -178,6 +178,10 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
 			return
 		}
+		if errors.Is(err, storage.ErrAgentDisabled) {
+			writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
+			return
+		}
 		if !errors.Is(err, storage.ErrUnauthorized) {
 			a.logger.Error("authenticate report", "error", err)
 		}
@@ -204,6 +208,10 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, storage.ErrAgentRevoked) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
+			return
+		}
+		if errors.Is(err, storage.ErrAgentDisabled) {
+			writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
 			return
 		}
 		if errors.Is(err, storage.ErrUnauthorized) {
@@ -310,6 +318,14 @@ func (a *App) authenticateJobRequest(w http.ResponseWriter, r *http.Request, ope
 	}
 	agentID, err := a.store.Authenticate(r.Context(), token)
 	if err != nil {
+		if errors.Is(err, storage.ErrAgentRevoked) {
+			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
+			return "", false
+		}
+		if errors.Is(err, storage.ErrAgentDisabled) {
+			writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
+			return "", false
+		}
 		if errors.Is(err, storage.ErrUnauthorized) {
 			writeJobError(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
 			return "", false

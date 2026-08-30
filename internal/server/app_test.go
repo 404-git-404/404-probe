@@ -130,6 +130,19 @@ func TestReportRevocationHasStableMachineSignal(t *testing.T) {
 	}
 }
 
+func TestReportDisabledHasStableDistinctMachineSignal(t *testing.T) {
+	app, store, id, token := testApp(t)
+	defer store.Close()
+	if disabled, err := store.DisableAgent(context.Background(), id, time.Now()); err != nil || !disabled {
+		t.Fatalf("disable=%t err=%v", disabled, err)
+	}
+	response := postReport(t, app, token, reportFor(id, 1))
+	if response.Code != http.StatusLocked || jobErrorCode(t, response) != "agent_disabled" ||
+		strings.Contains(response.Body.String(), "agent_revoked") {
+		t.Fatalf("disabled status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestOnlineOfflineOnline(t *testing.T) {
 	app, store, id, token := testApp(t)
 	defer store.Close()

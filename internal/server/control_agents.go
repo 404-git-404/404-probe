@@ -13,12 +13,13 @@ const (
 )
 
 type controlAgentSummaryView struct {
-	AgentID   string `json:"agent_id"`
-	Name      string `json:"name"`
-	Revoked   bool   `json:"revoked"`
-	CreatedAt int64  `json:"created_at"`
-	Online    bool   `json:"online"`
-	LastSeen  *int64 `json:"last_seen"`
+	AgentID    string `json:"agent_id"`
+	Name       string `json:"name"`
+	Revoked    bool   `json:"revoked"`
+	DisabledAt *int64 `json:"disabled_at"`
+	CreatedAt  int64  `json:"created_at"`
+	Online     bool   `json:"online"`
+	LastSeen   *int64 `json:"last_seen"`
 }
 
 type controlAgentDetailView struct {
@@ -68,7 +69,7 @@ func (a *App) handleGetControlAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	status := storage.AgentQueryStatus(values.Get("status"))
 	switch status {
-	case "", storage.AgentQueryStatusOnline, storage.AgentQueryStatusOffline, storage.AgentQueryStatusRevoked:
+	case "", storage.AgentQueryStatusOnline, storage.AgentQueryStatusOffline, storage.AgentQueryStatusDisabled, storage.AgentQueryStatusRevoked:
 	default:
 		writeControlCollectionError(w, errInvalidControlQuery)
 		return
@@ -164,7 +165,7 @@ func validControlAgentID(value string) bool {
 func newControlAgentSummaryView(record storage.AgentSnapshot) controlAgentSummaryView {
 	view := controlAgentSummaryView{
 		AgentID: record.Agent.ID, Name: record.Agent.Name, Revoked: record.Agent.Revoked,
-		CreatedAt: record.Agent.CreatedAt, Online: record.Online,
+		DisabledAt: record.Agent.DisabledAt, CreatedAt: record.Agent.CreatedAt, Online: record.Online,
 	}
 	if record.State != nil {
 		lastSeen := record.State.LastSeen
