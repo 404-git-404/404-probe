@@ -25,6 +25,7 @@ type Config struct {
 	Token             string
 	Interval          time.Duration
 	JobInterval       time.Duration
+	DisabledInterval  time.Duration
 	Timeout           time.Duration
 	AllowInsecureHTTP bool
 	StatePath         string
@@ -32,7 +33,12 @@ type Config struct {
 	NetworkExcludes   []string
 }
 
-var ErrAgentRevoked = errors.New("agent credential has been revoked")
+var (
+	ErrAgentRevoked  = errors.New("agent credential has been revoked")
+	ErrAgentDisabled = errors.New("agent has been disabled")
+)
+
+const DefaultDisabledInterval = time.Minute
 
 func (c Config) Validate() error {
 	if c.AgentID == "" || c.Token == "" {
@@ -45,8 +51,8 @@ func (c Config) Validate() error {
 	if u.Scheme != "https" && !(u.Scheme == "http" && c.AllowInsecureHTTP) {
 		return errors.New("server URL must use HTTPS; pass --allow-insecure-http only for local development")
 	}
-	if c.Interval <= 0 || c.JobInterval < 0 || c.Timeout <= 0 {
-		return errors.New("report interval and timeout must be positive; job interval must not be negative")
+	if c.Interval <= 0 || c.JobInterval < 0 || c.DisabledInterval < 0 || c.Timeout <= 0 {
+		return errors.New("report interval and timeout must be positive; job and disabled intervals must not be negative")
 	}
 	if strings.TrimSpace(c.StatePath) == "" {
 		return errors.New("state path is required")
@@ -79,6 +85,9 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 	if config.JobInterval == 0 {
 		config.JobInterval = DefaultJobInterval
 	}
+	if config.DisabledInterval == 0 {
+		config.DisabledInterval = DefaultDisabledInterval
+	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -104,55 +113,51 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-	workerContext, stopWorker := context.WithCancel(ctx)
-	defer stopWorker()
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		r.runJobWorker(workerContext)
-	}()
+	var sequence uint64
+	immediate := true
+	for {
+		workerContext, stopWorker := context.WithCancel(ctx)
+		workerDone := make(chan struct{})
+		go func() {
+			defer close(workerDone)
+			r.runJobWorker(workerContext)
+		}()
 
-	err := r.runReports(workerContext)
-	stopWorker()
-	<-workerDone
-	if errors.Is(err, ErrAgentRevoked) {
-		r.logger.Info("agent credential has been revoked; stopping")
-		return nil
+		err := r.runReportLoop(workerContext, &sequence, immediate)
+		stopWorker()
+		<-workerDone
+		if errors.Is(err, ErrAgentRevoked) {
+			r.logger.Info("agent credential has been revoked; stopping")
+			return nil
+		}
+		if !errors.Is(err, ErrAgentDisabled) {
+			return err
+		}
+
+		r.logger.Info("agent has been disabled; pausing reports and jobs")
+		err = r.waitWhileDisabled(ctx, &sequence)
+		if errors.Is(err, ErrAgentRevoked) {
+			r.logger.Info("agent credential has been revoked; stopping")
+			return nil
+		}
+		if err != nil || ctx.Err() != nil {
+			return err
+		}
+		r.logger.Info("agent has been enabled; resuming reports and jobs")
+		immediate = false
 	}
-	return err
 }
 
 func (r *Runner) runReports(ctx context.Context) error {
 	var sequence uint64
-	report := func() error {
-		measurement, err := r.collector.Collect(ctx)
-		if err != nil {
-			r.logger.Error("collect metrics", "error", err)
-			return nil
+	return r.runReportLoop(ctx, &sequence, true)
+}
+
+func (r *Runner) runReportLoop(ctx context.Context, sequence *uint64, immediate bool) error {
+	if immediate {
+		if _, err := r.sendReport(ctx, sequence); err != nil {
+			return err
 		}
-		sequence++
-		measurement.AgentID = r.config.AgentID
-		measurement.Epoch = r.epoch
-		measurement.SessionID = r.sessionID
-		measurement.Sequence = sequence
-		measurement.CollectedAt = time.Now().UnixMilli()
-		response, err := r.post(ctx, measurement)
-		if err != nil {
-			if errors.Is(err, ErrAgentRevoked) {
-				return err
-			}
-			r.logger.Warn("report failed; will retry with a fresh sample", "error", err)
-			return nil
-		}
-		if !response.Accepted {
-			r.logger.Warn("report rejected", "reason", response.Reason, "epoch", r.epoch, "sequence", sequence)
-			return nil
-		}
-		r.logger.Debug("report accepted", "sequence", sequence)
-		return nil
-	}
-	if err := report(); err != nil {
-		return err
 	}
 	ticker := time.NewTicker(r.config.Interval)
 	defer ticker.Stop()
@@ -161,11 +166,65 @@ func (r *Runner) runReports(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := report(); err != nil {
+			if _, err := r.sendReport(ctx, sequence); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+func (r *Runner) waitWhileDisabled(ctx context.Context, sequence *uint64) error {
+	ticker := time.NewTicker(r.config.DisabledInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			accepted, err := r.sendReport(ctx, sequence)
+			switch {
+			case errors.Is(err, ErrAgentDisabled):
+				continue
+			case err != nil:
+				if errors.Is(err, ErrAgentRevoked) {
+					return err
+				}
+				continue
+			case accepted:
+				return nil
+			default:
+				continue
+			}
+		}
+	}
+}
+
+func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error) {
+	measurement, err := r.collector.Collect(ctx)
+	if err != nil {
+		r.logger.Error("collect metrics", "error", err)
+		return false, nil
+	}
+	(*sequence)++
+	measurement.AgentID = r.config.AgentID
+	measurement.Epoch = r.epoch
+	measurement.SessionID = r.sessionID
+	measurement.Sequence = *sequence
+	measurement.CollectedAt = time.Now().UnixMilli()
+	response, err := r.post(ctx, measurement)
+	if err != nil {
+		if errors.Is(err, ErrAgentRevoked) || errors.Is(err, ErrAgentDisabled) {
+			return false, err
+		}
+		r.logger.Warn("report failed; will retry with a fresh sample", "error", err)
+		return false, nil
+	}
+	if !response.Accepted {
+		r.logger.Warn("report rejected", "reason", response.Reason, "epoch", r.epoch, "sequence", *sequence)
+		return false, nil
+	}
+	r.logger.Debug("report accepted", "sequence", *sequence)
+	return true, nil
 }
 
 func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.ReportResponse, error) {
@@ -193,14 +252,17 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 		return protocol.ReportResponse{}, errors.New("server response is too large")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp.StatusCode == http.StatusUnauthorized {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusLocked {
 			var envelope struct {
 				Error struct {
 					Code string `json:"code"`
 				} `json:"error"`
 			}
-			if json.Unmarshal(limited, &envelope) == nil && envelope.Error.Code == "agent_revoked" {
+			if json.Unmarshal(limited, &envelope) == nil && resp.StatusCode == http.StatusUnauthorized && envelope.Error.Code == "agent_revoked" {
 				return protocol.ReportResponse{}, ErrAgentRevoked
+			}
+			if resp.StatusCode == http.StatusLocked && envelope.Error.Code == "agent_disabled" {
+				return protocol.ReportResponse{}, ErrAgentDisabled
 			}
 		}
 		return protocol.ReportResponse{}, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(limited)))

@@ -155,16 +155,19 @@ func TestPostParsesReportResponse(t *testing.T) {
 	}
 }
 
-func TestPostClassifiesOnlyExplicitRevocationAsPermanent(t *testing.T) {
+func TestPostClassifiesOnlyExplicitLifecycleSignals(t *testing.T) {
 	tests := []struct {
-		name   string
-		status int
-		body   string
-		want   bool
+		name         string
+		status       int
+		body         string
+		wantRevoked  bool
+		wantDisabled bool
 	}{
-		{name: "revoked", status: http.StatusUnauthorized, body: `{"error":{"code":"agent_revoked","message":"agent credential has been revoked"}}`, want: true},
+		{name: "revoked", status: http.StatusUnauthorized, body: `{"error":{"code":"agent_revoked","message":"agent credential has been revoked"}}`, wantRevoked: true},
+		{name: "disabled", status: http.StatusLocked, body: `{"error":{"code":"agent_disabled","message":"agent has been disabled"}}`, wantDisabled: true},
 		{name: "unknown token", status: http.StatusUnauthorized, body: `{"error":"invalid agent token"}`},
 		{name: "server error cannot revoke", status: http.StatusInternalServerError, body: `{"error":{"code":"agent_revoked"}}`},
+		{name: "wrong status cannot disable", status: http.StatusUnauthorized, body: `{"error":{"code":"agent_disabled"}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,8 +182,8 @@ func TestPostClassifiesOnlyExplicitRevocationAsPermanent(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = runner.post(context.Background(), protocol.Report{})
-			if errors.Is(err, ErrAgentRevoked) != tt.want {
-				t.Fatalf("error=%v want revoked=%t", err, tt.want)
+			if errors.Is(err, ErrAgentRevoked) != tt.wantRevoked || errors.Is(err, ErrAgentDisabled) != tt.wantDisabled {
+				t.Fatalf("error=%v want revoked=%t disabled=%t", err, tt.wantRevoked, tt.wantDisabled)
 			}
 		})
 	}
@@ -210,6 +213,41 @@ func TestRunStopsCleanlyAndLogsOnceAfterRevocation(t *testing.T) {
 	}
 	if count := strings.Count(logs.String(), "agent credential has been revoked; stopping"); count != 1 {
 		t.Fatalf("stop log count=%d logs=%s", count, logs.String())
+	}
+}
+
+func TestDisabledWaitSurvivesTransientFailureWithoutFlooding(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		request := requests.Add(1)
+		if request == 2 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusLocked)
+		_, _ = io.WriteString(w, `{"error":{"code":"agent_disabled"}}`)
+		if request == 4 {
+			cancel()
+		}
+	}))
+	defer server.Close()
+	runner, err := NewWithExecutor(Config{
+		ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Hour,
+		DisabledInterval: 15 * time.Millisecond, Timeout: time.Second, AllowInsecureHTTP: true,
+		StatePath: filepath.Join(t.TempDir(), "epoch"),
+	}, nil, UnsupportedExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(staticReportCollector)
+	started := time.Now()
+	if err := runner.Run(ctx); err != nil {
+		t.Fatalf("transient disabled wait stopped Agent: %v", err)
+	}
+	if requests.Load() != 4 || time.Since(started) < 40*time.Millisecond {
+		t.Fatalf("disabled requests=%d elapsed=%s", requests.Load(), time.Since(started))
 	}
 }
 
@@ -351,4 +389,131 @@ func TestRevocationEndToEndStopsAgentAndPreservesState(t *testing.T) {
 	if err != nil || !snapshot.Agent.Revoked || snapshot.State == nil || snapshot.State.Hostname != "smoke-host" {
 		t.Fatalf("retained snapshot=%+v err=%v", snapshot, err)
 	}
+}
+
+type lifecycleExecutor struct{ starts *atomic.Int32 }
+
+func (e lifecycleExecutor) SupportedProbeTypes() []protocol.ProbeType {
+	e.starts.Add(1)
+	return []protocol.ProbeType{protocol.ProbeTypeTCPConnect}
+}
+
+func (lifecycleExecutor) Execute(context.Context, protocol.Job) (Execution, error) {
+	return Execution{}, errors.New("unexpected job")
+}
+
+func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	agentID, _ := auth.NewID()
+	token, tokenHash, _ := auth.NewToken()
+	if err := store.AddAgent(ctx, agentID, "lifecycle", tokenHash, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	app, err := appserver.NewApp(store, 30*time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Shutdown()
+
+	var accepted, disabled, claims atomic.Int32
+	handler := app.Handler()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		for name, values := range response.Header() {
+			w.Header()[name] = values
+		}
+		w.WriteHeader(response.Code)
+		_, _ = w.Write(response.Body.Bytes())
+		switch {
+		case request.URL.Path == "/api/v1/report" && response.Code == http.StatusOK:
+			accepted.Add(1)
+		case request.URL.Path == "/api/v1/report" && response.Code == http.StatusLocked:
+			disabled.Add(1)
+		case request.URL.Path == "/api/v1/agent/jobs/claim":
+			claims.Add(1)
+		}
+	}))
+	defer server.Close()
+
+	var workerStarts atomic.Int32
+	runner, err := NewWithExecutor(Config{
+		ServerURL: server.URL, AgentID: agentID, Token: token, Interval: 5 * time.Millisecond,
+		JobInterval: 5 * time.Millisecond, DisabledInterval: 35 * time.Millisecond,
+		Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"),
+	}, nil, lifecycleExecutor{starts: &workerStarts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(context.Context) (protocol.Report, error) {
+		return protocol.Report{Hostname: "pause-host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 1,
+			CPUPercent: 1, Load1: 1, Load5: 1, Load15: 1, RAMUsed: 1, RAMTotal: 2, RAMPercent: 50,
+			DiskUsed: 1, DiskTotal: 2, DiskPercent: 50, RXBytes: 1, TXBytes: 1}, nil
+	})
+	runDone := make(chan error, 1)
+	go func() { runDone <- runner.Run(ctx) }()
+	waitForAgentCondition(t, "initial reporting and worker", func() bool {
+		return accepted.Load() > 0 && claims.Load() > 0 && workerStarts.Load() == 1
+	})
+
+	if changed, err := store.DisableAgent(ctx, agentID, time.Now()); err != nil || !changed {
+		t.Fatalf("disable changed=%t err=%v", changed, err)
+	}
+	waitForAgentCondition(t, "disabled report", func() bool { return disabled.Load() > 0 })
+	time.Sleep(15 * time.Millisecond)
+	pausedAccepted, pausedClaims := accepted.Load(), claims.Load()
+	time.Sleep(15 * time.Millisecond)
+	if accepted.Load() != pausedAccepted || claims.Load() != pausedClaims || workerStarts.Load() != 1 {
+		t.Fatalf("work continued while disabled: accepted %d->%d claims %d->%d starts=%d",
+			pausedAccepted, accepted.Load(), pausedClaims, claims.Load(), workerStarts.Load())
+	}
+	select {
+	case err := <-runDone:
+		t.Fatalf("disabled Agent exited early: %v", err)
+	default:
+	}
+
+	if changed, err := store.EnableAgent(ctx, agentID, time.Now()); err != nil || !changed {
+		t.Fatalf("enable changed=%t err=%v", changed, err)
+	}
+	waitForAgentCondition(t, "automatic resume", func() bool {
+		return accepted.Load() > pausedAccepted && claims.Load() > pausedClaims && workerStarts.Load() == 2
+	})
+
+	if changed, err := store.DisableAgent(ctx, agentID, time.Now()); err != nil || !changed {
+		t.Fatalf("second disable changed=%t err=%v", changed, err)
+	}
+	disabledBefore := disabled.Load()
+	waitForAgentCondition(t, "second disabled report", func() bool { return disabled.Load() > disabledBefore })
+	if changed, err := store.RevokeAgent(ctx, agentID, time.Now()); err != nil || !changed {
+		t.Fatalf("revoke changed=%t err=%v", changed, err)
+	}
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("revoked while disabled did not exit cleanly: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("revoked while disabled Agent did not exit")
+	}
+	if workerStarts.Load() != 2 {
+		t.Fatalf("worker starts=%d want exactly 2", workerStarts.Load())
+	}
+}
+
+func waitForAgentCondition(t *testing.T, name string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", name)
 }
