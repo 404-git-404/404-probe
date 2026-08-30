@@ -188,7 +188,15 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 			t.Fatalf("drop %s: %v", name, err)
 		}
 	}
-	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=4`); err != nil {
+	if _, err := db.Exec(`DROP INDEX idx_agents_disabled_created_id`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE agents DROP COLUMN disabled_at`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version>=4`); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}

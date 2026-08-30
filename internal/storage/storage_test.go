@@ -77,15 +77,74 @@ func TestRevokedAuthenticationIsDistinctButUnauthorized(t *testing.T) {
 	}
 }
 
+func TestAgentDisableEnableLifecyclePersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "disabled.db")
+	s, id, token := testStore(t, path)
+	ctx := context.Background()
+	disabledAt := time.Unix(200, 0)
+	if changed, err := s.DisableAgent(ctx, id, disabledAt); err != nil || !changed {
+		t.Fatalf("disable changed=%t err=%v", changed, err)
+	}
+	if changed, err := s.DisableAgent(ctx, id, disabledAt.Add(time.Second)); err != nil || changed {
+		t.Fatalf("idempotent disable changed=%t err=%v", changed, err)
+	}
+	if _, err := s.Authenticate(ctx, token); !errors.Is(err, ErrAgentDisabled) || errors.Is(err, ErrAgentRevoked) {
+		t.Fatalf("disabled authentication error=%v", err)
+	}
+	agents, err := s.ListAgents(ctx)
+	if err != nil || len(agents) != 1 || agents[0].DisabledAt == nil || *agents[0].DisabledAt != disabledAt.UnixMilli() {
+		t.Fatalf("disabled agents=%+v err=%v", agents, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Authenticate(ctx, token); !errors.Is(err, ErrAgentDisabled) {
+		t.Fatalf("reopened disabled authentication error=%v", err)
+	}
+	if changed, err := s.EnableAgent(ctx, id, disabledAt.Add(2*time.Second)); err != nil || !changed {
+		t.Fatalf("enable changed=%t err=%v", changed, err)
+	}
+	if changed, err := s.EnableAgent(ctx, id, disabledAt.Add(3*time.Second)); err != nil || changed {
+		t.Fatalf("idempotent enable changed=%t err=%v", changed, err)
+	}
+	if got, err := s.Authenticate(ctx, token); err != nil || got != id {
+		t.Fatalf("enabled authentication id=%q err=%v", got, err)
+	}
+}
+
+func TestRevokedAgentCannotBeEnabled(t *testing.T) {
+	s, id, token := testStore(t, ":memory:")
+	defer s.Close()
+	ctx := context.Background()
+	if changed, err := s.DisableAgent(ctx, id, time.Unix(200, 0)); err != nil || !changed {
+		t.Fatalf("disable changed=%t err=%v", changed, err)
+	}
+	if changed, err := s.RevokeAgent(ctx, id, time.Unix(201, 0)); err != nil || !changed {
+		t.Fatalf("revoke changed=%t err=%v", changed, err)
+	}
+	if changed, err := s.EnableAgent(ctx, id, time.Unix(202, 0)); !errors.Is(err, ErrAgentRevoked) || changed {
+		t.Fatalf("enable revoked changed=%t err=%v", changed, err)
+	}
+	if _, err := s.Authenticate(ctx, token); !errors.Is(err, ErrAgentRevoked) || errors.Is(err, ErrAgentDisabled) {
+		t.Fatalf("revoked precedence error=%v", err)
+	}
+}
+
 func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v5.db")
+	path := filepath.Join(t.TempDir(), "v6.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
 		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
-		`INSERT INTO schema_migrations(version,applied_at) VALUES(5,5000)`,
+		`INSERT INTO schema_migrations(version,applied_at) VALUES(6,5000)`,
 		`CREATE TABLE future_fixture (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`,
 		`INSERT INTO future_fixture(id,value) VALUES(1,'future-data')`,
 	} {
@@ -108,7 +167,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 		store.Close()
 		t.Fatal("future schema was opened")
 	}
-	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 5") {
+	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 6") {
 		t.Fatalf("future schema error=%v", err)
 	}
 
@@ -119,7 +178,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	defer db.Close()
 	var version int
 	var appliedAt int64
-	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 5 || appliedAt != 5000 {
+	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 6 || appliedAt != 5000 {
 		t.Fatalf("migration metadata changed: version=%d applied_at=%d err=%v", version, appliedAt, err)
 	}
 	var fixtureValue string

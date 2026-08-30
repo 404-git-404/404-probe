@@ -14,21 +14,23 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
 	ErrAgentRevoked             = fmt.Errorf("agent revoked: %w", ErrUnauthorized)
+	ErrAgentDisabled            = fmt.Errorf("agent disabled: %w", ErrUnauthorized)
 	ErrUnsupportedSchemaVersion = errors.New("unsupported newer schema version")
 )
 
 type Store struct{ db *sql.DB }
 
 type Agent struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Revoked   bool   `json:"revoked"`
-	CreatedAt int64  `json:"created_at"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Revoked    bool   `json:"revoked"`
+	DisabledAt *int64 `json:"disabled_at"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
 type State struct {
@@ -264,6 +266,17 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	if version < 5 {
+		for _, statement := range []string{
+			`ALTER TABLE agents ADD COLUMN disabled_at INTEGER`,
+			`CREATE INDEX idx_agents_disabled_created_id ON agents(disabled_at,created_at DESC,id DESC)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(5, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 5: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
@@ -306,7 +319,7 @@ func (s *Store) AddAgent(ctx context.Context, id, name string, tokenHash []byte,
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,revoked,created_at FROM agents ORDER BY name,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,revoked,disabled_at,created_at FROM agents ORDER BY name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -315,10 +328,14 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	for rows.Next() {
 		var a Agent
 		var revoked int
-		if err := rows.Scan(&a.ID, &a.Name, &revoked, &a.CreatedAt); err != nil {
+		var disabledAt sql.NullInt64
+		if err := rows.Scan(&a.ID, &a.Name, &revoked, &disabledAt, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		a.Revoked = revoked != 0
+		if disabledAt.Valid {
+			a.DisabledAt = &disabledAt.Int64
+		}
 		result = append(result, a)
 	}
 	return result, rows.Err()
@@ -333,16 +350,58 @@ func (s *Store) RevokeAgent(ctx context.Context, id string, now time.Time) (bool
 	return n > 0, err
 }
 
+func (s *Store) DisableAgent(ctx context.Context, id string, now time.Time) (bool, error) {
+	var revoked int
+	if err := s.db.QueryRowContext(ctx, `SELECT revoked FROM agents WHERE id=?`, id).Scan(&revoked); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrAgentNotFound
+		}
+		return false, err
+	}
+	if revoked != 0 {
+		return false, ErrAgentRevoked
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE agents SET disabled_at=?,updated_at=? WHERE id=? AND revoked=0 AND disabled_at IS NULL`, now.UnixMilli(), now.UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
+func (s *Store) EnableAgent(ctx context.Context, id string, now time.Time) (bool, error) {
+	var revoked int
+	if err := s.db.QueryRowContext(ctx, `SELECT revoked FROM agents WHERE id=?`, id).Scan(&revoked); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrAgentNotFound
+		}
+		return false, err
+	}
+	if revoked != 0 {
+		return false, ErrAgentRevoked
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE agents SET disabled_at=NULL,updated_at=? WHERE id=? AND revoked=0 AND disabled_at IS NOT NULL`, now.UnixMilli(), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
 func (s *Store) Authenticate(ctx context.Context, token string) (string, error) {
 	want := auth.Hash(token)
 	var id string
 	var revoked int
-	err := s.db.QueryRowContext(ctx, `SELECT id,revoked FROM agents WHERE token_hash=?`, want).Scan(&id, &revoked)
+	var disabledAt sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT id,revoked,disabled_at FROM agents WHERE token_hash=?`, want).Scan(&id, &revoked, &disabledAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrUnauthorized
 	}
 	if err == nil && revoked != 0 {
 		return "", ErrAgentRevoked
+	}
+	if err == nil && disabledAt.Valid {
+		return "", ErrAgentDisabled
 	}
 	return id, err
 }
@@ -361,9 +420,14 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	defer tx.Rollback()
 	var name string
 	var revoked int
-	if err := tx.QueryRowContext(ctx, `SELECT name,revoked FROM agents WHERE id=?`, authenticatedID).Scan(&name, &revoked); err != nil || revoked != 0 {
+	var disabledAt sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT name,revoked,disabled_at FROM agents WHERE id=?`, authenticatedID).Scan(&name, &revoked, &disabledAt); err != nil || revoked != 0 || disabledAt.Valid {
 		if err == nil {
-			err = ErrAgentRevoked
+			if revoked != 0 {
+				err = ErrAgentRevoked
+			} else {
+				err = ErrAgentDisabled
+			}
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			err = ErrUnauthorized

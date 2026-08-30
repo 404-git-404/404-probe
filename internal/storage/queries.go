@@ -21,10 +21,11 @@ type CollectionPageKey struct {
 type AgentQueryStatus string
 
 const (
-	AgentQueryStatusActive  AgentQueryStatus = "active"
-	AgentQueryStatusOnline  AgentQueryStatus = "online"
-	AgentQueryStatusOffline AgentQueryStatus = "offline"
-	AgentQueryStatusRevoked AgentQueryStatus = "revoked"
+	AgentQueryStatusActive   AgentQueryStatus = "active"
+	AgentQueryStatusOnline   AgentQueryStatus = "online"
+	AgentQueryStatusOffline  AgentQueryStatus = "offline"
+	AgentQueryStatusDisabled AgentQueryStatus = "disabled"
+	AgentQueryStatusRevoked  AgentQueryStatus = "revoked"
 )
 
 type AgentQuery struct {
@@ -90,12 +91,14 @@ func (s *Store) QueryAgents(ctx context.Context, query AgentQuery) ([]AgentSnaps
 		clauses = append(clauses, `a.revoked=0`)
 	case AgentQueryStatusOnline:
 		joinState = true
-		clauses = append(clauses, `a.revoked=0`, `s.last_seen>0`, `s.last_seen>=?`)
+		clauses = append(clauses, `a.revoked=0`, `a.disabled_at IS NULL`, `s.last_seen>0`, `s.last_seen>=?`)
 		arguments = append(arguments, nowMillis-offlineMillis)
 	case AgentQueryStatusOffline:
 		joinState = true
-		clauses = append(clauses, `a.revoked=0`, `(s.agent_id IS NULL OR s.last_seen<=0 OR s.last_seen<?)`)
+		clauses = append(clauses, `a.revoked=0`, `a.disabled_at IS NULL`, `(s.agent_id IS NULL OR s.last_seen<=0 OR s.last_seen<?)`)
 		arguments = append(arguments, nowMillis-offlineMillis)
+	case AgentQueryStatusDisabled:
+		clauses = append(clauses, `a.revoked=0`, `a.disabled_at IS NOT NULL`)
 	case AgentQueryStatusRevoked:
 		clauses = append(clauses, `a.revoked=1`)
 	}
@@ -319,7 +322,7 @@ func (s *Store) QueryProbeJobs(ctx context.Context, query ProbeJobQuery, now tim
 
 func validateAgentQuery(query AgentQuery) (int64, int64, error) {
 	switch query.Status {
-	case "", AgentQueryStatusActive, AgentQueryStatusOnline, AgentQueryStatusOffline, AgentQueryStatusRevoked:
+	case "", AgentQueryStatusActive, AgentQueryStatusOnline, AgentQueryStatusOffline, AgentQueryStatusDisabled, AgentQueryStatusRevoked:
 	default:
 		return 0, 0, errors.New("agent status filter is invalid")
 	}
@@ -409,8 +412,9 @@ func validateCollectionQuery(limit int, after *CollectionPageKey) error {
 func readAgentSnapshotTx(ctx context.Context, tx *sql.Tx, agentID string, nowMillis, offlineMillis int64) (AgentSnapshot, bool, error) {
 	var record AgentSnapshot
 	var revoked int
-	err := tx.QueryRowContext(ctx, `SELECT id,name,revoked,created_at FROM agents WHERE id=?`, agentID).Scan(
-		&record.Agent.ID, &record.Agent.Name, &revoked, &record.Agent.CreatedAt)
+	var disabledAt sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT id,name,revoked,disabled_at,created_at FROM agents WHERE id=?`, agentID).Scan(
+		&record.Agent.ID, &record.Agent.Name, &revoked, &disabledAt, &record.Agent.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentSnapshot{}, false, nil
 	}
@@ -422,13 +426,19 @@ func readAgentSnapshotTx(ctx context.Context, tx *sql.Tx, agentID string, nowMil
 		return AgentSnapshot{}, false, fmt.Errorf("%w: stored agent is invalid", ErrCorruptProbeData)
 	}
 	record.Agent.Revoked = revoked == 1
+	if disabledAt.Valid {
+		if disabledAt.Int64 <= 0 {
+			return AgentSnapshot{}, false, fmt.Errorf("%w: stored agent disabled time is invalid", ErrCorruptProbeData)
+		}
+		record.Agent.DisabledAt = &disabledAt.Int64
+	}
 	state, exists, err := readStateTx(ctx, tx, record.Agent.ID, record.Agent.Name)
 	if err != nil {
 		return AgentSnapshot{}, false, err
 	}
 	if exists {
 		record.State = &state
-		record.Online = !record.Agent.Revoked && state.LastSeen > 0 && state.LastSeen >= nowMillis-offlineMillis
+		record.Online = !record.Agent.Revoked && record.Agent.DisabledAt == nil && state.LastSeen > 0 && state.LastSeen >= nowMillis-offlineMillis
 	}
 	return record, true, nil
 }
