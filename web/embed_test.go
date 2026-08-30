@@ -85,3 +85,43 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentCardsUseFixedAccessibleSlots(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsBytes, err := fs.ReadFile(static, "app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssBytes, err := fs.ReadFile(static, "style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	javascript := string(jsBytes)
+	stylesheet := string(cssBytes)
+	for _, required := range []string{
+		`card.className = 'card agent-card'`, `title.className = 'card-identity'`,
+		`line.className = 'meta-line'`, `element.title = value`,
+		`element.setAttribute('aria-label', accessibleValue)`, `state.hostname || agent.name || '未知主机'`,
+	} {
+		if !strings.Contains(javascript, required) {
+			t.Fatalf("dashboard script missing fixed-card behavior %q", required)
+		}
+	}
+	for _, required := range []string{
+		`.agent-card{height:424px`, `grid-template-rows:52px 130px 64px 64px 38px`,
+		`grid-template-columns:repeat(3,minmax(0,1fr))`, `.agent-card .metric:last-child{grid-column:2/-1}`,
+		`text-overflow:ellipsis;white-space:nowrap`, `.agent-card .card-actions{align-items:center;flex-direction:row}`,
+	} {
+		if !strings.Contains(stylesheet, required) {
+			t.Fatalf("dashboard stylesheet missing fixed-card rule %q", required)
+		}
+	}
+	for _, forbidden := range []string{"resize:", "draggable", "localStorage", "dashboard-preference"} {
+		if strings.Contains(stylesheet+javascript, forbidden) {
+			t.Fatalf("dashboard fixed-card flow contains customization behavior %q", forbidden)
+		}
+	}
+}

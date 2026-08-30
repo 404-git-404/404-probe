@@ -190,9 +190,15 @@ function metric(label, value) {
   const name = document.createElement('label');
   name.textContent = label;
   const strong = document.createElement('strong');
-  strong.textContent = value;
+  setReadableText(strong, value, `${label}: ${value}`);
   box.append(name, strong);
   return box;
+}
+
+function setReadableText(element, value, accessibleValue = value) {
+  element.textContent = value;
+  element.title = value;
+  element.setAttribute('aria-label', accessibleValue);
 }
 
 function render() {
@@ -203,15 +209,17 @@ function render() {
   for (const agent of list) {
     const state = agent.state || {};
     const card = document.createElement('article');
-    card.className = 'card';
+    card.className = 'card agent-card';
+    card.setAttribute('aria-label', `Agent ${agent.name || agent.agent_id}`);
     const head = document.createElement('div');
     head.className = 'card-head';
     const title = document.createElement('div');
+    title.className = 'card-identity';
     const heading = document.createElement('h2');
-    heading.textContent = state.hostname || agent.name;
+    setReadableText(heading, state.hostname || agent.name || '未知主机');
     const name = document.createElement('div');
     name.className = 'name';
-    name.textContent = agent.name || agent.agent_id;
+    setReadableText(name, agent.name || agent.agent_id);
     title.append(heading, name);
     const status = document.createElement('span');
     const stateName = agent.revoked ? 'revoked' : agent.online ? 'online' : 'offline';
@@ -236,9 +244,9 @@ function render() {
     for (const [arrow, rate, total] of [['↓', state.rx_rate, state.rx_total], ['↑', state.tx_rate, state.tx_total]]) {
       const box = document.createElement('div');
       const strong = document.createElement('strong');
-      strong.textContent = `${arrow} ${bytes(rate, true)}`;
+      setReadableText(strong, `${arrow} ${bytes(rate, true)}`);
       const small = document.createElement('small');
-      small.textContent = `累计 ${bytes(total)}`;
+      setReadableText(small, `累计 ${bytes(total)}`);
       box.append(strong, document.createElement('br'), small);
       network.append(box);
     }
@@ -252,7 +260,8 @@ function render() {
       `Last Seen: ${seen(agent.last_seen)}`,
     ]) {
       const line = document.createElement('span');
-      line.textContent = text;
+      line.className = 'meta-line';
+      setReadableText(line, text);
       meta.append(line);
     }
     card.append(meta);
