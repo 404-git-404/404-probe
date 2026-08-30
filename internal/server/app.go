@@ -174,6 +174,10 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	authenticatedID, err := a.store.Authenticate(r.Context(), token)
 	if err != nil {
+		if errors.Is(err, storage.ErrAgentRevoked) {
+			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
+			return
+		}
 		if !errors.Is(err, storage.ErrUnauthorized) {
 			a.logger.Error("authenticate report", "error", err)
 		}
@@ -198,6 +202,10 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	state, accepted, reason, err := a.store.ProcessReport(r.Context(), authenticatedID, report, a.now())
 	if err != nil {
+		if errors.Is(err, storage.ErrAgentRevoked) {
+			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
+			return
+		}
 		if errors.Is(err, storage.ErrUnauthorized) {
 			writeError(w, http.StatusUnauthorized, "agent ID does not match token")
 			return

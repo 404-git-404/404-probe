@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -109,6 +110,23 @@ func TestReportAuthentication(t *testing.T) {
 	}
 	if response := postReport(t, app, "wrong", reportFor(id, 2)); response.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong token status=%d", response.Code)
+	}
+}
+
+func TestReportRevocationHasStableMachineSignal(t *testing.T) {
+	app, store, id, token := testApp(t)
+	defer store.Close()
+	if revoked, err := store.RevokeAgent(context.Background(), id, time.Now()); err != nil || !revoked {
+		t.Fatalf("revoke=%t err=%v", revoked, err)
+	}
+	response := postReport(t, app, token, reportFor(id, 1))
+	if response.Code != http.StatusUnauthorized || jobErrorCode(t, response) != "agent_revoked" ||
+		!strings.Contains(response.Body.String(), "agent credential has been revoked") {
+		t.Fatalf("revoked status=%d body=%s", response.Code, response.Body.String())
+	}
+	unknown := postReport(t, app, "wrong", reportFor(id, 2))
+	if unknown.Code != http.StatusUnauthorized || strings.Contains(unknown.Body.String(), "agent_revoked") {
+		t.Fatalf("unknown status=%d body=%s", unknown.Code, unknown.Body.String())
 	}
 }
 

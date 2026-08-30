@@ -139,7 +139,8 @@ func TestWebAgentRevokePreservesHistorySchedulesJobsAndResults(t *testing.T) {
 	if _, err := store.Authenticate(ctx, token); !errors.Is(err, storage.ErrUnauthorized) {
 		t.Fatalf("revoked credential error=%v", err)
 	}
-	if response := postReport(t, app, token, reportFor(agentID, 2)); response.Code != http.StatusUnauthorized {
+	if response := postReport(t, app, token, reportFor(agentID, 2)); response.Code != http.StatusUnauthorized ||
+		jobErrorCode(t, response) != "agent_revoked" {
 		t.Fatalf("revoked report status=%d body=%s", response.Code, response.Body.String())
 	}
 

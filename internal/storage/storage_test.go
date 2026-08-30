@@ -59,6 +59,24 @@ func TestMigrationAndAuthentication(t *testing.T) {
 	}
 }
 
+func TestRevokedAuthenticationIsDistinctButUnauthorized(t *testing.T) {
+	s, id, token := testStore(t, ":memory:")
+	defer s.Close()
+	ctx := context.Background()
+	if revoked, err := s.RevokeAgent(ctx, id, time.Unix(200, 0)); err != nil || !revoked {
+		t.Fatalf("revoke=%t err=%v", revoked, err)
+	}
+	if _, err := s.Authenticate(ctx, token); !errors.Is(err, ErrAgentRevoked) || !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("revoked authentication error=%v", err)
+	}
+	if _, err := s.Authenticate(ctx, "wrong"); err != ErrUnauthorized || errors.Is(err, ErrAgentRevoked) {
+		t.Fatalf("unknown authentication error=%v", err)
+	}
+	if _, _, _, err := s.ProcessReport(ctx, id, validReport(id, 1, "session", "boot", 1, 1, 1), time.Unix(201, 0)); !errors.Is(err, ErrAgentRevoked) {
+		t.Fatalf("revoked report error=%v", err)
+	}
+}
+
 func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v5.db")
 	db, err := sql.Open("sqlite", path)

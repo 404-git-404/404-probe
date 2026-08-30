@@ -18,6 +18,7 @@ const currentSchemaVersion = 4
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
+	ErrAgentRevoked             = fmt.Errorf("agent revoked: %w", ErrUnauthorized)
 	ErrUnsupportedSchemaVersion = errors.New("unsupported newer schema version")
 )
 
@@ -335,9 +336,13 @@ func (s *Store) RevokeAgent(ctx context.Context, id string, now time.Time) (bool
 func (s *Store) Authenticate(ctx context.Context, token string) (string, error) {
 	want := auth.Hash(token)
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM agents WHERE token_hash=? AND revoked=0`, want).Scan(&id)
+	var revoked int
+	err := s.db.QueryRowContext(ctx, `SELECT id,revoked FROM agents WHERE token_hash=?`, want).Scan(&id, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrUnauthorized
+	}
+	if err == nil && revoked != 0 {
+		return "", ErrAgentRevoked
 	}
 	return id, err
 }
@@ -358,7 +363,7 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	var revoked int
 	if err := tx.QueryRowContext(ctx, `SELECT name,revoked FROM agents WHERE id=?`, authenticatedID).Scan(&name, &revoked); err != nil || revoked != 0 {
 		if err == nil {
-			err = ErrUnauthorized
+			err = ErrAgentRevoked
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			err = ErrUnauthorized
