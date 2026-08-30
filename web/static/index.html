@@ -8,7 +8,7 @@
 </head>
 <body>
   <header><div><h1>404-probe</h1><p>已认证 Agent 观测</p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
-  <main><div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid" aria-live="polite"></section></main>
+  <main><div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid agent-grid" aria-live="polite"></section></main>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <div id="add-agent-create">
       <h2 id="add-agent-title">添加 Agent</h2>

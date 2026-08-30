@@ -210,6 +210,7 @@ function render() {
     const state = agent.state || {};
     const card = document.createElement('article');
     card.className = 'card agent-card';
+    card.dataset.agentId = agent.agent_id;
     card.setAttribute('aria-label', `Agent ${agent.name || agent.agent_id}`);
     const head = document.createElement('div');
     head.className = 'card-head';
@@ -224,6 +225,7 @@ function render() {
     const status = document.createElement('span');
     const stateName = agent.revoked ? 'revoked' : agent.online ? 'online' : 'offline';
     status.className = `status ${stateName}`;
+    status.dataset.agentState = stateName;
     status.textContent = agent.revoked ? '● REVOKED' : agent.online ? '● ONLINE' : '● OFFLINE';
     head.append(title, status);
     card.append(head);
@@ -272,6 +274,7 @@ function render() {
     link.textContent = '查看 24 小时历史 →';
     const remove = document.createElement('button');
     remove.className = 'remove-agent';
+    remove.dataset.agentId = agent.agent_id;
     remove.type = 'button';
     remove.textContent = '移除 Agent';
     remove.disabled = !mutationCSRFToken;
