@@ -32,6 +32,8 @@ type Config struct {
 	NetworkExcludes   []string
 }
 
+var ErrAgentRevoked = errors.New("agent credential has been revoked")
+
 func (c Config) Validate() error {
 	if c.AgentID == "" || c.Token == "" {
 		return errors.New("agent ID and token are required")
@@ -55,11 +57,15 @@ func (c Config) Validate() error {
 type Runner struct {
 	config    Config
 	client    *http.Client
-	collector collector.Collector
+	collector reportCollector
 	logger    *slog.Logger
 	epoch     uint64
 	sessionID string
 	executor  Executor
+}
+
+type reportCollector interface {
+	Collect(context.Context) (protocol.Report, error)
 }
 
 func New(config Config, logger *slog.Logger) (*Runner, error) {
@@ -98,24 +104,31 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 }
 
 func (r *Runner) Run(ctx context.Context) error {
+	workerContext, stopWorker := context.WithCancel(ctx)
+	defer stopWorker()
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		r.runJobWorker(ctx)
+		r.runJobWorker(workerContext)
 	}()
 
-	err := r.runReports(ctx)
+	err := r.runReports(workerContext)
+	stopWorker()
 	<-workerDone
+	if errors.Is(err, ErrAgentRevoked) {
+		r.logger.Info("agent credential has been revoked; stopping")
+		return nil
+	}
 	return err
 }
 
 func (r *Runner) runReports(ctx context.Context) error {
 	var sequence uint64
-	report := func() {
+	report := func() error {
 		measurement, err := r.collector.Collect(ctx)
 		if err != nil {
 			r.logger.Error("collect metrics", "error", err)
-			return
+			return nil
 		}
 		sequence++
 		measurement.AgentID = r.config.AgentID
@@ -125,16 +138,22 @@ func (r *Runner) runReports(ctx context.Context) error {
 		measurement.CollectedAt = time.Now().UnixMilli()
 		response, err := r.post(ctx, measurement)
 		if err != nil {
+			if errors.Is(err, ErrAgentRevoked) {
+				return err
+			}
 			r.logger.Warn("report failed; will retry with a fresh sample", "error", err)
-			return
+			return nil
 		}
 		if !response.Accepted {
 			r.logger.Warn("report rejected", "reason", response.Reason, "epoch", r.epoch, "sequence", sequence)
-			return
+			return nil
 		}
 		r.logger.Debug("report accepted", "sequence", sequence)
+		return nil
 	}
-	report()
+	if err := report(); err != nil {
+		return err
+	}
 	ticker := time.NewTicker(r.config.Interval)
 	defer ticker.Stop()
 	for {
@@ -142,7 +161,9 @@ func (r *Runner) runReports(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			report()
+			if err := report(); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -172,6 +193,16 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 		return protocol.ReportResponse{}, errors.New("server response is too large")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusUnauthorized {
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if json.Unmarshal(limited, &envelope) == nil && envelope.Error.Code == "agent_revoked" {
+				return protocol.ReportResponse{}, ErrAgentRevoked
+			}
+		}
 		return protocol.ReportResponse{}, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(limited)))
 	}
 	var wire struct {
