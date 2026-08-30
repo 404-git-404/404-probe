@@ -101,13 +101,17 @@ func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filters := controlFilterFingerprint(values, "status")
+	queryStatus := status
+	if queryStatus == "" {
+		queryStatus = storage.AgentQueryStatusActive
+	}
 	limit, after, err := parseControlCollectionPage(values, webAgentCursorResource, filters, validWebAgentID)
 	if err != nil {
 		writeControlCollectionError(w, err)
 		return
 	}
 	records, next, err := a.store.QueryAgents(r.Context(), storage.AgentQuery{
-		Status: status, After: after, Limit: limit, Now: a.now(), OfflineTimeout: a.offlineTimeout,
+		Status: queryStatus, After: after, Limit: limit, Now: a.now(), OfflineTimeout: a.offlineTimeout,
 	})
 	if err != nil {
 		a.logger.Error("query Web agents", "error", err)

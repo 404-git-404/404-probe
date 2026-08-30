@@ -57,6 +57,7 @@ func TestQueryAgentsPaginationStatusAndDetail(t *testing.T) {
 
 	assertAgentQueryIDs(t, store, AgentQuery{Status: AgentQueryStatusOnline, Limit: 10, Now: now, OfflineTimeout: offlineTimeout}, "agent-c,agent-b")
 	assertAgentQueryIDs(t, store, AgentQuery{Status: AgentQueryStatusOffline, Limit: 10, Now: now, OfflineTimeout: offlineTimeout}, "agent-e,agent-a")
+	assertAgentQueryIDs(t, store, AgentQuery{Status: AgentQueryStatusActive, Limit: 10, Now: now, OfflineTimeout: offlineTimeout}, "agent-e,agent-c,agent-b,agent-a")
 	assertAgentQueryIDs(t, store, AgentQuery{Status: AgentQueryStatusRevoked, Limit: 10, Now: now, OfflineTimeout: offlineTimeout}, "agent-d")
 
 	detail, err := store.GetAgentSnapshot(ctx, "agent-d", now, offlineTimeout)

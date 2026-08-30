@@ -21,6 +21,7 @@ type CollectionPageKey struct {
 type AgentQueryStatus string
 
 const (
+	AgentQueryStatusActive  AgentQueryStatus = "active"
 	AgentQueryStatusOnline  AgentQueryStatus = "online"
 	AgentQueryStatusOffline AgentQueryStatus = "offline"
 	AgentQueryStatusRevoked AgentQueryStatus = "revoked"
@@ -85,6 +86,8 @@ func (s *Store) QueryAgents(ctx context.Context, query AgentQuery) ([]AgentSnaps
 	joinState := false
 	switch query.Status {
 	case "":
+	case AgentQueryStatusActive:
+		clauses = append(clauses, `a.revoked=0`)
 	case AgentQueryStatusOnline:
 		joinState = true
 		clauses = append(clauses, `a.revoked=0`, `s.last_seen>0`, `s.last_seen>=?`)
@@ -316,7 +319,7 @@ func (s *Store) QueryProbeJobs(ctx context.Context, query ProbeJobQuery, now tim
 
 func validateAgentQuery(query AgentQuery) (int64, int64, error) {
 	switch query.Status {
-	case "", AgentQueryStatusOnline, AgentQueryStatusOffline, AgentQueryStatusRevoked:
+	case "", AgentQueryStatusActive, AgentQueryStatusOnline, AgentQueryStatusOffline, AgentQueryStatusRevoked:
 	default:
 		return 0, 0, errors.New("agent status filter is invalid")
 	}

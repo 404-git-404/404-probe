@@ -12,8 +12,16 @@ const addAgentError = document.querySelector('#add-agent-error');
 const createdAgentID = document.querySelector('#created-agent-id');
 const createdInstallCommand = document.querySelector('#created-install-command');
 const createdEnrollment = document.querySelector('#created-enrollment');
+const removeAgentDialog = document.querySelector('#remove-agent-dialog');
+const removeAgentForm = document.querySelector('#remove-agent-form');
+const removeAgentName = document.querySelector('#remove-agent-name');
+const removeAgentID = document.querySelector('#remove-agent-id');
+const removeAgentConfirm = document.querySelector('#remove-agent-confirm');
+const removeAgentError = document.querySelector('#remove-agent-error');
 const agents = new Map();
+const revokedAgentIDs = new Set();
 let mutationCSRFToken = '';
+let pendingRemoveAgentID = '';
 
 const bytes = (value, rate = false) => {
   let number = Number(value || 0);
@@ -52,6 +60,7 @@ async function loadMutationSession() {
     const session = await readJSON('/api/v1/web/session');
     mutationCSRFToken = session.csrf_token || '';
     addAgentButton.disabled = !mutationCSRFToken;
+    render();
   } catch (error) {
     mutationCSRFToken = '';
     addAgentButton.disabled = true;
@@ -106,6 +115,56 @@ addAgentForm.addEventListener('submit', async event => {
   } catch (error) {
     addAgentError.classList.remove('hidden');
     addAgentSubmit.disabled = false;
+  }
+});
+
+function clearRemoveAgentDialog() {
+  pendingRemoveAgentID = '';
+  removeAgentName.textContent = '';
+  removeAgentID.textContent = '';
+  removeAgentError.classList.add('hidden');
+  removeAgentConfirm.disabled = false;
+}
+
+function openRemoveAgentDialog(agent) {
+  clearRemoveAgentDialog();
+  pendingRemoveAgentID = agent.agent_id;
+  removeAgentName.textContent = agent.name || '未命名 Agent';
+  removeAgentID.textContent = agent.agent_id;
+  removeAgentDialog.showModal();
+}
+
+document.querySelector('#remove-agent-cancel').addEventListener('click', () => removeAgentDialog.close());
+removeAgentDialog.addEventListener('close', clearRemoveAgentDialog);
+
+removeAgentForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const agentID = pendingRemoveAgentID;
+  if (!mutationCSRFToken || !agentID) return;
+  removeAgentConfirm.disabled = true;
+  removeAgentError.classList.add('hidden');
+  try {
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agentID)}/revoke`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
+      body: '{}',
+    });
+    if (response.status === 401) {
+      location.assign('/login');
+      return;
+    }
+    if (!response.ok) throw new Error(response.statusText);
+    const revoked = await response.json();
+    if (!revoked.agent || !revoked.agent.revoked) throw new Error('Agent was not revoked');
+    revokedAgentIDs.add(agentID);
+    agents.delete(agentID);
+    removeAgentDialog.close();
+    render();
+    await refresh();
+  } catch (error) {
+    removeAgentError.classList.remove('hidden');
+    removeAgentConfirm.disabled = false;
   }
 });
 
@@ -202,7 +261,16 @@ function render() {
     link.className = 'details';
     link.href = `/history.html?id=${encodeURIComponent(agent.agent_id)}`;
     link.textContent = '查看 24 小时历史 →';
-    card.append(link);
+    const remove = document.createElement('button');
+    remove.className = 'remove-agent';
+    remove.type = 'button';
+    remove.textContent = '移除 Agent';
+    remove.disabled = !mutationCSRFToken;
+    remove.addEventListener('click', () => openRemoveAgentDialog(agent));
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    actions.append(link, remove);
+    card.append(actions);
     container.append(card);
   }
 }
@@ -261,6 +329,7 @@ events.onerror = () => {
 };
 events.addEventListener('agent', event => {
   const update = JSON.parse(event.data);
+  if (revokedAgentIDs.has(update.agent_id)) return;
   agents.set(update.agent_id, {...agents.get(update.agent_id), ...update, detail_loaded: true});
   render();
 });

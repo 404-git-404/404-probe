@@ -71,12 +71,8 @@ func TestWebAgentsPaginationFilteringAndCursorBinding(t *testing.T) {
 		t.Fatalf("first page=%+v", first)
 	}
 	second := getWebAgentCollection(t, app, "/api/v1/web/agents?limit=1&cursor="+*first.NextCursor)
-	if len(second.Items) != 1 || second.Items[0].AgentID != controlAgentB || second.NextCursor == nil {
+	if len(second.Items) != 1 || second.Items[0].AgentID != webAgentC || second.NextCursor != nil {
 		t.Fatalf("second page=%+v", second)
-	}
-	third := getWebAgentCollection(t, app, "/api/v1/web/agents?limit=2&cursor="+*second.NextCursor)
-	if len(third.Items) != 1 || third.Items[0].AgentID != webAgentC || third.NextCursor != nil {
-		t.Fatalf("third page=%+v", third)
 	}
 
 	online := getWebAgentCollection(t, app, "/api/v1/web/agents?status=online")

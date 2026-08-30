@@ -8,7 +8,7 @@
 </head>
 <body>
   <header><div><h1>404-probe</h1><p>已认证 Agent 观测</p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
-  <main><div id="empty" class="empty">尚无 Agent 上报</div><section id="agents" class="grid" aria-live="polite"></section></main>
+  <main><div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid" aria-live="polite"></section></main>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <div id="add-agent-create">
       <h2 id="add-agent-title">添加 Agent</h2>
@@ -32,6 +32,16 @@
       <div class="copy-block secret-value"><code id="created-enrollment"></code><button type="button" data-copy-target="created-enrollment">复制 credential</button></div>
       <div class="dialog-actions"><button id="add-agent-done" class="primary-action" type="button">完成并关闭</button></div>
     </div>
+  </dialog>
+  <dialog id="remove-agent-dialog" class="agent-dialog" aria-labelledby="remove-agent-title">
+    <h2 id="remove-agent-title">移除 Agent</h2>
+    <p>这会立即撤销 Agent credential，并将它移出默认活动视图。</p>
+    <div class="remove-agent-identity"><strong id="remove-agent-name"></strong><code id="remove-agent-id"></code></div>
+    <p class="remove-warning">历史 telemetry、Schedules、Probe Jobs/Results 会保留。此操作不会远程卸载 Agent。</p>
+    <form id="remove-agent-form">
+      <div id="remove-agent-error" class="dialog-error hidden" role="alert">移除失败，请重试。</div>
+      <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">撤销并移除</button></div>
+    </form>
   </dialog>
   <footer>V0.5 · 数据通过 Server 安全汇总</footer>
   <script src="/app.js" defer></script>
