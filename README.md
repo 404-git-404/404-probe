@@ -8,13 +8,13 @@ On a fresh Linux VPS with systemd, run the unified installer and choose Server o
 curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo bash
 ```
 
-For a Server, enter its public Web URL (for example, `https://probe.example.com`) and set the Web administrator password. The installer exposes `http://127.0.0.1:8080` as cloudflared's local origin, but 404-probe does not provision or manage Cloudflare Tunnel; Tunnel configuration remains external. Create each Agent's one-time enrollment value on the Server:
+For a Server, enter its public Web URL (for example, `https://probe.example.com`) and set the Web administrator password. The installer exposes `http://127.0.0.1:8080` as cloudflared's local origin, but 404-probe does not provision or manage Cloudflare Tunnel; Tunnel configuration remains external. Create each Agent's shown-once enrollment value on the Server:
 
 ```bash
 sudo 404-probe-install enroll singapore-01
 ```
 
-For an Agent, run the same installer and enter only the Server URL and the enrollment value. Agent names remain server-authoritative. Non-loopback connections require HTTPS.
+For an Agent, run the same installer and enter only the Server URL and the enrollment value. Agent names remain server-authoritative. Non-loopback connections require HTTPS. An enrollment value packages the Agent's permanent credential; it is shown once, but it is not a single-use bootstrap token. Paste it only into the installer's hidden prompt and clear any clipboard copy after use.
 
 ## Build and test
 
@@ -32,13 +32,15 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-se
 
 ## Upgrade an existing database
 
-Stop the server and back up the database before opening it with the new binary. V1, V2, and V3 databases are migrated to schema V4 on open; newer schemas are rejected.
+Stop the server and back up the database before opening it with the new binary. V0.4 already uses schema V4, and V0.5 opens that database in place without a schema migration. V1, V2, and V3 databases are still migrated to schema V4 on open; newer schemas are rejected.
 
 ```bash
 sudo systemctl stop 404-probe-server
-sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.4
+sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.5
 sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
 ```
+
+V0.5 does not change the Agent report or Probe Job protocol, Control API, read-only `remote` CLI, local `--db` CLI, scheduler/materializer, or HTTP/TCP/ICMP executors. Existing Agents can continue reporting with their current IDs and credentials. Revoking an Agent preserves its telemetry, schedules, jobs, and results; an enabled schedule may be disabled later when the scheduler next materializes it for the revoked Agent.
 
 ## Configure Web authentication
 
@@ -55,7 +57,7 @@ The browser receives only an opaque `HttpOnly`, `Secure`, `SameSite=Strict` sess
 
 Production deployments must provide an exact HTTPS origin and terminate TLS at the public edge. Bind the Server to loopback when a reverse proxy is used. Plain HTTP Web login requires both an explicit exception and a loopback public origin and is only for local development.
 
-After login, the dashboard observes Agents only through the authenticated Web read surface:
+After login, the dashboard uses only the authenticated Web surface:
 
 ```text
 GET /api/v1/web/agents
@@ -66,13 +68,27 @@ GET /api/v1/web/schedules
 GET /api/v1/web/schedules/{schedule_id}
 GET /api/v1/web/jobs
 GET /api/v1/web/jobs/{job_id}
+POST /api/v1/web/agents
+POST /api/v1/web/agents/{agent_id}/revoke
 ```
 
-The Agent collection accepts `status=online|offline|revoked`; the Schedule collection accepts `agent_id`, `enabled=true|false`, and `probe_type=http|tcp_connect|icmp_ping`. The Job collection accepts `agent_id`, `schedule_id`, `probe_type`, `status`, `success`, and the documented created/finished time bounds. Every collection accepts `limit=1..100` and an opaque endpoint/filter-bound `cursor`. History accepts `hours=1..720`.
+The default Agent collection contains active Agents only. It accepts `status=online|offline|revoked` for an explicit state filter; `status=revoked` provides the retained revoked records. The Schedule collection accepts `agent_id`, `enabled=true|false`, and `probe_type=http|tcp_connect|icmp_ping`. The Job collection accepts `agent_id`, `schedule_id`, `probe_type`, `status`, `success`, and the documented created/finished time bounds. Every collection accepts `limit=1..100` and an opaque endpoint/filter-bound `cursor`. History accepts `hours=1..720`.
 
 These responses are `no-store` and use explicit browser-safe DTOs: agent tokens, the Control token, lease credentials, epochs, session IDs, report sequences, boot IDs, raw network counters, result hashes, and storage-only fields are not exposed. The SSE feed uses the same whitelist. Job collections expose only a bounded `result_summary`; Job detail exposes the target config, error text, and the complete typed HTTP, TCP, or ICMP measurement. There is no separate Web Result resource.
 
 Schedule targets, Job errors, and measurements are sensitive operational data visible only after Web authentication. The Web Schedule and Job surfaces are strictly read-only; legacy V0.1 browser data routes are unavailable, and Web JavaScript never calls `/api/v1/control/*`.
+
+### V0.5 Web Agent lifecycle
+
+`Add Agent` creates the same Agent ID and credential used by the existing CLI and Agent protocol. SQLite stores only the credential hash. The no-store creation response is the only retrieval path for the enrollment value: closing the result dialog clears it from the DOM, and list, detail, history, and SSE responses never expose it. There is no credential recovery API. Losing it requires revoking that Agent and creating a replacement.
+
+The generated Linux install command contains only the configured Server origin and a version-pinned installer URL. It does not place the enrollment value in a URL, shell argument, or command history. The installer reads the value without echo from `/dev/tty`, validates the existing `404p1_` format, and writes the resulting credential only to the private Agent environment file.
+
+`Remove Agent` means credential revocation and removal from the default active dashboard. It is not a hard delete, remote uninstall, or remote command. Historical telemetry, schedules, Probe Jobs, and Results remain queryable; the operation does not delete or cancel those records. It also does not remove software from the Agent host.
+
+Both Web mutations require an authenticated Web session, the exact configured Origin, `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
+
+Agent cards use a fixed five-slot layout for identity, metrics, network, metadata, and actions. Online, offline, long-name, and never-reported cards keep the same height on desktop and mobile. Long text is truncated in the card while its complete value remains available through `title`, accessible labels, and the authenticated Agent detail response. Card resizing, dragging, per-Agent layouts, and metric visibility preferences are not supported.
 
 ## Start the server
 
@@ -343,11 +359,11 @@ Use the read path from broad state to the typed result without SSH or direct SQL
 ./404-probe-server remote probe get "$PROBE_404_JOB_ID" --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --json
 ```
 
-Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; V0.4 Web authentication uses a separate password and server-side session boundary.
+Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; V0.5 Web authentication uses a separate password and server-side session boundary.
 
 ## Capacity runbook
 
-V0.4 keeps Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
+V0.5 continues the V0.4 behavior of keeping Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
 
 ```bash
 du -h "$PROBE_404_DB"
@@ -359,11 +375,11 @@ sqlite3 -readonly "$PROBE_404_DB" \
    UNION ALL SELECT 'results', COUNT(*) FROM probe_results;"
 ```
 
-Back up the database before maintenance. V0.4 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
+Back up the database before maintenance. V0.5 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
 
 ## Control credential incident response
 
-If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.4 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
+If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.5 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
 
 ## Optional Control API
 
