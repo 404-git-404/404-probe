@@ -86,7 +86,7 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 	}
 }
 
-func TestAgentCardsUseFixedAccessibleSlots(t *testing.T) {
+func TestAgentCardsUseCompactResponsiveLayout(t *testing.T) {
 	static, err := fs.Sub(Files, "static")
 	if err != nil {
 		t.Fatal(err)
@@ -101,8 +101,18 @@ func TestAgentCardsUseFixedAccessibleSlots(t *testing.T) {
 	}
 	javascript := string(jsBytes)
 	stylesheet := string(cssBytes)
+	htmlBytes, err := fs.ReadFile(static, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(htmlBytes)
+	if !strings.Contains(html, `id="agents" class="grid agent-grid"`) {
+		t.Fatal("dashboard Agent collection is missing its responsive grid hook")
+	}
 	for _, required := range []string{
 		`card.className = 'card agent-card'`, `title.className = 'card-identity'`,
+		`card.dataset.agentId = agent.agent_id`, `status.dataset.agentState = stateName`,
+		`remove.dataset.agentId = agent.agent_id`,
 		`line.className = 'meta-line'`, `element.title = value`,
 		`element.setAttribute('aria-label', accessibleValue)`, `state.hostname || agent.name || '未知主机'`,
 	} {
@@ -111,9 +121,12 @@ func TestAgentCardsUseFixedAccessibleSlots(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		`.agent-card{height:424px`, `grid-template-rows:52px 130px 64px 64px 38px`,
+		`.agent-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))`,
+		`header,main,footer{width:min(1440px,calc(100% - 32px))`,
+		`.agent-card{height:386px`, `grid-template-rows:46px 116px 58px 58px 36px`,
 		`grid-template-columns:repeat(3,minmax(0,1fr))`, `.agent-card .metric:last-child{grid-column:2/-1}`,
-		`text-overflow:ellipsis;white-space:nowrap`, `.agent-card .card-actions{align-items:center;flex-direction:row}`,
+		`max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`,
+		`.agent-card .card-actions{align-items:center;flex-direction:row}`,
 	} {
 		if !strings.Contains(stylesheet, required) {
 			t.Fatalf("dashboard stylesheet missing fixed-card rule %q", required)
