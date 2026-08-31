@@ -62,9 +62,15 @@ type webJobResultView struct {
 }
 
 type webJobMeasurementView struct {
-	HTTP       *webHTTPMeasurementView       `json:"http,omitempty"`
-	TCPConnect *webTCPConnectMeasurementView `json:"tcp_connect,omitempty"`
-	ICMPPing   *webICMPPingMeasurementView   `json:"icmp_ping,omitempty"`
+	HTTP           *webHTTPMeasurementView           `json:"http,omitempty"`
+	TCPConnect     *webTCPConnectMeasurementView     `json:"tcp_connect,omitempty"`
+	ICMPPing       *webICMPPingMeasurementView       `json:"icmp_ping,omitempty"`
+	SelectorSwitch *webSelectorSwitchMeasurementView `json:"selector_switch,omitempty"`
+}
+
+type webSelectorSwitchMeasurementView struct {
+	Current string `json:"current"`
+	Changed bool   `json:"changed"`
 }
 
 type webHTTPMeasurementView struct {
@@ -279,6 +285,10 @@ func newWebJobMeasurementView(probeType protocol.ProbeType, measurement protocol
 		return webJobMeasurementView{ICMPPing: &webICMPPingMeasurementView{
 			Sent: value.Sent, Received: value.Received, PacketLossPercent: value.PacketLossPercent,
 			LatencyMinMS: value.LatencyMinMS, LatencyAvgMS: value.LatencyAvgMS, LatencyMaxMS: value.LatencyMaxMS,
+		}}, nil
+	case protocol.ProbeTypeSelectorSwitch:
+		return webJobMeasurementView{SelectorSwitch: &webSelectorSwitchMeasurementView{
+			Current: measurement.SelectorSwitch.Current, Changed: measurement.SelectorSwitch.Changed,
 		}}, nil
 	default:
 		return webJobMeasurementView{}, fmt.Errorf("unknown probe type %q", probeType)

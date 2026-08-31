@@ -146,6 +146,8 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	mux.Handle("/api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleWebAgentCollectionMethodNotAllowed), true))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgentHistory), true))
 	mux.Handle("/api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleWebAgentHistoryMethodNotAllowed), true))
+	mux.Handle("POST /api/v1/web/agents/{agent_id}/outbounds/switch", a.requireWebMutation(http.HandlerFunc(a.handleWebSelectorSwitch)))
+	mux.Handle("/api/v1/web/agents/{agent_id}/outbounds/switch", a.requireWebSession(http.HandlerFunc(a.handleWebSelectorSwitchMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/revoke", a.requireWebMutation(http.HandlerFunc(a.handleRevokeWebAgent)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/revoke", a.requireWebSession(http.HandlerFunc(a.handleWebAgentRevokeMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/disable", a.requireWebMutation(http.HandlerFunc(a.handleDisableWebAgent)))

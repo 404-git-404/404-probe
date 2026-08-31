@@ -329,6 +329,7 @@ func TestControlPutValidationAndPaths(t *testing.T) {
 		{AgentID: agentID, ProbeType: protocol.ProbeTypeTCPConnect, Config: protocol.TCPConnectConfig{Host: "example.com", Port: 443}, TimeoutMS: protocol.MinProbeTimeoutMS - 1, ExpiresInSeconds: 300},
 		{AgentID: agentID, ProbeType: protocol.ProbeTypeTCPConnect, Config: protocol.TCPConnectConfig{Host: "example.com", Port: 443}, TimeoutMS: 5000, ExpiresInSeconds: minJobTTLSeconds - 1},
 		{AgentID: agentID, ProbeType: protocol.ProbeTypeTCPConnect, Config: protocol.TCPConnectConfig{Host: "example.com", Port: 0}, TimeoutMS: 5000, ExpiresInSeconds: 300},
+		{AgentID: agentID, ProbeType: protocol.ProbeTypeSelectorSwitch, Config: protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}, TimeoutMS: 5000, ExpiresInSeconds: 300},
 	}
 	for index, request := range invalidRequests {
 		response := controlHTTPResponse(t, app, http.MethodPut, path, controlToken, "application/json", request)

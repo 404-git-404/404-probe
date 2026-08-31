@@ -100,6 +100,10 @@ func (a *App) handlePutControlJob(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid control job request")
 		return
 	}
+	if !request.ProbeType.IsNetworkProbe() {
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "control API only accepts network probe types")
+		return
+	}
 	now := a.now()
 	createdAt := now.UnixMilli()
 	ttlMillis := request.ExpiresInSeconds * int64(time.Second/time.Millisecond)

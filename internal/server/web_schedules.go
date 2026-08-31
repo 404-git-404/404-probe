@@ -40,6 +40,8 @@ type webScheduleConfigView struct {
 	Port           int    `json:"port,omitempty"`
 	Target         string `json:"target,omitempty"`
 	Count          int    `json:"count,omitempty"`
+	Selector       string `json:"selector,omitempty"`
+	Choice         string `json:"choice,omitempty"`
 }
 
 type webScheduleCollectionView struct {
@@ -189,6 +191,8 @@ func newWebScheduleConfigView(probeType protocol.ProbeType, config protocol.Prob
 		return webScheduleConfigView{Host: config.TCPConnect.Host, Port: config.TCPConnect.Port}, nil
 	case protocol.ProbeTypeICMPPing:
 		return webScheduleConfigView{Target: config.ICMPPing.Target, Count: config.ICMPPing.Count}, nil
+	case protocol.ProbeTypeSelectorSwitch:
+		return webScheduleConfigView{Selector: config.SelectorSwitch.Selector, Choice: config.SelectorSwitch.Choice}, nil
 	default:
 		return webScheduleConfigView{}, fmt.Errorf("unknown probe type %q", probeType)
 	}

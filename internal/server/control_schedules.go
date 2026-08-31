@@ -196,6 +196,9 @@ func decodeControlPutScheduleRequest(body []byte) (controlPutScheduleRequest, er
 	if err := request.ProbeType.Validate(); err != nil {
 		return controlPutScheduleRequest{}, err
 	}
+	if !request.ProbeType.IsNetworkProbe() {
+		return controlPutScheduleRequest{}, errors.New("probe type is not schedulable")
+	}
 	if len(request.Config) == 0 || string(request.Config) == "null" {
 		return controlPutScheduleRequest{}, errors.New("config is required")
 	}

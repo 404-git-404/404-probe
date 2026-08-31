@@ -216,6 +216,7 @@ func TestControlScheduleValidationAndProbeTypes(t *testing.T) {
 		func() controlScheduleTestRequest { value := valid; value.TimeoutMS = 30001; return value }(),
 		func() controlScheduleTestRequest { value := valid; value.IntervalSeconds = 29; return value }(),
 		func() controlScheduleTestRequest { value := valid; value.IntervalSeconds = 604801; return value }(),
+		{AgentID: agentID, Name: "selector", ProbeType: protocol.ProbeTypeSelectorSwitch, Config: protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}, TimeoutMS: 5000, IntervalSeconds: 60, Enabled: true},
 	}
 	for index, request := range invalidRequests {
 		response := controlHTTPResponse(t, app, http.MethodPut, path, controlToken, "application/json", request)

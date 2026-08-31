@@ -773,8 +773,9 @@ func (r ProbeJobRecord) protocolJob() (protocol.Job, error) {
 
 func requireActiveAgentTx(ctx context.Context, tx *sql.Tx, agentID string) error {
 	var revoked int
-	err := tx.QueryRowContext(ctx, `SELECT revoked FROM agents WHERE id=?`, agentID).Scan(&revoked)
-	if errors.Is(err, sql.ErrNoRows) || revoked != 0 {
+	var disabledAt sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT revoked,disabled_at FROM agents WHERE id=?`, agentID).Scan(&revoked, &disabledAt)
+	if errors.Is(err, sql.ErrNoRows) || revoked != 0 || disabledAt.Valid {
 		return ErrUnauthorized
 	}
 	return err

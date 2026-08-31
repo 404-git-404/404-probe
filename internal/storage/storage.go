@@ -444,8 +444,13 @@ func (s *Store) RevokeAgent(ctx context.Context, id string, now time.Time) (bool
 }
 
 func (s *Store) DisableAgent(ctx context.Context, id string, now time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
 	var revoked int
-	if err := s.db.QueryRowContext(ctx, `SELECT revoked FROM agents WHERE id=?`, id).Scan(&revoked); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT revoked FROM agents WHERE id=?`, id).Scan(&revoked); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrAgentNotFound
 		}
@@ -454,12 +459,23 @@ func (s *Store) DisableAgent(ctx context.Context, id string, now time.Time) (boo
 	if revoked != 0 {
 		return false, ErrAgentRevoked
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE agents SET disabled_at=?,updated_at=? WHERE id=? AND revoked=0 AND disabled_at IS NULL`, now.UnixMilli(), now.UnixMilli(), id)
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET disabled_at=?,updated_at=? WHERE id=? AND revoked=0 AND disabled_at IS NULL`, now.UnixMilli(), now.UnixMilli(), id)
 	if err != nil {
 		return false, err
 	}
 	n, err := result.RowsAffected()
-	return n > 0, err
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET status='expired' WHERE agent_id=? AND probe_type=? AND status='queued'`, id, string(protocol.ProbeTypeSelectorSwitch)); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (s *Store) EnableAgent(ctx context.Context, id string, now time.Time) (bool, error) {

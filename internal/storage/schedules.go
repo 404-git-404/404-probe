@@ -241,6 +241,9 @@ func validatePutScheduleParams(params PutScheduleParams) ([]byte, error) {
 	if err := params.ProbeType.Validate(); err != nil {
 		return nil, err
 	}
+	if !params.ProbeType.IsNetworkProbe() {
+		return nil, errors.New("schedule probe type must be a network probe")
+	}
 	configJSON, err := protocol.MarshalProbeConfig(params.ProbeType, params.Config)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
