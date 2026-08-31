@@ -164,6 +164,9 @@ func decodeStrictJobResponse(data []byte, value any) error {
 
 func (r *Runner) runJobWorker(ctx context.Context) {
 	capabilities := append([]protocol.ProbeType(nil), r.executor.SupportedProbeTypes()...)
+	if r.config.ClashAPIURL != "" {
+		capabilities = append(capabilities, protocol.ProbeTypeSelectorSwitch)
+	}
 	if len(capabilities) == 0 {
 		r.logger.Info("job worker disabled; executor has no supported probe types")
 		<-ctx.Done()
@@ -227,7 +230,13 @@ func (r *Runner) runJobCycle(ctx context.Context, client jobHTTPClient, request 
 func (r *Runner) executeJob(ctx context.Context, job protocol.Job) protocol.JobResult {
 	started := time.Now()
 	executionContext, cancel := context.WithTimeout(ctx, time.Duration(job.TimeoutMS)*time.Millisecond)
-	execution, err := r.executor.Execute(executionContext, job)
+	var execution Execution
+	var err error
+	if job.ProbeType == protocol.ProbeTypeSelectorSwitch {
+		execution, err = r.executeSelectorSwitch(executionContext, job)
+	} else {
+		execution, err = r.executor.Execute(executionContext, job)
+	}
 	cancel()
 	finished := time.Now()
 
@@ -277,7 +286,34 @@ func emptyProbeResult(job protocol.Job) protocol.ProbeResult {
 		return protocol.ProbeResult{TCPConnect: &protocol.TCPConnectResult{}}
 	case protocol.ProbeTypeHTTP:
 		return protocol.ProbeResult{HTTP: &protocol.HTTPResult{}}
+	case protocol.ProbeTypeSelectorSwitch:
+		return protocol.ProbeResult{SelectorSwitch: &protocol.SelectorSwitchResult{}}
 	default:
 		return protocol.ProbeResult{}
 	}
+}
+
+func (r *Runner) executeSelectorSwitch(ctx context.Context, job protocol.Job) (Execution, error) {
+	if r.config.ClashAPIURL == "" || job.Config.SelectorSwitch == nil {
+		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
+	}
+	client := clashClient{endpoint: r.config.ClashAPIURL, secret: r.config.ClashAPISecret, client: r.client}
+	result, err := client.switchSelector(ctx, job.Config.SelectorSwitch.Selector, job.Config.SelectorSwitch.Choice)
+	if err != nil {
+		category := "clash_api_unavailable"
+		message := "local Clash API is unavailable"
+		var switchErr *selectorSwitchError
+		if errors.As(err, &switchErr) {
+			category, message = switchErr.category, switchErr.message
+		}
+		return Execution{Success: false, ErrorCategory: category, ErrorMessage: message,
+			Result: protocol.ProbeResult{SelectorSwitch: &protocol.SelectorSwitchResult{}}}, nil
+	}
+	selectors, discoverErr := client.discover(ctx)
+	if discoverErr == nil {
+		if publishErr := r.postOutboundSnapshot(ctx, protocol.OutboundSnapshot{Available: true, Selectors: selectors}); publishErr != nil && ctx.Err() == nil {
+			r.logger.Warn("publish post-switch outbound snapshot failed; discovery will retry", "error", publishErr)
+		}
+	}
+	return Execution{Success: true, Result: protocol.ProbeResult{SelectorSwitch: &result}}, nil
 }

@@ -234,6 +234,89 @@ func TestUnsupportedExecutorReturnsStableFailure(t *testing.T) {
 	}
 }
 
+func TestRunnerExecutesVerifiedSelectorSwitchAndPublishesSnapshot(t *testing.T) {
+	current := "hk"
+	puts, snapshots := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			_, _ = io.WriteString(w, `{"proxies":{"proxy":{"type":"Selector","name":"proxy","now":"`+current+`","all":["hk","jp"]}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/proxy":
+			puts++
+			current = "jp"
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agent/outbounds":
+			snapshots++
+			writeTestJSON(t, w, map[string]any{"accepted": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Second, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	runner.config.ClashAPISecret = "secret"
+	runner.client = server.Client()
+	job := protocol.Job{
+		ProtocolVersion: protocol.JobProtocolVersion, JobID: "switch-job", ProbeType: protocol.ProbeTypeSelectorSwitch,
+		Config:    protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}},
+		CreatedAt: 1000, NotBefore: 1000, ExpiresAt: 10000, TimeoutMS: 1000, Attempt: 1,
+		LeaseToken: "lease", LeaseExpiresAt: 9000,
+	}
+	result := runner.executeJob(context.Background(), job)
+	if !result.Success || result.Result.SelectorSwitch == nil || result.Result.SelectorSwitch.Current != "jp" || !result.Result.SelectorSwitch.Changed || puts != 1 || snapshots != 1 {
+		t.Fatalf("result=%+v puts=%d snapshots=%d", result, puts, snapshots)
+	}
+}
+
+func TestRunnerSelectorSwitchReportsStaleChoiceWithoutMutation(t *testing.T) {
+	puts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			puts++
+		}
+		_, _ = io.WriteString(w, `{"proxies":{"proxy":{"type":"Selector","name":"proxy","now":"hk","all":["hk"]}}}`)
+	}))
+	defer server.Close()
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Second, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	runner.client = server.Client()
+	job := protocol.Job{
+		ProtocolVersion: protocol.JobProtocolVersion, JobID: "switch-job", ProbeType: protocol.ProbeTypeSelectorSwitch,
+		Config:    protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}},
+		CreatedAt: 1000, NotBefore: 1000, ExpiresAt: 10000, TimeoutMS: 1000, Attempt: 1,
+		LeaseToken: "lease", LeaseExpiresAt: 9000,
+	}
+	result := runner.executeJob(context.Background(), job)
+	if result.Success || result.ErrorCategory != "choice_not_found" || puts != 0 {
+		t.Fatalf("result=%+v puts=%d", result, puts)
+	}
+}
+
+func TestConfiguredClashDiscoveryAdvertisesSelectorSwitchCapability(t *testing.T) {
+	claimReceived := make(chan protocol.ClaimRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var claim protocol.ClaimRequest
+		if err := json.NewDecoder(r.Body).Decode(&claim); err != nil {
+			t.Error(err)
+		}
+		claimReceived <- claim
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Hour, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { runner.runJobWorker(ctx); close(done) }()
+	claim := <-claimReceived
+	cancel()
+	waitSignal(t, done, "selector worker shutdown")
+	if len(claim.SupportedProbeTypes) != 1 || claim.SupportedProbeTypes[0] != protocol.ProbeTypeSelectorSwitch {
+		t.Fatalf("capabilities=%v", claim.SupportedProbeTypes)
+	}
+}
+
 func newJobTestRunner(t *testing.T, serverURL string, timeout, interval time.Duration, executor Executor) *Runner {
 	t.Helper()
 	runner, err := NewWithExecutor(Config{
