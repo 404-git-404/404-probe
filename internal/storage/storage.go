@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -14,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -80,6 +81,14 @@ type HistoryPoint struct {
 	TXRate      float64 `json:"tx_rate"`
 	RXTotal     uint64  `json:"rx_total"`
 	TXTotal     uint64  `json:"tx_total"`
+}
+
+type OutboundSnapshot struct {
+	AgentID   string                      `json:"agent_id"`
+	Available bool                        `json:"available"`
+	Selectors []protocol.OutboundSelector `json:"selectors"`
+	CheckedAt int64                       `json:"checked_at"`
+	UpdatedAt *int64                      `json:"updated_at"`
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -277,7 +286,91 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	if version < 6 {
+		for _, statement := range []string{
+			`CREATE TABLE agent_outbound_snapshots (
+				agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+				available INTEGER NOT NULL CHECK(available IN (0,1)),
+				payload_json TEXT NOT NULL,
+				checked_at INTEGER NOT NULL,
+				updated_at INTEGER
+			)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(6, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 6: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
+}
+
+func (s *Store) SaveOutboundSnapshot(ctx context.Context, agentID string, snapshot protocol.OutboundSnapshot, now time.Time) error {
+	if err := snapshot.Validate(); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var revoked int
+	var disabledAt sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT revoked,disabled_at FROM agents WHERE id=?`, agentID).Scan(&revoked, &disabledAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUnauthorized
+		}
+		return err
+	}
+	if revoked != 0 {
+		return ErrAgentRevoked
+	}
+	if disabledAt.Valid {
+		return ErrAgentDisabled
+	}
+	checkedAt := now.UnixMilli()
+	if snapshot.Available {
+		payload, err := json.Marshal(snapshot.Selectors)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO agent_outbound_snapshots(agent_id,available,payload_json,checked_at,updated_at)
+			VALUES(?,1,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET available=1,payload_json=excluded.payload_json,checked_at=excluded.checked_at,updated_at=excluded.updated_at`,
+			agentID, string(payload), checkedAt, checkedAt)
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err = tx.ExecContext(ctx, `INSERT INTO agent_outbound_snapshots(agent_id,available,payload_json,checked_at,updated_at)
+			VALUES(?,0,'[]',?,NULL) ON CONFLICT(agent_id) DO UPDATE SET available=0,checked_at=excluded.checked_at`, agentID, checkedAt)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) GetOutboundSnapshot(ctx context.Context, agentID string) (OutboundSnapshot, bool, error) {
+	var result OutboundSnapshot
+	var available int
+	var payload string
+	var updatedAt sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT agent_id,available,payload_json,checked_at,updated_at FROM agent_outbound_snapshots WHERE agent_id=?`, agentID).
+		Scan(&result.AgentID, &available, &payload, &result.CheckedAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return OutboundSnapshot{}, false, nil
+	}
+	if err != nil {
+		return OutboundSnapshot{}, false, err
+	}
+	result.Available = available != 0
+	if updatedAt.Valid {
+		result.UpdatedAt = &updatedAt.Int64
+	}
+	if err := json.Unmarshal([]byte(payload), &result.Selectors); err != nil {
+		return OutboundSnapshot{}, false, fmt.Errorf("decode outbound snapshot: %w", err)
+	}
+	return result, true, nil
 }
 
 func checkSupportedSchemaVersion(ctx context.Context, db *sql.DB) error {

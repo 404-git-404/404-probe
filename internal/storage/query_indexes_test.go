@@ -192,6 +192,10 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 		db.Close()
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`DROP TABLE agent_outbound_snapshots`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`ALTER TABLE agents DROP COLUMN disabled_at`); err != nil {
 		db.Close()
 		t.Fatal(err)
