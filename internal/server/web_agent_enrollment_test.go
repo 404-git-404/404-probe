@@ -98,7 +98,7 @@ func TestWebAgentCreateAndShownOnceCredential(t *testing.T) {
 	if created.Agent.AgentID == "" || created.Agent.Name != "lax-01" || created.Agent.Revoked || created.Agent.Online || created.Agent.LastSeen != nil {
 		t.Fatalf("agent=%+v", created.Agent)
 	}
-	if !strings.Contains(created.InstallCommand, "/v0.5.0/install.sh") || strings.Contains(created.InstallCommand, created.EnrollmentValue) ||
+	if !strings.Contains(created.InstallCommand, "/v0.6.0/install.sh") || strings.Contains(created.InstallCommand, created.EnrollmentValue) ||
 		!strings.Contains(created.InstallCommand, "--server 'https://probe.test'") {
 		t.Fatalf("install command=%q", created.InstallCommand)
 	}

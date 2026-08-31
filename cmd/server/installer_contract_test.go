@@ -19,7 +19,7 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`readonly DEFAULT_VERSION="v0.5.0"`,
+		`readonly DEFAULT_VERSION="v0.6.0"`,
 		`404-probe-install agent --server <origin>`,
 		`[[ $# -eq 2 && "$1" == "--server" ]]`,
 		`IFS= read -r -s enrollment </dev/tty`,

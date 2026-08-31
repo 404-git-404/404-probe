@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.5.0"
+readonly DEFAULT_VERSION="v0.6.0"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -416,7 +416,7 @@ install_server() {
 
   local web_origin web_password_hash control_token insecure_option
   web_origin="$(prompt_web_origin)"
-  note "Set the Web administrator password. The existing V0.4 password hasher reads it without echoing it."
+  note "Set the Web administrator password. The password hasher reads it without echoing it."
 
   begin_install_transaction server
   create_service_user
@@ -721,7 +721,7 @@ interactive_install() {
   require_root_linux_systemd
   local choice
   cat >/dev/tty <<'EOF'
-Install 404-probe V0.5.0
+Install 404-probe V0.6.0
 
   1) Server
   2) Agent

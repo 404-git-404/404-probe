@@ -1,6 +1,6 @@
-# V0.6 release notes (draft)
+# 404-probe v0.6.0
 
-This is a release-candidate draft. Do not publish it or create a V0.6 tag until every RC gate is complete.
+V0.6 adds reversible Agent pause/resume controls and a tightly scoped sing-box selector workflow while preserving the V0.5 Agent report path for rolling upgrades.
 
 ## Agent lifecycle
 
@@ -26,3 +26,9 @@ This is a release-candidate draft. Do not publish it or create a V0.6 tag until 
 - Stale or unavailable snapshots disable mutation, duplicate pending switches have deterministic rejection, and snapshot publication races use bounded recovery without fabricating a new current value.
 - Schema V4 databases migrate through V5 to V6 while preserving credentials, Agent state, telemetry, and revoked records.
 - V0.5 Agents remain compatible with the V0.6 Server report path during a rolling upgrade.
+
+## Upgrade notes
+
+- Back up the Server database before upgrading. V0.5 Schema V4 databases migrate in place through V5 to V6; do not downgrade the database afterward.
+- Upgrade the Server first. Existing V0.5 Agents can continue reporting, then Agents can be upgraded individually.
+- To enable sing-box discovery on an Agent, configure the optional loopback Clash API URL and secret during Agent installation or in its private environment file.
