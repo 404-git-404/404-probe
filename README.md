@@ -32,15 +32,15 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-se
 
 ## Upgrade an existing database
 
-Stop the server and back up the database before opening it with the new binary. V0.5 uses schema V4. V0.6 migrates it in place through schema V5 (Agent pause state) to schema V6 (latest outbound snapshots). V1, V2, and V3 databases still migrate through the same chain; schemas newer than the binary supports are rejected.
+Stop the server and back up the database before opening it with the new binary. V0.7 continues to use schema V6, so a V0.6 database opens without a schema change. Older databases still migrate through schema V5 (Agent pause state) to schema V6 (latest outbound snapshots); schemas newer than the binary supports are rejected.
 
 ```bash
 sudo systemctl stop 404-probe-server
-sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.6
+sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.7
 sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
 ```
 
-V0.6 keeps the V0.5 report path compatible, so existing V0.5 Agents continue reporting with their current IDs and credentials while Agents are upgraded. Revoking an Agent preserves its telemetry, schedules, jobs, and results. Back up the database first and do not downgrade a database after it has migrated.
+V0.7 keeps the existing report path compatible, so V0.6 Agents continue reporting with their current IDs and credentials while Agents are upgraded. Revoking an Agent preserves its telemetry, schedules, jobs, and results. Back up the database first and do not downgrade a database after it has migrated.
 
 ## Configure Web authentication
 
@@ -81,7 +81,7 @@ These responses are `no-store` and use explicit browser-safe DTOs: agent tokens,
 
 Schedule targets, Job errors, and measurements are sensitive operational data visible only after Web authentication. The Web Schedule and Job surfaces are strictly read-only; legacy V0.1 browser data routes are unavailable, and Web JavaScript never calls `/api/v1/control/*`.
 
-### V0.6 Web Agent lifecycle
+### V0.7 Web Agent lifecycle
 
 `Add Agent` creates the same Agent ID and credential used by the existing CLI and Agent protocol. SQLite stores only the credential hash. The no-store creation response is the only retrieval path for the enrollment value: closing the result dialog clears it from the DOM, and list, detail, history, and SSE responses never expose it. There is no credential recovery API. Losing it requires revoking that Agent and creating a replacement.
 
@@ -388,11 +388,11 @@ Use the read path from broad state to the typed result without SSH or direct SQL
 ./404-probe-server remote probe get "$PROBE_404_JOB_ID" --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --json
 ```
 
-Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; V0.6 Web authentication uses a separate password and server-side session boundary.
+Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; V0.7 Web authentication uses a separate password and server-side session boundary.
 
 ## Capacity runbook
 
-V0.6 continues the V0.5 behavior of keeping Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
+V0.7 continues the existing behavior of keeping Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
 
 ```bash
 du -h "$PROBE_404_DB"
@@ -404,11 +404,11 @@ sqlite3 -readonly "$PROBE_404_DB" \
    UNION ALL SELECT 'results', COUNT(*) FROM probe_results;"
 ```
 
-Back up the database before maintenance. V0.6 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
+Back up the database before maintenance. V0.7 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
 
 ## Control credential incident response
 
-If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.6 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
+If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.7 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
 
 ## Optional Control API
 

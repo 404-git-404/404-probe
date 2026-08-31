@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIRECTORY
-readonly VERSION="${1:-v0.6.0}"
+readonly VERSION="${1:-v0.7.0}"
 readonly OUTPUT_DIRECTORY="${PROBE_404_RELEASE_OUTPUT:-${ROOT_DIRECTORY}/build/release-${VERSION}}"
 
 command -v go >/dev/null 2>&1 || {
@@ -24,7 +24,7 @@ command -v git >/dev/null 2>&1 || {
   exit 1
 }
 [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-  printf 'version must look like v0.6.0\n' >&2
+  printf 'version must look like v0.7.0\n' >&2
   exit 1
 }
 
