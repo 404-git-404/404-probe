@@ -190,6 +190,8 @@ func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T)
 		`choices.value === selector.current`, `agent.disabled_at`, `agent.revoked`, `switchingSelector !== ''`,
 		`job.result?.error_category`, `currentAgent = await readJSON`,
 		`case 'singbox_selector_switch'`, `measurement.selector_switch`,
+		`operation.operation_status`, `selectorOperations`, `refreshAgentUntil`, `attempt < 5`,
+		`outbounds.stale`, `状态已过期`, `切换任务已过期`, `selector_switch_pending`,
 	} {
 		if !strings.Contains(combined, required) {
 			t.Fatalf("outbound UI missing %q", required)

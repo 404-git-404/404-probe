@@ -6,6 +6,7 @@ let mutationCSRFToken = '';
 let currentAgent = null;
 let switchingSelector = '';
 let selectorFeedback = null;
+const selectorOperations = new Map();
 
 const selectorErrors = {
   selector_not_found: '本地 Selector 已不存在，请刷新后重试',
@@ -14,6 +15,12 @@ const selectorErrors = {
   clash_api_unauthorized: 'Clash API 鉴权失败',
   switch_failed: 'Clash API 拒绝了切换',
   switch_verification_failed: '切换后的回读结果与目标不一致',
+  selector_switch_pending: '该 Selector 已有等待或执行中的切换',
+  agent_disabled: 'Agent 已暂停，无法执行切换',
+  agent_revoked: 'Agent 已撤销，无法执行切换',
+  outbounds_not_configured: 'Agent 未配置出站发现',
+  outbounds_unavailable: 'Clash API 当前不可用',
+  selector_choice_not_allowed: '目标已不在最新快照中，请刷新后重试',
 };
 
 function requestID() {
@@ -23,7 +30,7 @@ function requestID() {
 async function readError(response) {
   try {
     const body = await response.json();
-    return body.error?.message || body.message || response.statusText;
+    return selectorErrors[body.error?.code] || body.error?.message || body.message || response.statusText;
   } catch (error) {
     return response.statusText;
   }
@@ -33,11 +40,59 @@ async function waitForSwitch(jobID) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     const job = await readJSON(`/api/v1/web/jobs/${encodeURIComponent(jobID)}`);
-    if (job.status === 'finished') return job;
-    if (job.status === 'expired') throw new Error('切换任务在执行前已过期');
+    if (['success', 'failed', 'expired'].includes(job.operation_status)) return job;
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw new Error('切换仍在排队，可在 Probe Jobs 中查看结果');
+}
+
+function operationFeedback(operation) {
+  if (!operation) return null;
+  const choice = operation.config?.choice || '';
+  switch (operation.operation_status) {
+    case 'queued':
+      return {message: `等待切换至 ${choice}`, error: false, pending: true};
+    case 'running':
+      return {message: `正在切换至 ${choice}`, error: false, pending: true};
+    case 'expired':
+      return {message: '切换任务已过期（可能因暂停或超时）', error: true, pending: false};
+    case 'failed': {
+      const category = operation.result?.error_category || 'switch_failed';
+      return {message: selectorErrors[category] || operation.result?.error_message || category, error: true, pending: false};
+    }
+    case 'success': {
+      const result = operation.result?.measurement?.selector_switch;
+      if (!result) return {message: '切换成功', error: false, pending: false};
+      return {message: result.changed ? `已切换到 ${result.current}` : `已经是 ${result.current}`, error: false, pending: false};
+    }
+    default:
+      return null;
+  }
+}
+
+async function loadSelectorOperations(encodedID) {
+  try {
+    const page = await readJSON(`/api/v1/web/jobs?agent_id=${encodedID}&probe_type=singbox_selector_switch&limit=20`);
+    const details = await Promise.all((page.items || []).map(job => readJSON(`/api/v1/web/jobs/${encodeURIComponent(job.job_id)}`)));
+    selectorOperations.clear();
+    for (const operation of details) {
+      const selector = operation.config?.selector;
+      if (selector && !selectorOperations.has(selector)) selectorOperations.set(selector, operation);
+    }
+  } catch (error) {
+    selectorOperations.clear();
+  }
+}
+
+async function refreshAgentUntil(encodedID, selector, target) {
+  let latest = currentAgent;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    latest = await readJSON(`/api/v1/web/agents/${encodedID}`);
+    const value = latest.outbounds?.selectors?.find(item => item.name === selector);
+    if (value?.current === target) return {agent: latest, reflected: true};
+    if (attempt < 4) await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  return {agent: latest, reflected: false};
 }
 
 async function switchOutbound(selector, choice) {
@@ -59,17 +114,35 @@ async function switchOutbound(selector, choice) {
     if (!response.ok) throw new Error(await readError(response));
     const operation = await response.json();
     const job = await waitForSwitch(operation.job_id);
-    if (!job.result?.success) {
+    selectorOperations.set(selector, job);
+    if (job.operation_status === 'expired') {
+      throw new Error('切换任务已过期（可能因暂停或超时）');
+    }
+    if (job.operation_status !== 'success' || !job.result?.success) {
       const category = job.result?.error_category || 'switch_failed';
       throw new Error(selectorErrors[category] || job.result?.error_message || category);
     }
-    currentAgent = await readJSON(`/api/v1/web/agents/${encodedID}`);
+    const result = job.result.measurement?.selector_switch;
+    const target = result?.current || choice;
+    const refreshed = await refreshAgentUntil(encodedID, selector, target);
+    currentAgent = refreshed.agent;
     switchingSelector = '';
-    selectorFeedback = null;
+    selectorFeedback = {
+      selector,
+      message: refreshed.reflected
+        ? (result?.changed ? `已切换到 ${target}` : `已经是 ${target}`)
+        : `切换成功，状态快照尚未刷新（目标 ${target}）`,
+      error: false,
+    };
     renderOutbounds(currentAgent);
   } catch (error) {
     switchingSelector = '';
     selectorFeedback = {selector, message: error.message || '切换失败', error: true};
+    try {
+      currentAgent = await readJSON(`/api/v1/web/agents/${encodeURIComponent(id)}`);
+    } catch (refreshError) {
+      // Keep the last trusted snapshot; a later discovery or page refresh can recover it.
+    }
     renderOutbounds(currentAgent);
   }
 }
@@ -82,12 +155,15 @@ function renderOutbounds(agent) {
     return;
   }
   const lastUpdated = outbounds.updated_at ? new Date(outbounds.updated_at).toLocaleString() : '尚无成功快照';
-  outboundStatus.textContent = outbounds.available
-    ? `可用 · 更新于 ${lastUpdated}`
-    : `当前不可用 · 上次成功：${lastUpdated}`;
+  const lastChecked = outbounds.checked_at ? new Date(outbounds.checked_at).toLocaleString() : '未知';
+  if (agent.revoked) outboundStatus.textContent = `Agent 已撤销 · 最后更新：${lastUpdated}`;
+  else if (agent.disabled_at) outboundStatus.textContent = `Agent 已暂停 · 最后更新：${lastUpdated}`;
+  else if (!outbounds.available) outboundStatus.textContent = `Clash API 当前不可用 · 上次成功：${lastUpdated}`;
+  else if (outbounds.stale) outboundStatus.textContent = `状态已过期 · 最后检查：${lastChecked}`;
+  else outboundStatus.textContent = `可用 · 更新于 ${lastUpdated}`;
   for (const selector of outbounds.selectors || []) {
     const details = document.createElement('details');
-    details.open = switchingSelector === selector.name || selectorFeedback?.selector === selector.name;
+    details.open = switchingSelector === selector.name || selectorFeedback?.selector === selector.name || selectorOperations.has(selector.name);
     const summary = document.createElement('summary');
     const name = document.createElement('strong');
     name.textContent = selector.name;
@@ -110,11 +186,13 @@ function renderOutbounds(agent) {
     button.textContent = '切换';
     const operationStatus = document.createElement('span');
     operationStatus.className = 'selector-operation-status';
-    if (selectorFeedback?.selector === selector.name) {
-      operationStatus.textContent = selectorFeedback.message;
-      operationStatus.classList.toggle('switch-error', selectorFeedback.error);
+    const persistedFeedback = operationFeedback(selectorOperations.get(selector.name));
+    const feedback = selectorFeedback?.selector === selector.name ? selectorFeedback : persistedFeedback;
+    if (feedback) {
+      operationStatus.textContent = feedback.message;
+      operationStatus.classList.toggle('switch-error', feedback.error);
     }
-    const blocked = !outbounds.available || agent.disabled_at || agent.revoked || !mutationCSRFToken || switchingSelector !== '';
+    const blocked = !outbounds.available || outbounds.stale || agent.disabled_at || agent.revoked || !mutationCSRFToken || switchingSelector !== '' || persistedFeedback?.pending;
     const updateButton = () => {
       button.disabled = blocked || choices.value === selector.current;
     };
@@ -199,6 +277,7 @@ async function load() {
       readJSON(`/api/v1/web/agents/${encodedID}`),
       readJSON(`/api/v1/web/agents/${encodedID}/history?hours=24`),
       readJSON('/api/v1/web/session'),
+      loadSelectorOperations(encodedID),
     ]);
     mutationCSRFToken = session.csrf_token || '';
     currentAgent = agent;

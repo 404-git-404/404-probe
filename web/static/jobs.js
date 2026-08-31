@@ -15,6 +15,15 @@ async function readJSON(path) {
 
 const timestamp = value => value ? new Date(value).toLocaleString() : '—';
 const milliseconds = value => `${Number(value || 0).toFixed(2)} ms`;
+const operationLabels = {queued: '等待执行', running: '执行中', success: '成功', failed: '失败', expired: '已过期'};
+const selectorErrorLabels = {
+  selector_not_found: '本地 Selector 已不存在',
+  choice_not_found: '本地选项已不存在',
+  clash_api_unavailable: '本地 Clash API 不可用',
+  clash_api_unauthorized: 'Clash API 鉴权失败',
+  switch_failed: 'Clash API 切换失败',
+  switch_verification_failed: '切换回读验证失败',
+};
 
 function addLine(container, label, value) {
   const line = document.createElement('div');
@@ -77,11 +86,14 @@ function showDetail(container, detail) {
   addLine(container, 'Not Before', timestamp(detail.not_before));
   addLine(container, 'Expires At', timestamp(detail.expires_at));
   if (detail.lease) addLine(container, 'Lease', `${timestamp(detail.lease.leased_at)} → ${timestamp(detail.lease.expires_at)}`);
+  if (detail.probe_type === 'singbox_selector_switch' && detail.operation_status === 'expired') {
+    addLine(container, '结果', '切换任务已过期（可能因暂停或超时）');
+  }
   if (!detail.result) return;
   addLine(container, '执行耗时', milliseconds(detail.result.duration_ms));
   addLine(container, '执行时间', `${timestamp(detail.result.started_at)} → ${timestamp(detail.result.finished_at)}`);
   if (detail.result.resolved_ip) addLine(container, 'Resolved IP', detail.result.resolved_ip);
-  if (detail.result.error_category) addLine(container, '错误类别', detail.result.error_category);
+  if (detail.result.error_category) addLine(container, '错误类别', selectorErrorLabels[detail.result.error_category] || detail.result.error_category);
   if (detail.result.error_message) addLine(container, '错误信息', detail.result.error_message);
   for (const [label, value] of measurementLines(detail)) addLine(container, label, value);
 }
@@ -99,9 +111,9 @@ function appendJob(job) {
   id.textContent = job.job_id;
   title.append(heading, id);
   const status = document.createElement('span');
-  const failed = job.result_summary && !job.result_summary.success;
-  status.className = `status ${failed || job.status === 'expired' ? 'offline' : job.status === 'finished' ? 'online' : ''}`;
-  status.textContent = job.status.toUpperCase();
+  const failed = job.operation_status === 'failed' || job.operation_status === 'expired';
+  status.className = `status ${failed ? 'offline' : job.operation_status === 'success' ? 'online' : ''}`;
+  status.textContent = (operationLabels[job.operation_status] || job.operation_status).toUpperCase();
   head.append(title, status);
   card.append(head);
 
@@ -113,7 +125,7 @@ function appendJob(job) {
   addLine(summary, 'Attempt', String(job.attempt));
   if (job.result_summary) {
     addLine(summary, '结果', `${job.result_summary.success ? '成功' : '失败'} · ${milliseconds(job.result_summary.duration_ms)}`);
-    if (job.result_summary.error_category) addLine(summary, '错误类别', job.result_summary.error_category);
+    if (job.result_summary.error_category) addLine(summary, '错误类别', selectorErrorLabels[job.result_summary.error_category] || job.result_summary.error_category);
   }
   card.append(summary);
 
