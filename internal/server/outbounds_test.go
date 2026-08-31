@@ -47,6 +47,14 @@ func TestAgentOutboundEndpointAuthBoundsAndWebReadOnlyView(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":true`) || !strings.Contains(response.Body.String(), `"name":"select"`) {
 		t.Fatalf("web status=%d body=%s", response.Code, response.Body.String())
 	}
+	app.now = func() time.Time { return time.Unix(300, 0).Add(outboundSnapshotStaleAfter + time.Second) }
+	staleRequest := httptest.NewRequest(http.MethodGet, "/api/v1/web/agents/"+agentID, nil)
+	addTestWebSession(t, app, staleRequest)
+	staleResponse := httptest.NewRecorder()
+	app.Handler().ServeHTTP(staleResponse, staleRequest)
+	if staleResponse.Code != http.StatusOK || !strings.Contains(staleResponse.Body.String(), `"stale":true`) {
+		t.Fatalf("stale status=%d body=%s", staleResponse.Code, staleResponse.Body.String())
+	}
 	if response := webRequest(app, http.MethodPost, "/api/v1/web/agents/"+agentID, strings.NewReader(`{}`), nil); response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated Web mutation status=%d", response.Code)
 	}

@@ -87,6 +87,9 @@ func TestWebJobPaginationFiltersAndResultSummary(t *testing.T) {
 		first.Items[1].ResultSummary.ErrorCategory == nil || *first.Items[1].ResultSummary.ErrorCategory != "connection_refused" {
 		t.Fatalf("summaries=%+v", first.Items)
 	}
+	if first.Items[0].OperationStatus != "success" || first.Items[1].OperationStatus != "failed" || first.Items[2].OperationStatus != "success" {
+		t.Fatalf("finished operation states=%+v", first.Items)
+	}
 	assertWebJobCollectionMinimized(t, firstResponse.Body.String())
 
 	secondResponse := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/jobs?limit=3&cursor="+*first.NextCursor)
@@ -96,11 +99,17 @@ func TestWebJobPaginationFiltersAndResultSummary(t *testing.T) {
 		second.Items[1].JobID != webJobQueued || second.Items[2].JobID != outcome.JobID || second.NextCursor == nil {
 		t.Fatalf("second=%+v", second)
 	}
+	if second.Items[0].OperationStatus != "running" || second.Items[1].OperationStatus != "queued" {
+		t.Fatalf("active operation states=%+v", second.Items)
+	}
 	thirdResponse := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/jobs?limit=3&cursor="+*second.NextCursor)
 	var third webJobCollectionView
 	decodeWebJobCollection(t, thirdResponse, &third)
 	if len(third.Items) != 1 || third.Items[0].JobID != webJobExpired || third.Items[0].Status != storage.JobStatusExpired || third.NextCursor != nil {
 		t.Fatalf("third=%+v", third)
+	}
+	if third.Items[0].OperationStatus != "expired" {
+		t.Fatalf("expired operation state=%+v", third.Items[0])
 	}
 
 	assertWebJobIDs(t, app, "/api/v1/web/jobs?status=leased", webJobLeased)

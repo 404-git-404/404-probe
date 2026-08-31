@@ -435,12 +435,28 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 }
 
 func (s *Store) RevokeAgent(ctx context.Context, id string, now time.Time) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE agents SET revoked=1,updated_at=? WHERE id=? AND revoked=0`, now.UnixMilli(), id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET revoked=1,updated_at=? WHERE id=? AND revoked=0`, now.UnixMilli(), id)
 	if err != nil {
 		return false, err
 	}
 	n, err := result.RowsAffected()
-	return n > 0, err
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET status='expired' WHERE agent_id=? AND probe_type=? AND status='queued'`, id, string(protocol.ProbeTypeSelectorSwitch)); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (s *Store) DisableAgent(ctx context.Context, id string, now time.Time) (bool, error) {

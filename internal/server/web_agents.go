@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	webAgentPathPrefix     = "/api/v1/web/agents/"
-	webAgentCursorResource = "web_agents"
+	webAgentPathPrefix         = "/api/v1/web/agents/"
+	webAgentCursorResource     = "web_agents"
+	outboundSnapshotStaleAfter = 2 * time.Minute
 )
 
 type webAgentSummaryView struct {
@@ -34,6 +35,7 @@ type webAgentDetailView struct {
 type webOutboundsView struct {
 	Configured bool                        `json:"configured"`
 	Available  bool                        `json:"available"`
+	Stale      bool                        `json:"stale"`
 	Selectors  []protocol.OutboundSelector `json:"selectors"`
 	CheckedAt  *int64                      `json:"checked_at"`
 	UpdatedAt  *int64                      `json:"updated_at"`
@@ -172,7 +174,8 @@ func (a *App) handleGetWebAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if configured {
 		checkedAt := snapshot.CheckedAt
-		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
+		stale := a.now().Sub(time.UnixMilli(snapshot.CheckedAt)) > outboundSnapshotStaleAfter
+		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Stale: stale, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
 	}
 	writeJSON(w, http.StatusOK, view)
 }

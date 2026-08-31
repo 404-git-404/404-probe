@@ -110,6 +110,8 @@ func (a *App) handleWebSelectorSwitch(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, storage.ErrOutstandingJobsFull):
 			w.Header().Set("Retry-After", "10")
 			writeJobError(w, http.StatusTooManyRequests, "queue_full", "agent job queue is full")
+		case errors.Is(err, storage.ErrSelectorSwitchPending):
+			writeJobError(w, http.StatusConflict, "selector_switch_pending", "selector already has a queued or running switch")
 		default:
 			a.logger.Error("create selector switch", "agent_id", agentID, "error", err)
 			writeJobError(w, http.StatusInternalServerError, "internal_error", "could not create selector switch")

@@ -14,21 +14,32 @@ const (
 	webJobCursorResource = "web_jobs"
 )
 
+type webOperationStatus string
+
+const (
+	webOperationQueued  webOperationStatus = "queued"
+	webOperationRunning webOperationStatus = "running"
+	webOperationSuccess webOperationStatus = "success"
+	webOperationFailed  webOperationStatus = "failed"
+	webOperationExpired webOperationStatus = "expired"
+)
+
 type webJobSummaryView struct {
-	JobID         string                   `json:"job_id"`
-	ScheduleID    *string                  `json:"schedule_id"`
-	AgentID       string                   `json:"agent_id"`
-	ProbeType     protocol.ProbeType       `json:"probe_type"`
-	TimeoutMS     int                      `json:"timeout_ms"`
-	CreatedAt     int64                    `json:"created_at"`
-	ScheduledFor  int64                    `json:"scheduled_for"`
-	NotBefore     int64                    `json:"not_before"`
-	ExpiresAt     int64                    `json:"expires_at"`
-	Status        storage.JobStatus        `json:"status"`
-	Attempt       int64                    `json:"attempt"`
-	Lease         *webJobLeaseView         `json:"lease"`
-	FinishedAt    *int64                   `json:"finished_at"`
-	ResultSummary *webJobResultSummaryView `json:"result_summary"`
+	JobID           string                   `json:"job_id"`
+	ScheduleID      *string                  `json:"schedule_id"`
+	AgentID         string                   `json:"agent_id"`
+	ProbeType       protocol.ProbeType       `json:"probe_type"`
+	TimeoutMS       int                      `json:"timeout_ms"`
+	CreatedAt       int64                    `json:"created_at"`
+	ScheduledFor    int64                    `json:"scheduled_for"`
+	NotBefore       int64                    `json:"not_before"`
+	ExpiresAt       int64                    `json:"expires_at"`
+	Status          storage.JobStatus        `json:"status"`
+	OperationStatus webOperationStatus       `json:"operation_status"`
+	Attempt         int64                    `json:"attempt"`
+	Lease           *webJobLeaseView         `json:"lease"`
+	FinishedAt      *int64                   `json:"finished_at"`
+	ResultSummary   *webJobResultSummaryView `json:"result_summary"`
 }
 
 type webJobLeaseView struct {
@@ -208,11 +219,17 @@ func newWebJobSummaryView(record storage.ProbeJobListRecord) (webJobSummaryView,
 		if record.ResultSummary != nil {
 			return webJobSummaryView{}, errors.New("unfinished job has result summary")
 		}
+		if job.Status == storage.JobStatusExpired {
+			view.OperationStatus = webOperationExpired
+		} else {
+			view.OperationStatus = webOperationQueued
+		}
 	case storage.JobStatusLeased:
 		if job.LeasedAt <= 0 || job.LeaseUntil <= job.LeasedAt || record.ResultSummary != nil {
 			return webJobSummaryView{}, errors.New("leased job state is invalid")
 		}
 		view.Lease = &webJobLeaseView{LeasedAt: job.LeasedAt, ExpiresAt: job.LeaseUntil}
+		view.OperationStatus = webOperationRunning
 	case storage.JobStatusFinished:
 		if job.FinishedAt <= 0 || record.ResultSummary == nil || record.ResultSummary.ReceivedAt != job.FinishedAt {
 			return webJobSummaryView{}, errors.New("finished job is missing result summary")
@@ -222,6 +239,11 @@ func newWebJobSummaryView(record storage.ProbeJobListRecord) (webJobSummaryView,
 		view.ResultSummary = &webJobResultSummaryView{
 			Success: record.ResultSummary.Success, DurationMS: record.ResultSummary.DurationMS,
 			ErrorCategory: optionalWebString(record.ResultSummary.ErrorCategory), FinishedAt: record.ResultSummary.FinishedAt,
+		}
+		if record.ResultSummary.Success {
+			view.OperationStatus = webOperationSuccess
+		} else {
+			view.OperationStatus = webOperationFailed
 		}
 	default:
 		return webJobSummaryView{}, errors.New("invalid stored job status")

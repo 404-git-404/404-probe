@@ -18,16 +18,17 @@ import (
 )
 
 var (
-	ErrJobNotFound         = errors.New("probe job not found")
-	ErrLeaseLost           = errors.New("probe job lease lost")
-	ErrJobExpired          = errors.New("probe job expired")
-	ErrAttemptExhausted    = errors.New("probe job attempt exhausted")
-	ErrResultConflict      = errors.New("probe job result conflicts with stored result")
-	ErrInvalidJobResult    = errors.New("invalid probe job result")
-	ErrCorruptProbeData    = errors.New("stored probe data is corrupt")
-	ErrAgentNotFound       = errors.New("active agent not found")
-	ErrJobIDConflict       = errors.New("probe job ID conflicts with existing job")
-	ErrOutstandingJobsFull = errors.New("probe job outstanding queue is full")
+	ErrJobNotFound           = errors.New("probe job not found")
+	ErrLeaseLost             = errors.New("probe job lease lost")
+	ErrJobExpired            = errors.New("probe job expired")
+	ErrAttemptExhausted      = errors.New("probe job attempt exhausted")
+	ErrResultConflict        = errors.New("probe job result conflicts with stored result")
+	ErrInvalidJobResult      = errors.New("invalid probe job result")
+	ErrCorruptProbeData      = errors.New("stored probe data is corrupt")
+	ErrAgentNotFound         = errors.New("active agent not found")
+	ErrJobIDConflict         = errors.New("probe job ID conflicts with existing job")
+	ErrOutstandingJobsFull   = errors.New("probe job outstanding queue is full")
+	ErrSelectorSwitchPending = errors.New("selector already has a pending switch")
 )
 
 const MaxOutstandingJobsPerAgent = 64
@@ -162,6 +163,11 @@ func (s *Store) CreateOneShotJobIdempotent(ctx context.Context, params CreateOne
 	if err := cleanupExpiredJobsTx(ctx, tx, params.AgentID, params.CreatedAt); err != nil {
 		return ProbeJobRecord{}, false, err
 	}
+	if params.ProbeType == protocol.ProbeTypeSelectorSwitch {
+		if err := rejectPendingSelectorSwitchTx(ctx, tx, params.AgentID, params.Config.SelectorSwitch.Selector); err != nil {
+			return ProbeJobRecord{}, false, err
+		}
+	}
 	var outstanding int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM probe_jobs
 		WHERE agent_id=? AND status IN ('queued','leased')`, params.AgentID).Scan(&outstanding); err != nil {
@@ -188,6 +194,29 @@ func (s *Store) CreateOneShotJobIdempotent(ctx context.Context, params CreateOne
 		return ProbeJobRecord{}, false, err
 	}
 	return record, true, nil
+}
+
+func rejectPendingSelectorSwitchTx(ctx context.Context, tx *sql.Tx, agentID, selectorName string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT config_json FROM probe_jobs
+		WHERE agent_id=? AND probe_type=? AND status IN ('queued','leased')`, agentID, string(protocol.ProbeTypeSelectorSwitch))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return err
+		}
+		config, err := protocol.DecodeProbeConfig(protocol.ProbeTypeSelectorSwitch, raw)
+		if err != nil {
+			return fmt.Errorf("%w: pending selector switch config: %v", ErrCorruptProbeData, err)
+		}
+		if config.SelectorSwitch.Selector == selectorName {
+			return ErrSelectorSwitchPending
+		}
+	}
+	return rows.Err()
 }
 
 func validateOneShotJobParams(params CreateOneShotJobParams) ([]byte, error) {
