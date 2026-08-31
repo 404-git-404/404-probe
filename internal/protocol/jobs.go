@@ -26,18 +26,23 @@ const (
 type ProbeType string
 
 const (
-	ProbeTypeICMPPing   ProbeType = "icmp_ping"
-	ProbeTypeTCPConnect ProbeType = "tcp_connect"
-	ProbeTypeHTTP       ProbeType = "http"
+	ProbeTypeICMPPing       ProbeType = "icmp_ping"
+	ProbeTypeTCPConnect     ProbeType = "tcp_connect"
+	ProbeTypeHTTP           ProbeType = "http"
+	ProbeTypeSelectorSwitch ProbeType = "singbox_selector_switch"
 )
 
 func (p ProbeType) Validate() error {
 	switch p {
-	case ProbeTypeICMPPing, ProbeTypeTCPConnect, ProbeTypeHTTP:
+	case ProbeTypeICMPPing, ProbeTypeTCPConnect, ProbeTypeHTTP, ProbeTypeSelectorSwitch:
 		return nil
 	default:
 		return fmt.Errorf("unknown probe type %q", p)
 	}
+}
+
+func (p ProbeType) IsNetworkProbe() bool {
+	return p == ProbeTypeICMPPing || p == ProbeTypeTCPConnect || p == ProbeTypeHTTP
 }
 
 type ICMPPingConfig struct {
@@ -56,12 +61,18 @@ type HTTPConfig struct {
 	ExpectedStatus *int   `json:"expected_status,omitempty"`
 }
 
+type SelectorSwitchConfig struct {
+	Selector string `json:"selector"`
+	Choice   string `json:"choice"`
+}
+
 // ProbeConfig is a typed union. Exactly one field must be non-nil and it must
 // match the enclosing Job's ProbeType.
 type ProbeConfig struct {
-	ICMPPing   *ICMPPingConfig
-	TCPConnect *TCPConnectConfig
-	HTTP       *HTTPConfig
+	ICMPPing       *ICMPPingConfig
+	TCPConnect     *TCPConnectConfig
+	HTTP           *HTTPConfig
+	SelectorSwitch *SelectorSwitchConfig
 }
 
 func (c ProbeConfig) Type() (ProbeType, error) {
@@ -75,6 +86,9 @@ func (c ProbeConfig) Type() (ProbeType, error) {
 	}
 	if c.HTTP != nil {
 		probeType, count = ProbeTypeHTTP, count+1
+	}
+	if c.SelectorSwitch != nil {
+		probeType, count = ProbeTypeSelectorSwitch, count+1
 	}
 	if count != 1 {
 		return "", errors.New("probe config must contain exactly one typed config")
@@ -109,6 +123,13 @@ func (c ProbeConfig) Validate(probeType ProbeType) error {
 		if err := validateHTTPConfig(*c.HTTP); err != nil {
 			return err
 		}
+	case ProbeTypeSelectorSwitch:
+		if err := validateOutboundName(c.SelectorSwitch.Selector); err != nil {
+			return fmt.Errorf("selector: %w", err)
+		}
+		if err := validateOutboundName(c.SelectorSwitch.Choice); err != nil {
+			return fmt.Errorf("choice: %w", err)
+		}
 	default:
 		return fmt.Errorf("unknown probe type %q", probeType)
 	}
@@ -139,6 +160,12 @@ func DecodeProbeConfig(probeType ProbeType, data []byte) (ProbeConfig, error) {
 			return ProbeConfig{}, err
 		}
 		config.HTTP = &value
+	case ProbeTypeSelectorSwitch:
+		var value SelectorSwitchConfig
+		if err := decodeStrict(data, &value); err != nil {
+			return ProbeConfig{}, err
+		}
+		config.SelectorSwitch = &value
 	}
 	if err := config.Validate(probeType); err != nil {
 		return ProbeConfig{}, err
@@ -157,6 +184,8 @@ func MarshalProbeConfig(probeType ProbeType, config ProbeConfig) ([]byte, error)
 		return json.Marshal(config.TCPConnect)
 	case ProbeTypeHTTP:
 		return json.Marshal(config.HTTP)
+	case ProbeTypeSelectorSwitch:
+		return json.Marshal(config.SelectorSwitch)
 	default:
 		return nil, fmt.Errorf("unknown probe type %q", probeType)
 	}
@@ -179,8 +208,8 @@ func (r ClaimRequest) Validate() error {
 	if !validIdentifier(r.SessionID, 128) {
 		return errors.New("session_id is required and must be at most 128 bytes")
 	}
-	if len(r.SupportedProbeTypes) == 0 || len(r.SupportedProbeTypes) > 3 {
-		return errors.New("supported_probe_types must contain between 1 and 3 values")
+	if len(r.SupportedProbeTypes) == 0 || len(r.SupportedProbeTypes) > 4 {
+		return errors.New("supported_probe_types must contain between 1 and 4 values")
 	}
 	seen := make(map[ProbeType]struct{}, len(r.SupportedProbeTypes))
 	for _, probeType := range r.SupportedProbeTypes {
@@ -321,11 +350,17 @@ type HTTPResult struct {
 	BodyTruncated bool    `json:"body_truncated"`
 }
 
+type SelectorSwitchResult struct {
+	Current string `json:"current"`
+	Changed bool   `json:"changed"`
+}
+
 // ProbeResult is a typed union. Exactly one field must be non-nil.
 type ProbeResult struct {
-	ICMPPing   *ICMPPingResult
-	TCPConnect *TCPConnectResult
-	HTTP       *HTTPResult
+	ICMPPing       *ICMPPingResult
+	TCPConnect     *TCPConnectResult
+	HTTP           *HTTPResult
+	SelectorSwitch *SelectorSwitchResult
 }
 
 func (r ProbeResult) Type() (ProbeType, error) {
@@ -339,6 +374,9 @@ func (r ProbeResult) Type() (ProbeType, error) {
 	}
 	if r.HTTP != nil {
 		probeType, count = ProbeTypeHTTP, count+1
+	}
+	if r.SelectorSwitch != nil {
+		probeType, count = ProbeTypeSelectorSwitch, count+1
 	}
 	if count != 1 {
 		return "", errors.New("probe result must contain exactly one typed payload")
@@ -386,6 +424,12 @@ func (r ProbeResult) Validate(probeType ProbeType) error {
 		if value.BodyBytes > math.MaxInt64 {
 			return errors.New("HTTP body_bytes exceeds MaxInt64")
 		}
+	case ProbeTypeSelectorSwitch:
+		if r.SelectorSwitch.Current != "" {
+			if err := validateOutboundName(r.SelectorSwitch.Current); err != nil {
+				return fmt.Errorf("current: %w", err)
+			}
+		}
 	default:
 		return fmt.Errorf("unknown probe type %q", probeType)
 	}
@@ -416,6 +460,12 @@ func DecodeProbeResult(probeType ProbeType, data []byte) (ProbeResult, error) {
 			return ProbeResult{}, err
 		}
 		result.HTTP = &value
+	case ProbeTypeSelectorSwitch:
+		var value SelectorSwitchResult
+		if err := decodeStrict(data, &value); err != nil {
+			return ProbeResult{}, err
+		}
+		result.SelectorSwitch = &value
 	}
 	if err := result.Validate(probeType); err != nil {
 		return ProbeResult{}, err
@@ -435,6 +485,8 @@ func MarshalProbeResult(probeType ProbeType, result ProbeResult) ([]byte, error)
 		return json.Marshal(normalized.TCPConnect)
 	case ProbeTypeHTTP:
 		return json.Marshal(normalized.HTTP)
+	case ProbeTypeSelectorSwitch:
+		return json.Marshal(normalized.SelectorSwitch)
 	default:
 		return nil, fmt.Errorf("unknown probe type %q", probeType)
 	}

@@ -186,6 +186,32 @@ func TestProbeResultValidation(t *testing.T) {
 	}
 }
 
+func TestSelectorSwitchProtocolIsDomainSpecificAndBounded(t *testing.T) {
+	config := ProbeConfig{SelectorSwitch: &SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}}
+	if err := config.Validate(ProbeTypeSelectorSwitch); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := MarshalProbeConfig(ProbeTypeSelectorSwitch, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeProbeConfig(ProbeTypeSelectorSwitch, encoded)
+	if err != nil || decoded.SelectorSwitch.Selector != "proxy" || decoded.SelectorSwitch.Choice != "jp" {
+		t.Fatalf("decoded=%+v err=%v", decoded, err)
+	}
+	if ProbeTypeSelectorSwitch.IsNetworkProbe() {
+		t.Fatal("selector switch was classified as a user-creatable network probe")
+	}
+	invalid := ProbeConfig{SelectorSwitch: &SelectorSwitchConfig{Selector: "proxy", Choice: strings.Repeat("x", MaxOutboundNameBytes+1)}}
+	if err := invalid.Validate(ProbeTypeSelectorSwitch); err == nil {
+		t.Fatal("oversized selector choice accepted")
+	}
+	result := ProbeResult{SelectorSwitch: &SelectorSwitchResult{Current: "jp", Changed: true}}
+	if err := result.Validate(ProbeTypeSelectorSwitch); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func intPointer(value int) *int { return &value }
 
 func TestJobResultValidationAndStrictDecode(t *testing.T) {
