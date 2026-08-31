@@ -38,6 +38,8 @@ func oneShot(id, agentID string, at time.Time, probeType protocol.ProbeType) Cre
 		params.Config = protocol.ProbeConfig{TCPConnect: &protocol.TCPConnectConfig{Host: "example.com", Port: 443}}
 	case protocol.ProbeTypeHTTP:
 		params.Config = protocol.ProbeConfig{HTTP: &protocol.HTTPConfig{URL: "https://example.com/health", Method: "GET"}}
+	case protocol.ProbeTypeSelectorSwitch:
+		params.Config = protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}}
 	}
 	return params
 }
@@ -147,6 +149,90 @@ func TestCreateOneShotJobIdempotent(t *testing.T) {
 	replayed, created, err = store.CreateOneShotJobIdempotent(ctx, replayParams)
 	if err != nil || created || replayed.ID != params.ID || replayed.CreatedAt != params.CreatedAt {
 		t.Fatalf("revoked agent replay=%+v created=%t err=%v", replayed, created, err)
+	}
+}
+
+func TestConcurrentSelectorSwitchesAllowOnePendingPerSelector(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	const callers = 8
+	start := make(chan struct{})
+	errorsSeen := make(chan error, callers)
+	var wait sync.WaitGroup
+	for index := 0; index < callers; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			params := oneShot(fmt.Sprintf("%032x", index+1), agentID, at, protocol.ProbeTypeSelectorSwitch)
+			_, _, err := store.CreateOneShotJobIdempotent(ctx, params)
+			errorsSeen <- err
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+	close(errorsSeen)
+	created, pending := 0, 0
+	for err := range errorsSeen {
+		switch {
+		case err == nil:
+			created++
+		case errors.Is(err, ErrSelectorSwitchPending):
+			pending++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if created != 1 || pending != callers-1 {
+		t.Fatalf("created=%d pending=%d", created, pending)
+	}
+}
+
+func TestPausedRunningSelectorSwitchRetriesAsIdempotentCompletion(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	params := oneShot("33333333333333333333333333333333", agentID, at, protocol.ProbeTypeSelectorSwitch)
+	if err := store.CreateOneShotJob(ctx, params); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.ClaimJob(ctx, agentID, claimRequest(1, "first", protocol.ProbeTypeSelectorSwitch), at, time.Minute)
+	if err != nil || first == nil {
+		t.Fatalf("first claim=%+v err=%v", first, err)
+	}
+	if changed, err := store.DisableAgent(ctx, agentID, at.Add(time.Second)); err != nil || !changed {
+		t.Fatalf("disable=%t err=%v", changed, err)
+	}
+	running, err := store.GetProbeJob(ctx, params.ID)
+	if err != nil || running.Status != JobStatusLeased {
+		t.Fatalf("paused running job=%+v err=%v", running, err)
+	}
+	if _, err := store.SubmitJobResult(ctx, agentID, params.ID, protocol.JobResult{}, at.Add(2*time.Second)); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("disabled result error=%v", err)
+	}
+	if changed, err := store.EnableAgent(ctx, agentID, at.Add(2*time.Second)); err != nil || !changed {
+		t.Fatalf("enable=%t err=%v", changed, err)
+	}
+	retryAt := at.Add(time.Minute)
+	retry, err := store.ClaimJob(ctx, agentID, claimRequest(2, "second", protocol.ProbeTypeSelectorSwitch), retryAt, time.Minute)
+	if err != nil || retry == nil || retry.JobID != params.ID || retry.Attempt != 2 {
+		t.Fatalf("retry claim=%+v err=%v", retry, err)
+	}
+	result := protocol.JobResult{
+		ProtocolVersion: protocol.JobProtocolVersion, LeaseToken: retry.LeaseToken, Attempt: retry.Attempt,
+		AgentEpoch: 2, SessionID: "second", StartedAt: retryAt.UnixMilli(), FinishedAt: retryAt.Add(time.Millisecond).UnixMilli(),
+		DurationMS: 1, Success: true,
+		Result: protocol.ProbeResult{SelectorSwitch: &protocol.SelectorSwitchResult{Current: "jp", Changed: false}},
+	}
+	if _, err := store.SubmitJobResult(ctx, agentID, params.ID, result, retryAt.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := store.GetProbeJob(ctx, params.ID)
+	if err != nil || finished.Status != JobStatusFinished || finished.Attempt != 2 {
+		t.Fatalf("finished=%+v err=%v", finished, err)
 	}
 }
 

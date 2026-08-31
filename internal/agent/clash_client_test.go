@@ -122,6 +122,35 @@ func TestClashClientSwitchReportsUnauthorized(t *testing.T) {
 	}
 }
 
+func TestClashClientRetryAfterVerificationFailureDoesNotRepeatPUT(t *testing.T) {
+	current := "a"
+	puts, gets := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			puts++
+			current = "b"
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodGet:
+			gets++
+			if gets == 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"proxies":{"select":{"type":"Selector","name":"select","now":"` + current + `","all":["a","b"]}}}`))
+		}
+	}))
+	defer server.Close()
+	client := clashClient{endpoint: server.URL, client: server.Client()}
+	if _, err := client.switchSelector(context.Background(), "select", "b"); err == nil {
+		t.Fatal("verification failure unexpectedly succeeded")
+	}
+	result, err := client.switchSelector(context.Background(), "select", "b")
+	if err != nil || result.Changed || result.Current != "b" || puts != 1 {
+		t.Fatalf("retry result=%+v puts=%d err=%v", result, puts, err)
+	}
+}
+
 func TestClashClientRejectsFailuresAndMalformedSelectors(t *testing.T) {
 	tests := []struct {
 		status int

@@ -293,6 +293,37 @@ func TestRunnerSelectorSwitchReportsStaleChoiceWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestRunnerSelectorSwitchSuccessSurvivesSnapshotPublicationRace(t *testing.T) {
+	current := "hk"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			_, _ = io.WriteString(w, `{"proxies":{"proxy":{"type":"Selector","name":"proxy","now":"`+current+`","all":["hk","jp"]}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/proxy":
+			current = "jp"
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agent/outbounds":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Second, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	runner.client = server.Client()
+	job := protocol.Job{
+		ProtocolVersion: protocol.JobProtocolVersion, JobID: "switch-race", ProbeType: protocol.ProbeTypeSelectorSwitch,
+		Config:    protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}},
+		CreatedAt: 1000, NotBefore: 1000, ExpiresAt: 10000, TimeoutMS: 1000, Attempt: 1,
+		LeaseToken: "lease", LeaseExpiresAt: 9000,
+	}
+	result := runner.executeJob(context.Background(), job)
+	if !result.Success || result.Result.SelectorSwitch == nil || result.Result.SelectorSwitch.Current != "jp" {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
 func TestConfiguredClashDiscoveryAdvertisesSelectorSwitchCapability(t *testing.T) {
 	claimReceived := make(chan protocol.ClaimRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
