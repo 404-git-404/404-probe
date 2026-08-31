@@ -1,5 +1,40 @@
 const id = new URLSearchParams(location.search).get('id');
 const empty = document.querySelector('#history-empty');
+const outboundStatus = document.querySelector('#outbounds-status');
+const outboundList = document.querySelector('#outbounds-list');
+
+function renderOutbounds(outbounds) {
+  outboundList.replaceChildren();
+  if (!outbounds || !outbounds.configured) {
+    outboundStatus.textContent = '未配置只读发现';
+    return;
+  }
+  const lastUpdated = outbounds.updated_at ? new Date(outbounds.updated_at).toLocaleString() : '尚无成功快照';
+  outboundStatus.textContent = outbounds.available
+    ? `可用 · 更新于 ${lastUpdated}`
+    : `当前不可用 · 上次成功：${lastUpdated}`;
+  for (const selector of outbounds.selectors || []) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    const name = document.createElement('strong');
+    name.textContent = selector.name;
+    const current = document.createElement('span');
+    current.textContent = selector.current;
+    summary.append(name, current);
+    const choices = document.createElement('ul');
+    for (const choice of selector.choices || []) {
+      const item = document.createElement('li');
+      item.textContent = choice;
+      if (choice === selector.current) item.className = 'selected-outbound';
+      choices.append(item);
+    }
+    details.append(summary, choices);
+    outboundList.append(details);
+  }
+  if (!outboundList.children.length && outbounds.available) {
+    outboundStatus.textContent += ' · 未发现 Selector';
+  }
+}
 
 function draw(canvas, points, key, color, format) {
   const ratio = devicePixelRatio || 1;
@@ -71,6 +106,7 @@ async function load() {
     ]);
     const state = agent.state || {};
     document.querySelector('#title').textContent = `${state.hostname || agent.name} · 历史`;
+    renderOutbounds(agent.outbounds);
     const points = history.points;
     empty.classList.toggle('hidden', points.length > 0);
     if (!points.length) {
@@ -87,6 +123,7 @@ async function load() {
     addEventListener('resize', render);
   } catch (error) {
     empty.textContent = '加载失败';
+    outboundStatus.textContent = '出站状态加载失败';
   }
 }
 

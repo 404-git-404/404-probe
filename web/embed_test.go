@@ -172,3 +172,23 @@ func TestAgentCardsUseCompactResponsiveLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestOutboundDiscoveryUIIsReadOnlyAndShowsAllStates(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	htmlBytes, _ := fs.ReadFile(static, "history.html")
+	jsBytes, _ := fs.ReadFile(static, "history.js")
+	combined := string(htmlBytes) + string(jsBytes)
+	for _, required := range []string{`id="outbounds-status"`, `id="outbounds-list"`, `未配置只读发现`, `当前不可用`, `未发现 Selector`, `document.createElement('details')`} {
+		if !strings.Contains(combined, required) {
+			t.Fatalf("outbound UI missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"switch", "apply", "PUT /proxies", "method: 'PUT'"} {
+		if strings.Contains(strings.ToLower(combined), strings.ToLower(forbidden)) {
+			t.Fatalf("outbound UI contains mutation behavior %q", forbidden)
+		}
+	}
+}
