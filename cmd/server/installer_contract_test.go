@@ -60,3 +60,30 @@ func TestInstallerAgentServiceRestartsOnlyAfterFailure(t *testing.T) {
 		t.Fatalf("Agent service would restart after a clean revoked exit:\n%s", service)
 	}
 }
+
+func TestInstallerConfiguresOptionalAgentLocalClashAPI(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`valid_sing_box_clash_api_url`,
+		`IFS= read -r clash_api </dev/tty`,
+		`IFS= read -r -s clash_secret </dev/tty`,
+		`PROBE_404_SING_BOX_CLASH_API=$(quote_environment_value "${clash_api}")`,
+		`PROBE_404_SING_BOX_CLASH_SECRET=$(quote_environment_value "${clash_secret}")`,
+		`unset clash_secret clash_environment`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing Agent-local Clash contract %q", required)
+		}
+	}
+	if strings.Contains(script, "--sing-box-clash-secret <") || strings.Contains(script, "--sing-box-clash-secret=") {
+		t.Fatal("installer exposes the Clash API secret through command arguments")
+	}
+}

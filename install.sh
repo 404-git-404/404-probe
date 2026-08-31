@@ -503,6 +503,19 @@ valid_agent_server_url() {
     || "${value}" =~ ^http://\[::1\](:[0-9]{1,5})?/?$ ]]
 }
 
+valid_sing_box_clash_api_url() {
+  local value="$1"
+  [[ "${value}" =~ ^https?://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?/?$ \
+    || "${value}" =~ ^https?://\[::1\](:[0-9]{1,5})?/?$ ]]
+}
+
+quote_environment_value() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "${value}"
+}
+
 decode_enrollment_token() {
   local enrollment="$1"
   local encoded padding decoded agent_id agent_token
@@ -547,6 +560,7 @@ install_agent() {
   [[ ! -e "${AGENT_BINARY}" ]] || die "${AGENT_BINARY} already exists; refusing to overwrite it"
 
   local server_url="${1:-}" enrollment credentials agent_id agent_token insecure_option
+  local clash_api clash_secret clash_environment
   if [[ -z "${server_url}" ]]; then
     printf 'Server URL: ' >/dev/tty
     IFS= read -r server_url </dev/tty
@@ -563,6 +577,22 @@ install_agent() {
   unset enrollment credentials
   verify_agent_authentication "${server_url}" "${agent_token}"
 
+  printf 'Local sing-box Clash API URL (optional, for example http://127.0.0.1:9090): ' >/dev/tty
+  IFS= read -r clash_api </dev/tty
+  clash_environment=""
+  if [[ -n "${clash_api}" ]]; then
+    valid_sing_box_clash_api_url "${clash_api}" \
+      || die "sing-box Clash API URL must be an HTTP(S) loopback origin without credentials, path, query, or fragment"
+    clash_api="${clash_api%/}"
+    printf 'sing-box Clash API secret (optional, hidden): ' >/dev/tty
+    IFS= read -r -s clash_secret </dev/tty
+    printf '\n' >/dev/tty
+    clash_environment=$'\n'"PROBE_404_SING_BOX_CLASH_API=$(quote_environment_value "${clash_api}")"
+    if [[ -n "${clash_secret}" ]]; then
+      clash_environment+=$'\n'"PROBE_404_SING_BOX_CLASH_SECRET=$(quote_environment_value "${clash_secret}")"
+    fi
+  fi
+
   begin_install_transaction agent
   create_service_user
   prepare_directories
@@ -576,7 +606,8 @@ install_agent() {
   write_private_file "${CONFIG_DIRECTORY}/agent.env" "PROBE_404_SERVER=${server_url}
 PROBE_404_AGENT_ID=${agent_id}
 PROBE_404_TOKEN=${agent_token}
-PROBE_404_STATE=${STATE_DIRECTORY}/agent.epoch"
+PROBE_404_STATE=${STATE_DIRECTORY}/agent.epoch${clash_environment}"
+  unset clash_secret clash_environment
 
   insecure_option=""
   if [[ "${server_url}" == http://* ]]; then
