@@ -87,3 +87,34 @@ func TestInstallerConfiguresOptionalAgentLocalClashAPI(t *testing.T) {
 		t.Fatal("installer exposes the Clash API secret through command arguments")
 	}
 }
+
+func TestInstallerAgentUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`404-probe-install uninstall <server|agent>`,
+		`systemctl is-active --quiet "${unit}"`,
+		`systemctl disable "${unit}" >/dev/null 2>&1 || true`,
+		`rm -f -- "${unit_path}" "${binary_path}"`,
+		`"${CONFIG_DIRECTORY}/agent.env"`,
+		`"${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"`,
+		`Re-running this command is safe.`,
+		`Preserved systemd journal history`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing uninstall contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{`journalctl --vacuum`, `rm -rf -- "${STATE_DIRECTORY}"`, `systemctl disable --now "${unit}"`} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("installer uninstall violates preservation or idempotency through %q", forbidden)
+		}
+	}
+}

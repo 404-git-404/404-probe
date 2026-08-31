@@ -282,7 +282,7 @@ async function load() {
     mutationCSRFToken = session.csrf_token || '';
     currentAgent = agent;
     const state = agent.state || {};
-    document.querySelector('#title').textContent = `${state.hostname || agent.name} · 历史`;
+    document.querySelector('#title').textContent = `${state.hostname || agent.name || 'Agent'} · 历史`;
     renderOutbounds(agent);
     const points = history.points;
     empty.classList.toggle('hidden', points.length > 0);

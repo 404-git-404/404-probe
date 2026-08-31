@@ -23,8 +23,6 @@
     <div id="add-agent-result" class="hidden">
       <h2>Agent 已创建</h2>
       <p class="secret-warning">Enrollment credential 仅显示这一次。关闭后无法再次查看。</p>
-      <label>Agent ID</label>
-      <div class="copy-row"><code id="created-agent-id"></code><button type="button" data-copy-target="created-agent-id">复制</button></div>
       <label>安装命令</label>
       <div class="copy-block"><code id="created-install-command"></code><button type="button" data-copy-target="created-install-command">复制命令</button></div>
       <p class="install-note">在目标 Linux 主机执行命令，然后在隐藏提示中粘贴下面的 enrollment value。复制 credential 会将其留在系统剪贴板，使用后请清除。</p>
@@ -36,14 +34,14 @@
   <dialog id="remove-agent-dialog" class="agent-dialog" aria-labelledby="remove-agent-title">
     <h2 id="remove-agent-title">移除 Agent</h2>
     <p>这会立即撤销 Agent credential，并将它移出默认活动视图。</p>
-    <div class="remove-agent-identity"><strong id="remove-agent-name"></strong><code id="remove-agent-id"></code></div>
+    <div class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
     <p class="remove-warning">此操作会永久撤销 Agent credential，无法通过恢复操作撤销。历史 telemetry、Schedules、Probe Jobs/Results 会保留，且不会远程卸载 Agent。</p>
     <form id="remove-agent-form">
       <div id="remove-agent-error" class="dialog-error hidden" role="alert">移除失败，请重试。</div>
       <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">撤销并移除</button></div>
     </form>
   </dialog>
-  <footer>V0.6 · 数据通过 Server 安全汇总</footer>
+  <footer>V0.7 · 数据通过 Server 安全汇总</footer>
   <script src="/app.js" defer></script>
   <script src="/session.js" defer></script>
 </body>

@@ -31,6 +31,9 @@ func TestWebAgentDisableEnableLifecycleAndBoundary(t *testing.T) {
 	defer store.Close()
 	now := time.Unix(2_000, 0)
 	app.now = func() time.Time { return now }
+	if response := postReport(t, app, token, reportFor(agentID, 1)); response.Code != http.StatusOK {
+		t.Fatalf("initial report status=%d body=%s", response.Code, response.Body.String())
+	}
 
 	for _, action := range []string{"disable", "enable"} {
 		response := webAgentStateResponse(t, app, agentID, action, func(r *http.Request, _ *webSession) {
@@ -50,7 +53,13 @@ func TestWebAgentDisableEnableLifecycleAndBoundary(t *testing.T) {
 	if *disabled.Agent.DisabledAt != now.UnixMilli() {
 		t.Fatalf("disabled_at=%d want=%d", *disabled.Agent.DisabledAt, now.UnixMilli())
 	}
-	if response := postReport(t, app, token, reportFor(agentID, 1)); response.Code != http.StatusLocked || jobErrorCode(t, response) != "agent_disabled" {
+	pausedDetailResponse := webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+agentID)
+	var pausedDetail webAgentDetailView
+	if pausedDetailResponse.Code != http.StatusOK || json.Unmarshal(pausedDetailResponse.Body.Bytes(), &pausedDetail) != nil ||
+		pausedDetail.State == nil || !pausedDetail.State.Stale || pausedDetail.State.RXRate != 0 || pausedDetail.State.TXRate != 0 {
+		t.Fatalf("paused detail status=%d body=%s", pausedDetailResponse.Code, pausedDetailResponse.Body.String())
+	}
+	if response := postReport(t, app, token, reportFor(agentID, 2)); response.Code != http.StatusLocked || jobErrorCode(t, response) != "agent_disabled" {
 		t.Fatalf("disabled report status=%d body=%s", response.Code, response.Body.String())
 	}
 	active := getWebAgentCollection(t, app, "/api/v1/web/agents?limit=100")
@@ -71,8 +80,20 @@ func TestWebAgentDisableEnableLifecycleAndBoundary(t *testing.T) {
 	if enable.Code != http.StatusOK || json.Unmarshal(enable.Body.Bytes(), &enabled) != nil || enabled.Agent.DisabledAt != nil {
 		t.Fatalf("enable status=%d body=%s", enable.Code, enable.Body.String())
 	}
-	if response := postReport(t, app, token, reportFor(agentID, 1)); response.Code != http.StatusOK {
+	awaitingDetailResponse := webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+agentID)
+	var awaitingDetail webAgentDetailView
+	if awaitingDetailResponse.Code != http.StatusOK || json.Unmarshal(awaitingDetailResponse.Body.Bytes(), &awaitingDetail) != nil ||
+		awaitingDetail.State == nil || !awaitingDetail.State.Stale || awaitingDetail.State.RXRate != 0 || awaitingDetail.State.TXRate != 0 {
+		t.Fatalf("resumed detail before fresh sample status=%d body=%s", awaitingDetailResponse.Code, awaitingDetailResponse.Body.String())
+	}
+	if response := postReport(t, app, token, reportFor(agentID, 2)); response.Code != http.StatusOK {
 		t.Fatalf("resumed report status=%d body=%s", response.Code, response.Body.String())
+	}
+	freshDetailResponse := webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+agentID)
+	var freshDetail webAgentDetailView
+	if freshDetailResponse.Code != http.StatusOK || json.Unmarshal(freshDetailResponse.Body.Bytes(), &freshDetail) != nil ||
+		freshDetail.State == nil || freshDetail.State.Stale {
+		t.Fatalf("resumed detail after fresh sample status=%d body=%s", freshDetailResponse.Code, freshDetailResponse.Body.String())
 	}
 }
 

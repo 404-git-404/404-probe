@@ -1,5 +1,6 @@
 const schedules = document.querySelector('#schedules');
 const empty = document.querySelector('#schedule-empty');
+let agentNames = new Map();
 
 async function readJSON(path) {
   const response = await fetch(path, {cache: 'no-store'});
@@ -12,6 +13,22 @@ async function readJSON(path) {
 }
 
 const timestamp = value => value ? new Date(value).toLocaleString() : '—';
+
+async function loadAgentNames() {
+  const names = new Map();
+  for (const status of ['', 'revoked']) {
+    let cursor = '';
+    do {
+      const query = new URLSearchParams({limit: '100'});
+      if (status) query.set('status', status);
+      if (cursor) query.set('cursor', cursor);
+      const page = await readJSON(`/api/v1/web/agents?${query}`);
+      for (const agent of page.items || []) names.set(agent.agent_id, agent.name || '未命名 Agent');
+      cursor = page.next_cursor || '';
+    } while (cursor);
+  }
+  return names;
+}
 
 function duration(seconds) {
   if (seconds % 86400 === 0) return `${seconds / 86400} 天`;
@@ -69,7 +86,7 @@ function render(items) {
     const details = document.createElement('div');
     details.className = 'schedule-details';
     addLine(details, '目标', target(schedule));
-    addLine(details, 'Agent', schedule.agent_id);
+    addLine(details, 'Agent', agentNames.get(schedule.agent_id) || '未知 Agent');
     addLine(details, '间隔', duration(schedule.interval_seconds));
     addLine(details, '超时', `${schedule.timeout_ms} ms`);
     addLine(details, '下次运行', schedule.enabled ? timestamp(schedule.next_run_at) : '已停用');
@@ -81,6 +98,7 @@ function render(items) {
 
 async function load() {
   try {
+    agentNames = await loadAgentNames();
     const summaries = [];
     const seenCursors = new Set();
     let cursor = '';

@@ -91,6 +91,14 @@ The generated Linux install command contains only the configured Server origin a
 
 `Pause` temporarily rejects reports, discovery, and new work while retaining the credential and history. Queued selector switches expire instead of executing while paused. `Resume` re-enables that same Agent and credential. `Remove Agent` remains permanent: a revoked Agent cannot be resumed, and the Agent exits cleanly after the Server returns the revoked signal. The installed systemd unit uses `Restart=on-failure`, so crashes restart but this clean revoked exit does not.
 
+To explicitly remove the software and private Agent state from its Linux host, run:
+
+```bash
+sudo 404-probe-install uninstall agent
+```
+
+This local, repeatable command stops and disables the Agent service, then removes its systemd unit, binary, private environment file, and epoch/state files. It is safe to rerun after a partial cleanup. It preserves systemd journal history, the locked service account, and the installer helper. It does not contact the Server or delete Server-side telemetry. `uninstall server` similarly removes the Server unit and binary, but deliberately preserves Server configuration, credentials, and the database.
+
 All Web mutations require an authenticated Web session, the exact configured Origin, `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
 
 Agent cards use a fixed five-slot layout for identity, metrics, network, metadata, and actions. Online, offline, long-name, and never-reported cards keep the same height on desktop and mobile. Long text is truncated in the card while its complete value remains available through `title`, accessible labels, and the authenticated Agent detail response. Card resizing, dragging, per-Agent layouts, and metric visibility preferences are not supported.

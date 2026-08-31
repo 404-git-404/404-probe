@@ -223,6 +223,61 @@ func TestWebLoginRejectsOriginCSRFAndReplays(t *testing.T) {
 	if replayed.Code != http.StatusForbidden {
 		t.Fatalf("replay status=%d body=%s", replayed.Code, replayed.Body.String())
 	}
+	if !strings.Contains(replayed.Body.String(), "登录请求已过期，请重新登录。") ||
+		len(webLoginTokenPattern.FindStringSubmatch(replayed.Body.String())) != 2 {
+		t.Fatalf("replay did not recover to a fresh login form: %s", replayed.Body.String())
+	}
+}
+
+func TestWebLoginRecoversAfterServerRestart(t *testing.T) {
+	app, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+
+	oldCookie, oldToken, _ := webLoginPage(t, app)
+	app.webAuth.mu.Lock()
+	app.webAuth.loginTokens = make(map[string]time.Time)
+	app.webAuth.mu.Unlock()
+
+	oldForm := url.Values{"csrf_token": {oldToken}, "password": {"test-password"}}
+	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(oldForm.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", "https://probe.test")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	request.AddCookie(oldCookie)
+	recovered := httptest.NewRecorder()
+	app.Handler().ServeHTTP(recovered, request)
+
+	if recovered.Code != http.StatusForbidden || recovered.Header().Get("Content-Type") != "text/html; charset=utf-8" ||
+		!strings.Contains(recovered.Body.String(), "登录请求已过期，请重新登录。") ||
+		strings.Contains(recovered.Body.String(), "test-password") {
+		t.Fatalf("restart recovery status=%d content-type=%q body=%s", recovered.Code,
+			recovered.Header().Get("Content-Type"), recovered.Body.String())
+	}
+	match := webLoginTokenPattern.FindStringSubmatch(recovered.Body.String())
+	if len(match) != 2 || match[1] == oldToken {
+		t.Fatalf("restart recovery did not issue a fresh token: %s", recovered.Body.String())
+	}
+	var freshCookie *http.Cookie
+	for _, cookie := range recovered.Result().Cookies() {
+		if cookie.Name == app.webAuth.loginCookieName() && cookie.Value == match[1] {
+			freshCookie = cookie
+		}
+	}
+	if freshCookie == nil {
+		t.Fatalf("restart recovery did not issue a matching login cookie: %v", recovered.Header().Values("Set-Cookie"))
+	}
+
+	freshForm := url.Values{"csrf_token": {match[1]}, "password": {"test-password"}}
+	retry := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(freshForm.Encode()))
+	retry.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	retry.Header.Set("Origin", "https://probe.test")
+	retry.Header.Set("Sec-Fetch-Site", "same-origin")
+	retry.AddCookie(freshCookie)
+	result := httptest.NewRecorder()
+	app.Handler().ServeHTTP(result, retry)
+	if result.Code != http.StatusSeeOther || result.Header().Get("Location") != "/" {
+		t.Fatalf("fresh login status=%d location=%q body=%s", result.Code, result.Header().Get("Location"), result.Body.String())
+	}
 }
 
 func TestWebLogoutCSRFAndImmediateInvalidation(t *testing.T) {

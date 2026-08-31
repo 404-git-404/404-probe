@@ -23,7 +23,7 @@ func TestAgentEnrollmentUIUsesShownOnceDOMFlow(t *testing.T) {
 	javascript := string(jsBytes)
 	for _, required := range []string{
 		`id="add-agent"`, `id="add-agent-dialog"`, `id="add-agent-form"`,
-		`id="created-agent-id"`, `id="created-install-command"`, `id="created-enrollment"`,
+		`id="created-install-command"`, `id="created-enrollment"`,
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("dashboard missing enrollment UI %q", required)
@@ -63,7 +63,7 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 	html := string(htmlBytes)
 	javascript := string(jsBytes)
 	for _, required := range []string{
-		`id="remove-agent-dialog"`, `id="remove-agent-form"`, `id="remove-agent-id"`,
+		`id="remove-agent-dialog"`, `id="remove-agent-form"`, `id="remove-agent-name"`,
 		`永久撤销 Agent credential`, `历史 telemetry、Schedules、Probe Jobs/Results 会保留`, `不会远程卸载 Agent`,
 	} {
 		if !strings.Contains(html, required) {
@@ -83,6 +83,42 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 		if strings.Contains(javascript, forbidden) {
 			t.Fatalf("dashboard revoke flow contains forbidden behavior %q", forbidden)
 		}
+	}
+}
+
+func TestOrdinaryUIHidesAgentIDs(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexBytes, err := fs.ReadFile(static, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appBytes, err := fs.ReadFile(static, "app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedulesBytes, err := fs.ReadFile(static, "schedules.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobsBytes, err := fs.ReadFile(static, "jobs.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, app := string(indexBytes), string(appBytes)
+	if strings.Contains(index, "Agent ID") || strings.Contains(index, `id="created-agent-id"`) || strings.Contains(index, `id="remove-agent-id"`) {
+		t.Fatalf("dashboard exposes Agent ID controls: %s", index)
+	}
+	for _, forbidden := range []string{"agent.name || agent.agent_id", "createdAgentID", "removeAgentID"} {
+		if strings.Contains(app, forbidden) {
+			t.Fatalf("dashboard visibly falls back to Agent ID through %q", forbidden)
+		}
+	}
+	if strings.Contains(string(schedulesBytes), "addLine(details, 'Agent', schedule.agent_id)") ||
+		strings.Contains(string(jobsBytes), "addLine(summary, 'Agent', job.agent_id)") {
+		t.Fatal("ordinary schedule or job cards expose Agent IDs")
 	}
 }
 
@@ -106,6 +142,9 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 		`agent.disabled_at ? '● PAUSED'`,
 		`stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable'`,
 		`stateAction.textContent = agent.disabled_at ? '恢复' : '暂停'`,
+		`const metricsStale = Boolean(agent.disabled_at || state.stale)`,
+		`metric('CPU', metricsStale ? '—' : pct(state.cpu_percent))`,
+		`['↓', metricsStale ? 0 : state.rx_rate, state.rx_total]`,
 		"/${action}`", `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`,
 		`if (!agent.revoked) management.append(stateAction)`,
 	} {

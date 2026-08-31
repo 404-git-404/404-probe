@@ -40,8 +40,9 @@ Usage:
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install uninstall <server|agent>
 
-Uninstall removes the selected service unit and binary. Configuration,
-credentials, the database, and Agent state are preserved.
+Agent uninstall removes its service unit, binary, private environment, and
+epoch/state files. Server uninstall preserves its configuration and database.
+Systemd journal history is preserved for both roles.
 EOF
 }
 
@@ -232,9 +233,12 @@ render_local_helper() {
 set -Eeuo pipefail
 
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
+readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
 readonly SERVER_DATABASE="/var/lib/404-probe/404-probe.db"
 readonly SERVER_UNIT="/etc/systemd/system/404-probe-server.service"
 readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
+readonly CONFIG_DIRECTORY="/etc/404-probe"
+readonly STATE_DIRECTORY="/var/lib/404-probe"
 readonly SERVICE_USER="404-probe"
 readonly ENROLLMENT_PREFIX="404p1_"
 
@@ -270,13 +274,28 @@ uninstall() {
   if [[ "${role}" == "server" ]]; then
     unit_path="${SERVER_UNIT}"; binary_path="${SERVER_BINARY}"
   else
-    unit_path="${AGENT_UNIT}"; binary_path="/usr/local/bin/404-probe-agent"
+    unit_path="${AGENT_UNIT}"; binary_path="${AGENT_BINARY}"
   fi
-  systemctl disable --now "${unit}" || die "could not stop and disable ${unit}; nothing was removed"
+  if systemctl is-active --quiet "${unit}"; then
+    systemctl stop "${unit}" || die "could not stop ${unit}; nothing was removed"
+  fi
+  systemctl disable "${unit}" >/dev/null 2>&1 || true
+  if systemctl is-active --quiet "${unit}"; then
+    die "${unit} is still active; nothing was removed"
+  fi
   rm -f -- "${unit_path}" "${binary_path}"
+  if [[ "${role}" == "agent" ]]; then
+    rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
+      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
+  fi
   systemctl daemon-reload
-  printf 'Removed %s and %s.\n' "${unit}" "${binary_path}"
-  printf 'Preserved configuration, credentials, database, Agent state, service user, and this helper.\n'
+  printf 'Uninstalled %s. Re-running this command is safe.\n' "${role}"
+  if [[ "${role}" == "agent" ]]; then
+    printf 'Removed the Agent unit, binary, private environment, and epoch/state files.\n'
+  else
+    printf 'Preserved Server configuration, credentials, and database.\n'
+  fi
+  printf 'Preserved systemd journal history, service user, and this installer helper.\n'
 }
 
 require_root
@@ -709,12 +728,26 @@ uninstall_role() {
     unit_path="${AGENT_UNIT}"
     binary_path="${AGENT_BINARY}"
   fi
-  systemctl disable --now "${unit}" \
-    || die "could not stop and disable ${unit}; nothing was removed"
+  if systemctl is-active --quiet "${unit}"; then
+    systemctl stop "${unit}" || die "could not stop ${unit}; nothing was removed"
+  fi
+  systemctl disable "${unit}" >/dev/null 2>&1 || true
+  if systemctl is-active --quiet "${unit}"; then
+    die "${unit} is still active; nothing was removed"
+  fi
   rm -f -- "${unit_path}" "${binary_path}"
+  if [[ "${role}" == "agent" ]]; then
+    rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
+      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
+  fi
   systemctl daemon-reload
-  note "Removed ${unit} and ${binary_path}."
-  printf 'Preserved configuration, credentials, database, Agent state, service user, and installer helper.\n'
+  note "Uninstalled ${role}. Re-running this command is safe."
+  if [[ "${role}" == "agent" ]]; then
+    printf 'Removed the Agent unit, binary, private environment, and epoch/state files.\n'
+  else
+    printf 'Preserved Server configuration, credentials, and database.\n'
+  fi
+  printf 'Preserved systemd journal history, service user, and installer helper.\n'
 }
 
 interactive_install() {

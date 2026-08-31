@@ -37,9 +37,10 @@ type AgentQuery struct {
 }
 
 type AgentSnapshot struct {
-	Agent  Agent
-	State  *State
-	Online bool
+	Agent      Agent
+	State      *State
+	Online     bool
+	StateStale bool
 }
 
 type ProbeScheduleQuery struct {
@@ -413,15 +414,16 @@ func readAgentSnapshotTx(ctx context.Context, tx *sql.Tx, agentID string, nowMil
 	var record AgentSnapshot
 	var revoked int
 	var disabledAt sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT id,name,revoked,disabled_at,created_at FROM agents WHERE id=?`, agentID).Scan(
-		&record.Agent.ID, &record.Agent.Name, &revoked, &disabledAt, &record.Agent.CreatedAt)
+	var updatedAt int64
+	err := tx.QueryRowContext(ctx, `SELECT id,name,revoked,disabled_at,created_at,updated_at FROM agents WHERE id=?`, agentID).Scan(
+		&record.Agent.ID, &record.Agent.Name, &revoked, &disabledAt, &record.Agent.CreatedAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentSnapshot{}, false, nil
 	}
 	if err != nil {
 		return AgentSnapshot{}, false, err
 	}
-	if !validStorageID(record.Agent.ID, 128) || strings.TrimSpace(record.Agent.Name) == "" || record.Agent.CreatedAt <= 0 ||
+	if !validStorageID(record.Agent.ID, 128) || strings.TrimSpace(record.Agent.Name) == "" || record.Agent.CreatedAt <= 0 || updatedAt <= 0 ||
 		(revoked != 0 && revoked != 1) {
 		return AgentSnapshot{}, false, fmt.Errorf("%w: stored agent is invalid", ErrCorruptProbeData)
 	}
@@ -438,6 +440,7 @@ func readAgentSnapshotTx(ctx context.Context, tx *sql.Tx, agentID string, nowMil
 	}
 	if exists {
 		record.State = &state
+		record.StateStale = record.Agent.DisabledAt != nil || state.LastSeen < updatedAt
 		record.Online = !record.Agent.Revoked && record.Agent.DisabledAt == nil && state.LastSeen > 0 && state.LastSeen >= nowMillis-offlineMillis
 	}
 	return record, true, nil

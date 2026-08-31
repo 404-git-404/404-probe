@@ -9,13 +9,11 @@ const addAgentForm = document.querySelector('#add-agent-form');
 const addAgentName = document.querySelector('#add-agent-name');
 const addAgentSubmit = document.querySelector('#add-agent-submit');
 const addAgentError = document.querySelector('#add-agent-error');
-const createdAgentID = document.querySelector('#created-agent-id');
 const createdInstallCommand = document.querySelector('#created-install-command');
 const createdEnrollment = document.querySelector('#created-enrollment');
 const removeAgentDialog = document.querySelector('#remove-agent-dialog');
 const removeAgentForm = document.querySelector('#remove-agent-form');
 const removeAgentName = document.querySelector('#remove-agent-name');
-const removeAgentID = document.querySelector('#remove-agent-id');
 const removeAgentConfirm = document.querySelector('#remove-agent-confirm');
 const removeAgentError = document.querySelector('#remove-agent-error');
 const agents = new Map();
@@ -68,7 +66,6 @@ async function loadMutationSession() {
 }
 
 function clearEnrollmentDialog() {
-  createdAgentID.textContent = '';
   createdInstallCommand.textContent = '';
   createdEnrollment.textContent = '';
   addAgentForm.reset();
@@ -106,7 +103,6 @@ addAgentForm.addEventListener('submit', async event => {
     }
     if (!response.ok) throw new Error(response.statusText);
     const enrollment = await response.json();
-    createdAgentID.textContent = enrollment.agent.agent_id;
     createdInstallCommand.textContent = enrollment.install_command;
     createdEnrollment.textContent = enrollment.enrollment_value;
     addAgentCreate.classList.add('hidden');
@@ -121,7 +117,6 @@ addAgentForm.addEventListener('submit', async event => {
 function clearRemoveAgentDialog() {
   pendingRemoveAgentID = '';
   removeAgentName.textContent = '';
-  removeAgentID.textContent = '';
   removeAgentError.classList.add('hidden');
   removeAgentConfirm.disabled = false;
 }
@@ -130,7 +125,6 @@ function openRemoveAgentDialog(agent) {
   clearRemoveAgentDialog();
   pendingRemoveAgentID = agent.agent_id;
   removeAgentName.textContent = agent.name || '未命名 Agent';
-  removeAgentID.textContent = agent.agent_id;
   removeAgentDialog.showModal();
 }
 
@@ -236,10 +230,11 @@ function render() {
   empty.classList.toggle('hidden', list.length > 0);
   for (const agent of list) {
     const state = agent.state || {};
+    const metricsStale = Boolean(agent.disabled_at || state.stale);
     const card = document.createElement('article');
     card.className = 'card agent-card';
     card.dataset.agentId = agent.agent_id;
-    card.setAttribute('aria-label', `Agent ${agent.name || agent.agent_id}`);
+    card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}`);
     const head = document.createElement('div');
     head.className = 'card-head';
     const title = document.createElement('div');
@@ -248,7 +243,7 @@ function render() {
     setReadableText(heading, state.hostname || agent.name || '未知主机');
     const name = document.createElement('div');
     name.className = 'name';
-    setReadableText(name, agent.name || agent.agent_id);
+    setReadableText(name, agent.name || '未命名 Agent');
     title.append(heading, name);
     const status = document.createElement('span');
     const stateName = agent.revoked ? 'revoked' : agent.disabled_at ? 'paused' : agent.online ? 'online' : 'offline';
@@ -261,17 +256,17 @@ function render() {
     const metrics = document.createElement('div');
     metrics.className = 'metrics';
     metrics.append(
-      metric('CPU', pct(state.cpu_percent)),
-      metric('RAM', pct(state.ram_percent)),
-      metric('Swap', pct(state.swap_percent)),
-      metric('Disk', pct(state.disk_percent)),
-      metric('Load', `${Number(state.load1 || 0).toFixed(2)} / ${Number(state.load5 || 0).toFixed(2)} / ${Number(state.load15 || 0).toFixed(2)}`),
+      metric('CPU', metricsStale ? '—' : pct(state.cpu_percent)),
+      metric('RAM', metricsStale ? '—' : pct(state.ram_percent)),
+      metric('Swap', metricsStale ? '—' : pct(state.swap_percent)),
+      metric('Disk', metricsStale ? '—' : pct(state.disk_percent)),
+      metric('Load', metricsStale ? '—' : `${Number(state.load1 || 0).toFixed(2)} / ${Number(state.load5 || 0).toFixed(2)} / ${Number(state.load15 || 0).toFixed(2)}`),
     );
     card.append(metrics);
 
     const network = document.createElement('div');
     network.className = 'network';
-    for (const [arrow, rate, total] of [['↓', state.rx_rate, state.rx_total], ['↑', state.tx_rate, state.tx_total]]) {
+    for (const [arrow, rate, total] of [['↓', metricsStale ? 0 : state.rx_rate, state.rx_total], ['↑', metricsStale ? 0 : state.tx_rate, state.tx_total]]) {
       const box = document.createElement('div');
       const strong = document.createElement('strong');
       setReadableText(strong, `${arrow} ${bytes(rate, true)}`);

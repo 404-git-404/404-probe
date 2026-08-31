@@ -38,6 +38,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <title>404-probe · 登录</title><link rel="stylesheet" href="/style.css"></head>
 <body><main class="login"><article class="login-card"><h1>404-probe</h1><p>管理员登录</p>
 {{if .Failed}}<div class="login-error" role="alert">登录失败，请稍后重试。</div>{{end}}
+{{if .Expired}}<div class="login-error" role="alert">登录请求已过期，请重新登录。</div>{{end}}
 <form method="post" action="/login"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <label for="password">密码</label><input id="password" name="password" type="password" maxlength="1024" required autocomplete="current-password" autofocus>
 <button type="submit">登录</button></form></article></main></body></html>`))
@@ -74,6 +75,7 @@ type webSessionContextKey struct{}
 type webLoginPageView struct {
 	CSRFToken string
 	Failed    bool
+	Expired   bool
 }
 
 func WithWebAuthentication(config WebAuthenticationConfig) Option {
@@ -236,7 +238,7 @@ func (a *App) handleWebLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	a.renderWebLogin(w, http.StatusOK, false)
+	a.renderWebLogin(w, http.StatusOK, false, false)
 }
 
 func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
@@ -261,20 +263,20 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	loginCookie, err := r.Cookie(a.webAuth.loginCookieName())
 	if err != nil || !a.webAuth.consumeLoginToken(loginCookie.Value, r.PostForm.Get("csrf_token"), a.now()) {
-		writeJobError(w, http.StatusForbidden, "forbidden", "request rejected")
+		a.renderWebLogin(w, http.StatusForbidden, false, true)
 		return
 	}
 	client := webClientAddress(r.RemoteAddr)
 	if !a.webAuth.beginPasswordCheck(client, a.now()) {
 		w.Header().Set("Retry-After", "60")
-		a.renderWebLogin(w, http.StatusTooManyRequests, true)
+		a.renderWebLogin(w, http.StatusTooManyRequests, true, false)
 		return
 	}
 	valid := auth.VerifyPassword(a.webAuth.passwordHash, []byte(r.PostForm.Get("password")))
 	a.webAuth.endPasswordCheck()
 	if !valid {
 		a.webAuth.recordLoginFailure(client, a.now())
-		a.renderWebLogin(w, http.StatusUnauthorized, true)
+		a.renderWebLogin(w, http.StatusUnauthorized, true, false)
 		return
 	}
 	a.webAuth.recordLoginSuccess(client, a.now())
@@ -289,7 +291,7 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusSeeOther)
 }
 
-func (a *App) renderWebLogin(w http.ResponseWriter, status int, failed bool) {
+func (a *App) renderWebLogin(w http.ResponseWriter, status int, failed, expired bool) {
 	token, err := a.webAuth.issueLoginToken(a.now())
 	if err != nil {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not create login request")
@@ -298,7 +300,7 @@ func (a *App) renderWebLogin(w http.ResponseWriter, status int, failed bool) {
 	a.webAuth.setLoginCookie(w, token, a.now())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_ = loginTemplate.Execute(w, webLoginPageView{CSRFToken: token, Failed: failed})
+	_ = loginTemplate.Execute(w, webLoginPageView{CSRFToken: token, Failed: failed, Expired: expired})
 }
 
 func (a *App) handleWebLogout(w http.ResponseWriter, r *http.Request) {

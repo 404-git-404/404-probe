@@ -42,6 +42,7 @@ type webOutboundsView struct {
 }
 
 type webAgentStateView struct {
+	Stale       bool    `json:"stale"`
 	Hostname    string  `json:"hostname"`
 	OS          string  `json:"os"`
 	Arch        string  `json:"arch"`
@@ -166,7 +167,7 @@ func (a *App) handleGetWebAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
 	if record.State != nil {
-		view.State = newWebAgentStateView(*record.State)
+		view.State = newWebAgentStateView(*record.State, record.StateStale)
 	}
 	if snapshot, configured, err := a.store.GetOutboundSnapshot(r.Context(), agentID); err != nil {
 		a.logger.Error("read Web agent outbounds", "agent_id", agentID, "error", err)
@@ -271,8 +272,9 @@ func newWebAgentSummaryView(record storage.AgentSnapshot) webAgentSummaryView {
 	return view
 }
 
-func newWebAgentStateView(state storage.State) *webAgentStateView {
-	return &webAgentStateView{
+func newWebAgentStateView(state storage.State, stale bool) *webAgentStateView {
+	view := &webAgentStateView{
+		Stale:    stale,
 		Hostname: state.Hostname, OS: state.OS, Arch: state.Arch, Uptime: state.Uptime,
 		CPUPercent: state.CPUPercent, Load1: state.Load1, Load5: state.Load5, Load15: state.Load15,
 		RAMUsed: state.RAMUsed, RAMTotal: state.RAMTotal, RAMPercent: state.RAMPercent,
@@ -281,12 +283,17 @@ func newWebAgentStateView(state storage.State) *webAgentStateView {
 		RXRate: state.RXRate, TXRate: state.TXRate, RXTotal: state.RXTotal, TXTotal: state.TXTotal,
 		CollectedAt: state.CollectedAt,
 	}
+	if stale {
+		view.RXRate = 0
+		view.TXRate = 0
+	}
+	return view
 }
 
 func newWebAgentEventView(state storage.State) webAgentEventView {
 	return webAgentEventView{
 		AgentID: state.AgentID, Name: state.Name, Online: true, LastSeen: state.LastSeen,
-		State: newWebAgentStateView(state),
+		State: newWebAgentStateView(state, false),
 	}
 }
 

@@ -2,6 +2,7 @@ const jobs = document.querySelector('#jobs');
 const empty = document.querySelector('#job-empty');
 const loadMore = document.querySelector('#load-more');
 let cursor = '';
+let agentNamesPromise;
 
 async function readJSON(path) {
   const response = await fetch(path, {cache: 'no-store'});
@@ -14,6 +15,22 @@ async function readJSON(path) {
 }
 
 const timestamp = value => value ? new Date(value).toLocaleString() : '—';
+
+async function loadAgentNames() {
+  const names = new Map();
+  for (const status of ['', 'revoked']) {
+    let nextCursor = '';
+    do {
+      const query = new URLSearchParams({limit: '100'});
+      if (status) query.set('status', status);
+      if (nextCursor) query.set('cursor', nextCursor);
+      const page = await readJSON(`/api/v1/web/agents?${query}`);
+      for (const agent of page.items || []) names.set(agent.agent_id, agent.name || '未命名 Agent');
+      nextCursor = page.next_cursor || '';
+    } while (nextCursor);
+  }
+  return names;
+}
 const milliseconds = value => `${Number(value || 0).toFixed(2)} ms`;
 const operationLabels = {queued: '等待执行', running: '执行中', success: '成功', failed: '失败', expired: '已过期'};
 const selectorErrorLabels = {
@@ -98,7 +115,7 @@ function showDetail(container, detail) {
   for (const [label, value] of measurementLines(detail)) addLine(container, label, value);
 }
 
-function appendJob(job) {
+function appendJob(job, agentNames) {
   const card = document.createElement('article');
   card.className = 'card job-card';
   const head = document.createElement('div');
@@ -119,7 +136,7 @@ function appendJob(job) {
 
   const summary = document.createElement('div');
   summary.className = 'schedule-details';
-  addLine(summary, 'Agent', job.agent_id);
+  addLine(summary, 'Agent', agentNames.get(job.agent_id) || '未知 Agent');
   addLine(summary, '创建时间', timestamp(job.created_at));
   addLine(summary, '来源', job.schedule_id ? `Schedule ${job.schedule_id}` : 'One-shot');
   addLine(summary, 'Attempt', String(job.attempt));
@@ -154,9 +171,10 @@ function appendJob(job) {
 async function loadPage() {
   loadMore.disabled = true;
   try {
+    const agentNames = await agentNamesPromise;
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
     const page = await readJSON(`/api/v1/web/jobs?limit=50${suffix}`);
-    for (const job of page.items) appendJob(job);
+    for (const job of page.items) appendJob(job, agentNames);
     cursor = page.next_cursor || '';
     empty.classList.toggle('hidden', jobs.childElementCount > 0);
     if (!jobs.childElementCount) empty.textContent = '尚无 Probe Job';
@@ -171,4 +189,5 @@ async function loadPage() {
 }
 
 loadMore.addEventListener('click', loadPage);
+agentNamesPromise = loadAgentNames();
 loadPage();
