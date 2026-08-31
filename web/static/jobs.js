@@ -35,6 +35,8 @@ function jobTarget(job) {
       return `${config.host}:${config.port}`;
     case 'icmp_ping':
       return `${config.target} · ${config.count} 次`;
+    case 'singbox_selector_switch':
+      return `${config.selector} → ${config.choice}`;
     default:
       return '未知配置';
   }
@@ -61,6 +63,10 @@ function measurementLines(job) {
       ['丢包', `${Number(value.packet_loss_percent).toFixed(1)}%`],
       ['延迟 min / avg / max', [value.latency_min_ms, value.latency_avg_ms, value.latency_max_ms].map(milliseconds).join(' / ')],
     ];
+  }
+  if (measurement.selector_switch) {
+    const value = measurement.selector_switch;
+    return [['当前出站', value.current || '—'], ['执行方式', value.changed ? '已切换' : '幂等，无需切换']];
   }
   return [];
 }

@@ -2,11 +2,83 @@ const id = new URLSearchParams(location.search).get('id');
 const empty = document.querySelector('#history-empty');
 const outboundStatus = document.querySelector('#outbounds-status');
 const outboundList = document.querySelector('#outbounds-list');
+let mutationCSRFToken = '';
+let currentAgent = null;
+let switchingSelector = '';
+let selectorFeedback = null;
 
-function renderOutbounds(outbounds) {
+const selectorErrors = {
+  selector_not_found: '本地 Selector 已不存在，请刷新后重试',
+  choice_not_found: '本地选项已不存在，请刷新后重试',
+  clash_api_unavailable: 'Agent 无法连接本地 Clash API',
+  clash_api_unauthorized: 'Clash API 鉴权失败',
+  switch_failed: 'Clash API 拒绝了切换',
+  switch_verification_failed: '切换后的回读结果与目标不一致',
+};
+
+function requestID() {
+  return crypto.randomUUID().replaceAll('-', '');
+}
+
+async function readError(response) {
+  try {
+    const body = await response.json();
+    return body.error?.message || body.message || response.statusText;
+  } catch (error) {
+    return response.statusText;
+  }
+}
+
+async function waitForSwitch(jobID) {
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const job = await readJSON(`/api/v1/web/jobs/${encodeURIComponent(jobID)}`);
+    if (job.status === 'finished') return job;
+    if (job.status === 'expired') throw new Error('切换任务在执行前已过期');
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw new Error('切换仍在排队，可在 Probe Jobs 中查看结果');
+}
+
+async function switchOutbound(selector, choice) {
+  switchingSelector = selector;
+  selectorFeedback = {selector, message: `正在切换至 ${choice}`, error: false};
+  renderOutbounds(currentAgent);
+  try {
+    const encodedID = encodeURIComponent(id);
+    const response = await fetch(`/api/v1/web/agents/${encodedID}/outbounds/switch`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
+      body: JSON.stringify({request_id: requestID(), selector, choice}),
+    });
+    if (response.status === 401) {
+      location.assign('/login');
+      return;
+    }
+    if (!response.ok) throw new Error(await readError(response));
+    const operation = await response.json();
+    const job = await waitForSwitch(operation.job_id);
+    if (!job.result?.success) {
+      const category = job.result?.error_category || 'switch_failed';
+      throw new Error(selectorErrors[category] || job.result?.error_message || category);
+    }
+    currentAgent = await readJSON(`/api/v1/web/agents/${encodedID}`);
+    switchingSelector = '';
+    selectorFeedback = null;
+    renderOutbounds(currentAgent);
+  } catch (error) {
+    switchingSelector = '';
+    selectorFeedback = {selector, message: error.message || '切换失败', error: true};
+    renderOutbounds(currentAgent);
+  }
+}
+
+function renderOutbounds(agent) {
+  const outbounds = agent?.outbounds;
   outboundList.replaceChildren();
   if (!outbounds || !outbounds.configured) {
-    outboundStatus.textContent = '未配置只读发现';
+    outboundStatus.textContent = '未配置出站发现';
     return;
   }
   const lastUpdated = outbounds.updated_at ? new Date(outbounds.updated_at).toLocaleString() : '尚无成功快照';
@@ -15,20 +87,43 @@ function renderOutbounds(outbounds) {
     : `当前不可用 · 上次成功：${lastUpdated}`;
   for (const selector of outbounds.selectors || []) {
     const details = document.createElement('details');
+    details.open = switchingSelector === selector.name || selectorFeedback?.selector === selector.name;
     const summary = document.createElement('summary');
     const name = document.createElement('strong');
     name.textContent = selector.name;
     const current = document.createElement('span');
     current.textContent = selector.current;
     summary.append(name, current);
-    const choices = document.createElement('ul');
+    const controls = document.createElement('div');
+    controls.className = 'selector-controls';
+    const choices = document.createElement('select');
+    choices.setAttribute('aria-label', `${selector.name} 目标出站`);
     for (const choice of selector.choices || []) {
-      const item = document.createElement('li');
-      item.textContent = choice;
-      if (choice === selector.current) item.className = 'selected-outbound';
-      choices.append(item);
+      const option = document.createElement('option');
+      option.value = choice;
+      option.textContent = choice === selector.current ? `${choice}（当前）` : choice;
+      option.selected = choice === selector.current;
+      choices.append(option);
     }
-    details.append(summary, choices);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = '切换';
+    const operationStatus = document.createElement('span');
+    operationStatus.className = 'selector-operation-status';
+    if (selectorFeedback?.selector === selector.name) {
+      operationStatus.textContent = selectorFeedback.message;
+      operationStatus.classList.toggle('switch-error', selectorFeedback.error);
+    }
+    const blocked = !outbounds.available || agent.disabled_at || agent.revoked || !mutationCSRFToken || switchingSelector !== '';
+    const updateButton = () => {
+      button.disabled = blocked || choices.value === selector.current;
+    };
+    choices.disabled = blocked;
+    choices.addEventListener('change', updateButton);
+    button.addEventListener('click', () => switchOutbound(selector.name, choices.value));
+    updateButton();
+    controls.append(choices, button, operationStatus);
+    details.append(summary, controls);
     outboundList.append(details);
   }
   if (!outboundList.children.length && outbounds.available) {
@@ -100,13 +195,16 @@ async function load() {
   }
   try {
     const encodedID = encodeURIComponent(id);
-    const [agent, history] = await Promise.all([
+    const [agent, history, session] = await Promise.all([
       readJSON(`/api/v1/web/agents/${encodedID}`),
       readJSON(`/api/v1/web/agents/${encodedID}/history?hours=24`),
+      readJSON('/api/v1/web/session'),
     ]);
+    mutationCSRFToken = session.csrf_token || '';
+    currentAgent = agent;
     const state = agent.state || {};
     document.querySelector('#title').textContent = `${state.hostname || agent.name} · 历史`;
-    renderOutbounds(agent.outbounds);
+    renderOutbounds(agent);
     const points = history.points;
     empty.classList.toggle('hidden', points.length > 0);
     if (!points.length) {

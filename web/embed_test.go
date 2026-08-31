@@ -173,20 +173,29 @@ func TestAgentCardsUseCompactResponsiveLayout(t *testing.T) {
 	}
 }
 
-func TestOutboundDiscoveryUIIsReadOnlyAndShowsAllStates(t *testing.T) {
+func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T) {
 	static, err := fs.Sub(Files, "static")
 	if err != nil {
 		t.Fatal(err)
 	}
 	htmlBytes, _ := fs.ReadFile(static, "history.html")
 	jsBytes, _ := fs.ReadFile(static, "history.js")
-	combined := string(htmlBytes) + string(jsBytes)
-	for _, required := range []string{`id="outbounds-status"`, `id="outbounds-list"`, `未配置只读发现`, `当前不可用`, `未发现 Selector`, `document.createElement('details')`} {
+	jobsBytes, _ := fs.ReadFile(static, "jobs.js")
+	combined := string(htmlBytes) + string(jsBytes) + string(jobsBytes)
+	for _, required := range []string{
+		`id="outbounds-status"`, `id="outbounds-list"`, `未配置出站发现`, `当前不可用`, `未发现 Selector`,
+		`document.createElement('details')`, `document.createElement('select')`, `button.textContent = '切换'`,
+		`/outbounds/switch`, `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`,
+		`body: JSON.stringify({request_id: requestID(), selector, choice})`,
+		`choices.value === selector.current`, `agent.disabled_at`, `agent.revoked`, `switchingSelector !== ''`,
+		`job.result?.error_category`, `currentAgent = await readJSON`,
+		`case 'singbox_selector_switch'`, `measurement.selector_switch`,
+	} {
 		if !strings.Contains(combined, required) {
 			t.Fatalf("outbound UI missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"switch", "apply", "PUT /proxies", "method: 'PUT'"} {
+	for _, forbidden := range []string{"PUT /proxies", "method: 'PUT'", "/api/v1/control/", "clash_api_url", "secret"} {
 		if strings.Contains(strings.ToLower(combined), strings.ToLower(forbidden)) {
 			t.Fatalf("outbound UI contains mutation behavior %q", forbidden)
 		}
