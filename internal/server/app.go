@@ -80,6 +80,8 @@ func (a *App) Handler() http.Handler { return a.handler }
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/report", a.handleReport)
+	mux.HandleFunc("POST /api/v1/agent/outbounds", a.handleAgentOutbounds)
+	mux.HandleFunc("/api/v1/agent/outbounds", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/claim", a.handleClaimJob)
 	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/{job_id}/result", a.handleJobResult)

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 )
 
@@ -26,7 +27,16 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
-	State *webAgentStateView `json:"state"`
+	State     *webAgentStateView `json:"state"`
+	Outbounds webOutboundsView   `json:"outbounds"`
+}
+
+type webOutboundsView struct {
+	Configured bool                        `json:"configured"`
+	Available  bool                        `json:"available"`
+	Selectors  []protocol.OutboundSelector `json:"selectors"`
+	CheckedAt  *int64                      `json:"checked_at"`
+	UpdatedAt  *int64                      `json:"updated_at"`
 }
 
 type webAgentStateView struct {
@@ -152,9 +162,17 @@ func (a *App) handleGetWebAgent(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read agent")
 		return
 	}
-	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record)}
+	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
 	if record.State != nil {
 		view.State = newWebAgentStateView(*record.State)
+	}
+	if snapshot, configured, err := a.store.GetOutboundSnapshot(r.Context(), agentID); err != nil {
+		a.logger.Error("read Web agent outbounds", "agent_id", agentID, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read agent")
+		return
+	} else if configured {
+		checkedAt := snapshot.CheckedAt
+		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
 	}
 	writeJSON(w, http.StatusOK, view)
 }
