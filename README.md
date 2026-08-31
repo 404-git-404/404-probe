@@ -32,15 +32,15 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-se
 
 ## Upgrade an existing database
 
-Stop the server and back up the database before opening it with the new binary. V0.4 already uses schema V4, and V0.5 opens that database in place without a schema migration. V1, V2, and V3 databases are still migrated to schema V4 on open; newer schemas are rejected.
+Stop the server and back up the database before opening it with the new binary. V0.5 uses schema V4. V0.6 migrates it in place through schema V5 (Agent pause state) to schema V6 (latest outbound snapshots). V1, V2, and V3 databases still migrate through the same chain; schemas newer than the binary supports are rejected.
 
 ```bash
 sudo systemctl stop 404-probe-server
-sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.5
+sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.6
 sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
 ```
 
-V0.5 does not change the Agent report or Probe Job protocol, Control API, read-only `remote` CLI, local `--db` CLI, scheduler/materializer, or HTTP/TCP/ICMP executors. Existing Agents can continue reporting with their current IDs and credentials. Revoking an Agent preserves its telemetry, schedules, jobs, and results; an enabled schedule may be disabled later when the scheduler next materializes it for the revoked Agent.
+V0.6 keeps the V0.5 report path compatible, so existing V0.5 Agents continue reporting with their current IDs and credentials while Agents are upgraded. Revoking an Agent preserves its telemetry, schedules, jobs, and results. Back up the database first and do not downgrade a database after it has migrated.
 
 ## Configure Web authentication
 
@@ -69,16 +69,19 @@ GET /api/v1/web/schedules/{schedule_id}
 GET /api/v1/web/jobs
 GET /api/v1/web/jobs/{job_id}
 POST /api/v1/web/agents
+POST /api/v1/web/agents/{agent_id}/disable
+POST /api/v1/web/agents/{agent_id}/enable
 POST /api/v1/web/agents/{agent_id}/revoke
+POST /api/v1/web/agents/{agent_id}/outbounds/switch
 ```
 
-The default Agent collection contains active Agents only. It accepts `status=online|offline|revoked` for an explicit state filter; `status=revoked` provides the retained revoked records. The Schedule collection accepts `agent_id`, `enabled=true|false`, and `probe_type=http|tcp_connect|icmp_ping`. The Job collection accepts `agent_id`, `schedule_id`, `probe_type`, `status`, `success`, and the documented created/finished time bounds. Every collection accepts `limit=1..100` and an opaque endpoint/filter-bound `cursor`. History accepts `hours=1..720`.
+The default Agent collection contains non-revoked Agents, including paused Agents. It accepts `status=online|offline|disabled|revoked` for an explicit state filter. The Schedule collection accepts `agent_id`, `enabled=true|false`, and `probe_type=http|tcp_connect|icmp_ping`. The Job collection accepts `agent_id`, `schedule_id`, `probe_type`, `status`, `success`, and the documented created/finished time bounds. Every collection accepts `limit=1..100` and an opaque endpoint/filter-bound `cursor`. History accepts `hours=1..720`.
 
-These responses are `no-store` and use explicit browser-safe DTOs: agent tokens, the Control token, lease credentials, epochs, session IDs, report sequences, boot IDs, raw network counters, result hashes, and storage-only fields are not exposed. The SSE feed uses the same whitelist. Job collections expose only a bounded `result_summary`; Job detail exposes the target config, error text, and the complete typed HTTP, TCP, or ICMP measurement. There is no separate Web Result resource.
+These responses are `no-store` and use explicit browser-safe DTOs: agent tokens, the Control token, lease credentials, epochs, session IDs, report sequences, boot IDs, raw network counters, result hashes, and storage-only fields are not exposed. The SSE feed uses the same whitelist. Job collections expose only a bounded `result_summary`; Job detail exposes the target config, error text, and the complete typed probe or selector result. There is no separate Web Result resource.
 
 Schedule targets, Job errors, and measurements are sensitive operational data visible only after Web authentication. The Web Schedule and Job surfaces are strictly read-only; legacy V0.1 browser data routes are unavailable, and Web JavaScript never calls `/api/v1/control/*`.
 
-### V0.5 Web Agent lifecycle
+### V0.6 Web Agent lifecycle
 
 `Add Agent` creates the same Agent ID and credential used by the existing CLI and Agent protocol. SQLite stores only the credential hash. The no-store creation response is the only retrieval path for the enrollment value: closing the result dialog clears it from the DOM, and list, detail, history, and SSE responses never expose it. There is no credential recovery API. Losing it requires revoking that Agent and creating a replacement.
 
@@ -86,7 +89,9 @@ The generated Linux install command contains only the configured Server origin a
 
 `Remove Agent` means credential revocation and removal from the default active dashboard. It is not a hard delete, remote uninstall, or remote command. Historical telemetry, schedules, Probe Jobs, and Results remain queryable; the operation does not delete or cancel those records. It also does not remove software from the Agent host.
 
-Both Web mutations require an authenticated Web session, the exact configured Origin, `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
+`Pause` temporarily rejects reports, discovery, and new work while retaining the credential and history. Queued selector switches expire instead of executing while paused. `Resume` re-enables that same Agent and credential. `Remove Agent` remains permanent: a revoked Agent cannot be resumed, and the Agent exits cleanly after the Server returns the revoked signal. The installed systemd unit uses `Restart=on-failure`, so crashes restart but this clean revoked exit does not.
+
+All Web mutations require an authenticated Web session, the exact configured Origin, `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
 
 Agent cards use a fixed five-slot layout for identity, metrics, network, metadata, and actions. Online, offline, long-name, and never-reported cards keep the same height on desktop and mobile. Long text is truncated in the card while its complete value remains available through `title`, accessible labels, and the authenticated Agent detail response. Card resizing, dragging, per-Agent layouts, and metric visibility preferences are not supported.
 
@@ -149,6 +154,22 @@ PROBE_404_AGENT_PID=$!
 ```
 
 Remove `--allow-insecure-http` when `PROBE_404_SERVER` uses HTTPS.
+
+## Optional sing-box selector discovery and switching
+
+The Agent can discover sing-box `Selector` outbounds through a local Clash API and publish only the latest selector name, current choice, choices, availability, and timestamps. To enable it for a manual Agent launch, add these values to the private Agent environment file before starting the Agent:
+
+```bash
+printf '%s\n' \
+  'PROBE_404_SING_BOX_CLASH_API=http://127.0.0.1:9090' \
+  'PROBE_404_SING_BOX_CLASH_SECRET=replace-with-the-local-api-secret' \
+  >> "$PROBE_404_AGENT_ENV"
+chmod 600 "$PROBE_404_AGENT_ENV"
+```
+
+The unified Agent installer asks for the optional loopback Clash API origin and reads its optional secret without echo. The URL and secret are stored only in the root-owned private Agent environment file. The secret is used by the Agent for local Clash API requests; it is never sent to the 404-probe Server, Web UI, outbound snapshot, or normal logs. Keep the Clash API bound to loopback and do not reuse its secret as a Server, Web, or Control credential.
+
+After discovery, the authenticated Agent detail page shows the current selector value and its allowlisted choices. A switch is a fixed `singbox_selector_switch` operation delivered through the existing Agent Job channel. The Server validates against the latest snapshot, the Agent validates against current local state, and a mutation succeeds only after a read-back confirms the target. Re-selecting the current value is a successful no-op. Stale, unavailable, paused, and revoked states disable the control. This is not a generic shell, HTTP, configuration-editing, restart, scheduling, bulk-switch, or automatic-failover facility.
 
 ## Run one-shot probes
 
@@ -271,7 +292,7 @@ For local development only, loopback HTTP requires an explicit exception:
   --json
 ```
 
-`--status` accepts `online`, `offline`, or `revoked`.
+The read-only remote CLI accepts `online`, `offline`, or `revoked` for `--status`. Paused Agents remain visible through the authenticated Web UI.
 
 ### Remote Schedule queries
 
@@ -359,11 +380,11 @@ Use the read path from broad state to the typed result without SSH or direct SQL
 ./404-probe-server remote probe get "$PROBE_404_JOB_ID" --server "$PROBE_404_SERVER" --control-token-file "$PROBE_404_CONTROL_TOKEN_FILE" --json
 ```
 
-Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; V0.5 Web authentication uses a separate password and server-side session boundary.
+Agent hostnames, internal addresses, probe targets, errors, and measurements are sensitive operational data even when they are not credentials. Do not expose remote output publicly or place the Control token in a browser; V0.6 Web authentication uses a separate password and server-side session boundary.
 
 ## Capacity runbook
 
-V0.5 continues the V0.4 behavior of keeping Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
+V0.6 continues the V0.5 behavior of keeping Probe Jobs and Results without automatic retention or purge. Fixed-interval schedules therefore grow the SQLite database continuously. Check capacity regularly on the Server host:
 
 ```bash
 du -h "$PROBE_404_DB"
@@ -375,11 +396,11 @@ sqlite3 -readonly "$PROBE_404_DB" \
    UNION ALL SELECT 'results', COUNT(*) FROM probe_results;"
 ```
 
-Back up the database before maintenance. V0.5 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
+Back up the database before maintenance. V0.6 does not include a purge command or supported manual-deletion recipe; retention, archival, and downsampling remain future work.
 
 ## Control credential incident response
 
-If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.5 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
+If the Control token may have leaked, treat the event as administrator credential compromise. Stop the Server, generate a new canonical token into a new `0600` regular file, replace the configured token file, and restart the Server so it loads the new token. The old token remains valid until that restart. Review Server access logs and probe activity without copying Authorization values into tickets or chat. V0.6 does not provide token rotation, multiple concurrent Control tokens, RBAC, or an audit-log subsystem.
 
 ## Optional Control API
 
