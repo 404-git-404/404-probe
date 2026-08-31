@@ -440,12 +440,22 @@ func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	var clashRequests atomic.Int32
+	clashServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		clashRequests.Add(1)
+		if request.Header.Get("Authorization") != "Bearer local-only-secret" {
+			t.Errorf("Clash authorization=%q", request.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{"proxies":{"select":{"type":"Selector","name":"select","now":"a","all":["a","b"]}}}`)
+	}))
+	defer clashServer.Close()
 
 	var workerStarts atomic.Int32
 	runner, err := NewWithExecutor(Config{
 		ServerURL: server.URL, AgentID: agentID, Token: token, Interval: 5 * time.Millisecond,
 		JobInterval: 5 * time.Millisecond, DisabledInterval: 35 * time.Millisecond,
 		Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"),
+		ClashAPIURL: clashServer.URL, ClashAPISecret: "local-only-secret", OutboundInterval: 5 * time.Millisecond,
 	}, nil, lifecycleExecutor{starts: &workerStarts})
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +468,7 @@ func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
 	runDone := make(chan error, 1)
 	go func() { runDone <- runner.Run(ctx) }()
 	waitForAgentCondition(t, "initial reporting and worker", func() bool {
-		return accepted.Load() > 0 && claims.Load() > 0 && workerStarts.Load() == 1
+		return accepted.Load() > 0 && claims.Load() > 0 && workerStarts.Load() == 1 && clashRequests.Load() > 0
 	})
 
 	if changed, err := store.DisableAgent(ctx, agentID, time.Now()); err != nil || !changed {
@@ -466,11 +476,11 @@ func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
 	}
 	waitForAgentCondition(t, "disabled report", func() bool { return disabled.Load() > 0 })
 	time.Sleep(15 * time.Millisecond)
-	pausedAccepted, pausedClaims := accepted.Load(), claims.Load()
+	pausedAccepted, pausedClaims, pausedClash := accepted.Load(), claims.Load(), clashRequests.Load()
 	time.Sleep(15 * time.Millisecond)
-	if accepted.Load() != pausedAccepted || claims.Load() != pausedClaims || workerStarts.Load() != 1 {
-		t.Fatalf("work continued while disabled: accepted %d->%d claims %d->%d starts=%d",
-			pausedAccepted, accepted.Load(), pausedClaims, claims.Load(), workerStarts.Load())
+	if accepted.Load() != pausedAccepted || claims.Load() != pausedClaims || clashRequests.Load() != pausedClash || workerStarts.Load() != 1 {
+		t.Fatalf("work continued while disabled: accepted %d->%d claims %d->%d clash %d->%d starts=%d",
+			pausedAccepted, accepted.Load(), pausedClaims, claims.Load(), pausedClash, clashRequests.Load(), workerStarts.Load())
 	}
 	select {
 	case err := <-runDone:
@@ -482,7 +492,7 @@ func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
 		t.Fatalf("enable changed=%t err=%v", changed, err)
 	}
 	waitForAgentCondition(t, "automatic resume", func() bool {
-		return accepted.Load() > pausedAccepted && claims.Load() > pausedClaims && workerStarts.Load() == 2
+		return accepted.Load() > pausedAccepted && claims.Load() > pausedClaims && clashRequests.Load() > pausedClash && workerStarts.Load() == 2
 	})
 
 	if changed, err := store.DisableAgent(ctx, agentID, time.Now()); err != nil || !changed {

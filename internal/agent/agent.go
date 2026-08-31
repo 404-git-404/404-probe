@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"404-probe/internal/collector"
@@ -31,6 +33,9 @@ type Config struct {
 	StatePath         string
 	NetworkIncludes   []string
 	NetworkExcludes   []string
+	ClashAPIURL       string
+	ClashAPISecret    string `json:"-"`
+	OutboundInterval  time.Duration
 }
 
 var (
@@ -56,6 +61,24 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.StatePath) == "" {
 		return errors.New("state path is required")
+	}
+	if c.ClashAPIURL == "" {
+		if c.ClashAPISecret != "" {
+			return errors.New("sing-box Clash secret requires a Clash API URL")
+		}
+		return nil
+	}
+	if c.OutboundInterval <= 0 {
+		return errors.New("outbound discovery interval must be positive")
+	}
+	u, err = url.Parse(c.ClashAPIURL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return errors.New("sing-box Clash API URL is invalid")
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("sing-box Clash API URL must use a loopback host")
 	}
 	return nil
 }
@@ -88,6 +111,9 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 	if config.DisabledInterval == 0 {
 		config.DisabledInterval = DefaultDisabledInterval
 	}
+	if config.ClashAPIURL != "" && config.OutboundInterval == 0 {
+		config.OutboundInterval = time.Minute
+	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -117,15 +143,23 @@ func (r *Runner) Run(ctx context.Context) error {
 	immediate := true
 	for {
 		workerContext, stopWorker := context.WithCancel(ctx)
-		workerDone := make(chan struct{})
+		var workers sync.WaitGroup
+		workers.Add(1)
 		go func() {
-			defer close(workerDone)
+			defer workers.Done()
 			r.runJobWorker(workerContext)
 		}()
+		if r.config.ClashAPIURL != "" {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				r.runOutboundDiscovery(workerContext)
+			}()
+		}
 
 		err := r.runReportLoop(workerContext, &sequence, immediate)
 		stopWorker()
-		<-workerDone
+		workers.Wait()
 		if errors.Is(err, ErrAgentRevoked) {
 			r.logger.Info("agent credential has been revoked; stopping")
 			return nil
@@ -134,7 +168,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			return err
 		}
 
-		r.logger.Info("agent has been disabled; pausing reports and jobs")
+		r.logger.Info("agent has been disabled; pausing reports, jobs, and outbound discovery")
 		err = r.waitWhileDisabled(ctx, &sequence)
 		if errors.Is(err, ErrAgentRevoked) {
 			r.logger.Info("agent credential has been revoked; stopping")
@@ -143,7 +177,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		if err != nil || ctx.Err() != nil {
 			return err
 		}
-		r.logger.Info("agent has been enabled; resuming reports and jobs")
+		r.logger.Info("agent has been enabled; resuming reports, jobs, and outbound discovery")
 		immediate = false
 	}
 }
