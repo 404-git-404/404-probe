@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 	"404-probe/web"
@@ -32,6 +33,7 @@ type App struct {
 	states           map[string]storage.State
 	hub              *hub
 	webAuth          *webAuthenticator
+	buildInfo        buildinfo.Info
 	handler          http.Handler
 }
 
@@ -57,7 +59,7 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 		return nil, err
 	}
 	shutdown, cancel := context.WithCancel(context.Background())
-	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers)}
+	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), buildInfo: buildinfo.Current()}
 	for _, option := range options {
 		if option == nil {
 			cancel()
@@ -86,6 +88,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/{job_id}/result", a.handleJobResult)
 	mux.HandleFunc("/api/v1/agent/jobs/{job_id}/result", requirePost)
+	mux.HandleFunc("POST /api/v1/agent/upgrades/claim", a.handleClaimUpgrade)
+	mux.HandleFunc("POST /api/v1/agent/upgrades/{operation_id}/status", a.handleUpgradeStatus)
 	mux.HandleFunc("PUT /api/v1/control/jobs/{job_id}", a.handlePutControlJob)
 	mux.HandleFunc("GET /api/v1/control/jobs/{job_id}", a.handleGetControlJob)
 	mux.HandleFunc("/api/v1/control/jobs/{job_id}", a.handleControlJobMethodNotAllowed)
@@ -227,7 +231,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishState(state)
 	}
-	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason})
+	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true}})
 }
 
 func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 )
@@ -24,6 +25,13 @@ const (
 )
 
 type Option func(*App) error
+
+func WithBuildInfo(info buildinfo.Info) Option {
+	return func(app *App) error {
+		app.buildInfo = info
+		return nil
+	}
+}
 
 func WithControlTokenHash(hash []byte) Option {
 	return func(app *App) error {

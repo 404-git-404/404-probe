@@ -15,7 +15,7 @@ import (
 const (
 	maxWebAgentCreateBodyBytes = 2 << 10
 	maxWebAgentNameBytes       = 128
-	webAgentInstallerURL       = "https://raw.githubusercontent.com/404-git-404/404-probe/v0.7.0/install.sh"
+	webAgentInstallerURL       = "https://raw.githubusercontent.com/404-git-404/404-probe/v0.8.0/install.sh"
 )
 
 type webAgentCreateRequest struct {

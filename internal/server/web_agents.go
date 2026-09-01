@@ -17,13 +17,15 @@ const (
 )
 
 type webAgentSummaryView struct {
-	AgentID    string `json:"agent_id"`
-	Name       string `json:"name"`
-	Revoked    bool   `json:"revoked"`
-	DisabledAt *int64 `json:"disabled_at"`
-	CreatedAt  int64  `json:"created_at"`
-	Online     bool   `json:"online"`
-	LastSeen   *int64 `json:"last_seen"`
+	AgentID        string `json:"agent_id"`
+	Name           string `json:"name"`
+	Revoked        bool   `json:"revoked"`
+	DisabledAt     *int64 `json:"disabled_at"`
+	CreatedAt      int64  `json:"created_at"`
+	Online         bool   `json:"online"`
+	LastSeen       *int64 `json:"last_seen"`
+	Version        string `json:"version"`
+	UpgradeCapable bool   `json:"upgrade_capable"`
 }
 
 type webAgentDetailView struct {
@@ -263,13 +265,27 @@ func validWebAgentID(value string) bool { return validLowerHexID(value, 32) }
 func newWebAgentSummaryView(record storage.AgentSnapshot) webAgentSummaryView {
 	view := webAgentSummaryView{
 		AgentID: record.Agent.ID, Name: record.Agent.Name, Revoked: record.Agent.Revoked,
-		DisabledAt: record.Agent.DisabledAt, CreatedAt: record.Agent.CreatedAt, Online: record.Online,
+		DisabledAt: record.Agent.DisabledAt, CreatedAt: record.Agent.CreatedAt, Online: record.Online, Version: "unknown",
 	}
 	if record.State != nil {
 		lastSeen := record.State.LastSeen
 		view.LastSeen = &lastSeen
+		view.Version = record.State.AgentVersion
+		view.UpgradeCapable = record.State.AgentUpgradeCapable
 	}
 	return view
+}
+
+type webVersionView struct {
+	Version         string `json:"version"`
+	Commit          string `json:"commit,omitempty"`
+	Dirty           bool   `json:"dirty"`
+	UpgradeEligible bool   `json:"upgrade_eligible"`
+}
+
+func (a *App) handleGetWebVersion(w http.ResponseWriter, _ *http.Request) {
+	info := a.buildInfo
+	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible()})
 }
 
 func newWebAgentStateView(state storage.State, stale bool) *webAgentStateView {

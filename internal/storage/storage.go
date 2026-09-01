@@ -15,13 +15,16 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
 	ErrAgentRevoked             = fmt.Errorf("agent revoked: %w", ErrUnauthorized)
 	ErrAgentDisabled            = fmt.Errorf("agent disabled: %w", ErrUnauthorized)
 	ErrUnsupportedSchemaVersion = errors.New("unsupported newer schema version")
+	ErrUpgradeNotFound          = errors.New("upgrade operation not found")
+	ErrUpgradeConflict          = errors.New("agent already has an active upgrade")
+	ErrUpgradeTransition        = errors.New("invalid upgrade status transition")
 )
 
 type Store struct{ db *sql.DB }
@@ -35,37 +38,39 @@ type Agent struct {
 }
 
 type State struct {
-	AgentID     string  `json:"agent_id"`
-	Name        string  `json:"name"`
-	Epoch       uint64  `json:"-"`
-	SessionID   string  `json:"-"`
-	Sequence    uint64  `json:"sequence"`
-	BootID      string  `json:"boot_id"`
-	Hostname    string  `json:"hostname"`
-	OS          string  `json:"os"`
-	Arch        string  `json:"arch"`
-	Uptime      uint64  `json:"uptime"`
-	CPUPercent  float64 `json:"cpu_percent"`
-	Load1       float64 `json:"load1"`
-	Load5       float64 `json:"load5"`
-	Load15      float64 `json:"load15"`
-	RAMUsed     uint64  `json:"ram_used"`
-	RAMTotal    uint64  `json:"ram_total"`
-	RAMPercent  float64 `json:"ram_percent"`
-	SwapUsed    uint64  `json:"swap_used"`
-	SwapTotal   uint64  `json:"swap_total"`
-	SwapPercent float64 `json:"swap_percent"`
-	DiskUsed    uint64  `json:"disk_used"`
-	DiskTotal   uint64  `json:"disk_total"`
-	DiskPercent float64 `json:"disk_percent"`
-	RXBytes     uint64  `json:"raw_rx"`
-	TXBytes     uint64  `json:"raw_tx"`
-	RXRate      float64 `json:"rx_rate"`
-	TXRate      float64 `json:"tx_rate"`
-	RXTotal     uint64  `json:"rx_total"`
-	TXTotal     uint64  `json:"tx_total"`
-	CollectedAt int64   `json:"collected_at"`
-	LastSeen    int64   `json:"last_seen"`
+	AgentID             string  `json:"agent_id"`
+	Name                string  `json:"name"`
+	Epoch               uint64  `json:"-"`
+	SessionID           string  `json:"-"`
+	Sequence            uint64  `json:"sequence"`
+	BootID              string  `json:"boot_id"`
+	Hostname            string  `json:"hostname"`
+	OS                  string  `json:"os"`
+	Arch                string  `json:"arch"`
+	AgentVersion        string  `json:"agent_version"`
+	AgentUpgradeCapable bool    `json:"agent_upgrade_capable"`
+	Uptime              uint64  `json:"uptime"`
+	CPUPercent          float64 `json:"cpu_percent"`
+	Load1               float64 `json:"load1"`
+	Load5               float64 `json:"load5"`
+	Load15              float64 `json:"load15"`
+	RAMUsed             uint64  `json:"ram_used"`
+	RAMTotal            uint64  `json:"ram_total"`
+	RAMPercent          float64 `json:"ram_percent"`
+	SwapUsed            uint64  `json:"swap_used"`
+	SwapTotal           uint64  `json:"swap_total"`
+	SwapPercent         float64 `json:"swap_percent"`
+	DiskUsed            uint64  `json:"disk_used"`
+	DiskTotal           uint64  `json:"disk_total"`
+	DiskPercent         float64 `json:"disk_percent"`
+	RXBytes             uint64  `json:"raw_rx"`
+	TXBytes             uint64  `json:"raw_tx"`
+	RXRate              float64 `json:"rx_rate"`
+	TXRate              float64 `json:"tx_rate"`
+	RXTotal             uint64  `json:"rx_total"`
+	TXTotal             uint64  `json:"tx_total"`
+	CollectedAt         int64   `json:"collected_at"`
+	LastSeen            int64   `json:"last_seen"`
 }
 
 type HistoryPoint struct {
@@ -299,6 +304,32 @@ func (s *Store) migrate(ctx context.Context) error {
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migration 6: %w", err)
+			}
+		}
+	}
+	if version < 7 {
+		for _, statement := range []string{
+			`ALTER TABLE agent_state ADD COLUMN agent_version TEXT NOT NULL DEFAULT 'unknown'`,
+			`ALTER TABLE agent_state ADD COLUMN agent_upgrade_capable INTEGER NOT NULL DEFAULT 0 CHECK(agent_upgrade_capable IN (0,1))`,
+			`CREATE TABLE agent_upgrade_operations (
+				operation_id TEXT PRIMARY KEY,
+				agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+				from_version TEXT NOT NULL,
+				target_version TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check','succeeded','failed','rolled_back')),
+				failure_code TEXT,
+				failure_message TEXT,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				finished_at INTEGER,
+				updated_at INTEGER NOT NULL
+			)`,
+			`CREATE UNIQUE INDEX idx_agent_upgrade_one_active ON agent_upgrade_operations(agent_id) WHERE status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check')`,
+			`CREATE INDEX idx_agent_upgrade_agent_created ON agent_upgrade_operations(agent_id,created_at DESC)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(7, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 7: %w", err)
 			}
 		}
 	}
@@ -630,9 +661,13 @@ func calculateState(name string, old State, exists bool, r protocol.Report, rece
 			}
 		}
 	}
+	agentVersion := r.AgentVersion
+	if agentVersion == "" {
+		agentVersion = "unknown"
+	}
 	return State{
 		AgentID: r.AgentID, Name: name, Epoch: r.Epoch, SessionID: r.SessionID, Sequence: r.Sequence, BootID: r.BootID,
-		Hostname: r.Hostname, OS: r.OS, Arch: r.Arch, Uptime: r.Uptime, CPUPercent: r.CPUPercent,
+		Hostname: r.Hostname, OS: r.OS, Arch: r.Arch, AgentVersion: agentVersion, AgentUpgradeCapable: r.AgentUpgradeCapable, Uptime: r.Uptime, CPUPercent: r.CPUPercent,
 		Load1: r.Load1, Load5: r.Load5, Load15: r.Load15, RAMUsed: r.RAMUsed, RAMTotal: r.RAMTotal, RAMPercent: r.RAMPercent,
 		SwapUsed: r.SwapUsed, SwapTotal: r.SwapTotal, SwapPercent: r.SwapPercent, DiskUsed: r.DiskUsed, DiskTotal: r.DiskTotal, DiskPercent: r.DiskPercent,
 		RXBytes: r.RXBytes, TXBytes: r.TXBytes, RXRate: rxRate, TXRate: txRate, RXTotal: rxTotal, TXTotal: txTotal,
@@ -650,8 +685,9 @@ func delta(previous, current uint64, bootChanged bool) (uint64, bool) {
 func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool, error) {
 	s := State{AgentID: id, Name: name}
 	var epoch, sequence, uptime, ramUsed, ramTotal, swapUsed, swapTotal, diskUsed, diskTotal, rawRX, rawTX, rxTotal, txTotal int64
-	err := tx.QueryRowContext(ctx, `SELECT epoch,session_id,sequence,boot_id,hostname,os,arch,uptime,cpu,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen FROM agent_state WHERE agent_id=?`, id).Scan(
-		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &uptime, &s.CPUPercent, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen)
+	var upgradeCapable int
+	err := tx.QueryRowContext(ctx, `SELECT epoch,session_id,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,uptime,cpu,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen FROM agent_state WHERE agent_id=?`, id).Scan(
+		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &uptime, &s.CPUPercent, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return State{}, false, nil
 	}
@@ -659,6 +695,7 @@ func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool,
 		return State{}, false, err
 	}
 	assignUnsigned(&s, epoch, sequence, uptime, ramUsed, ramTotal, swapUsed, swapTotal, diskUsed, diskTotal, rawRX, rawTX, rxTotal, txTotal)
+	s.AgentUpgradeCapable = upgradeCapable == 1
 	return s, true, nil
 }
 
@@ -682,9 +719,9 @@ func writeStateTx(ctx context.Context, tx *sql.Tx, s State) error {
 	if err := validatePermanentTotals(s); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,uptime,cpu,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,epoch)
-	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,sequence=excluded.sequence,boot_id=excluded.boot_id,hostname=excluded.hostname,os=excluded.os,arch=excluded.arch,uptime=excluded.uptime,cpu=excluded.cpu,load1=excluded.load1,load5=excluded.load5,load15=excluded.load15,ram_used=excluded.ram_used,ram_total=excluded.ram_total,ram_percent=excluded.ram_percent,swap_used=excluded.swap_used,swap_total=excluded.swap_total,swap_percent=excluded.swap_percent,disk_used=excluded.disk_used,disk_total=excluded.disk_total,disk_percent=excluded.disk_percent,raw_rx=excluded.raw_rx,raw_tx=excluded.raw_tx,rx_rate=excluded.rx_rate,tx_rate=excluded.tx_rate,rx_total=excluded.rx_total,tx_total=excluded.tx_total,collected_at=excluded.collected_at,last_seen=excluded.last_seen,epoch=excluded.epoch`,
-		s.AgentID, s.SessionID, s.CollectedAt, int64(s.Sequence), s.BootID, s.Hostname, s.OS, s.Arch, int64(s.Uptime), s.CPUPercent, s.Load1, s.Load5, s.Load15, int64(s.RAMUsed), int64(s.RAMTotal), s.RAMPercent, int64(s.SwapUsed), int64(s.SwapTotal), s.SwapPercent, int64(s.DiskUsed), int64(s.DiskTotal), s.DiskPercent, int64(s.RXBytes), int64(s.TXBytes), s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), s.CollectedAt, s.LastSeen, int64(s.Epoch))
+	_, err := tx.ExecContext(ctx, `INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,uptime,cpu,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,epoch)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,sequence=excluded.sequence,boot_id=excluded.boot_id,hostname=excluded.hostname,os=excluded.os,arch=excluded.arch,agent_version=excluded.agent_version,agent_upgrade_capable=excluded.agent_upgrade_capable,uptime=excluded.uptime,cpu=excluded.cpu,load1=excluded.load1,load5=excluded.load5,load15=excluded.load15,ram_used=excluded.ram_used,ram_total=excluded.ram_total,ram_percent=excluded.ram_percent,swap_used=excluded.swap_used,swap_total=excluded.swap_total,swap_percent=excluded.swap_percent,disk_used=excluded.disk_used,disk_total=excluded.disk_total,disk_percent=excluded.disk_percent,raw_rx=excluded.raw_rx,raw_tx=excluded.raw_tx,rx_rate=excluded.rx_rate,tx_rate=excluded.tx_rate,rx_total=excluded.rx_total,tx_total=excluded.tx_total,collected_at=excluded.collected_at,last_seen=excluded.last_seen,epoch=excluded.epoch`,
+		s.AgentID, s.SessionID, s.CollectedAt, int64(s.Sequence), s.BootID, s.Hostname, s.OS, s.Arch, s.AgentVersion, boolInt(s.AgentUpgradeCapable), int64(s.Uptime), s.CPUPercent, s.Load1, s.Load5, s.Load15, int64(s.RAMUsed), int64(s.RAMTotal), s.RAMPercent, int64(s.SwapUsed), int64(s.SwapTotal), s.SwapPercent, int64(s.DiskUsed), int64(s.DiskTotal), s.DiskPercent, int64(s.RXBytes), int64(s.TXBytes), s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), s.CollectedAt, s.LastSeen, int64(s.Epoch))
 	return err
 }
 

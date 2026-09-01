@@ -13,8 +13,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"404-probe/internal/collector"
@@ -36,6 +38,8 @@ type Config struct {
 	ClashAPIURL       string
 	ClashAPISecret    string `json:"-"`
 	OutboundInterval  time.Duration
+	AgentVersion      string
+	UpdaterSocket     string
 }
 
 var (
@@ -84,13 +88,16 @@ func (c Config) Validate() error {
 }
 
 type Runner struct {
-	config    Config
-	client    *http.Client
-	collector reportCollector
-	logger    *slog.Logger
-	epoch     uint64
-	sessionID string
-	executor  Executor
+	config                Config
+	client                *http.Client
+	collector             reportCollector
+	logger                *slog.Logger
+	epoch                 uint64
+	sessionID             string
+	executor              Executor
+	reportAgentVersion    bool
+	versionReportAccepted atomic.Bool
+	upgradeAPISupported   atomic.Bool
 }
 
 type reportCollector interface {
@@ -149,6 +156,13 @@ func (r *Runner) Run(ctx context.Context) error {
 			defer workers.Done()
 			r.runJobWorker(workerContext)
 		}()
+		if r.config.UpdaterSocket != "" {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				r.runUpgradeWorker(workerContext)
+			}()
+		}
 		if r.config.ClashAPIURL != "" {
 			workers.Add(1)
 			go func() {
@@ -241,6 +255,10 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	(*sequence)++
 	measurement.AgentID = r.config.AgentID
+	if r.reportAgentVersion {
+		measurement.AgentVersion = r.config.AgentVersion
+		measurement.AgentUpgradeCapable = r.updaterAvailable()
+	}
 	measurement.Epoch = r.epoch
 	measurement.SessionID = r.sessionID
 	measurement.Sequence = *sequence
@@ -257,8 +275,25 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		r.logger.Warn("report rejected", "reason", response.Reason, "epoch", r.epoch, "sequence", *sequence)
 		return false, nil
 	}
+	if measurement.AgentVersion != "" {
+		r.versionReportAccepted.Store(true)
+	}
+	if response.Capabilities.AgentVersionReport {
+		r.reportAgentVersion = true
+	}
+	if response.Capabilities.AgentUpgrade {
+		r.upgradeAPISupported.Store(true)
+	}
 	r.logger.Debug("report accepted", "sequence", *sequence)
 	return true, nil
+}
+
+func (r *Runner) updaterAvailable() bool {
+	if r.config.UpdaterSocket == "" {
+		return false
+	}
+	info, err := os.Stat(r.config.UpdaterSocket)
+	return err == nil && info.Mode()&os.ModeSocket != 0
 }
 
 func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.ReportResponse, error) {
@@ -302,8 +337,9 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 		return protocol.ReportResponse{}, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(limited)))
 	}
 	var wire struct {
-		Accepted *bool  `json:"accepted"`
-		Reason   string `json:"reason"`
+		Accepted     *bool                       `json:"accepted"`
+		Reason       string                      `json:"reason"`
+		Capabilities protocol.ReportCapabilities `json:"capabilities"`
 	}
 	if err := json.Unmarshal(limited, &wire); err != nil {
 		return protocol.ReportResponse{}, fmt.Errorf("decode server response: %w", err)
@@ -311,7 +347,7 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	if wire.Accepted == nil {
 		return protocol.ReportResponse{}, errors.New("decode server response: accepted field is required")
 	}
-	return protocol.ReportResponse{Accepted: *wire.Accepted, Reason: wire.Reason}, nil
+	return protocol.ReportResponse{Accepted: *wire.Accepted, Reason: wire.Reason, Capabilities: wire.Capabilities}, nil
 }
 
 func randomID(bytes int) (string, error) {
