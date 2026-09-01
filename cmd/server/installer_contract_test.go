@@ -135,6 +135,7 @@ func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
 		`ExecStart=${AGENT_BINARY} updater`,
 		`Restart=always`,
 		`RuntimeDirectory=404-probe`,
+		`RuntimeDirectoryMode=0755`,
 		`ReadWritePaths=${AGENT_UPDATER_STATE} /usr/local/bin /run/404-probe`,
 		`NoNewPrivileges=true`,
 		`ProtectSystem=strict`,

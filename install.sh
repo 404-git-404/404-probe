@@ -617,7 +617,7 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RuntimeDirectory=404-probe
-RuntimeDirectoryMode=0750
+RuntimeDirectoryMode=0755
 ReadWritePaths=${AGENT_UPDATER_STATE} /usr/local/bin /run/404-probe
 
 [Install]
