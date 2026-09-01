@@ -201,7 +201,7 @@ func inspectCandidate(uid, gid int) Inspector {
 			}
 		}
 		command := exec.CommandContext(ctx, path, "version", "--json")
-		command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}, Noctty: true}
+		command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
 		output, err := command.Output()
 		if err != nil || len(output) > 4096 {
 			return appbuildinfo.Info{}, errors.New("candidate version metadata is unavailable")
