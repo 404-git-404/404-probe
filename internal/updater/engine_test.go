@@ -57,6 +57,10 @@ func TestEngineHealthTimeoutRollsBack(t *testing.T) {
 	if data, err := os.ReadFile(live); err != nil || string(data) != "old-agent" {
 		t.Fatalf("live=%q err=%v", data, err)
 	}
+	candidate := filepath.Join(filepath.Dir(filepath.Dir(live)), "state", "candidate")
+	if _, err := os.Stat(candidate); !os.IsNotExist(err) {
+		t.Fatalf("candidate was not cleaned after rollback: %v", err)
+	}
 	commands.mu.Lock()
 	defer commands.mu.Unlock()
 	if fmt.Sprint(commands.values) != "[restart stop restart]" {

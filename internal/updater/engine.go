@@ -373,6 +373,7 @@ func (e *Engine) finishFailure(installed bool, code string) {
 			cancel()
 			if err == nil {
 				_ = e.setStatus("rolled_back", code, "upgrade failed; previous version restored")
+				e.cleanupCommittedFiles()
 				e.mu.Lock()
 				e.running = false
 				e.mu.Unlock()
