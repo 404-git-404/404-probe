@@ -44,7 +44,7 @@ func TestInstallerAgentServiceRestartsOnlyAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
-	start := strings.Index(script, `ExecStart=${AGENT_BINARY}`)
+	start := strings.Index(script, `ExecStart=${AGENT_BINARY} --interval`)
 	if start < 0 {
 		t.Fatal("installer is missing the Agent service ExecStart")
 	}
@@ -133,6 +133,7 @@ func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
 		`bootstrap_existing_agent`,
 		`version --json >/dev/null 2>&1`,
 		`ExecStart=${AGENT_BINARY} updater`,
+		`Restart=always`,
 		`RuntimeDirectory=404-probe`,
 		`ReadWritePaths=${AGENT_UPDATER_STATE} /usr/local/bin /run/404-probe`,
 		`NoNewPrivileges=true`,
@@ -145,7 +146,7 @@ func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
 			t.Fatalf("installer missing updater/bootstrap contract %q", required)
 		}
 	}
-	for _, forbidden := range []string{`--download-url`, `--binary-path`, `--command`, `Restart=always`} {
+	for _, forbidden := range []string{`--download-url`, `--binary-path`, `--command`} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("installer expands updater authority through %q", forbidden)
 		}

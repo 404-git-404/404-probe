@@ -20,7 +20,9 @@ import (
 	"404-probe/internal/buildinfo"
 )
 
-const officialReleaseBase = "https://github.com/404-git-404/404-probe/releases/download/"
+// officialReleaseBase is fixed in production builds. A controlled E2E build may
+// replace it with -ldflags -X; the running updater exposes no URL override.
+var officialReleaseBase = "https://github.com/404-git-404/404-probe/releases/download/"
 
 type Inspector func(context.Context, string) (buildinfo.Info, error)
 type ServiceCommand func(context.Context, string) error
@@ -39,6 +41,7 @@ type EngineConfig struct {
 	ServiceCommand ServiceCommand
 	HealthTimeout  time.Duration
 	Now            func() time.Time
+	OnCommitted    func()
 }
 
 type Engine struct {
@@ -205,12 +208,17 @@ func (e *Engine) run(request Request) {
 	e.mu.Unlock()
 	select {
 	case <-health:
-		_ = os.Remove(e.config.PreviousBinary)
-		_ = os.Remove(filepath.Join(e.config.StateDirectory, "candidate"))
-		_ = e.setStatus("succeeded", "", "")
+		if err := e.setStatus("succeeded", "", ""); err != nil {
+			e.finishFailure(true, "stage_failed")
+			return
+		}
+		e.cleanupCommittedFiles()
 		e.mu.Lock()
 		e.running = false
 		e.mu.Unlock()
+		if e.config.OnCommitted != nil {
+			e.config.OnCommitted()
+		}
 	case <-timer.C:
 		e.finishFailure(true, "health_timeout")
 	}
@@ -474,14 +482,25 @@ func (e *Engine) recoverInstalled() {
 	e.mu.Unlock()
 	select {
 	case <-health:
-		_ = os.Remove(e.config.PreviousBinary)
-		_ = e.setStatus("succeeded", "", "")
+		if err := e.setStatus("succeeded", "", ""); err != nil {
+			e.finishFailure(true, "stage_failed")
+			return
+		}
+		e.cleanupCommittedFiles()
 		e.mu.Lock()
 		e.running = false
 		e.mu.Unlock()
+		if e.config.OnCommitted != nil {
+			e.config.OnCommitted()
+		}
 	case <-time.After(e.config.HealthTimeout):
 		e.finishFailure(true, "health_timeout")
 	}
+}
+
+func (e *Engine) cleanupCommittedFiles() {
+	_ = os.Remove(e.config.PreviousBinary)
+	_ = os.Remove(filepath.Join(e.config.StateDirectory, "candidate"))
 }
 
 func classifyDownloadFailure(err error) string {

@@ -21,7 +21,7 @@ Upgrade requests are rejected for offline, paused, revoked, or bootstrap-require
 
 The updater supports Linux `amd64` and `arm64`. It derives a fixed official GitHub Release URL from the canonical version, uses HTTPS, requires exactly one matching entry in `SHA256SUMS`, verifies the downloaded digest, and validates candidate Go build metadata and the candidate's `version --json` response before installation. It never executes an unverified candidate.
 
-The current binary is preserved, the verified candidate is installed with an atomic rename, and only the fixed `404-probe-agent.service` is restarted. Success requires a subsequent authenticated report that carries the target version. A download, checksum, metadata, install, restart, or health timeout failure leaves the old binary in place or restores it.
+The current binary is preserved, the verified candidate is installed with an atomic rename, and only the fixed `404-probe-agent.service` is restarted before health confirmation. Success requires a subsequent authenticated report that carries the target version. After that commit, the updater exits cleanly and systemd restarts it from the new live binary, so both the Agent and the privileged updater run the target build. A download, checksum, metadata, install, restart, or health timeout failure leaves the old binary in place or restores it.
 
 This release uses checksums and embedded build metadata, not a signed release manifest. Compromise of the official GitHub release account or its distributed checksum file remains inside the V0.8 trust boundary and should be addressed by signed manifests in a future release.
 

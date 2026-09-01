@@ -17,6 +17,8 @@ import (
 
 func TestEngineVerifiedUpgradeAndHealthCommit(t *testing.T) {
 	engine, request, live, previous, _ := testEngine(t, false, 2*time.Second)
+	committed := make(chan struct{}, 1)
+	engine.config.OnCommitted = func() { committed <- struct{}{} }
 	if _, err := engine.Start(request); err != nil {
 		t.Fatal(err)
 	}
@@ -31,6 +33,17 @@ func TestEngineVerifiedUpgradeAndHealthCommit(t *testing.T) {
 	}
 	if _, err := os.Stat(previous); !os.IsNotExist(err) {
 		t.Fatalf("previous binary was not cleaned: %v", err)
+	}
+	select {
+	case <-committed:
+	case <-time.After(time.Second):
+		t.Fatal("successful target health did not request updater refresh")
+	}
+}
+
+func TestProductionReleaseBaseIsOfficialRepository(t *testing.T) {
+	if officialReleaseBase != "https://github.com/404-git-404/404-probe/releases/download/" {
+		t.Fatalf("unexpected production release base %q", officialReleaseBase)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/user"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -54,9 +55,14 @@ func platformServe(ctx context.Context) error {
 	if err := os.Chmod(updaterStateDirectory, 0700); err != nil {
 		return err
 	}
+	committed := make(chan struct{})
+	var commitOnce sync.Once
 	engine, err := NewEngine(EngineConfig{CurrentVersion: appbuildinfo.Current().Version, StateDirectory: updaterStateDirectory,
 		LiveBinary: liveAgentBinary, StagedBinary: stagedAgentBinary, PreviousBinary: previousAgentBinary,
-		Inspect: inspectCandidate(uid, gid), ServiceCommand: controlAgentService, HealthTimeout: 2 * time.Minute})
+		Inspect: inspectCandidate(uid, gid), ServiceCommand: controlAgentService, HealthTimeout: 2 * time.Minute,
+		OnCommitted: func() {
+			commitOnce.Do(func() { close(committed) })
+		}})
 	if err != nil {
 		return err
 	}
@@ -84,14 +90,22 @@ func platformServe(ctx context.Context) error {
 		return err
 	}
 	go func() {
-		<-ctx.Done()
-		listener.Close()
+		select {
+		case <-ctx.Done():
+		case <-committed:
+		}
+		_ = listener.Close()
 	}()
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
+			}
+			select {
+			case <-committed:
+				return nil
+			default:
 			}
 			return err
 		}
