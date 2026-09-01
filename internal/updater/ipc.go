@@ -89,6 +89,13 @@ func (c Client) Call(ctx context.Context, request Request) (Response, error) {
 	if err := json.NewEncoder(connection).Encode(request); err != nil {
 		return Response{}, err
 	}
+	halfCloser, ok := connection.(interface{ CloseWrite() error })
+	if !ok {
+		return Response{}, errors.New("updater socket does not support half-close")
+	}
+	if err := halfCloser.CloseWrite(); err != nil {
+		return Response{}, err
+	}
 	body, err := io.ReadAll(io.LimitReader(connection, maxIPCBytes+1))
 	if err != nil {
 		return Response{}, err
