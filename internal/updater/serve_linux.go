@@ -124,7 +124,6 @@ func handleConnection(connection net.Conn, engine *Engine, allowedUID uint32) {
 		return
 	}
 	var state State
-	var err error
 	switch request.Action {
 	case ActionStart:
 		state, err = engine.Start(request)
