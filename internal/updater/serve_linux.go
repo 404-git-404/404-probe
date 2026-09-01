@@ -49,10 +49,13 @@ func platformServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse Agent service GID: %w", err)
 	}
-	if err := os.MkdirAll(updaterStateDirectory, 0700); err != nil {
+	if err := os.MkdirAll(updaterStateDirectory, 0711); err != nil {
 		return err
 	}
-	if err := os.Chmod(updaterStateDirectory, 0700); err != nil {
+	// The Agent account needs path traversal only so the updater can inspect a
+	// root-owned executable candidate after dropping privileges. State files
+	// remain root-only and directory listing remains disabled.
+	if err := os.Chmod(updaterStateDirectory, 0711); err != nil {
 		return err
 	}
 	committed := make(chan struct{})

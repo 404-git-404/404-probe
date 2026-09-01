@@ -247,7 +247,9 @@ func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
 		return errors.New("checksum_mismatch")
 	}
 	path := filepath.Join(e.config.StateDirectory, "candidate")
-	if err := writeRootFile(path, candidate, 0700); err != nil {
+	// The candidate stays root-owned and non-writable by the Agent account, but
+	// the unprivileged metadata inspector must be able to execute it.
+	if err := writeRootFile(path, candidate, 0711); err != nil {
 		return fmt.Errorf("stage_failed: %w", err)
 	}
 	if err := e.setStatus("verifying", "", ""); err != nil {

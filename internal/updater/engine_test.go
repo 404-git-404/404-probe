@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -116,7 +117,14 @@ func testEngine(t *testing.T, badChecksum bool, healthTimeout time.Duration) (*E
 	commands := &commandLog{}
 	engine, err := NewEngine(EngineConfig{CurrentVersion: "v0.8.0", GOOS: "linux", GOARCH: "amd64", StateDirectory: stateDirectory,
 		LiveBinary: live, StagedBinary: staged, PreviousBinary: previous, ReleaseBase: server.URL,
-		Inspect: func(context.Context, string) (buildinfo.Info, error) {
+		Inspect: func(_ context.Context, path string) (buildinfo.Info, error) {
+			metadata, err := os.Stat(path)
+			if err != nil {
+				return buildinfo.Info{}, err
+			}
+			if got := metadata.Mode().Perm(); runtime.GOOS != "windows" && got != 0711 {
+				return buildinfo.Info{}, fmt.Errorf("candidate mode=%#o want=0711", got)
+			}
 			return buildinfo.Info{Version: "v0.8.1", Commit: "0123456789abcdef", Dirty: false}, nil
 		}, ServiceCommand: func(_ context.Context, action string) error {
 			commands.mu.Lock()
