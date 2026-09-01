@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.7.0"
+readonly DEFAULT_VERSION="v0.8.0"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -12,6 +12,9 @@ readonly STATE_DIRECTORY="/var/lib/404-probe"
 readonly SERVER_DATABASE="${STATE_DIRECTORY}/404-probe.db"
 readonly SERVER_UNIT="/etc/systemd/system/404-probe-server.service"
 readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
+readonly AGENT_UPDATER_UNIT="/etc/systemd/system/404-probe-agent-updater.service"
+readonly AGENT_UPDATER_STATE="/var/lib/404-probe-updater"
+readonly AGENT_UPDATER_SOCKET="/run/404-probe/agent-updater.sock"
 readonly SERVICE_USER="404-probe"
 readonly ENROLLMENT_PREFIX="404p1_"
 
@@ -21,6 +24,7 @@ INSTALL_TRANSACTION_UNIT=""
 INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED=0
 INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=0
 INSTALL_TRANSACTION_USER_CREATED=0
+INSTALL_TRANSACTION_UPDATER_STATE_CREATED=0
 INSTALL_TRANSACTION_PATHS=()
 
 die() {
@@ -156,6 +160,8 @@ rollback_install_transaction() {
   if [[ "${INSTALL_TRANSACTION_ROLE}" == "server" ]]; then
     rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
   elif [[ "${INSTALL_TRANSACTION_ROLE}" == "agent" ]]; then
+	 systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true
+	 systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
     rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
   fi
   for (( index=${#INSTALL_TRANSACTION_PATHS[@]}-1; index>=0; index-- )); do
@@ -164,6 +170,7 @@ rollback_install_transaction() {
   systemctl daemon-reload >/dev/null 2>&1 || true
   (( INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED == 0 )) || rmdir -- "${CONFIG_DIRECTORY}" 2>/dev/null || true
   (( INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED == 0 )) || rmdir -- "${STATE_DIRECTORY}" 2>/dev/null || true
+  (( INSTALL_TRANSACTION_UPDATER_STATE_CREATED == 0 )) || rmdir -- "${AGENT_UPDATER_STATE}" 2>/dev/null || true
   if (( INSTALL_TRANSACTION_USER_CREATED != 0 )); then
     printf '404-probe installer: preserved the new locked service account for a safe retry\n' >&2
   fi
@@ -237,6 +244,9 @@ readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
 readonly SERVER_DATABASE="/var/lib/404-probe/404-probe.db"
 readonly SERVER_UNIT="/etc/systemd/system/404-probe-server.service"
 readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
+readonly AGENT_UPDATER_UNIT="/etc/systemd/system/404-probe-agent-updater.service"
+readonly AGENT_UPDATER_STATE="/var/lib/404-probe-updater"
+readonly AGENT_UPDATER_SOCKET="/run/404-probe/agent-updater.sock"
 readonly CONFIG_DIRECTORY="/etc/404-probe"
 readonly STATE_DIRECTORY="/var/lib/404-probe"
 readonly SERVICE_USER="404-probe"
@@ -276,6 +286,12 @@ uninstall() {
   else
     unit_path="${AGENT_UNIT}"; binary_path="${AGENT_BINARY}"
   fi
+	if [[ "${role}" == "agent" ]]; then
+	  if systemctl is-active --quiet 404-probe-agent-updater.service; then
+	    systemctl stop 404-probe-agent-updater.service || die "could not stop Agent updater; nothing was removed"
+	  fi
+	  systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
+	fi
   if systemctl is-active --quiet "${unit}"; then
     systemctl stop "${unit}" || die "could not stop ${unit}; nothing was removed"
   fi
@@ -286,7 +302,10 @@ uninstall() {
   rm -f -- "${unit_path}" "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
-      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
+      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" \
+	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
+	  "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
+	rm -rf -- "${AGENT_UPDATER_STATE}"
   fi
   systemctl daemon-reload
   printf 'Uninstalled %s. Re-running this command is safe.\n' "${role}"
@@ -569,10 +588,145 @@ verify_agent_authentication() {
     || die "Agent authentication verification failed (expected HTTP 415 after authentication, received ${status_code:-no response})"
 }
 
+install_agent_updater_unit() {
+  install -d -m 0700 -o root -g root "${AGENT_UPDATER_STATE}"
+  cat >"${AGENT_UPDATER_UNIT}" <<EOF
+[Unit]
+Description=404-probe restricted Agent updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+ExecStart=${AGENT_BINARY} updater
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RuntimeDirectory=404-probe
+RuntimeDirectoryMode=0750
+ReadWritePaths=${AGENT_UPDATER_STATE} /usr/local/bin /run/404-probe
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 "${AGENT_UPDATER_UNIT}"
+}
+
+render_agent_unit() {
+  local insecure_option="$1"
+  cat <<EOF
+[Unit]
+Description=404-probe Agent
+After=network-online.target 404-probe-agent-updater.service
+Wants=network-online.target 404-probe-agent-updater.service
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+EnvironmentFile=${CONFIG_DIRECTORY}/agent.env
+UMask=0077
+ExecStart=${AGENT_BINARY} --interval 10s --job-interval 10s --timeout 8s${insecure_option}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+ReadWritePaths=${STATE_DIRECTORY} /run/404-probe
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+bootstrap_existing_agent() (
+  local candidate="/usr/local/bin/.404-probe-agent.bootstrap"
+  local previous="/usr/local/bin/.404-probe-agent.previous"
+  local backup_directory server_url agent_token insecure_option rollback_active=0
+  [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" && -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
+    || die "existing Agent installation is incomplete or unsafe; no files were changed"
+  [[ "$(stat -c '%U:%G:%a' "${AGENT_UNIT}")" == "root:root:644" ]] \
+    || die "existing Agent unit must be root:root mode 0644"
+  [[ "$(stat -c '%U:%G:%a' "${AGENT_BINARY}")" == "root:root:755" ]] \
+    || die "existing Agent binary must be root:root mode 0755"
+  if "${AGENT_BINARY}" version --json >/dev/null 2>&1; then
+    die "existing Agent already supports versioned upgrades; use the Web upgrade action"
+  fi
+  [[ ! -e "${AGENT_UPDATER_UNIT}" && ! -e "${AGENT_UPDATER_SOCKET}" && ! -e "${AGENT_UPDATER_STATE}" ]] \
+    || die "existing updater installation is partial or unmanaged; no files were changed"
+  grep -Fxq "User=${SERVICE_USER}" "${AGENT_UNIT}" \
+    && grep -Fq "ExecStart=${AGENT_BINARY} " "${AGENT_UNIT}" \
+    && grep -Fxq "EnvironmentFile=${CONFIG_DIRECTORY}/agent.env" "${AGENT_UNIT}" \
+    || die "existing Agent unit is not a supported 404-probe v0.7 installation"
+  server_url="$(sed -n 's/^PROBE_404_SERVER=//p' "${CONFIG_DIRECTORY}/agent.env")"
+  agent_token="$(sed -n 's/^PROBE_404_TOKEN=//p' "${CONFIG_DIRECTORY}/agent.env")"
+  [[ "$(grep -c '^PROBE_404_SERVER=' "${CONFIG_DIRECTORY}/agent.env")" -eq 1 && "$(grep -c '^PROBE_404_TOKEN=' "${CONFIG_DIRECTORY}/agent.env")" -eq 1 ]] \
+    || die "existing Agent environment is ambiguous"
+  valid_agent_server_url "${server_url}" || die "existing Agent Server URL is invalid"
+  [[ "${agent_token}" =~ ^[A-Za-z0-9_-]{43}$ ]] || die "existing Agent credential is invalid"
+  [[ ! -e "${candidate}" ]] || { [[ -f "${candidate}" && ! -L "${candidate}" ]] || die "unsafe bootstrap candidate path"; rm -f -- "${candidate}"; }
+  [[ ! -e "${previous}" ]] || { [[ -f "${previous}" && ! -L "${previous}" ]] || die "unsafe previous binary path"; rm -f -- "${previous}"; }
+  download_binary agent "${candidate}"
+  backup_directory="$(mktemp -d)"
+  cp --preserve=mode,ownership,timestamps -- "${AGENT_UNIT}" "${backup_directory}/agent.service"
+  trap 'status=$?; if (( rollback_active != 0 )); then systemctl stop 404-probe-agent.service >/dev/null 2>&1 || true; systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true; systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true; rm -f -- "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}"; rm -rf -- "${AGENT_UPDATER_STATE}"; if [[ -f "${previous}" && ! -L "${previous}" ]]; then mv -f -- "${previous}" "${AGENT_BINARY}"; fi; cp --preserve=mode,ownership,timestamps -- "${backup_directory}/agent.service" "${AGENT_UNIT}"; systemctl daemon-reload >/dev/null 2>&1 || true; systemctl restart 404-probe-agent.service >/dev/null 2>&1 || true; fi; rm -f -- "${candidate}"; rm -rf -- "${backup_directory}"; exit "${status}"' EXIT HUP INT TERM
+  systemctl stop 404-probe-agent.service || die "could not stop existing Agent"
+  rollback_active=1
+  ln -- "${AGENT_BINARY}" "${previous}"
+  mv -f -- "${candidate}" "${AGENT_BINARY}"
+  insecure_option=""
+  [[ "${server_url}" != http://* ]] || insecure_option=" --allow-insecure-http"
+  render_agent_unit "${insecure_option}" >"${AGENT_UNIT}"
+  chmod 0644 "${AGENT_UNIT}"
+  install_agent_updater_unit
+  systemctl daemon-reload
+  systemctl enable --now 404-probe-agent-updater.service
+  wait_for_service 404-probe-agent-updater.service
+  systemctl enable --now 404-probe-agent.service
+  wait_for_service 404-probe-agent.service
+  verify_agent_authentication "${server_url}" "${agent_token}"
+  install_local_helper
+  rm -f -- "${previous}"
+  rollback_active=0
+  trap - EXIT HUP INT TERM
+  rm -rf -- "${backup_directory}"
+  unset agent_token
+  note "404-probe Agent v0.8 bootstrap completed; identity, credential, configuration, and epoch state were preserved."
+)
+
 install_agent() {
   [[ ! -e "${SERVER_UNIT}" && ! -e "${CONFIG_DIRECTORY}/server.env" ]] \
     || die "a Server installation already exists; Server and Agent roles are kept on separate hosts"
-  [[ ! -e "${AGENT_UNIT}" ]] || die "Agent installation already exists; no files were changed"
+  if [[ -e "${AGENT_UNIT}" || -e "${CONFIG_DIRECTORY}/agent.env" || -e "${AGENT_BINARY}" ]]; then
+    [[ -e "${AGENT_UNIT}" && -e "${CONFIG_DIRECTORY}/agent.env" && -e "${AGENT_BINARY}" ]] \
+      || die "conflicting partial Agent installation found; no files were changed"
+    bootstrap_existing_agent
+    return
+  fi
   [[ ! -e "${CONFIG_DIRECTORY}/agent.env" ]] || die "existing Agent configuration was found; refusing to overwrite it"
   [[ ! -e "${STATE_DIRECTORY}/agent.epoch" && ! -e "${STATE_DIRECTORY}/agent.epoch.lock" ]] \
     || die "existing Agent state was found; refusing to alter it"
@@ -633,42 +787,15 @@ PROBE_404_STATE=${STATE_DIRECTORY}/agent.epoch${clash_environment}"
     insecure_option=" --allow-insecure-http"
   fi
   track_install_path "${AGENT_UNIT}"
+  track_install_path "${AGENT_UPDATER_UNIT}"
+  [[ -d "${AGENT_UPDATER_STATE}" ]] || INSTALL_TRANSACTION_UPDATER_STATE_CREATED=1
   INSTALL_TRANSACTION_UNIT="404-probe-agent.service"
-  cat >"${AGENT_UNIT}" <<EOF
-[Unit]
-Description=404-probe Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_USER}
-EnvironmentFile=${CONFIG_DIRECTORY}/agent.env
-UMask=0077
-ExecStart=${AGENT_BINARY} --interval 10s --job-interval 10s --timeout 8s${insecure_option}
-Restart=on-failure
-RestartSec=5s
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=CAP_NET_RAW
-AmbientCapabilities=CAP_NET_RAW
-ReadWritePaths=${STATE_DIRECTORY}
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  render_agent_unit "${insecure_option}" >"${AGENT_UNIT}"
   chmod 0644 "${AGENT_UNIT}"
+  install_agent_updater_unit
   systemctl daemon-reload
+  systemctl enable --now 404-probe-agent-updater.service
+  wait_for_service 404-probe-agent-updater.service
   systemctl enable --now 404-probe-agent.service
   wait_for_service 404-probe-agent.service
 
@@ -728,6 +855,12 @@ uninstall_role() {
     unit_path="${AGENT_UNIT}"
     binary_path="${AGENT_BINARY}"
   fi
+  if [[ "${role}" == "agent" ]]; then
+    if systemctl is-active --quiet 404-probe-agent-updater.service; then
+      systemctl stop 404-probe-agent-updater.service || die "could not stop Agent updater; nothing was removed"
+    fi
+    systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
+  fi
   if systemctl is-active --quiet "${unit}"; then
     systemctl stop "${unit}" || die "could not stop ${unit}; nothing was removed"
   fi
@@ -738,7 +871,10 @@ uninstall_role() {
   rm -f -- "${unit_path}" "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
-      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
+      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" \
+      "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
+      "/usr/local/bin/.404-probe-agent.bootstrap" "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
+    rm -rf -- "${AGENT_UPDATER_STATE}"
   fi
   systemctl daemon-reload
   note "Uninstalled ${role}. Re-running this command is safe."
@@ -754,7 +890,7 @@ interactive_install() {
   require_root_linux_systemd
   local choice
   cat >/dev/tty <<'EOF'
-Install 404-probe V0.7.0
+Install 404-probe V0.8.0
 
   1) Server
   2) Agent

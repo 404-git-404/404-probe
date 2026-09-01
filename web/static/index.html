@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header><div><h1>404-probe</h1><p>已认证 Agent 观测</p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
+  <header><div><h1>404-probe</h1><p>已认证 Agent 观测 · <span id="server-version">Server unknown</span></p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
   <main><div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid agent-grid" aria-live="polite"></section></main>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <div id="add-agent-create">
@@ -31,6 +31,15 @@
       <div class="dialog-actions"><button id="add-agent-done" class="primary-action" type="button">完成并关闭</button></div>
     </div>
   </dialog>
+  <dialog id="upgrade-agent-dialog" class="agent-dialog" aria-labelledby="upgrade-agent-title">
+    <h2 id="upgrade-agent-title">升级 Agent</h2>
+    <p>将通过受限 updater 下载、校验并事务性替换单个 Agent。升级失败时会尝试恢复旧版本。</p>
+    <div class="upgrade-versions"><span>当前版本 <strong id="upgrade-current-version"></strong></span><span>目标版本 <strong id="upgrade-target-version"></strong></span></div>
+    <form id="upgrade-agent-form">
+      <div id="upgrade-agent-error" class="dialog-error hidden" role="alert">升级请求失败，请重试。</div>
+      <div class="dialog-actions"><button id="upgrade-agent-cancel" type="button">取消</button><button id="upgrade-agent-confirm" class="primary-action" type="submit">开始升级</button></div>
+    </form>
+  </dialog>
   <dialog id="remove-agent-dialog" class="agent-dialog" aria-labelledby="remove-agent-title">
     <h2 id="remove-agent-title">移除 Agent</h2>
     <p>这会立即撤销 Agent credential，并将它移出默认活动视图。</p>
@@ -41,7 +50,7 @@
       <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">撤销并移除</button></div>
     </form>
   </dialog>
-  <footer>V0.7 · 数据通过 Server 安全汇总</footer>
+  <footer>数据通过 Server 安全汇总</footer>
   <script src="/app.js" defer></script>
   <script src="/session.js" defer></script>
 </body>

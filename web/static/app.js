@@ -16,10 +16,19 @@ const removeAgentForm = document.querySelector('#remove-agent-form');
 const removeAgentName = document.querySelector('#remove-agent-name');
 const removeAgentConfirm = document.querySelector('#remove-agent-confirm');
 const removeAgentError = document.querySelector('#remove-agent-error');
+const serverVersion = document.querySelector('#server-version');
+const upgradeAgentDialog = document.querySelector('#upgrade-agent-dialog');
+const upgradeAgentForm = document.querySelector('#upgrade-agent-form');
+const upgradeCurrentVersion = document.querySelector('#upgrade-current-version');
+const upgradeTargetVersion = document.querySelector('#upgrade-target-version');
+const upgradeAgentConfirm = document.querySelector('#upgrade-agent-confirm');
+const upgradeAgentError = document.querySelector('#upgrade-agent-error');
 const agents = new Map();
 const revokedAgentIDs = new Set();
 let mutationCSRFToken = '';
 let pendingRemoveAgentID = '';
+let pendingUpgradeAgentID = '';
+let serverBuild = {version: 'unknown', upgrade_eligible: false};
 
 const bytes = (value, rate = false) => {
   let number = Number(value || 0);
@@ -42,9 +51,25 @@ const duration = value => {
 
 const seen = value => value ? new Date(value).toLocaleString() : '从未上报';
 const pct = value => `${Number(value || 0).toFixed(1)}%`;
+const upgradeLabel = operation => {
+  if (!operation) return '';
+  const labels = {requested: 'Requested', claimed: 'Claimed', downloading: 'Downloading', verifying: 'Verifying', staging: 'Staging', installing: 'Installing', restarting: 'Restarting', health_check: 'Checking health', succeeded: `Upgraded to ${operation.target_version}`, failed: 'Upgrade failed', rolled_back: 'Upgrade failed; previous version restored'};
+  return labels[operation.status] || operation.status;
+};
 
 async function readJSON(path) {
   const response = await fetch(path, {cache: 'no-store'});
+  if (response.status === 401) {
+    location.assign('/login');
+    throw new Error('authentication required');
+  }
+  if (!response.ok) throw new Error(response.statusText);
+  return response.json();
+}
+
+async function readOptionalJSON(path) {
+  const response = await fetch(path, {cache: 'no-store'});
+  if (response.status === 204) return null;
   if (response.status === 401) {
     location.assign('/login');
     throw new Error('authentication required');
@@ -57,6 +82,8 @@ async function loadMutationSession() {
   try {
     const session = await readJSON('/api/v1/web/session');
     mutationCSRFToken = session.csrf_token || '';
+    serverBuild = await readJSON('/api/v1/web/version');
+    serverVersion.textContent = `Server ${serverBuild.version || 'unknown'}`;
     addAgentButton.disabled = !mutationCSRFToken;
     render();
   } catch (error) {
@@ -64,6 +91,40 @@ async function loadMutationSession() {
     addAgentButton.disabled = true;
   }
 }
+
+function openUpgradeAgentDialog(agent) {
+  pendingUpgradeAgentID = agent.agent_id;
+  upgradeCurrentVersion.textContent = agent.version || 'unknown';
+  upgradeTargetVersion.textContent = serverBuild.version || 'unknown';
+  upgradeAgentError.classList.add('hidden');
+  upgradeAgentConfirm.disabled = false;
+  upgradeAgentDialog.showModal();
+}
+
+document.querySelector('#upgrade-agent-cancel').addEventListener('click', () => upgradeAgentDialog.close());
+upgradeAgentDialog.addEventListener('close', () => { pendingUpgradeAgentID = ''; });
+upgradeAgentForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const agentID = pendingUpgradeAgentID;
+  if (!mutationCSRFToken || !agentID) return;
+  upgradeAgentConfirm.disabled = true;
+  upgradeAgentError.classList.add('hidden');
+  try {
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agentID)}/upgrade`, {
+      method: 'POST', cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken}, body: '{}',
+    });
+    if (response.status === 401) { location.assign('/login'); return; }
+    if (!response.ok) throw new Error(response.statusText);
+    const operation = await response.json();
+    agents.set(agentID, {...agents.get(agentID), upgrade: operation});
+    upgradeAgentDialog.close();
+    render();
+  } catch (error) {
+    upgradeAgentError.classList.remove('hidden');
+    upgradeAgentConfirm.disabled = false;
+  }
+});
 
 function clearEnrollmentDialog() {
   createdInstallCommand.textContent = '';
@@ -282,8 +343,11 @@ function render() {
     for (const text of [
       `Uptime: ${duration(state.uptime)}`,
       `${state.os || '未知 OS'} / ${state.arch || '未知架构'}`,
+      `Version: ${agent.version || 'unknown'}`,
       `Last Seen: ${seen(agent.last_seen)}`,
+      agent.upgrade ? `Upgrade: ${upgradeLabel(agent.upgrade)}` : '',
     ]) {
+      if (!text) continue;
       const line = document.createElement('span');
       line.className = 'meta-line';
       setReadableText(line, text);
@@ -310,8 +374,20 @@ function render() {
     stateAction.textContent = agent.disabled_at ? '恢复' : '暂停';
     stateAction.disabled = !mutationCSRFToken || agent.revoked;
     stateAction.addEventListener('click', () => setAgentDisabled(agent, !agent.disabled_at, stateAction));
+    const upgrade = document.createElement('button');
+    upgrade.className = 'upgrade-agent';
+    upgrade.type = 'button';
+    upgrade.textContent = '升级';
+    const versionParts = value => /^v\d+\.\d+\.\d+$/.test(value || '') ? value.slice(1).split('.').map(Number) : null;
+    const currentParts = versionParts(agent.version);
+    const targetParts = versionParts(serverBuild.version);
+    const newer = currentParts && targetParts && targetParts.some((part, index) => part > currentParts[index] && targetParts.slice(0, index).every((value, prior) => value === currentParts[prior]));
+    upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || !newer || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status));
+    upgrade.title = !agent.upgrade_capable ? '需要先在主机上完成 v0.8 bootstrap' : !agent.online ? 'Agent 离线时不能升级' : agent.disabled_at ? '请先恢复 Agent' : '升级到当前 Server 对应版本';
+    upgrade.addEventListener('click', () => openUpgradeAgentDialog(agent));
     const management = document.createElement('div');
     management.className = 'agent-actions';
+    if (!agent.revoked) management.append(upgrade);
     if (!agent.revoked) management.append(stateAction);
     management.append(remove);
     const actions = document.createElement('div');
@@ -323,13 +399,14 @@ function render() {
 }
 
 async function hydrateDetails(records) {
-  const pending = records.filter(record => !record.detail_loaded);
+  const pending = records;
   let next = 0;
   const worker = async () => {
     while (next < pending.length) {
       const record = pending[next++];
-      const detail = await readJSON(`/api/v1/web/agents/${encodeURIComponent(record.agent_id)}`);
-      agents.set(record.agent_id, {...agents.get(record.agent_id), ...detail, detail_loaded: true});
+      const detail = record.detail_loaded ? {} : await readJSON(`/api/v1/web/agents/${encodeURIComponent(record.agent_id)}`);
+      const upgrade = await readOptionalJSON(`/api/v1/web/agents/${encodeURIComponent(record.agent_id)}/upgrade`);
+      agents.set(record.agent_id, {...agents.get(record.agent_id), ...detail, upgrade, detail_loaded: true});
     }
   };
   const workers = Array.from({length: Math.min(8, pending.length)}, worker);

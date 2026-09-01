@@ -30,17 +30,29 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-ag
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-server ./cmd/server
 ```
 
-## Upgrade an existing database
+## Upgrade to V0.8
 
-Stop the server and back up the database before opening it with the new binary. V0.7 continues to use schema V6, so a V0.6 database opens without a schema change. Older databases still migrate through schema V5 (Agent pause state) to schema V6 (latest outbound snapshots); schemas newer than the binary supports are rejected.
+V0.8 introduces version reporting and a narrowly scoped Agent updater. A V0.7 Agent cannot receive the first upgrade remotely because it has neither the protocol nor the privileged updater. Bootstrap each existing Agent locally with the V0.8 installer; it preserves the Agent ID, credential, Server URL, epoch, and optional local Clash configuration:
+
+```bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v0.8.0/install.sh | sudo bash -s -- agent --server 'https://probe.example.com'
+```
+
+The installer recognizes a complete supported V0.7 installation, stages and verifies V0.8 before stopping it, installs the updater service, and rolls back to the previous Agent binary if authentication does not recover. Partial or unrecognized installations fail closed. After this local bootstrap, later eligible releases can be requested from the authenticated Agent card in the Web UI.
+
+Stop the Server and back up the database before opening it with the V0.8 binary. V0.8 migrates schema V6 to V7 by adding Agent version/capability fields and a dedicated upgrade-operation table; schemas newer than the binary supports are rejected.
 
 ```bash
 sudo systemctl stop 404-probe-server
-sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.7
+sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.8
 sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
 ```
 
-V0.7 keeps the existing report path compatible, so V0.6 Agents continue reporting with their current IDs and credentials while Agents are upgraded. Revoking an Agent preserves its telemetry, schedules, jobs, and results. Back up the database first and do not downgrade a database after it has migrated.
+The first V0.8 report remains V0.7-compatible. The Agent sends version and updater capability only after the Server advertises support, so older Servers reject no new fields. Paused, offline, revoked, bootstrap-required, development, dirty, same-version, and downgrade cases cannot start an upgrade.
+
+The updater is a separate root service on `/run/404-probe/agent-updater.sock`; the normal Agent remains the locked `404-probe` user. It accepts only typed start/status/healthy requests for a fixed operation and target version. It downloads only official GitHub Release assets over HTTPS, requires an exact `SHA256SUMS` match, validates candidate build metadata, atomically swaps the fixed Agent binary, waits for a healthy authenticated version report, and rolls back on failure. V0.8 does not accept custom URLs, paths, commands, batch operations, reboot requests, automatic updates, or downgrades. See `RELEASE_NOTES_v0.8.md` for the trust boundary and operational details.
+
+Revoking an Agent preserves its telemetry, schedules, jobs, results, and upgrade history. Back up the database first and do not downgrade a database after it has migrated.
 
 ## Configure Web authentication
 
@@ -64,6 +76,7 @@ GET /api/v1/web/agents
 GET /api/v1/web/agents/{agent_id}
 GET /api/v1/web/agents/{agent_id}/history?hours=24
 GET /api/v1/web/events
+GET /api/v1/web/version
 GET /api/v1/web/schedules
 GET /api/v1/web/schedules/{schedule_id}
 GET /api/v1/web/jobs
@@ -73,6 +86,8 @@ POST /api/v1/web/agents/{agent_id}/disable
 POST /api/v1/web/agents/{agent_id}/enable
 POST /api/v1/web/agents/{agent_id}/revoke
 POST /api/v1/web/agents/{agent_id}/outbounds/switch
+GET /api/v1/web/agents/{agent_id}/upgrade
+POST /api/v1/web/agents/{agent_id}/upgrade
 ```
 
 The default Agent collection contains non-revoked Agents, including paused Agents. It accepts `status=online|offline|disabled|revoked` for an explicit state filter. The Schedule collection accepts `agent_id`, `enabled=true|false`, and `probe_type=http|tcp_connect|icmp_ping`. The Job collection accepts `agent_id`, `schedule_id`, `probe_type`, `status`, `success`, and the documented created/finished time bounds. Every collection accepts `limit=1..100` and an opaque endpoint/filter-bound `cursor`. History accepts `hours=1..720`.
@@ -81,7 +96,7 @@ These responses are `no-store` and use explicit browser-safe DTOs: agent tokens,
 
 Schedule targets, Job errors, and measurements are sensitive operational data visible only after Web authentication. The Web Schedule and Job surfaces are strictly read-only; legacy V0.1 browser data routes are unavailable, and Web JavaScript never calls `/api/v1/control/*`.
 
-### V0.7 Web Agent lifecycle
+### V0.8 Web Agent lifecycle
 
 `Add Agent` creates the same Agent ID and credential used by the existing CLI and Agent protocol. SQLite stores only the credential hash. The no-store creation response is the only retrieval path for the enrollment value: closing the result dialog clears it from the DOM, and list, detail, history, and SSE responses never expose it. There is no credential recovery API. Losing it requires revoking that Agent and creating a replacement.
 

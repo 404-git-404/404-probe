@@ -19,7 +19,7 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`readonly DEFAULT_VERSION="v0.7.0"`,
+		`readonly DEFAULT_VERSION="v0.8.0"`,
 		`404-probe-install agent --server <origin>`,
 		`[[ $# -eq 2 && "$1" == "--server" ]]`,
 		`IFS= read -r -s enrollment </dev/tty`,
@@ -115,6 +115,39 @@ func TestInstallerAgentUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 	for _, forbidden := range []string{`journalctl --vacuum`, `rm -rf -- "${STATE_DIRECTORY}"`, `systemctl disable --now "${unit}"`} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("installer uninstall violates preservation or idempotency through %q", forbidden)
+		}
+	}
+}
+
+func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`bootstrap_existing_agent`,
+		`version --json >/dev/null 2>&1`,
+		`ExecStart=${AGENT_BINARY} updater`,
+		`RuntimeDirectory=404-probe`,
+		`ReadWritePaths=${AGENT_UPDATER_STATE} /usr/local/bin /run/404-probe`,
+		`NoNewPrivileges=true`,
+		`ProtectSystem=strict`,
+		`systemctl enable --now 404-probe-agent-updater.service`,
+		`verify_agent_authentication`,
+		`rm -f -- "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing updater/bootstrap contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{`--download-url`, `--binary-path`, `--command`, `Restart=always`} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("installer expands updater authority through %q", forbidden)
 		}
 	}
 }
