@@ -141,6 +141,7 @@ func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
 		`systemctl enable --now 404-probe-agent-updater.service`,
 		`verify_agent_authentication`,
 		`rm -f -- "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}"`,
+		`cp --preserve=mode,ownership,timestamps -- "${backup_directory}/install-helper" "${INSTALL_HELPER}"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("installer missing updater/bootstrap contract %q", required)

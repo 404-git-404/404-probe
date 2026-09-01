@@ -666,13 +666,18 @@ EOF
 bootstrap_existing_agent() (
   local candidate="/usr/local/bin/.404-probe-agent.bootstrap"
   local previous="/usr/local/bin/.404-probe-agent.previous"
-  local backup_directory server_url agent_token insecure_option rollback_active=0
+  local backup_directory server_url agent_token insecure_option rollback_active=0 helper_existed=0
   [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" && -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
     || die "existing Agent installation is incomplete or unsafe; no files were changed"
   [[ "$(stat -c '%U:%G:%a' "${AGENT_UNIT}")" == "root:root:644" ]] \
     || die "existing Agent unit must be root:root mode 0644"
   [[ "$(stat -c '%U:%G:%a' "${AGENT_BINARY}")" == "root:root:755" ]] \
     || die "existing Agent binary must be root:root mode 0755"
+  if [[ -e "${INSTALL_HELPER}" ]]; then
+    [[ -f "${INSTALL_HELPER}" && ! -L "${INSTALL_HELPER}" && "$(stat -c '%U:%G:%a' "${INSTALL_HELPER}")" == "root:root:755" ]] \
+      || die "existing installer helper is unsafe; no files were changed"
+    helper_existed=1
+  fi
   if "${AGENT_BINARY}" version --json >/dev/null 2>&1; then
     die "existing Agent already supports versioned upgrades; use the Web upgrade action"
   fi
@@ -693,7 +698,10 @@ bootstrap_existing_agent() (
   download_binary agent "${candidate}"
   backup_directory="$(mktemp -d)"
   cp --preserve=mode,ownership,timestamps -- "${AGENT_UNIT}" "${backup_directory}/agent.service"
-  trap 'status=$?; if (( rollback_active != 0 )); then systemctl stop 404-probe-agent.service >/dev/null 2>&1 || true; systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true; systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true; rm -f -- "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}"; rm -rf -- "${AGENT_UPDATER_STATE}"; if [[ -f "${previous}" && ! -L "${previous}" ]]; then mv -f -- "${previous}" "${AGENT_BINARY}"; fi; cp --preserve=mode,ownership,timestamps -- "${backup_directory}/agent.service" "${AGENT_UNIT}"; systemctl daemon-reload >/dev/null 2>&1 || true; systemctl restart 404-probe-agent.service >/dev/null 2>&1 || true; fi; rm -f -- "${candidate}"; rm -rf -- "${backup_directory}"; exit "${status}"' EXIT HUP INT TERM
+  if (( helper_existed != 0 )); then
+    cp --preserve=mode,ownership,timestamps -- "${INSTALL_HELPER}" "${backup_directory}/install-helper"
+  fi
+  trap 'status=$?; if (( rollback_active != 0 )); then systemctl stop 404-probe-agent.service >/dev/null 2>&1 || true; systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true; systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true; rm -f -- "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}"; rm -rf -- "${AGENT_UPDATER_STATE}"; if [[ -f "${previous}" && ! -L "${previous}" ]]; then mv -f -- "${previous}" "${AGENT_BINARY}"; fi; cp --preserve=mode,ownership,timestamps -- "${backup_directory}/agent.service" "${AGENT_UNIT}"; if (( helper_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/install-helper" "${INSTALL_HELPER}"; else rm -f -- "${INSTALL_HELPER}"; fi; systemctl daemon-reload >/dev/null 2>&1 || true; systemctl restart 404-probe-agent.service >/dev/null 2>&1 || true; fi; rm -f -- "${candidate}"; rm -rf -- "${backup_directory}"; exit "${status}"' EXIT HUP INT TERM
   systemctl stop 404-probe-agent.service || die "could not stop existing Agent"
   rollback_active=1
   ln -- "${AGENT_BINARY}" "${previous}"
@@ -709,6 +717,7 @@ bootstrap_existing_agent() (
   systemctl enable --now 404-probe-agent.service
   wait_for_service 404-probe-agent.service
   verify_agent_authentication "${server_url}" "${agent_token}"
+  rm -f -- "${INSTALL_HELPER}"
   install_local_helper
   rm -f -- "${previous}"
   rollback_active=0
