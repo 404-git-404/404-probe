@@ -148,7 +148,7 @@ func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
 			t.Fatalf("installer missing updater/bootstrap contract %q", required)
 		}
 	}
-	for _, forbidden := range []string{`--download-url`, `--binary-path`, `--command`} {
+	for _, forbidden := range []string{`--download-url`, `--binary-path`, `--command`, `AmbientCapabilities=CAP_SETUID CAP_SETGID`} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("installer expands updater authority through %q", forbidden)
 		}

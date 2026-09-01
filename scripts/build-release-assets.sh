@@ -15,10 +15,6 @@ command -v sha256sum >/dev/null 2>&1 || {
   printf 'sha256sum is required\n' >&2
   exit 1
 }
-command -v sed >/dev/null 2>&1 || {
-  printf 'sed is required\n' >&2
-  exit 1
-}
 command -v git >/dev/null 2>&1 || {
   printf 'git is required\n' >&2
   exit 1
@@ -46,7 +42,7 @@ tag_commit="$(git rev-parse --verify "${VERSION}^{commit}")"
 
 mkdir -p "${OUTPUT_DIRECTORY}"
 
-assets=()
+asset_paths=()
 for architecture in amd64 arm64; do
   for role in server agent; do
     asset="404-probe-${role}-linux-${architecture}"
@@ -63,13 +59,15 @@ for architecture in amd64 arm64; do
       printf '%s was built from a modified worktree\n' "${asset}" >&2
       exit 1
     fi
-    assets+=("${asset}")
+    asset_paths+=("${OUTPUT_DIRECTORY}/${asset}")
   done
 done
 
+go run ./cmd/release-metadata --version "${VERSION}" --commit "${head_commit}" \
+  --output "${OUTPUT_DIRECTORY}" "${asset_paths[@]}"
+
 (
   cd "${OUTPUT_DIRECTORY}"
-  LC_ALL=C sha256sum "${assets[@]}" | sed 's/ \*/  /' >SHA256SUMS
   sha256sum --check --strict SHA256SUMS
 )
 

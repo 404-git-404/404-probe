@@ -49,6 +49,7 @@ func (r Request) Validate() error {
 type State struct {
 	OperationID    string `json:"operation_id"`
 	TargetVersion  string `json:"target_version"`
+	ReleaseCommit  string `json:"release_commit,omitempty"`
 	Status         string `json:"status"`
 	FailureCode    string `json:"failure_code,omitempty"`
 	FailureMessage string `json:"failure_message,omitempty"`

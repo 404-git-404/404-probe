@@ -5,7 +5,6 @@ package updater
 import (
 	"bytes"
 	"context"
-	stdbuildinfo "debug/buildinfo"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 	"os/user"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -49,20 +47,17 @@ func platformServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse Agent service GID: %w", err)
 	}
-	if err := os.MkdirAll(updaterStateDirectory, 0711); err != nil {
+	if err := os.MkdirAll(updaterStateDirectory, 0700); err != nil {
 		return err
 	}
-	// The Agent account needs path traversal only so the updater can inspect a
-	// root-owned executable candidate after dropping privileges. State files
-	// remain root-only and directory listing remains disabled.
-	if err := os.Chmod(updaterStateDirectory, 0711); err != nil {
+	if err := os.Chmod(updaterStateDirectory, 0700); err != nil {
 		return err
 	}
 	committed := make(chan struct{})
 	var commitOnce sync.Once
 	engine, err := NewEngine(EngineConfig{CurrentVersion: appbuildinfo.Current().Version, StateDirectory: updaterStateDirectory,
 		LiveBinary: liveAgentBinary, StagedBinary: stagedAgentBinary, PreviousBinary: previousAgentBinary,
-		Inspect: inspectCandidate(uid, gid), ServiceCommand: controlAgentService, HealthTimeout: 2 * time.Minute,
+		Inspect: inspectCandidateBuild, ServiceCommand: controlAgentService, HealthTimeout: 2 * time.Minute,
 		OnCommitted: func() {
 			commitOnce.Do(func() { close(committed) })
 		}})
@@ -182,34 +177,4 @@ func controlAgentService(ctx context.Context, action string) error {
 		return errors.New("invalid fixed service action")
 	}
 	return exec.CommandContext(ctx, "systemctl", action, agentServiceName).Run()
-}
-
-func inspectCandidate(uid, gid int) Inspector {
-	return func(ctx context.Context, path string) (appbuildinfo.Info, error) {
-		metadata, err := stdbuildinfo.ReadFile(path)
-		if err != nil {
-			return appbuildinfo.Info{}, err
-		}
-		var revision string
-		var dirty bool
-		for _, setting := range metadata.Settings {
-			switch setting.Key {
-			case "vcs.revision":
-				revision = setting.Value
-			case "vcs.modified":
-				dirty = setting.Value == "true"
-			}
-		}
-		command := exec.CommandContext(ctx, path, "version", "--json")
-		command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
-		output, err := command.Output()
-		if err != nil || len(output) > 4096 {
-			return appbuildinfo.Info{}, errors.New("candidate version metadata is unavailable")
-		}
-		var info appbuildinfo.Info
-		if json.Unmarshal(output, &info) != nil || info.Commit != revision || info.Dirty != dirty {
-			return appbuildinfo.Info{}, errors.New("candidate build metadata is inconsistent")
-		}
-		return info, nil
-	}
 }

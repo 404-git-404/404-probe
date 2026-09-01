@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"404-probe/internal/buildinfo"
+	"404-probe/internal/releasemetadata"
 )
 
 func TestEngineVerifiedUpgradeAndHealthCommit(t *testing.T) {
-	engine, request, live, previous, _ := testEngine(t, false, 2*time.Second)
+	engine, request, live, previous, _ := testEngine(t, false, false, 2*time.Second)
 	committed := make(chan struct{}, 1)
 	engine.config.OnCommitted = func() { committed <- struct{}{} }
 	if _, err := engine.Start(request); err != nil {
@@ -49,7 +49,7 @@ func TestProductionReleaseBaseIsOfficialRepository(t *testing.T) {
 }
 
 func TestEngineHealthTimeoutRollsBack(t *testing.T) {
-	engine, request, live, _, commands := testEngine(t, false, 25*time.Millisecond)
+	engine, request, live, _, commands := testEngine(t, false, false, 25*time.Millisecond)
 	if _, err := engine.Start(request); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestEngineHealthTimeoutRollsBack(t *testing.T) {
 }
 
 func TestEngineChecksumMismatchLeavesOldBinary(t *testing.T) {
-	engine, request, live, _, _ := testEngine(t, true, time.Second)
+	engine, request, live, _, _ := testEngine(t, true, false, time.Second)
 	if _, err := engine.Start(request); err != nil {
 		t.Fatal(err)
 	}
@@ -78,21 +78,78 @@ func TestEngineChecksumMismatchLeavesOldBinary(t *testing.T) {
 	}
 }
 
+func TestEngineRejectsReleaseAndChecksumManifestMismatch(t *testing.T) {
+	engine, request, live, _, _ := testEngine(t, false, true, time.Second)
+	if _, err := engine.Start(request); err != nil {
+		t.Fatal(err)
+	}
+	state := waitLocalStatus(t, engine, request, "failed")
+	if state.FailureCode != "checksum_manifest_mismatch" {
+		t.Fatalf("failure=%+v", state)
+	}
+	if data, err := os.ReadFile(live); err != nil || string(data) != "old-agent" {
+		t.Fatalf("live=%q err=%v", data, err)
+	}
+}
+
+func TestEngineRejectsInvalidStaticCandidateBuildInfo(t *testing.T) {
+	tests := map[string]func(*CandidateBuildInfo){
+		"candidate_revision_mismatch": func(info *CandidateBuildInfo) { info.Commit = "ffffffffffffffffffffffffffffffffffffffff" },
+		"candidate_dirty":             func(info *CandidateBuildInfo) { info.Dirty = true },
+		"candidate_platform_mismatch": func(info *CandidateBuildInfo) { info.GOARCH = "arm64" },
+	}
+	for want, mutate := range tests {
+		t.Run(want, func(t *testing.T) {
+			engine, request, live, _, _ := testEngine(t, false, false, time.Second)
+			inspect := engine.config.Inspect
+			engine.config.Inspect = func(path string) (CandidateBuildInfo, error) {
+				info, err := inspect(path)
+				mutate(&info)
+				return info, err
+			}
+			if _, err := engine.Start(request); err != nil {
+				t.Fatal(err)
+			}
+			state := waitLocalStatus(t, engine, request, "failed")
+			if state.FailureCode != want {
+				t.Fatalf("failure=%+v", state)
+			}
+			if data, err := os.ReadFile(live); err != nil || string(data) != "old-agent" {
+				t.Fatalf("live=%q err=%v", data, err)
+			}
+		})
+	}
+}
+
 type commandLog struct {
 	mu     sync.Mutex
 	values []string
 }
 
-func testEngine(t *testing.T, badChecksum bool, healthTimeout time.Duration) (*Engine, Request, string, string, *commandLog) {
+func testEngine(t *testing.T, badChecksum, manifestMismatch bool, healthTimeout time.Duration) (*Engine, Request, string, string, *commandLog) {
 	t.Helper()
+	const commit = "0123456789abcdef0123456789abcdef01234567"
 	artifact := []byte("new-agent")
 	digest := sha256.Sum256(artifact)
-	checksum := fmt.Sprintf("%x  404-probe-agent-linux-amd64\n", digest)
+	declaredDigest := digest
 	if badChecksum {
-		checksum = fmt.Sprintf("%064x  404-probe-agent-linux-amd64\n", 1)
+		declaredDigest[0] ^= 0xff
+	}
+	checksum := fmt.Sprintf("%x  404-probe-agent-linux-amd64\n", declaredDigest)
+	metadataDigest := declaredDigest
+	if manifestMismatch {
+		metadataDigest[1] ^= 0xff
+	}
+	metadata, err := releasemetadata.Encode(releasemetadata.Document{SchemaVersion: 1, Version: "v0.8.1", Commit: commit, Assets: []releasemetadata.Asset{
+		{Name: "404-probe-agent-linux-amd64", GOOS: "linux", GOARCH: "amd64", SHA256: fmt.Sprintf("%x", metadataDigest)},
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch filepath.Base(r.URL.Path) {
+		case "RELEASE-METADATA.json":
+			_, _ = w.Write(metadata)
 		case "SHA256SUMS":
 			_, _ = w.Write([]byte(checksum))
 		case "404-probe-agent-linux-amd64":
@@ -117,15 +174,15 @@ func testEngine(t *testing.T, badChecksum bool, healthTimeout time.Duration) (*E
 	commands := &commandLog{}
 	engine, err := NewEngine(EngineConfig{CurrentVersion: "v0.8.0", GOOS: "linux", GOARCH: "amd64", StateDirectory: stateDirectory,
 		LiveBinary: live, StagedBinary: staged, PreviousBinary: previous, ReleaseBase: server.URL,
-		Inspect: func(_ context.Context, path string) (buildinfo.Info, error) {
+		Inspect: func(path string) (CandidateBuildInfo, error) {
 			metadata, err := os.Stat(path)
 			if err != nil {
-				return buildinfo.Info{}, err
+				return CandidateBuildInfo{}, err
 			}
-			if got := metadata.Mode().Perm(); runtime.GOOS != "windows" && got != 0711 {
-				return buildinfo.Info{}, fmt.Errorf("candidate mode=%#o want=0711", got)
+			if got := metadata.Mode().Perm(); runtime.GOOS != "windows" && got != 0600 {
+				return CandidateBuildInfo{}, fmt.Errorf("candidate mode=%#o want=0600", got)
 			}
-			return buildinfo.Info{Version: "v0.8.1", Commit: "0123456789abcdef", Dirty: false}, nil
+			return CandidateBuildInfo{Path: "404-probe/cmd/agent", Commit: commit, GOOS: "linux", GOARCH: "amd64"}, nil
 		}, ServiceCommand: func(_ context.Context, action string) error {
 			commands.mu.Lock()
 			defer commands.mu.Unlock()

@@ -19,12 +19,12 @@ Upgrade requests are rejected for offline, paused, revoked, or bootstrap-require
 
 ## Artifact trust and rollback
 
-The updater supports Linux `amd64` and `arm64`. It derives a fixed official GitHub Release URL from the canonical version, uses HTTPS, requires exactly one matching entry in `SHA256SUMS`, verifies the downloaded digest, and validates candidate Go build metadata and the candidate's `version --json` response before installation. It never executes an unverified candidate.
+The updater supports Linux `amd64` and `arm64`. It derives a fixed official GitHub Release URL from the canonical version and uses HTTPS. A bounded, strict `RELEASE-METADATA.json` is the authoritative same-origin release identity: it binds the canonical version and commit to one fixed platform asset and digest. `SHA256SUMS` is retained as a packaging cross-check, and the metadata digest, checksum entry, and actual candidate digest must all agree. The updater statically reads Go build information to require the expected package, platform, clean state, and release commit. The root-owned candidate remains mode `0600` during verification and is never executed before installation.
 
 The current binary is preserved, the verified candidate is installed with an atomic rename, and only the fixed `404-probe-agent.service` is restarted before health confirmation. Success requires a subsequent authenticated report that carries the target version. After that commit, the updater exits cleanly and systemd restarts it from the new live binary, so both the Agent and the privileged updater run the target build. A download, checksum, metadata, install, restart, or health timeout failure leaves the old binary in place or restores it.
 
-This release uses checksums and embedded build metadata, not a signed release manifest. Compromise of the official GitHub release account or its distributed checksum file remains inside the V0.8 trust boundary and should be addressed by signed manifests in a future release.
+`RELEASE-METADATA.json` is not independently signed: it, `SHA256SUMS`, and the artifacts come from the same trusted GitHub Release. The two manifests catch packaging and consistency errors but do not provide independent resistance to compromise of the official GitHub release account. A signing key and signed-manifest scheme remain future hardening.
 
 ## Verification before publishing
 
-Run `go test ./...`, `go vet ./...`, validate `web/static/app.js`, and build Server and Agent for Linux `amd64` and `arm64`. The release asset script requires a clean worktree, an exact matching tag, linker-injected version and commit metadata, and verifies the generated `SHA256SUMS`. Create the tag and release only after review.
+Run `go test ./...`, `go vet ./...`, validate `web/static/app.js`, and build Server and Agent for Linux `amd64` and `arm64`. The release asset script requires a clean worktree and exact matching tag, injects version and commit metadata, generates `RELEASE-METADATA.json` and `SHA256SUMS` from the same built assets, and verifies the checksums. Create the tag and release only after review.

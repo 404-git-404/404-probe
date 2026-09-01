@@ -18,13 +18,22 @@ import (
 	"time"
 
 	"404-probe/internal/buildinfo"
+	"404-probe/internal/releasemetadata"
 )
 
 // officialReleaseBase is fixed in production builds. A controlled E2E build may
 // replace it with -ldflags -X; the running updater exposes no URL override.
 var officialReleaseBase = "https://github.com/404-git-404/404-probe/releases/download/"
 
-type Inspector func(context.Context, string) (buildinfo.Info, error)
+type CandidateBuildInfo struct {
+	Path   string
+	Commit string
+	Dirty  bool
+	GOOS   string
+	GOARCH string
+}
+
+type Inspector func(string) (CandidateBuildInfo, error)
 type ServiceCommand func(context.Context, string) error
 
 type EngineConfig struct {
@@ -230,13 +239,38 @@ func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
 		return err
 	}
 	base := strings.TrimRight(e.config.ReleaseBase, "/") + "/" + target + "/"
-	manifest, err := e.fetch(ctx, base+"SHA256SUMS", 1<<20)
+	metadataBody, err := e.fetch(ctx, base+"RELEASE-METADATA.json", 64<<10)
+	if err != nil {
+		return fmt.Errorf("release_metadata_download_failed: %w", err)
+	}
+	metadata, err := releasemetadata.Decode(metadataBody)
+	if err != nil {
+		return fmt.Errorf("release_metadata_invalid: %w", err)
+	}
+	selected, err := releasemetadata.Select(metadata, target, asset, e.config.GOOS, e.config.GOARCH)
+	if err != nil {
+		if strings.Contains(err.Error(), "version") {
+			return fmt.Errorf("release_metadata_version_mismatch: %w", err)
+		}
+		return fmt.Errorf("release_metadata_asset_invalid: %w", err)
+	}
+	want, err := hex.DecodeString(selected.SHA256)
+	if err != nil {
+		return fmt.Errorf("release_metadata_invalid: %w", err)
+	}
+	if err := e.setReleaseCommit(metadata.Commit); err != nil {
+		return fmt.Errorf("stage_failed: %w", err)
+	}
+	checksumBody, err := e.fetch(ctx, base+"SHA256SUMS", 256<<10)
 	if err != nil {
 		return fmt.Errorf("checksum_manifest_failed: %w", err)
 	}
-	want, err := parseChecksum(manifest, asset)
+	checksumWant, err := parseChecksum(checksumBody, asset)
 	if err != nil {
 		return fmt.Errorf("checksum_manifest_failed: %w", err)
+	}
+	if subtle.ConstantTimeCompare(checksumWant, want) != 1 {
+		return errors.New("checksum_manifest_mismatch")
 	}
 	candidate, err := e.fetch(ctx, base+asset, 128<<20)
 	if err != nil {
@@ -247,22 +281,34 @@ func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
 		return errors.New("checksum_mismatch")
 	}
 	path := filepath.Join(e.config.StateDirectory, "candidate")
-	// The candidate stays root-owned and non-writable by the Agent account, but
-	// the unprivileged metadata inspector must be able to execute it.
-	if err := writeRootFile(path, candidate, 0711); err != nil {
+	if err := writeRootFile(path, candidate, 0600); err != nil {
 		return fmt.Errorf("stage_failed: %w", err)
 	}
 	if err := e.setStatus("verifying", "", ""); err != nil {
 		return fmt.Errorf("stage_failed: %w", err)
 	}
-	info, err := e.config.Inspect(ctx, path)
-	if err != nil || info.Dirty || info.Commit == "" {
-		return errors.New("candidate_metadata_invalid")
+	info, err := e.config.Inspect(path)
+	if err != nil || info.Path != "404-probe/cmd/agent" {
+		return errors.New("candidate_buildinfo_invalid")
 	}
-	if info.Version != target {
-		return errors.New("candidate_version_mismatch")
+	if info.Commit == "" || info.Commit != metadata.Commit {
+		return errors.New("candidate_revision_mismatch")
+	}
+	if info.Dirty {
+		return errors.New("candidate_dirty")
+	}
+	if info.GOOS != selected.GOOS || info.GOARCH != selected.GOARCH {
+		return errors.New("candidate_platform_mismatch")
 	}
 	return nil
+}
+
+func (e *Engine) setReleaseCommit(commit string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.state.ReleaseCommit = commit
+	e.state.UpdatedAt = e.config.Now().UnixMilli()
+	return e.persistLocked()
 }
 
 func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
@@ -363,7 +409,7 @@ func readStateFile(path string) (State, error) {
 		return State{}, err
 	}
 	var state State
-	if json.Unmarshal(data, &state) != nil || !validOperationID(state.OperationID) || !buildinfo.IsCanonicalVersion(state.TargetVersion) {
+	if json.Unmarshal(data, &state) != nil || !validOperationID(state.OperationID) || !buildinfo.IsCanonicalVersion(state.TargetVersion) || (state.ReleaseCommit != "" && !releasemetadata.IsCommit(state.ReleaseCommit)) {
 		return State{}, errors.New("stored updater state is invalid")
 	}
 	return state, nil
@@ -457,10 +503,8 @@ func syncDirectory(path string) error {
 }
 
 func (e *Engine) recoverInstalled() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	info, err := e.config.Inspect(ctx, e.config.LiveBinary)
-	cancel()
-	if err != nil || info.Version != e.state.TargetVersion {
+	info, err := e.config.Inspect(e.config.LiveBinary)
+	if err != nil || e.state.ReleaseCommit == "" || info.Path != "404-probe/cmd/agent" || info.Commit != e.state.ReleaseCommit || info.Dirty || info.GOOS != e.config.GOOS || info.GOARCH != e.config.GOARCH {
 		e.finishFailure(true, "updater_restarted")
 		return
 	}
@@ -468,7 +512,7 @@ func (e *Engine) recoverInstalled() {
 		e.finishFailure(true, "updater_restarted")
 		return
 	}
-	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err = e.config.ServiceCommand(ctx, "restart")
 	cancel()
 	if err != nil {
@@ -506,7 +550,7 @@ func (e *Engine) cleanupCommittedFiles() {
 }
 
 func classifyDownloadFailure(err error) string {
-	for _, code := range []string{"checksum_manifest_failed", "checksum_mismatch", "download_failed", "candidate_metadata_invalid", "candidate_version_mismatch", "unsupported_platform", "stage_failed"} {
+	for _, code := range []string{"release_metadata_download_failed", "release_metadata_version_mismatch", "release_metadata_asset_invalid", "release_metadata_invalid", "checksum_manifest_failed", "checksum_manifest_mismatch", "checksum_mismatch", "download_failed", "candidate_buildinfo_invalid", "candidate_revision_mismatch", "candidate_dirty", "candidate_platform_mismatch", "unsupported_platform", "stage_failed"} {
 		if strings.Contains(err.Error(), code) {
 			return code
 		}
@@ -516,11 +560,15 @@ func classifyDownloadFailure(err error) string {
 
 func safeFailureMessage(code string) string {
 	switch code {
+	case "release_metadata_download_failed", "release_metadata_invalid", "release_metadata_version_mismatch", "release_metadata_asset_invalid":
+		return "upgrade release metadata could not be verified"
 	case "checksum_manifest_failed":
 		return "upgrade checksum manifest could not be verified"
+	case "checksum_manifest_mismatch":
+		return "upgrade release metadata and checksum manifest did not match"
 	case "checksum_mismatch":
 		return "upgrade candidate checksum did not match"
-	case "candidate_metadata_invalid", "candidate_version_mismatch":
+	case "candidate_buildinfo_invalid", "candidate_revision_mismatch", "candidate_dirty", "candidate_platform_mismatch":
 		return "upgrade candidate build metadata is invalid"
 	case "restart_failed":
 		return "Agent restart failed"
