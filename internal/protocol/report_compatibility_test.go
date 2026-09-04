@@ -28,7 +28,7 @@ func TestLegacyReportResponseDecodesWithoutCapabilities(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"accepted":true}`), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.Accepted || response.Capabilities.AgentVersionReport || response.Capabilities.AgentUpgrade {
+	if !response.Accepted || response.Capabilities.AgentVersionReport || response.Capabilities.AgentUpgrade || response.Capabilities.InteractiveControl {
 		t.Fatalf("legacy response=%+v", response)
 	}
 }

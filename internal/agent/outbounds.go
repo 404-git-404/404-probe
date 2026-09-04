@@ -15,26 +15,29 @@ import (
 )
 
 func (r *Runner) runOutboundDiscovery(ctx context.Context) {
-	local := clashClient{endpoint: r.config.ClashAPIURL, secret: r.config.ClashAPISecret, client: r.client}
-	ticker := time.NewTicker(r.config.OutboundInterval)
-	defer ticker.Stop()
-	var lastAvailable *bool
+	local := clashClient{endpoint: r.config.ClashAPIURL, client: r.client}
+	var lastStatus protocol.OutboundStatus
+	capabilityReady := (<-chan struct{})(r.interactiveControlReady)
 	for {
 		selectors, discoverErr := local.discover(ctx)
 		if ctx.Err() != nil {
 			return
 		}
-		available := discoverErr == nil
-		if lastAvailable == nil || *lastAvailable != available {
+		status := outboundStatus(discoverErr)
+		available := status == protocol.OutboundStatusConnected
+		r.clashControlReady.Store(available)
+		if lastStatus != status {
 			if discoverErr != nil {
-				r.logger.Warn("sing-box Clash API unavailable; retaining last outbound snapshot", "error", discoverErr)
-			} else if lastAvailable != nil {
+				r.logger.Warn("sing-box Clash API discovery state changed", "status", status)
+			} else if lastStatus != "" {
 				r.logger.Info("sing-box Clash API available again")
 			}
-			state := available
-			lastAvailable = &state
+			lastStatus = status
 		}
 		snapshot := protocol.OutboundSnapshot{Available: available, Selectors: selectors}
+		if r.interactiveControlSupported.Load() {
+			snapshot.Status = status
+		}
 		if err := r.postOutboundSnapshot(ctx, snapshot); err != nil {
 			if ctx.Err() != nil {
 				return
@@ -44,12 +47,46 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 			}
 			r.logger.Warn("publish outbound snapshot failed; will retry", "error", err)
 		}
+		delay := r.config.OutboundInterval
+		if !available && delay > 10*time.Second {
+			delay = 10 * time.Second
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			stopTimer(timer)
 			return
-		case <-ticker.C:
+		case <-capabilityReady:
+			stopTimer(timer)
+			capabilityReady = nil
+		case <-timer.C:
 		}
 	}
+}
+
+func stopTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func outboundStatus(err error) protocol.OutboundStatus {
+	if err == nil {
+		return protocol.OutboundStatusConnected
+	}
+	var typed *selectorSwitchError
+	if errors.As(err, &typed) {
+		switch typed.category {
+		case "clash_api_not_detected":
+			return protocol.OutboundStatusNotDetected
+		case "clash_api_auth_required":
+			return protocol.OutboundStatusAuthRequired
+		}
+	}
+	return protocol.OutboundStatusUnavailable
 }
 
 func (r *Runner) postOutboundSnapshot(ctx context.Context, snapshot protocol.OutboundSnapshot) error {

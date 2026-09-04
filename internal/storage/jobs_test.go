@@ -190,6 +190,29 @@ func TestConcurrentSelectorSwitchesAllowOnePendingPerSelector(t *testing.T) {
 	}
 }
 
+func TestProbeAndSelectorLeasesUseIndependentLanes(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Now()
+	probe := oneShot("41414141414141414141414141414141", agentID, at, protocol.ProbeTypeTCPConnect)
+	selector := oneShot("42424242424242424242424242424242", agentID, at, protocol.ProbeTypeSelectorSwitch)
+	if err := store.CreateOneShotJob(ctx, probe); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateOneShotJob(ctx, selector); err != nil {
+		t.Fatal(err)
+	}
+	probeJob, err := store.ClaimJob(ctx, agentID, claimRequest(1, "probe-session", protocol.ProbeTypeTCPConnect), at, time.Minute)
+	if err != nil || probeJob == nil || probeJob.ProbeType != protocol.ProbeTypeTCPConnect {
+		t.Fatalf("probe=%+v err=%v", probeJob, err)
+	}
+	selectorJob, err := store.ClaimJob(ctx, agentID, claimRequest(1, "control-session", protocol.ProbeTypeSelectorSwitch), at, time.Minute)
+	if err != nil || selectorJob == nil || selectorJob.ProbeType != protocol.ProbeTypeSelectorSwitch {
+		t.Fatalf("selector=%+v err=%v", selectorJob, err)
+	}
+}
+
 func TestPausedRunningSelectorSwitchRetriesAsIdempotentCompletion(t *testing.T) {
 	store, agentID, _ := testStore(t, ":memory:")
 	defer store.Close()
@@ -1241,7 +1264,7 @@ func TestMigratesV2ToV4WithoutChangingV01Data(t *testing.T) {
 	}
 	for _, name := range []string{
 		"idx_probe_schedules_due", "idx_probe_jobs_schedule_slot", "idx_probe_jobs_claim",
-		"idx_probe_jobs_lease_expiry", "idx_probe_jobs_one_active_lease", "idx_probe_jobs_expiry", "idx_probe_jobs_agent_finished",
+		"idx_probe_jobs_lease_expiry", "idx_probe_jobs_one_active_probe_lease", "idx_probe_jobs_one_active_selector_lease", "idx_probe_jobs_expiry", "idx_probe_jobs_agent_finished",
 		"idx_probe_jobs_schedule_finished",
 	} {
 		var count int

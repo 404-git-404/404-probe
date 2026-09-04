@@ -430,6 +430,67 @@ func TestRevocationEndToEndStopsAgentAndPreservesState(t *testing.T) {
 
 type lifecycleExecutor struct{ starts *atomic.Int32 }
 
+func TestLegacyClashSecretLogsFixedMessageAndKeepsTelemetry(t *testing.T) {
+	var reports atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/report" {
+			reports.Add(1)
+			_, _ = io.WriteString(w, `{"accepted":true}`)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	runner, err := NewWithExecutor(Config{
+		ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: 5 * time.Millisecond,
+		Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"),
+		ClashAPIURL: DefaultClashAPIURL, LegacyClashSecretConfigured: true,
+	}, slog.New(slog.NewTextHandler(&logs, nil)), UnsupportedExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(context.Context) (protocol.Report, error) {
+		return protocol.Report{Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 1,
+			CPUPercent: 1, Load1: 1, Load5: 1, Load15: 1, RAMUsed: 1, RAMTotal: 2, RAMPercent: 50,
+			DiskUsed: 1, DiskTotal: 2, DiskPercent: 50, RXBytes: 1, TXBytes: 1}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+	waitForAgentCondition(t, "legacy telemetry", func() bool { return reports.Load() > 0 })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), "legacy Clash API secret configuration is unsupported; remove it") {
+		t.Fatalf("logs=%s", logs.String())
+	}
+}
+
+func TestInteractiveCapabilityCanDowngradeToLegacyLane(t *testing.T) {
+	var reports atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		enabled := reports.Add(1) == 1
+		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{InteractiveControl: enabled}})
+	}))
+	defer server.Close()
+	runner, err := NewWithExecutor(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch")}, nil, UnsupportedExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(context.Context) (protocol.Report, error) {
+		return protocol.Report{Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 1, RAMTotal: 1, DiskTotal: 1}, nil
+	})
+	var sequence uint64
+	if accepted, err := runner.sendReport(context.Background(), &sequence); err != nil || !accepted || !runner.interactiveControlSupported.Load() {
+		t.Fatalf("first accepted=%t capability=%t err=%v", accepted, runner.interactiveControlSupported.Load(), err)
+	}
+	if accepted, err := runner.sendReport(context.Background(), &sequence); err != nil || !accepted || runner.interactiveControlSupported.Load() {
+		t.Fatalf("second accepted=%t capability=%t err=%v", accepted, runner.interactiveControlSupported.Load(), err)
+	}
+}
+
 func (e lifecycleExecutor) SupportedProbeTypes() []protocol.ProbeType {
 	e.starts.Add(1)
 	return []protocol.ProbeType{protocol.ProbeTypeTCPConnect}
@@ -480,8 +541,8 @@ func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
 	var clashRequests atomic.Int32
 	clashServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		clashRequests.Add(1)
-		if request.Header.Get("Authorization") != "Bearer local-only-secret" {
-			t.Errorf("Clash authorization=%q", request.Header.Get("Authorization"))
+		if request.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected Clash authorization=%q", request.Header.Get("Authorization"))
 		}
 		_, _ = io.WriteString(w, `{"proxies":{"select":{"type":"Selector","name":"select","now":"a","all":["a","b"]}}}`)
 	}))
@@ -492,7 +553,7 @@ func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
 		ServerURL: server.URL, AgentID: agentID, Token: token, Interval: 5 * time.Millisecond,
 		JobInterval: 5 * time.Millisecond, DisabledInterval: 35 * time.Millisecond,
 		Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"),
-		ClashAPIURL: clashServer.URL, ClashAPISecret: "local-only-secret", OutboundInterval: 5 * time.Millisecond,
+		ClashAPIURL: clashServer.URL, OutboundInterval: 5 * time.Millisecond,
 	}, nil, lifecycleExecutor{starts: &workerStarts})
 	if err != nil {
 		t.Fatal(err)

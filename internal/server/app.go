@@ -22,19 +22,22 @@ import (
 )
 
 type App struct {
-	store            *storage.Store
-	offlineTimeout   time.Duration
-	logger           *slog.Logger
-	now              func() time.Time
-	controlTokenHash []byte
-	shutdown         context.Context
-	cancel           context.CancelFunc
-	mu               sync.RWMutex
-	states           map[string]storage.State
-	hub              *hub
-	webAuth          *webAuthenticator
-	buildInfo        buildinfo.Info
-	handler          http.Handler
+	store               *storage.Store
+	offlineTimeout      time.Duration
+	logger              *slog.Logger
+	now                 func() time.Time
+	controlTokenHash    []byte
+	shutdown            context.Context
+	cancel              context.CancelFunc
+	mu                  sync.RWMutex
+	states              map[string]storage.State
+	hub                 *hub
+	controlMu           sync.Mutex
+	controlWaiters      map[string]map[chan struct{}]struct{}
+	controlPollDuration time.Duration
+	webAuth             *webAuthenticator
+	buildInfo           buildinfo.Info
+	handler             http.Handler
 }
 
 const (
@@ -59,7 +62,7 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 		return nil, err
 	}
 	shutdown, cancel := context.WithCancel(context.Background())
-	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), buildInfo: buildinfo.Current()}
+	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, buildInfo: buildinfo.Current()}
 	for _, option := range options {
 		if option == nil {
 			cancel()
@@ -86,6 +89,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/v1/agent/outbounds", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/claim", a.handleClaimJob)
 	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
+	mux.HandleFunc("POST /api/v1/agent/control/claim", a.handleClaimControl)
+	mux.HandleFunc("/api/v1/agent/control/claim", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/{job_id}/result", a.handleJobResult)
 	mux.HandleFunc("/api/v1/agent/jobs/{job_id}/result", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/upgrades/claim", a.handleClaimUpgrade)
@@ -231,7 +236,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishState(state)
 	}
-	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true}})
+	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true, InteractiveControl: true}})
 }
 
 func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {

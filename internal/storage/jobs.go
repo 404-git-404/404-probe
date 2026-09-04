@@ -303,7 +303,7 @@ func (s *Store) ClaimJob(ctx context.Context, agentID string, request protocol.C
 		return nil, err
 	}
 
-	existing, exists, err := readActiveLeaseTx(ctx, tx, agentID, nowMillis)
+	existing, exists, err := readActiveLeaseTx(ctx, tx, agentID, nowMillis, request.SupportedProbeTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -736,10 +736,17 @@ func readProbeResultTx(ctx context.Context, tx *sql.Tx, job ProbeJobRecord) (Pro
 	return record, true, nil
 }
 
-func readActiveLeaseTx(ctx context.Context, tx *sql.Tx, agentID string, nowMillis int64) (ProbeJobRecord, bool, error) {
+func readActiveLeaseTx(ctx context.Context, tx *sql.Tx, agentID string, nowMillis int64, supported []protocol.ProbeType) (ProbeJobRecord, bool, error) {
+	placeholders := make([]string, len(supported))
+	args := []any{agentID, nowMillis}
+	for i, probeType := range supported {
+		placeholders[i] = "?"
+		args = append(args, string(probeType))
+	}
 	var jobID string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM probe_jobs
-		WHERE agent_id=? AND status='leased' AND lease_until>? ORDER BY leased_at,id LIMIT 1`, agentID, nowMillis).Scan(&jobID)
+		WHERE agent_id=? AND status='leased' AND lease_until>? AND probe_type IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY leased_at,id LIMIT 1`, args...).Scan(&jobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ProbeJobRecord{}, false, nil
 	}

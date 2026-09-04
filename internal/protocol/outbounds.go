@@ -14,6 +14,15 @@ const (
 	MaxOutboundNameBytes     = 256
 )
 
+type OutboundStatus string
+
+const (
+	OutboundStatusConnected    OutboundStatus = "connected"
+	OutboundStatusNotDetected  OutboundStatus = "not_detected"
+	OutboundStatusAuthRequired OutboundStatus = "auth_required"
+	OutboundStatusUnavailable  OutboundStatus = "unavailable"
+)
+
 type OutboundSelector struct {
 	Name    string   `json:"name"`
 	Current string   `json:"current"`
@@ -22,10 +31,20 @@ type OutboundSelector struct {
 
 type OutboundSnapshot struct {
 	Available bool               `json:"available"`
+	Status    OutboundStatus     `json:"status,omitempty"`
 	Selectors []OutboundSelector `json:"selectors"`
 }
 
 func (s OutboundSnapshot) Validate() error {
+	if s.Status != "" && s.Status != OutboundStatusConnected && s.Status != OutboundStatusNotDetected && s.Status != OutboundStatusAuthRequired && s.Status != OutboundStatusUnavailable {
+		return errors.New("outbound status is invalid")
+	}
+	if s.Available && s.Status != "" && s.Status != OutboundStatusConnected {
+		return errors.New("available snapshot must have connected status")
+	}
+	if !s.Available && s.Status == OutboundStatusConnected {
+		return errors.New("connected snapshot must be available")
+	}
 	if !s.Available && len(s.Selectors) != 0 {
 		return errors.New("unavailable snapshot must not contain selectors")
 	}

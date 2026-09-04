@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -37,6 +39,7 @@ type webAgentDetailView struct {
 type webOutboundsView struct {
 	Configured bool                        `json:"configured"`
 	Available  bool                        `json:"available"`
+	Status     protocol.OutboundStatus     `json:"status"`
 	Stale      bool                        `json:"stale"`
 	Selectors  []protocol.OutboundSelector `json:"selectors"`
 	CheckedAt  *int64                      `json:"checked_at"`
@@ -157,7 +160,7 @@ func (a *App) handleGetWebAgent(w http.ResponseWriter, r *http.Request) {
 		writeControlCollectionError(w, err)
 		return
 	}
-	record, err := a.store.GetAgentSnapshot(r.Context(), agentID, a.now(), a.offlineTimeout)
+	view, err := a.webAgentDetail(r.Context(), agentID)
 	if err != nil {
 		if errors.Is(err, storage.ErrAgentNotFound) {
 			writeJobError(w, http.StatusNotFound, "agent_not_found", "agent not found")
@@ -167,20 +170,41 @@ func (a *App) handleGetWebAgent(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read agent")
 		return
 	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetailView, error) {
+	record, err := a.store.GetAgentSnapshot(ctx, agentID, a.now(), a.offlineTimeout)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
 	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
 	if record.State != nil {
 		view.State = newWebAgentStateView(*record.State, record.StateStale)
 	}
-	if snapshot, configured, err := a.store.GetOutboundSnapshot(r.Context(), agentID); err != nil {
-		a.logger.Error("read Web agent outbounds", "agent_id", agentID, "error", err)
-		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read agent")
-		return
-	} else if configured {
+	snapshot, configured, err := a.store.GetOutboundSnapshot(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	if configured {
 		checkedAt := snapshot.CheckedAt
 		stale := a.now().Sub(time.UnixMilli(snapshot.CheckedAt)) > outboundSnapshotStaleAfter
-		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Stale: stale, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
+		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Status: snapshot.Status, Stale: stale, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
 	}
-	writeJSON(w, http.StatusOK, view)
+	return view, nil
+}
+
+func (a *App) publishAgentDetail(ctx context.Context, agentID string) error {
+	view, err := a.webAgentDetail(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(view)
+	if err != nil {
+		return err
+	}
+	a.hub.publish(payload)
+	return nil
 }
 
 func (a *App) handleGetWebAgentHistory(w http.ResponseWriter, r *http.Request) {

@@ -255,7 +255,6 @@ func TestRunnerExecutesVerifiedSelectorSwitchAndPublishesSnapshot(t *testing.T) 
 	defer server.Close()
 	runner := newJobTestRunner(t, server.URL, time.Second, time.Second, UnsupportedExecutor{})
 	runner.config.ClashAPIURL = server.URL
-	runner.config.ClashAPISecret = "secret"
 	runner.client = server.Client()
 	job := protocol.Job{
 		ProtocolVersion: protocol.JobProtocolVersion, JobID: "switch-job", ProbeType: protocol.ProbeTypeSelectorSwitch,
@@ -337,6 +336,7 @@ func TestConfiguredClashDiscoveryAdvertisesSelectorSwitchCapability(t *testing.T
 	defer server.Close()
 	runner := newJobTestRunner(t, server.URL, time.Second, time.Hour, UnsupportedExecutor{})
 	runner.config.ClashAPIURL = server.URL
+	runner.clashControlReady.Store(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { runner.runJobWorker(ctx); close(done) }()
@@ -346,6 +346,70 @@ func TestConfiguredClashDiscoveryAdvertisesSelectorSwitchCapability(t *testing.T
 	if len(claim.SupportedProbeTypes) != 1 || claim.SupportedProbeTypes[0] != protocol.ProbeTypeSelectorSwitch {
 		t.Fatalf("capabilities=%v", claim.SupportedProbeTypes)
 	}
+}
+
+func TestInteractiveControlWorkerReconnectsAfterServerFailure(t *testing.T) {
+	var claims atomic.Int32
+	current := "hk"
+	resultReceived := make(chan protocol.JobResult, 1)
+	now := time.Now()
+	job := protocol.Job{
+		ProtocolVersion: protocol.JobProtocolVersion, JobID: "interactive-reconnect", ProbeType: protocol.ProbeTypeSelectorSwitch,
+		Config:    protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}},
+		CreatedAt: now.UnixMilli(), NotBefore: now.UnixMilli(), ExpiresAt: now.Add(time.Minute).UnixMilli(), TimeoutMS: 1000,
+		Attempt: 1, LeaseToken: "lease", LeaseExpiresAt: now.Add(time.Minute).UnixMilli(),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agent/control/claim":
+			if claims.Add(1) == 1 {
+				http.Error(w, "restarting", http.StatusServiceUnavailable)
+				return
+			}
+			writeTestJSON(t, w, job)
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			_, _ = io.WriteString(w, `{"proxies":{"proxy":{"type":"Selector","name":"proxy","now":"`+current+`","all":["hk","jp"]}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/proxy":
+			current = "jp"
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agent/outbounds":
+			writeTestJSON(t, w, map[string]any{"accepted": true})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/agent/jobs/"):
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			result, err := protocol.DecodeJobResult(raw, protocol.ProbeTypeSelectorSwitch)
+			if err != nil {
+				t.Error(err)
+			}
+			writeTestJSON(t, w, map[string]any{"accepted": true, "duplicate": false, "job_status": "finished"})
+			resultReceived <- result
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Second, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	runner.client = server.Client()
+	runner.clashControlReady.Store(true)
+	runner.interactiveControlSupported.Store(true)
+	runner.interactiveControlOnce.Do(func() { close(runner.interactiveControlReady) })
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { runner.runControlWorker(ctx); close(done) }()
+	select {
+	case result := <-resultReceived:
+		if !result.Success || result.Result.SelectorSwitch == nil || result.Result.SelectorSwitch.Current != "jp" || claims.Load() < 2 {
+			t.Fatalf("result=%+v claims=%d", result, claims.Load())
+		}
+		cancel()
+	case <-ctx.Done():
+		t.Fatal("control worker did not reconnect")
+	}
+	<-done
 }
 
 func newJobTestRunner(t *testing.T, serverURL string, timeout, interval time.Duration, executor Executor) *Runner {

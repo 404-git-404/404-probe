@@ -78,6 +78,10 @@ func (a *App) handleWebSelectorSwitch(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusLocked, "agent_disabled", "disabled agent cannot switch selectors")
 		return
 	}
+	if !agent.Online {
+		writeJobError(w, http.StatusConflict, "agent_offline", "offline agent cannot switch selectors")
+		return
+	}
 	snapshot, configured, err := a.store.GetOutboundSnapshot(r.Context(), agentID)
 	if err != nil {
 		a.logger.Error("read selector switch snapshot", "agent_id", agentID, "error", err)
@@ -121,6 +125,7 @@ func (a *App) handleWebSelectorSwitch(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
+		a.notifyControl(agentID)
 	}
 	writeJSON(w, status, struct {
 		JobID   string            `json:"job_id"`

@@ -12,12 +12,14 @@ const selectorErrors = {
   selector_not_found: '本地 Selector 已不存在，请刷新后重试',
   choice_not_found: '本地选项已不存在，请刷新后重试',
   clash_api_unavailable: 'Agent 无法连接本地 Clash API',
-  clash_api_unauthorized: 'Clash API 鉴权失败',
+  clash_api_not_detected: '未检测到 sing-box Clash API',
+  clash_api_auth_required: '检测到 Clash API 鉴权；请移除 secret，404-probe 不读取密钥',
   switch_failed: 'Clash API 拒绝了切换',
   switch_verification_failed: '切换后的回读结果与目标不一致',
   selector_switch_pending: '该 Selector 已有等待或执行中的切换',
   agent_disabled: 'Agent 已暂停，无法执行切换',
   agent_revoked: 'Agent 已撤销，无法执行切换',
+  agent_offline: 'Agent 离线，无法执行切换',
   outbounds_not_configured: 'Agent 未配置出站发现',
   outbounds_unavailable: 'Clash API 当前不可用',
   selector_choice_not_allowed: '目标已不在最新快照中，请刷新后重试',
@@ -41,7 +43,7 @@ async function waitForSwitch(jobID) {
   while (Date.now() < deadline) {
     const job = await readJSON(`/api/v1/web/jobs/${encodeURIComponent(jobID)}`);
     if (['success', 'failed', 'expired'].includes(job.operation_status)) return job;
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 250));
   }
   throw new Error('切换仍在排队，可在 Probe Jobs 中查看结果');
 }
@@ -158,9 +160,11 @@ function renderOutbounds(agent) {
   const lastChecked = outbounds.checked_at ? new Date(outbounds.checked_at).toLocaleString() : '未知';
   if (agent.revoked) outboundStatus.textContent = `Agent 已撤销 · 最后更新：${lastUpdated}`;
   else if (agent.disabled_at) outboundStatus.textContent = `Agent 已暂停 · 最后更新：${lastUpdated}`;
-  else if (!outbounds.available) outboundStatus.textContent = `Clash API 当前不可用 · 上次成功：${lastUpdated}`;
+  else if (outbounds.status === 'not_detected') outboundStatus.textContent = '未检测到 sing-box Clash API（默认 http://127.0.0.1:9090）';
+  else if (outbounds.status === 'auth_required') outboundStatus.textContent = '检测到 Clash API 鉴权；请移除 secret，404-probe 不读取或保存密钥';
+  else if (!outbounds.available) outboundStatus.textContent = `Clash API 不可用 · 上次成功：${lastUpdated}`;
   else if (outbounds.stale) outboundStatus.textContent = `状态已过期 · 最后检查：${lastChecked}`;
-  else outboundStatus.textContent = `可用 · 更新于 ${lastUpdated}`;
+  else outboundStatus.textContent = switchingSelector ? `正在切换 ${switchingSelector}…` : `已连接 · 更新于 ${lastUpdated}`;
   for (const selector of outbounds.selectors || []) {
     const details = document.createElement('details');
     details.open = switchingSelector === selector.name || selectorFeedback?.selector === selector.name || selectorOperations.has(selector.name);
@@ -192,7 +196,7 @@ function renderOutbounds(agent) {
       operationStatus.textContent = feedback.message;
       operationStatus.classList.toggle('switch-error', feedback.error);
     }
-    const blocked = !outbounds.available || outbounds.stale || agent.disabled_at || agent.revoked || !mutationCSRFToken || switchingSelector !== '' || persistedFeedback?.pending;
+    const blocked = !agent.online || !outbounds.available || outbounds.stale || agent.disabled_at || agent.revoked || !mutationCSRFToken || switchingSelector !== '' || persistedFeedback?.pending;
     const updateButton = () => {
       button.disabled = blocked || choices.value === selector.current;
     };
@@ -305,3 +309,11 @@ async function load() {
 }
 
 load();
+
+const events = new EventSource('/api/v1/web/events');
+events.addEventListener('agent', event => {
+  const update = JSON.parse(event.data);
+  if (!currentAgent || update.agent_id !== id) return;
+  currentAgent = {...currentAgent, ...update};
+  renderOutbounds(currentAgent);
+});

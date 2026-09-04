@@ -188,6 +188,16 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 			t.Fatalf("drop %s: %v", name, err)
 		}
 	}
+	for _, name := range []string{"idx_probe_jobs_one_active_probe_lease", "idx_probe_jobs_one_active_selector_lease"} {
+		if _, err := db.Exec(`DROP INDEX ` + name); err != nil {
+			db.Close()
+			t.Fatalf("drop %s: %v", name, err)
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX idx_probe_jobs_one_active_lease ON probe_jobs(agent_id) WHERE status='leased'`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`DROP INDEX idx_agents_disabled_created_id`); err != nil {
 		db.Close()
 		t.Fatal(err)

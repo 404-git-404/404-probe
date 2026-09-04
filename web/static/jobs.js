@@ -37,7 +37,8 @@ const selectorErrorLabels = {
   selector_not_found: '本地 Selector 已不存在',
   choice_not_found: '本地选项已不存在',
   clash_api_unavailable: '本地 Clash API 不可用',
-  clash_api_unauthorized: 'Clash API 鉴权失败',
+  clash_api_not_detected: '未检测到本地 Clash API',
+  clash_api_auth_required: 'Clash API 已启用鉴权；请移除 secret',
   switch_failed: 'Clash API 切换失败',
   switch_verification_failed: '切换回读验证失败',
 };

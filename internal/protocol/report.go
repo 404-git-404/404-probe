@@ -87,4 +87,5 @@ type ReportResponse struct {
 type ReportCapabilities struct {
 	AgentVersionReport bool `json:"agent_version_report,omitempty"`
 	AgentUpgrade       bool `json:"agent_upgrade,omitempty"`
+	InteractiveControl bool `json:"interactive_control,omitempty"`
 }

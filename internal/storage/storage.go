@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -91,6 +91,7 @@ type HistoryPoint struct {
 type OutboundSnapshot struct {
 	AgentID   string                      `json:"agent_id"`
 	Available bool                        `json:"available"`
+	Status    protocol.OutboundStatus     `json:"status"`
 	Selectors []protocol.OutboundSelector `json:"selectors"`
 	CheckedAt int64                       `json:"checked_at"`
 	UpdatedAt *int64                      `json:"updated_at"`
@@ -333,6 +334,20 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	if version < 8 {
+		for _, statement := range []string{
+			`ALTER TABLE agent_outbound_snapshots ADD COLUMN status TEXT NOT NULL DEFAULT 'unavailable' CHECK(status IN ('connected','not_detected','auth_required','unavailable'))`,
+			`UPDATE agent_outbound_snapshots SET status=CASE WHEN available=1 THEN 'connected' ELSE 'unavailable' END`,
+			`DROP INDEX IF EXISTS idx_probe_jobs_one_active_lease`,
+			`CREATE UNIQUE INDEX idx_probe_jobs_one_active_probe_lease ON probe_jobs(agent_id) WHERE status='leased' AND probe_type<>'singbox_selector_switch'`,
+			`CREATE UNIQUE INDEX idx_probe_jobs_one_active_selector_lease ON probe_jobs(agent_id) WHERE status='leased' AND probe_type='singbox_selector_switch'`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(8, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 8: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
@@ -360,20 +375,28 @@ func (s *Store) SaveOutboundSnapshot(ctx context.Context, agentID string, snapsh
 		return ErrAgentDisabled
 	}
 	checkedAt := now.UnixMilli()
+	status := snapshot.Status
+	if status == "" {
+		if snapshot.Available {
+			status = protocol.OutboundStatusConnected
+		} else {
+			status = protocol.OutboundStatusUnavailable
+		}
+	}
 	if snapshot.Available {
 		payload, err := json.Marshal(snapshot.Selectors)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO agent_outbound_snapshots(agent_id,available,payload_json,checked_at,updated_at)
-			VALUES(?,1,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET available=1,payload_json=excluded.payload_json,checked_at=excluded.checked_at,updated_at=excluded.updated_at`,
-			agentID, string(payload), checkedAt, checkedAt)
+		_, err = tx.ExecContext(ctx, `INSERT INTO agent_outbound_snapshots(agent_id,available,payload_json,checked_at,updated_at,status)
+			VALUES(?,1,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET available=1,payload_json=excluded.payload_json,checked_at=excluded.checked_at,updated_at=excluded.updated_at,status=excluded.status`,
+			agentID, string(payload), checkedAt, checkedAt, status)
 		if err != nil {
 			return err
 		}
 	} else {
-		_, err = tx.ExecContext(ctx, `INSERT INTO agent_outbound_snapshots(agent_id,available,payload_json,checked_at,updated_at)
-			VALUES(?,0,'[]',?,NULL) ON CONFLICT(agent_id) DO UPDATE SET available=0,checked_at=excluded.checked_at`, agentID, checkedAt)
+		_, err = tx.ExecContext(ctx, `INSERT INTO agent_outbound_snapshots(agent_id,available,payload_json,checked_at,updated_at,status)
+			VALUES(?,0,'[]',?,NULL,?) ON CONFLICT(agent_id) DO UPDATE SET available=0,checked_at=excluded.checked_at,status=excluded.status`, agentID, checkedAt, status)
 		if err != nil {
 			return err
 		}
@@ -386,8 +409,8 @@ func (s *Store) GetOutboundSnapshot(ctx context.Context, agentID string) (Outbou
 	var available int
 	var payload string
 	var updatedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT agent_id,available,payload_json,checked_at,updated_at FROM agent_outbound_snapshots WHERE agent_id=?`, agentID).
-		Scan(&result.AgentID, &available, &payload, &result.CheckedAt, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT agent_id,available,status,payload_json,checked_at,updated_at FROM agent_outbound_snapshots WHERE agent_id=?`, agentID).
+		Scan(&result.AgentID, &available, &result.Status, &payload, &result.CheckedAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OutboundSnapshot{}, false, nil
 	}

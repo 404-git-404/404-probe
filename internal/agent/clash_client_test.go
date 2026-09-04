@@ -1,26 +1,27 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
-func TestClashClientDiscoversOnlySelectorsAndSendsBearer(t *testing.T) {
+func TestClashClientDiscoversOnlySelectorsWithoutCredentials(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/proxies" || r.Header.Get("Authorization") != "Bearer clash-secret" {
+		if r.Method != http.MethodGet || r.URL.Path != "/proxies" || r.Header.Get("Authorization") != "" {
 			t.Fatalf("request method=%s path=%s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
 		}
 		_, _ = w.Write([]byte(`{"proxies":{"auto":{"type":"URLTest","name":"auto","now":"a","all":["a"]},"select":{"type":"Selector","name":"select","now":"b","all":["a","b"]}}}`))
 	}))
 	defer server.Close()
 
-	selectors, err := (clashClient{endpoint: server.URL, secret: "clash-secret", client: server.Client()}).discover(context.Background())
+	selectors, err := (clashClient{endpoint: server.URL, client: server.Client()}).discover(context.Background())
 	if err != nil || len(selectors) != 1 || selectors[0].Name != "select" || selectors[0].Current != "b" || len(selectors[0].Choices) != 2 {
 		t.Fatalf("selectors=%+v err=%v", selectors, err)
 	}
@@ -31,7 +32,7 @@ func TestClashClientSwitchesWithReadBackAndIdempotency(t *testing.T) {
 	current := "a"
 	puts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer clash-secret" {
+		if r.Header.Get("Authorization") != "" {
 			t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
 		}
 		mu.Lock()
@@ -57,7 +58,7 @@ func TestClashClientSwitchesWithReadBackAndIdempotency(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client := clashClient{endpoint: server.URL, secret: "clash-secret", client: server.Client()}
+	client := clashClient{endpoint: server.URL, client: server.Client()}
 	result, err := client.switchSelector(context.Background(), "select", "b")
 	if err != nil || !result.Changed || result.Current != "b" || puts != 1 {
 		t.Fatalf("result=%+v puts=%d err=%v", result, puts, err)
@@ -110,14 +111,26 @@ func TestClashClientRejectsStaleAndUnverifiedSwitches(t *testing.T) {
 	}
 }
 
-func TestClashClientSwitchReportsUnauthorized(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer server.Close()
-	_, err := (clashClient{endpoint: server.URL, secret: "wrong", client: server.Client()}).switchSelector(context.Background(), "select", "b")
+func TestClashClientReportsAuthenticationRequired(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+		_, err := (clashClient{endpoint: server.URL, client: server.Client()}).switchSelector(context.Background(), "select", "b")
+		server.Close()
+		var switchErr *selectorSwitchError
+		if !errors.As(err, &switchErr) || switchErr.category != "clash_api_auth_required" {
+			t.Fatalf("status=%d error=%v category=%v", status, err, switchErr)
+		}
+	}
+}
+
+func TestClashClientConnectionRefusedMeansNotDetected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	endpoint := server.URL
+	client := server.Client()
+	server.Close()
+	_, err := (clashClient{endpoint: endpoint, client: client}).discover(context.Background())
 	var switchErr *selectorSwitchError
-	if !errors.As(err, &switchErr) || switchErr.category != "clash_api_unauthorized" {
+	if !errors.As(err, &switchErr) || switchErr.category != "clash_api_not_detected" {
 		t.Fatalf("error=%v category=%v", err, switchErr)
 	}
 }
@@ -174,13 +187,30 @@ func TestClashClientRejectsFailuresAndMalformedSelectors(t *testing.T) {
 	}
 }
 
-func TestClashSecretIsNotSerialized(t *testing.T) {
-	config := Config{ClashAPISecret: "do-not-leak"}
-	body, err := json.Marshal(config)
-	if err != nil {
-		t.Fatal(err)
+func TestLegacyClashSecretDisablesIntegration(t *testing.T) {
+	runner := &Runner{config: Config{ClashAPIURL: DefaultClashAPIURL, LegacyClashSecretConfigured: true}}
+	if runner.clashIntegrationEnabled() {
+		t.Fatal("legacy secret must fail the integration closed")
 	}
-	if !json.Valid(body) || bytes.Contains(body, []byte("do-not-leak")) {
-		t.Fatal("secret leaked from serialized config")
+}
+
+func TestClashAPIDefaultAndLoopbackOverrideValidation(t *testing.T) {
+	if DefaultClashAPIURL != "http://127.0.0.1:9090" {
+		t.Fatalf("default=%q", DefaultClashAPIURL)
+	}
+	base := Config{ServerURL: "https://probe.example", AgentID: "a", Token: "t", Interval: time.Second, Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"), OutboundInterval: time.Minute}
+	for _, valid := range []string{DefaultClashAPIURL, "http://localhost:9191", "https://[::1]:9443"} {
+		config := base
+		config.ClashAPIURL = valid
+		if err := config.Validate(); err != nil {
+			t.Errorf("valid %q: %v", valid, err)
+		}
+	}
+	for _, invalid := range []string{"http://192.0.2.1:9090", "http://user@127.0.0.1:9090", "http://127.0.0.1:9090/proxies", "http://127.0.0.1:9090?q=x", "http://127.0.0.1:9090/#x"} {
+		config := base
+		config.ClashAPIURL = invalid
+		if err := config.Validate(); err == nil {
+			t.Errorf("invalid override %q accepted", invalid)
+		}
 	}
 }

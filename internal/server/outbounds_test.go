@@ -27,7 +27,7 @@ func TestAgentOutboundEndpointAuthBoundsAndWebReadOnlyView(t *testing.T) {
 	app, store, agentID, token := testApp(t)
 	defer store.Close()
 	app.now = func() time.Time { return time.Unix(300, 0) }
-	payload, _ := json.Marshal(protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{{Name: "select", Current: "b", Choices: []string{"a", "b"}}}})
+	payload, _ := json.Marshal(protocol.OutboundSnapshot{Available: true, Status: protocol.OutboundStatusConnected, Selectors: []protocol.OutboundSelector{{Name: "select", Current: "b", Choices: []string{"a", "b"}}}})
 	if response := postOutbounds(t, app, token, payload); response.Code != http.StatusOK {
 		t.Fatalf("active status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -44,7 +44,7 @@ func TestAgentOutboundEndpointAuthBoundsAndWebReadOnlyView(t *testing.T) {
 	addTestWebSession(t, app, request)
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":true`) || !strings.Contains(response.Body.String(), `"name":"select"`) {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"configured":true`) || !strings.Contains(response.Body.String(), `"status":"connected"`) || !strings.Contains(response.Body.String(), `"name":"select"`) {
 		t.Fatalf("web status=%d body=%s", response.Code, response.Body.String())
 	}
 	app.now = func() time.Time { return time.Unix(300, 0).Add(outboundSnapshotStaleAfter + time.Second) }

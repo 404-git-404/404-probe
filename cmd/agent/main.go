@@ -57,12 +57,12 @@ func run() error {
 	state := flag.String("state", env("PROBE_404_STATE", "404-probe-agent.state"), "persistent agent epoch state file")
 	include := flag.String("network-include", "", "comma-separated interface glob patterns")
 	exclude := flag.String("network-exclude", "", "comma-separated additional interface glob patterns")
-	clashAPI := flag.String("sing-box-clash-api", env("PROBE_404_SING_BOX_CLASH_API", ""), "local sing-box Clash API base URL (read-only discovery)")
-	clashSecret := flag.String("sing-box-clash-secret", env("PROBE_404_SING_BOX_CLASH_SECRET", ""), "sing-box Clash API secret (prefer environment variable)")
+	clashAPI := flag.String("sing-box-clash-api", env("PROBE_404_SING_BOX_CLASH_API", agent.DefaultClashAPIURL), "local sing-box Clash API loopback origin")
 	outboundInterval := flag.Duration("outbound-interval", time.Minute, "sing-box outbound discovery interval")
 	updaterSocket := flag.String("updater-socket", env("PROBE_404_UPDATER_SOCKET", "/run/404-probe/agent-updater.sock"), "restricted Agent updater socket")
 	flag.Parse()
-	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, ClashAPISecret: *clashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket}, slog.Default())
+	_, legacyClashSecret := os.LookupEnv("PROBE_404_SING_BOX_CLASH_SECRET")
+	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket}, slog.Default())
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}

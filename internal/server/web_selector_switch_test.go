@@ -35,11 +35,21 @@ func webSelectorSwitchResponse(t *testing.T, app *App, agentID, body string, con
 	return response
 }
 
+func markSelectorAgentOnline(t *testing.T, store *storage.Store, agentID string, at time.Time) {
+	t.Helper()
+	report := reportFor(agentID, 1)
+	report.CollectedAt = at.UnixMilli()
+	if _, accepted, reason, err := store.ProcessReport(context.Background(), agentID, report, at); err != nil || !accepted {
+		t.Fatalf("mark Agent online accepted=%t reason=%q err=%v", accepted, reason, err)
+	}
+}
+
 func TestWebSelectorSwitchCreatesAllowlistedIdempotentJob(t *testing.T) {
 	app, store, agentID, _ := testApp(t)
 	defer store.Close()
 	now := time.Unix(3_000, 0)
 	app.now = func() time.Time { return now }
+	markSelectorAgentOnline(t, store, agentID, now)
 	if err := store.SaveOutboundSnapshot(context.Background(), agentID, protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{
 		{Name: "proxy", Current: "hk", Choices: []string{"hk", "jp"}},
 		{Name: "backup", Current: "direct", Choices: []string{"direct", "warp"}},
@@ -81,6 +91,7 @@ func TestWebSelectorSwitchTrustBoundaryAndAgentStates(t *testing.T) {
 	defer store.Close()
 	now := time.Unix(3_100, 0)
 	app.now = func() time.Time { return now }
+	markSelectorAgentOnline(t, store, agentID, now)
 	if err := store.SaveOutboundSnapshot(context.Background(), agentID, protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{
 		{Name: "proxy", Current: "hk", Choices: []string{"hk", "jp"}},
 	}}, now); err != nil {
@@ -132,6 +143,7 @@ func TestPauseExpiresQueuedSelectorSwitch(t *testing.T) {
 	defer store.Close()
 	now := time.Now()
 	app.now = func() time.Time { return now }
+	markSelectorAgentOnline(t, store, agentID, now)
 	if err := store.SaveOutboundSnapshot(context.Background(), agentID, protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{
 		{Name: "proxy", Current: "hk", Choices: []string{"hk", "jp"}},
 	}}, now); err != nil {
@@ -205,6 +217,7 @@ func TestRevokeExpiresQueuedSelectorSwitch(t *testing.T) {
 	defer store.Close()
 	now := time.Unix(3_300, 0)
 	app.now = func() time.Time { return now }
+	markSelectorAgentOnline(t, store, agentID, now)
 	if err := store.SaveOutboundSnapshot(context.Background(), agentID, protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{
 		{Name: "proxy", Current: "hk", Choices: []string{"hk", "jp"}},
 	}}, now); err != nil {
@@ -228,6 +241,7 @@ func TestRevokePreventsRunningSelectorSwitchFromExecutingAgain(t *testing.T) {
 	defer store.Close()
 	now := time.Unix(3_400, 0)
 	app.now = func() time.Time { return now }
+	markSelectorAgentOnline(t, store, agentID, now)
 	if err := store.SaveOutboundSnapshot(context.Background(), agentID, protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{
 		{Name: "proxy", Current: "hk", Choices: []string{"hk", "jp"}},
 	}}, now); err != nil {
@@ -265,6 +279,7 @@ func TestRevokePreventsRunningSelectorSwitchFromExecutingAgain(t *testing.T) {
 func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
 	app, store, agentID, agentToken := testApp(t)
 	defer store.Close()
+	markSelectorAgentOnline(t, store, agentID, time.Now())
 
 	var clashMu sync.Mutex
 	current := "hk"
@@ -272,9 +287,8 @@ func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
 	applySwitch := true
 	puts := 0
 	clash := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer local-secret" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("unexpected authorization header")
 		}
 		clashMu.Lock()
 		defer clashMu.Unlock()
@@ -315,7 +329,7 @@ func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
 		ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
 		Interval: time.Hour, JobInterval: 10 * time.Millisecond, Timeout: 2 * time.Second,
 		AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "agent.state"),
-		ClashAPIURL: clash.URL, ClashAPISecret: "local-secret", OutboundInterval: time.Hour,
+		ClashAPIURL: clash.URL, OutboundInterval: time.Hour,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)

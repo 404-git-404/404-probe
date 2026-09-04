@@ -231,12 +231,13 @@ func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T)
 		`case 'singbox_selector_switch'`, `measurement.selector_switch`,
 		`operation.operation_status`, `selectorOperations`, `refreshAgentUntil`, `attempt < 5`,
 		`outbounds.stale`, `状态已过期`, `切换任务已过期`, `selector_switch_pending`,
+		`未检测到 sing-box Clash API`, `请移除 secret`, `new EventSource('/api/v1/web/events')`,
 	} {
 		if !strings.Contains(combined, required) {
 			t.Fatalf("outbound UI missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"PUT /proxies", "method: 'PUT'", "/api/v1/control/", "clash_api_url", "secret"} {
+	for _, forbidden := range []string{"PUT /proxies", "method: 'PUT'", "/api/v1/control/", "clash_api_url", "secret-input", "clash-secret"} {
 		if strings.Contains(strings.ToLower(combined), strings.ToLower(forbidden)) {
 			t.Fatalf("outbound UI contains mutation behavior %q", forbidden)
 		}

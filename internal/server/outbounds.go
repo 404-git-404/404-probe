@@ -55,6 +55,9 @@ func (a *App) handleAgentOutbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if err := a.publishAgentDetail(r.Context(), agentID); err != nil {
+		a.logger.Warn("publish outbound Web event", "agent_id", agentID, "error", err)
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Accepted bool `json:"accepted"`
 	}{Accepted: true})

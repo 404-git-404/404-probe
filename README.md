@@ -178,21 +178,15 @@ PROBE_404_AGENT_PID=$!
 
 Remove `--allow-insecure-http` when `PROBE_404_SERVER` uses HTTPS.
 
-## Optional sing-box selector discovery and switching
+## Zero-configuration sing-box selector discovery and switching
 
-The Agent can discover sing-box `Selector` outbounds through a local Clash API and publish only the latest selector name, current choice, choices, availability, and timestamps. To enable it for a manual Agent launch, add these values to the private Agent environment file before starting the Agent:
+The Agent automatically probes the local Clash API at `http://127.0.0.1:9090` and publishes only the latest selector name, current choice, choices, discovery state, and timestamps. A manual loopback-only origin override is available through `PROBE_404_SING_BOX_CLASH_API`; credentials, paths, queries, fragments, and non-loopback hosts are rejected. Fresh installation asks for neither an API URL nor a secret.
 
-```bash
-printf '%s\n' \
-  'PROBE_404_SING_BOX_CLASH_API=http://127.0.0.1:9090' \
-  'PROBE_404_SING_BOX_CLASH_SECRET=replace-with-the-local-api-secret' \
-  >> "$PROBE_404_AGENT_ENV"
-chmod 600 "$PROBE_404_AGENT_ENV"
-```
+404-probe does not support Clash API secrets. If the legacy `PROBE_404_SING_BOX_CLASH_SECRET` variable is present, only the sing-box integration fails closed; normal telemetry continues, and the Agent logs a fixed remediation message without reading or printing the value. Configure sing-box's Clash API without authentication and keep it bound to loopback.
 
-The unified Agent installer asks for the optional loopback Clash API origin and reads its optional secret without echo. The URL and secret are stored only in the root-owned private Agent environment file. The secret is used by the Agent for local Clash API requests; it is never sent to the 404-probe Server, Web UI, outbound snapshot, or normal logs. Keep the Clash API bound to loopback and do not reuse its secret as a Server, Web, or Control credential.
+After discovery, the authenticated Agent detail page shows the current selector and its allowlisted choices. v0.8.1 Server and Agent negotiate a dedicated outbound-only long-poll control lane which can carry only the fixed `singbox_selector_switch` operation. A v0.8.1 Agent talking to a v0.8.0 Server falls back to the existing 10-second Job claim lane; a v0.8.0 Agent continues to work with a v0.8.1 Server through that old lane.
 
-After discovery, the authenticated Agent detail page shows the current selector value and its allowlisted choices. A switch is a fixed `singbox_selector_switch` operation delivered through the existing Agent Job channel. The Server validates against the latest snapshot, the Agent validates against current local state, and a mutation succeeds only after a read-back confirms the target. Re-selecting the current value is a successful no-op. Stale, unavailable, paused, and revoked states disable the control. This is not a generic shell, HTTP, configuration-editing, restart, scheduling, bulk-switch, or automatic-failover facility.
+The Server validates against the latest snapshot, then the Agent performs `GET /proxies`, validates the live selector and choice, sends the selector `PUT`, immediately reads back `GET /proxies`, and publishes an immediate verified snapshot. Re-selecting the current value is a successful no-op. SSE updates the detail page after the snapshot arrives. Not detected, authentication required, unavailable, stale, offline, paused, and revoked states disable control. This is not a generic shell, HTTP, configuration-editing, restart, scheduling, bulk-switch, or automatic-failover facility.
 
 ## Run one-shot probes
 

@@ -24,22 +24,22 @@ import (
 )
 
 type Config struct {
-	ServerURL         string
-	AgentID           string
-	Token             string
-	Interval          time.Duration
-	JobInterval       time.Duration
-	DisabledInterval  time.Duration
-	Timeout           time.Duration
-	AllowInsecureHTTP bool
-	StatePath         string
-	NetworkIncludes   []string
-	NetworkExcludes   []string
-	ClashAPIURL       string
-	ClashAPISecret    string `json:"-"`
-	OutboundInterval  time.Duration
-	AgentVersion      string
-	UpdaterSocket     string
+	ServerURL                   string
+	AgentID                     string
+	Token                       string
+	Interval                    time.Duration
+	JobInterval                 time.Duration
+	DisabledInterval            time.Duration
+	Timeout                     time.Duration
+	AllowInsecureHTTP           bool
+	StatePath                   string
+	NetworkIncludes             []string
+	NetworkExcludes             []string
+	ClashAPIURL                 string
+	LegacyClashSecretConfigured bool
+	OutboundInterval            time.Duration
+	AgentVersion                string
+	UpdaterSocket               string
 }
 
 var (
@@ -47,7 +47,10 @@ var (
 	ErrAgentDisabled = errors.New("agent has been disabled")
 )
 
-const DefaultDisabledInterval = time.Minute
+const (
+	DefaultDisabledInterval = time.Minute
+	DefaultClashAPIURL      = "http://127.0.0.1:9090"
+)
 
 func (c Config) Validate() error {
 	if c.AgentID == "" || c.Token == "" {
@@ -67,9 +70,6 @@ func (c Config) Validate() error {
 		return errors.New("state path is required")
 	}
 	if c.ClashAPIURL == "" {
-		if c.ClashAPISecret != "" {
-			return errors.New("sing-box Clash secret requires a Clash API URL")
-		}
 		return nil
 	}
 	if c.OutboundInterval <= 0 {
@@ -88,16 +88,20 @@ func (c Config) Validate() error {
 }
 
 type Runner struct {
-	config                Config
-	client                *http.Client
-	collector             reportCollector
-	logger                *slog.Logger
-	epoch                 uint64
-	sessionID             string
-	executor              Executor
-	reportAgentVersion    bool
-	versionReportAccepted atomic.Bool
-	upgradeAPISupported   atomic.Bool
+	config                      Config
+	client                      *http.Client
+	collector                   reportCollector
+	logger                      *slog.Logger
+	epoch                       uint64
+	sessionID                   string
+	executor                    Executor
+	reportAgentVersion          bool
+	versionReportAccepted       atomic.Bool
+	upgradeAPISupported         atomic.Bool
+	interactiveControlSupported atomic.Bool
+	clashControlReady           atomic.Bool
+	interactiveControlReady     chan struct{}
+	interactiveControlOnce      sync.Once
 }
 
 type reportCollector interface {
@@ -141,7 +145,7 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 	return &Runner{
 		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
-		executor:  executor,
+		executor:  executor, interactiveControlReady: make(chan struct{}),
 	}, nil
 }
 
@@ -163,12 +167,19 @@ func (r *Runner) Run(ctx context.Context) error {
 				r.runUpgradeWorker(workerContext)
 			}()
 		}
-		if r.config.ClashAPIURL != "" {
+		if r.clashIntegrationEnabled() {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
 				r.runOutboundDiscovery(workerContext)
 			}()
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				r.runControlWorker(workerContext)
+			}()
+		} else if r.config.LegacyClashSecretConfigured {
+			r.logger.Warn("legacy Clash API secret configuration is unsupported; remove it")
 		}
 
 		err := r.runReportLoop(workerContext, &sequence, immediate)
@@ -284,8 +295,16 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	if response.Capabilities.AgentUpgrade {
 		r.upgradeAPISupported.Store(true)
 	}
+	r.interactiveControlSupported.Store(response.Capabilities.InteractiveControl)
+	if response.Capabilities.InteractiveControl {
+		r.interactiveControlOnce.Do(func() { close(r.interactiveControlReady) })
+	}
 	r.logger.Debug("report accepted", "sequence", *sequence)
 	return true, nil
+}
+
+func (r *Runner) clashIntegrationEnabled() bool {
+	return r.config.ClashAPIURL != "" && !r.config.LegacyClashSecretConfigured
 }
 
 func (r *Runner) updaterAvailable() bool {

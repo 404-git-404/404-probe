@@ -61,7 +61,7 @@ func TestInstallerAgentServiceRestartsOnlyAfterFailure(t *testing.T) {
 	}
 }
 
-func TestInstallerConfiguresOptionalAgentLocalClashAPI(t *testing.T) {
+func TestInstallerUsesZeroConfigurationLocalClashAPI(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("could not locate installer contract test")
@@ -71,20 +71,10 @@ func TestInstallerConfiguresOptionalAgentLocalClashAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
-	for _, required := range []string{
-		`valid_sing_box_clash_api_url`,
-		`IFS= read -r clash_api </dev/tty`,
-		`IFS= read -r -s clash_secret </dev/tty`,
-		`PROBE_404_SING_BOX_CLASH_API=$(quote_environment_value "${clash_api}")`,
-		`PROBE_404_SING_BOX_CLASH_SECRET=$(quote_environment_value "${clash_secret}")`,
-		`unset clash_secret clash_environment`,
-	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("installer missing Agent-local Clash contract %q", required)
+	for _, forbidden := range []string{"read -r clash_api", "read -r -s clash_secret", "PROBE_404_SING_BOX_CLASH_API=", "PROBE_404_SING_BOX_CLASH_SECRET=", "--sing-box-clash-secret"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("fresh install must not ask for or store Clash API configuration: %q", forbidden)
 		}
-	}
-	if strings.Contains(script, "--sing-box-clash-secret <") || strings.Contains(script, "--sing-box-clash-secret=") {
-		t.Fatal("installer exposes the Clash API secret through command arguments")
 	}
 }
 

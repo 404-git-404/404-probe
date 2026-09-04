@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -18,7 +19,6 @@ const maxClashResponseBytes = 1 << 20
 
 type clashClient struct {
 	endpoint string
-	secret   string
 	client   *http.Client
 }
 
@@ -41,12 +41,14 @@ func (c clashClient) discover(ctx context.Context) ([]protocol.OutboundSelector,
 	if err != nil {
 		return nil, err
 	}
-	if c.secret != "" {
-		req.Header.Set("Authorization", "Bearer "+c.secret)
-	}
 	response, err := c.client.Do(req)
 	if err != nil {
-		return nil, err
+		category := "clash_api_unavailable"
+		var netErr net.Error
+		if errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) {
+			category = "clash_api_not_detected"
+		}
+		return nil, &selectorSwitchError{category: category, message: "local Clash API request failed"}
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxClashResponseBytes+1))
@@ -58,8 +60,8 @@ func (c clashClient) discover(ctx context.Context) ([]protocol.OutboundSelector,
 	}
 	if response.StatusCode != http.StatusOK {
 		category := "clash_api_unavailable"
-		if response.StatusCode == http.StatusUnauthorized {
-			category = "clash_api_unauthorized"
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			category = "clash_api_auth_required"
 		}
 		return nil, &selectorSwitchError{category: category, message: fmt.Sprintf("Clash API returned HTTP %d", response.StatusCode)}
 	}
@@ -131,17 +133,14 @@ func (c clashClient) switchSelector(ctx context.Context, selectorName, choiceNam
 		return protocol.SelectorSwitchResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.secret != "" {
-		req.Header.Set("Authorization", "Bearer "+c.secret)
-	}
 	response, err := c.client.Do(req)
 	if err != nil {
 		return protocol.SelectorSwitchResult{}, &selectorSwitchError{category: "switch_failed", message: "Clash API switch request failed"}
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if response.StatusCode == http.StatusUnauthorized {
-		return protocol.SelectorSwitchResult{}, &selectorSwitchError{category: "clash_api_unauthorized", message: "Clash API rejected its credential"}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return protocol.SelectorSwitchResult{}, &selectorSwitchError{category: "clash_api_auth_required", message: "Clash API authentication must be disabled"}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return protocol.SelectorSwitchResult{}, &selectorSwitchError{category: "switch_failed", message: fmt.Sprintf("Clash API switch returned HTTP %d", response.StatusCode)}
@@ -149,7 +148,7 @@ func (c clashClient) switchSelector(ctx context.Context, selectorName, choiceNam
 	readBack, err := c.discover(ctx)
 	if err != nil {
 		var switchErr *selectorSwitchError
-		if errors.As(err, &switchErr) && switchErr.category == "clash_api_unauthorized" {
+		if errors.As(err, &switchErr) && switchErr.category == "clash_api_auth_required" {
 			return protocol.SelectorSwitchResult{}, switchErr
 		}
 		return protocol.SelectorSwitchResult{}, &selectorSwitchError{category: "switch_verification_failed", message: "could not verify selector after switch"}

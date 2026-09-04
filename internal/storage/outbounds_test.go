@@ -17,11 +17,11 @@ func TestOutboundSnapshotLatestSuccessAndUnavailableState(t *testing.T) {
 	if err := store.SaveOutboundSnapshot(ctx, agentID, first, time.Unix(200, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveOutboundSnapshot(ctx, agentID, protocol.OutboundSnapshot{Available: false}, time.Unix(210, 0)); err != nil {
+	if err := store.SaveOutboundSnapshot(ctx, agentID, protocol.OutboundSnapshot{Available: false, Status: protocol.OutboundStatusAuthRequired}, time.Unix(210, 0)); err != nil {
 		t.Fatal(err)
 	}
 	got, configured, err := store.GetOutboundSnapshot(ctx, agentID)
-	if err != nil || !configured || got.Available || got.CheckedAt != time.Unix(210, 0).UnixMilli() || got.UpdatedAt == nil || *got.UpdatedAt != time.Unix(200, 0).UnixMilli() || len(got.Selectors) != 1 {
+	if err != nil || !configured || got.Available || got.Status != protocol.OutboundStatusAuthRequired || got.CheckedAt != time.Unix(210, 0).UnixMilli() || got.UpdatedAt == nil || *got.UpdatedAt != time.Unix(200, 0).UnixMilli() || len(got.Selectors) != 1 {
 		t.Fatalf("snapshot=%+v configured=%t err=%v", got, configured, err)
 	}
 	replacement := protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{{Name: "other", Current: "x", Choices: []string{"x"}}}}

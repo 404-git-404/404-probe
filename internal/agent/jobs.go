@@ -88,6 +88,30 @@ func (c jobHTTPClient) claim(ctx context.Context, request protocol.ClaimRequest)
 	return &job, nil
 }
 
+func (c jobHTTPClient) claimControl(ctx context.Context, request protocol.ControlClaimRequest) (*protocol.Job, error) {
+	var job protocol.Job
+	status, body, err := c.postJSON(ctx, "/api/v1/agent/control/claim", request)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNoContent {
+		if len(bytes.TrimSpace(body)) != 0 {
+			return nil, errors.New("control claim response has a body with HTTP 204")
+		}
+		return nil, nil
+	}
+	if status != http.StatusOK {
+		return nil, decodeJobHTTPError(status, body)
+	}
+	if err := decodeStrictJobResponse(body, &job); err != nil {
+		return nil, fmt.Errorf("decode control claim response: %w", err)
+	}
+	if job.ProbeType != protocol.ProbeTypeSelectorSwitch {
+		return nil, errors.New("control claim returned a non-selector operation")
+	}
+	return &job, nil
+}
+
 func (c jobHTTPClient) submit(ctx context.Context, jobID string, result protocol.JobResult) (bool, error) {
 	status, body, err := c.postJSON(ctx, "/api/v1/agent/jobs/"+url.PathEscape(jobID)+"/result", result)
 	if err != nil {
@@ -163,33 +187,25 @@ func decodeStrictJobResponse(data []byte, value any) error {
 }
 
 func (r *Runner) runJobWorker(ctx context.Context) {
-	capabilities := append([]protocol.ProbeType(nil), r.executor.SupportedProbeTypes()...)
-	if r.config.ClashAPIURL != "" {
-		capabilities = append(capabilities, protocol.ProbeTypeSelectorSwitch)
-	}
-	if len(capabilities) == 0 {
+	baseCapabilities := append([]protocol.ProbeType(nil), r.executor.SupportedProbeTypes()...)
+	capabilities := append([]protocol.ProbeType(nil), baseCapabilities...)
+	if len(capabilities) == 0 && !r.clashIntegrationEnabled() {
 		r.logger.Info("job worker disabled; executor has no supported probe types")
 		<-ctx.Done()
 		return
 	}
 
 	client := jobHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: r.client}
-	request := protocol.ClaimRequest{
-		ProtocolVersion:     protocol.JobProtocolVersion,
-		AgentEpoch:          r.epoch,
-		SessionID:           r.sessionID,
-		SupportedProbeTypes: capabilities,
-	}
-	if err := request.Validate(); err != nil {
-		r.logger.Error("job worker disabled; executor capabilities are invalid", "error", err)
-		<-ctx.Done()
-		return
-	}
-
 	ticker := time.NewTicker(r.config.JobInterval)
 	defer ticker.Stop()
 	for {
-		r.runJobCycle(ctx, client, request)
+		cycleCapabilities := append([]protocol.ProbeType(nil), baseCapabilities...)
+		if r.clashIntegrationEnabled() && r.clashControlReady.Load() && !r.interactiveControlSupported.Load() {
+			cycleCapabilities = append(cycleCapabilities, protocol.ProbeTypeSelectorSwitch)
+		}
+		if len(cycleCapabilities) != 0 {
+			r.runJobCycle(ctx, client, protocol.ClaimRequest{ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, SupportedProbeTypes: cycleCapabilities})
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -225,6 +241,48 @@ func (r *Runner) runJobCycle(ctx context.Context, client jobHTTPClient, request 
 		return
 	}
 	r.logger.Debug("job result accepted", "job_id", job.JobID, "duplicate", duplicate)
+}
+
+func (r *Runner) runControlWorker(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-r.interactiveControlReady:
+	}
+	httpClient := *r.client
+	httpClient.Timeout = 35 * time.Second
+	client := jobHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: &httpClient}
+	request := protocol.ControlClaimRequest{ProtocolVersion: protocol.ControlProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID}
+	for ctx.Err() == nil {
+		if !r.interactiveControlSupported.Load() || !r.clashControlReady.Load() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(250 * time.Millisecond):
+			}
+			continue
+		}
+		job, err := client.claimControl(ctx, request)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			r.logger.Warn("claim interactive control failed; will retry", "error", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		if job == nil {
+			continue
+		}
+		result := r.executeJob(ctx, *job)
+		if _, err := client.submit(ctx, job.JobID, result); err != nil && ctx.Err() == nil {
+			r.logger.Warn("submit interactive control result failed", "job_id", job.JobID, "error", err)
+		}
+	}
 }
 
 func (r *Runner) executeJob(ctx context.Context, job protocol.Job) protocol.JobResult {
@@ -294,10 +352,10 @@ func emptyProbeResult(job protocol.Job) protocol.ProbeResult {
 }
 
 func (r *Runner) executeSelectorSwitch(ctx context.Context, job protocol.Job) (Execution, error) {
-	if r.config.ClashAPIURL == "" || job.Config.SelectorSwitch == nil {
+	if !r.clashIntegrationEnabled() || job.Config.SelectorSwitch == nil {
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	}
-	client := clashClient{endpoint: r.config.ClashAPIURL, secret: r.config.ClashAPISecret, client: r.client}
+	client := clashClient{endpoint: r.config.ClashAPIURL, client: r.client}
 	result, err := client.switchSelector(ctx, job.Config.SelectorSwitch.Selector, job.Config.SelectorSwitch.Choice)
 	if err != nil {
 		category := "clash_api_unavailable"
@@ -311,7 +369,11 @@ func (r *Runner) executeSelectorSwitch(ctx context.Context, job protocol.Job) (E
 	}
 	selectors, discoverErr := client.discover(ctx)
 	if discoverErr == nil {
-		if publishErr := r.postOutboundSnapshot(ctx, protocol.OutboundSnapshot{Available: true, Selectors: selectors}); publishErr != nil && ctx.Err() == nil {
+		snapshot := protocol.OutboundSnapshot{Available: true, Selectors: selectors}
+		if r.interactiveControlSupported.Load() {
+			snapshot.Status = protocol.OutboundStatusConnected
+		}
+		if publishErr := r.postOutboundSnapshot(ctx, snapshot); publishErr != nil && ctx.Err() == nil {
 			r.logger.Warn("publish post-switch outbound snapshot failed; discovery will retry", "error", publishErr)
 		}
 	}
