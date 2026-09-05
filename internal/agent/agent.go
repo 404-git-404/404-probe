@@ -102,6 +102,11 @@ type Runner struct {
 	googleStatusSupported       atomic.Bool
 	googleStatusAvailable       bool
 	clashControlReady           atomic.Bool
+	selectorJobMu               sync.Mutex
+	selectorJobKey              string
+	selectorJobResult           protocol.JobResult
+	selectorJobResultReady      bool
+	selectorJobSubmitted        bool
 	interactiveControlReady     chan struct{}
 	interactiveControlOnce      sync.Once
 }

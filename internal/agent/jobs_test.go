@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -321,6 +322,109 @@ func TestRunnerSelectorSwitchSuccessSurvivesSnapshotPublicationRace(t *testing.T
 	result := runner.executeJob(context.Background(), job)
 	if !result.Success || result.Result.SelectorSwitch == nil || result.Result.SelectorSwitch.Current != "jp" {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestRunnerSerializesSameSelectorLeaseAcrossClaimLanes(t *testing.T) {
+	var currentMu sync.Mutex
+	current := "hk"
+	puts, submits := 0, 0
+	firstRead := make(chan struct{})
+	releaseFirstRead := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		currentMu.Lock()
+		defer currentMu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			if current == "hk" {
+				blocked := false
+				select {
+				case <-firstRead:
+				default:
+					close(firstRead)
+					blocked = true
+				}
+				if blocked {
+					<-releaseFirstRead
+				}
+			}
+			_, _ = io.WriteString(w, `{"proxies":{"proxy":{"type":"Selector","name":"proxy","now":"`+current+`","all":["hk","jp"]}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/proxy":
+			puts++
+			current = "jp"
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agent/outbounds":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/result"):
+			submits++
+			_, _ = io.WriteString(w, `{"accepted":true,"duplicate":false,"job_status":"finished"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Second, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	runner.client = server.Client()
+	job := validWorkerJob()
+	job.JobID = "same-lease"
+	job.ProbeType = protocol.ProbeTypeSelectorSwitch
+	job.Config = protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}}
+	client := jobHTTPClient{baseURL: server.URL, token: "token", client: server.Client()}
+	done := make(chan struct{}, 2)
+	go func() { runner.runSelectorJob(context.Background(), client, job); done <- struct{}{} }()
+	<-firstRead
+	go func() { runner.runSelectorJob(context.Background(), client, job); done <- struct{}{} }()
+	close(releaseFirstRead)
+	<-done
+	<-done
+	if puts != 1 || submits != 1 || !runner.selectorJobSubmitted || !runner.selectorJobResultReady ||
+		runner.selectorJobResult.Result.SelectorSwitch == nil || !runner.selectorJobResult.Result.SelectorSwitch.Changed {
+		t.Fatalf("puts=%d submits=%d result=%+v submitted=%t", puts, submits, runner.selectorJobResult, runner.selectorJobSubmitted)
+	}
+}
+
+func TestSelectorReplayRetriesCachedResultWithoutReexecution(t *testing.T) {
+	current := "hk"
+	discovers, puts, submits := 0, 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			discovers++
+			_, _ = io.WriteString(w, `{"proxies":{"proxy":{"type":"Selector","name":"proxy","now":"`+current+`","all":["hk","jp"]}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/proxy":
+			puts++
+			current = "jp"
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agent/outbounds":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/result"):
+			submits++
+			if submits == 1 {
+				http.Error(w, "temporary", http.StatusInternalServerError)
+				return
+			}
+			_, _ = io.WriteString(w, `{"accepted":true,"duplicate":false,"job_status":"finished"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Second, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	runner.client = server.Client()
+	job := validWorkerJob()
+	job.JobID = "retry-same-lease"
+	job.ProbeType = protocol.ProbeTypeSelectorSwitch
+	job.Config = protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}}
+	client := jobHTTPClient{baseURL: server.URL, token: "token", client: server.Client()}
+	runner.runSelectorJob(context.Background(), client, job)
+	if runner.selectorJobSubmitted {
+		t.Fatal("failed result upload marked submitted")
+	}
+	runner.runSelectorJob(context.Background(), client, job)
+	if !runner.selectorJobSubmitted || discovers != 3 || puts != 1 || submits != 2 {
+		t.Fatalf("submitted=%t discovers=%d puts=%d submits=%d", runner.selectorJobSubmitted, discovers, puts, submits)
 	}
 }
 

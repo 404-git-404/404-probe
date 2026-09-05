@@ -237,22 +237,58 @@ func (r *Runner) runJobCycle(ctx context.Context, client jobHTTPClient, request 
 	if job == nil {
 		return
 	}
+	if job.ProbeType == protocol.ProbeTypeSelectorSwitch {
+		r.runSelectorJob(ctx, client, *job)
+		return
+	}
 
 	result := r.executeJob(ctx, *job)
-	duplicate, err := client.submit(ctx, job.JobID, result)
+	r.submitJobResult(ctx, client, job.JobID, result)
+}
+
+// runSelectorJob covers the legacy-to-interactive lane transition. The Server
+// intentionally replays an active same-session lease, so two local workers can
+// briefly receive the same job and attempt. Execute it once, retain the derived
+// result for a failed submission retry, and never repeat the Clash mutation.
+func (r *Runner) runSelectorJob(ctx context.Context, client jobHTTPClient, job protocol.Job) {
+	r.selectorJobMu.Lock()
+	defer r.selectorJobMu.Unlock()
+	key := fmt.Sprintf("%s/%d", job.JobID, job.Attempt)
+	if r.selectorJobKey != key {
+		r.selectorJobKey = key
+		r.selectorJobResult = protocol.JobResult{}
+		r.selectorJobResultReady = false
+		r.selectorJobSubmitted = false
+	}
+	if r.selectorJobSubmitted {
+		r.logger.Debug("selector job replay already submitted", "job_id", job.JobID, "attempt", job.Attempt)
+		return
+	}
+	if !r.selectorJobResultReady {
+		r.selectorJobResult = r.executeJob(ctx, job)
+		r.selectorJobResultReady = true
+	}
+	if r.submitJobResult(ctx, client, job.JobID, r.selectorJobResult) {
+		r.selectorJobSubmitted = true
+	}
+}
+
+func (r *Runner) submitJobResult(ctx context.Context, client jobHTTPClient, jobID string, result protocol.JobResult) bool {
+	duplicate, err := client.submit(ctx, jobID, result)
 	if err != nil {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		var responseError *jobHTTPError
 		if errors.As(err, &responseError) && responseError.StatusCode == http.StatusConflict && responseError.Code == "lease_lost" {
-			r.logger.Info("job result rejected because lease was lost", "job_id", job.JobID)
-			return
+			r.logger.Info("job result rejected because lease was lost", "job_id", jobID)
+			return false
 		}
-		r.logger.Warn("submit job result failed; worker will continue", "job_id", job.JobID, "error", err)
-		return
+		r.logger.Warn("submit job result failed; worker will continue", "job_id", jobID, "error", err)
+		return false
 	}
-	r.logger.Debug("job result accepted", "job_id", job.JobID, "duplicate", duplicate)
+	r.logger.Debug("job result accepted", "job_id", jobID, "duplicate", duplicate)
+	return true
 }
 
 func (r *Runner) runControlWorker(ctx context.Context) {
@@ -290,10 +326,7 @@ func (r *Runner) runControlWorker(ctx context.Context) {
 		if job == nil {
 			continue
 		}
-		result := r.executeJob(ctx, *job)
-		if _, err := client.submit(ctx, job.JobID, result); err != nil && ctx.Err() == nil {
-			r.logger.Warn("submit interactive control result failed", "job_id", job.JobID, "error", err)
-		}
+		r.runSelectorJob(ctx, client, *job)
 	}
 }
 
