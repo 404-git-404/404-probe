@@ -635,6 +635,9 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 			if _, err = tx.ExecContext(ctx, `INSERT INTO agent_sessions(agent_id,session_id,started_at,active,first_seen,epoch) VALUES(?,?,?,1,?,?)`, authenticatedID, r.SessionID, r.CollectedAt, received.UnixMilli(), int64(r.Epoch)); err != nil {
 				return State{}, false, "", err
 			}
+			if err = requeueSupersededSessionLeasesTx(ctx, tx, authenticatedID, r.Epoch, r.SessionID, received.UnixMilli()); err != nil {
+				return State{}, false, "", err
+			}
 		}
 	} else {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_sessions(agent_id,session_id,started_at,active,first_seen,epoch) VALUES(?,?,?,1,?,?)`, authenticatedID, r.SessionID, r.CollectedAt, received.UnixMilli(), int64(r.Epoch)); err != nil {

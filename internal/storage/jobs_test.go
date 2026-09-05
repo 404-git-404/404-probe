@@ -599,6 +599,38 @@ func TestDifferentSessionCannotClaimWhileLeaseIsActive(t *testing.T) {
 	}
 }
 
+func TestNewAgentSessionRequeuesOldLeaseAndRejectsStaleClaim(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(1000, 0)
+	if _, accepted, _, err := store.ProcessReport(ctx, agentID, validReport(agentID, 1, "old-session", "boot", 1, 100, 100), at); err != nil || !accepted {
+		t.Fatalf("old session report accepted=%t err=%v", accepted, err)
+	}
+	if err := store.CreateOneShotJob(ctx, oneShot("job", agentID, at.Add(time.Second), protocol.ProbeTypeSelectorSwitch)); err != nil {
+		t.Fatal(err)
+	}
+	oldRequest := claimRequest(1, "old-session", protocol.ProbeTypeSelectorSwitch)
+	oldLease, err := store.ClaimJob(ctx, agentID, oldRequest, at.Add(time.Second), time.Minute)
+	if err != nil || oldLease == nil {
+		t.Fatalf("old lease=%+v err=%v", oldLease, err)
+	}
+	if _, accepted, _, err := store.ProcessReport(ctx, agentID, validReport(agentID, 2, "new-session", "boot", 1, 110, 110), at.Add(2*time.Second)); err != nil || !accepted {
+		t.Fatalf("new session report accepted=%t err=%v", accepted, err)
+	}
+	requeued, err := store.GetProbeJob(ctx, "job")
+	if err != nil || requeued.Status != JobStatusQueued || requeued.Attempt != 1 || requeued.LeaseToken != "" || requeued.LeaseSessionID != "" {
+		t.Fatalf("requeued job=%+v err=%v", requeued, err)
+	}
+	if stale, err := store.ClaimJob(ctx, agentID, oldRequest, at.Add(3*time.Second), time.Minute); err != nil || stale != nil {
+		t.Fatalf("stale session claim=%+v err=%v", stale, err)
+	}
+	newLease, err := store.ClaimJob(ctx, agentID, claimRequest(2, "new-session", protocol.ProbeTypeSelectorSwitch), at.Add(3*time.Second), time.Minute)
+	if err != nil || newLease == nil || newLease.JobID != "job" || newLease.Attempt != 2 || newLease.LeaseToken == oldLease.LeaseToken {
+		t.Fatalf("new lease=%+v old=%+v err=%v", newLease, oldLease, err)
+	}
+}
+
 func TestClaimOnlyReturnsSupportedProbeType(t *testing.T) {
 	for name, capabilities := range map[string][]protocol.ProbeType{
 		"tcp-first": {protocol.ProbeTypeTCPConnect, protocol.ProbeTypeHTTP},

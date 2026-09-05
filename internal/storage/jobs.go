@@ -298,6 +298,16 @@ func (s *Store) ClaimJob(ctx context.Context, agentID string, request protocol.C
 	if err := requireActiveAgentTx(ctx, tx, agentID); err != nil {
 		return nil, err
 	}
+	current, err := claimSessionIsCurrentTx(ctx, tx, agentID, request.AgentEpoch, request.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !current {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
 
 	if err := cleanupExpiredJobsTx(ctx, tx, agentID, nowMillis); err != nil {
 		return nil, err
@@ -397,6 +407,29 @@ func (s *Store) ClaimJob(ctx context.Context, agentID string, request protocol.C
 		return nil, err
 	}
 	return &job, nil
+}
+
+func claimSessionIsCurrentTx(ctx context.Context, tx *sql.Tx, agentID string, epoch uint64, sessionID string) (bool, error) {
+	var storedEpoch int64
+	var storedSession string
+	err := tx.QueryRowContext(ctx, `SELECT epoch,session_id FROM agent_state WHERE agent_id=?`, agentID).Scan(&storedEpoch, &storedSession)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return storedEpoch == int64(epoch) && storedSession == sessionID, nil
+}
+
+func requeueSupersededSessionLeasesTx(ctx context.Context, tx *sql.Tx, agentID string, epoch uint64, sessionID string, nowMillis int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET
+		status=CASE WHEN expires_at>? THEN 'queued' ELSE 'expired' END,
+		lease_token=NULL,lease_epoch=NULL,lease_session_id=NULL,leased_at=NULL,lease_until=NULL
+		WHERE agent_id=? AND status='leased'
+		AND (lease_epoch IS NULL OR lease_epoch<>? OR lease_session_id IS NULL OR lease_session_id<>?)`,
+		nowMillis, agentID, int64(epoch), sessionID)
+	return err
 }
 
 func (s *Store) SubmitJobResult(ctx context.Context, agentID, jobID string, result protocol.JobResult, received time.Time) (SubmitResultAck, error) {

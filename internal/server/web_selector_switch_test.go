@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -42,6 +43,15 @@ func markSelectorAgentOnline(t *testing.T, store *storage.Store, agentID string,
 	if _, accepted, reason, err := store.ProcessReport(context.Background(), agentID, report, at); err != nil || !accepted {
 		t.Fatalf("mark Agent online accepted=%t reason=%q err=%v", accepted, reason, err)
 	}
+}
+
+func selectorRunnerStatePath(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte("1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestWebSelectorSwitchCreatesAllowlistedIdempotentJob(t *testing.T) {
@@ -190,7 +200,7 @@ func TestPauseExpiresQueuedSelectorSwitch(t *testing.T) {
 	runner, err := agent.New(agent.Config{
 		ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
 		Interval: time.Hour, JobInterval: 10 * time.Millisecond, Timeout: time.Second,
-		AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "pause-resume.state"),
+		AllowInsecureHTTP: true, StatePath: selectorRunnerStatePath(t, "pause-resume.state"),
 		ClashAPIURL: clash.URL, OutboundInterval: time.Hour,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -252,7 +262,7 @@ func TestRevokePreventsRunningSelectorSwitchFromExecutingAgain(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", response.Code, response.Body.String())
 	}
 	claim := protocol.ClaimRequest{
-		ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: 1, SessionID: "running",
+		ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: 1, SessionID: "session",
 		SupportedProbeTypes: []protocol.ProbeType{protocol.ProbeTypeSelectorSwitch},
 	}
 	job, response := claimHTTPJob(t, app, agentToken, claim)
@@ -328,7 +338,7 @@ func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
 	runner, err := agent.New(agent.Config{
 		ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
 		Interval: time.Hour, JobInterval: 10 * time.Millisecond, Timeout: 2 * time.Second,
-		AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "agent.state"),
+		AllowInsecureHTTP: true, StatePath: selectorRunnerStatePath(t, "agent.state"),
 		ClashAPIURL: clash.URL, OutboundInterval: time.Hour,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {

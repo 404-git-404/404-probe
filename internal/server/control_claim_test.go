@@ -30,7 +30,7 @@ func TestInteractiveControlClaimWakesForSelectorOnly(t *testing.T) {
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
 	claimBody, _ := json.Marshal(protocol.ControlClaimRequest{
-		ProtocolVersion: protocol.ControlProtocolVersion, AgentEpoch: 9, SessionID: "interactive-test",
+		ProtocolVersion: protocol.ControlProtocolVersion, AgentEpoch: 1, SessionID: "session",
 	})
 	type claimResult struct {
 		job     protocol.Job
