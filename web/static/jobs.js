@@ -64,6 +64,8 @@ function jobTarget(job) {
       return `${config.target} · ${config.count} 次`;
     case 'singbox_selector_switch':
       return `${config.selector} → ${config.choice}`;
+    case 'google_status':
+      return 'Google Status';
     default:
       return '未知配置';
   }
