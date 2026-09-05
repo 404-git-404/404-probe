@@ -153,6 +153,8 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	mux.Handle("/api/v1/web/agents/{agent_id}/outbounds/switch", a.requireWebSession(http.HandlerFunc(a.handleWebSelectorSwitchMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/upgrade", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebUpgrade)))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/upgrade", a.requireWebSession(http.HandlerFunc(a.handleGetWebUpgrade), true))
+	mux.Handle("POST /api/v1/web/agents/{agent_id}/google-status", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebGoogleStatus)))
+	mux.Handle("/api/v1/web/agents/{agent_id}/google-status", a.requireWebSession(http.HandlerFunc(a.handleWebGoogleStatusMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/revoke", a.requireWebMutation(http.HandlerFunc(a.handleRevokeWebAgent)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/revoke", a.requireWebSession(http.HandlerFunc(a.handleWebAgentRevokeMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/disable", a.requireWebMutation(http.HandlerFunc(a.handleDisableWebAgent)))
@@ -237,9 +239,12 @@ func (a *App) handleWebLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if cookie, err := r.Cookie(a.webAuth.sessionCookieName()); err == nil && a.webAuth.authenticate(cookie.Value, a.now()) != nil {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
+	if cookie, err := r.Cookie(a.webAuth.sessionCookieName()); err == nil {
+		if a.webAuth.authenticate(cookie.Value, a.now()) != nil {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		a.webAuth.clearSessionCookie(w)
 	}
 	a.renderWebLogin(w, http.StatusOK, false, false)
 }

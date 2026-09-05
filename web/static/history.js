@@ -2,6 +2,9 @@ const id = new URLSearchParams(location.search).get('id');
 const empty = document.querySelector('#history-empty');
 const outboundStatus = document.querySelector('#outbounds-status');
 const outboundList = document.querySelector('#outbounds-list');
+const googleState = document.querySelector('#google-status-state');
+const googleValues = document.querySelector('#google-status-values');
+const googleChecked = document.querySelector('#google-status-checked');
 let mutationCSRFToken = '';
 let currentAgent = null;
 let switchingSelector = '';
@@ -213,6 +216,40 @@ function renderOutbounds(agent) {
   }
 }
 
+function renderGoogleStatus(agent) {
+  const google = agent?.google_status;
+  googleValues.replaceChildren();
+  if (!google?.supported) {
+    googleState.textContent = 'Unsupported';
+    googleChecked.textContent = '';
+    return;
+  }
+  const statuses = google.result ? [google.result.youtube?.status, google.result.search?.status, google.result.signin?.status, google.result.gemini?.status] : [];
+  const unknown = statuses.filter(status => !status || status === 'unknown').length;
+  googleState.textContent = google.pending ? '检测中…'
+    : !google.result ? '尚未检测'
+      : unknown === statuses.length ? '检测失败'
+        : unknown ? '部分结果未知'
+          : google.stale ? '最后结果（stale）' : '当前结果';
+  if (!google.result) {
+    googleValues.textContent = '尚未检测';
+    googleChecked.textContent = '';
+    return;
+  }
+  const rows = [
+    ['YouTube', google.result.youtube?.status === 'cn' ? 'CN · SENT TO CHINA' : google.result.youtube?.status === 'not_cn' ? google.result.youtube.region : 'UNKNOWN'],
+    ['Google Search', (google.result.search?.status || 'unknown').toUpperCase()],
+    ['Google Sign-in', (google.result.signin?.status || 'unknown').toUpperCase()],
+    ['Gemini', `${(google.result.gemini?.status || 'unknown').toUpperCase()}${google.result.gemini?.region ? ` [${google.result.gemini.region}]` : ''}`],
+  ];
+  for (const [name, value] of rows) {
+    const term = document.createElement('dt'); term.textContent = name;
+    const description = document.createElement('dd'); description.textContent = value;
+    googleValues.append(term, description);
+  }
+  googleChecked.textContent = google.checked_at ? `Last checked: ${new Date(google.checked_at).toLocaleString()}` : '';
+}
+
 function draw(canvas, points, key, color, format) {
   const ratio = devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -288,6 +325,7 @@ async function load() {
     const state = agent.state || {};
     document.querySelector('#title').textContent = `${state.hostname || agent.name || 'Agent'} · 历史`;
     renderOutbounds(agent);
+    renderGoogleStatus(agent);
     const points = history.points;
     empty.classList.toggle('hidden', points.length > 0);
     if (!points.length) {
@@ -305,6 +343,7 @@ async function load() {
   } catch (error) {
     empty.textContent = '加载失败';
     outboundStatus.textContent = '出站状态加载失败';
+    googleState.textContent = 'Google Status 加载失败';
   }
 }
 
@@ -316,4 +355,5 @@ events.addEventListener('agent', event => {
   if (!currentAgent || update.agent_id !== id) return;
   currentAgent = {...currentAgent, ...update};
   renderOutbounds(currentAgent);
+  renderGoogleStatus(currentAgent);
 });

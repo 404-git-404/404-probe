@@ -39,6 +39,8 @@ type Executor interface {
 	Execute(context.Context, protocol.Job) (Execution, error)
 }
 
+type googleStatusCapability interface{ SupportsGoogleStatus() bool }
+
 // UnsupportedExecutor advertises no capabilities and returns a stable error
 // if called directly.
 type UnsupportedExecutor struct{}
@@ -188,8 +190,15 @@ func decodeStrictJobResponse(data []byte, value any) error {
 
 func (r *Runner) runJobWorker(ctx context.Context) {
 	baseCapabilities := append([]protocol.ProbeType(nil), r.executor.SupportedProbeTypes()...)
+	filtered := baseCapabilities[:0]
+	for _, capability := range baseCapabilities {
+		if capability != protocol.ProbeTypeGoogleStatus {
+			filtered = append(filtered, capability)
+		}
+	}
+	baseCapabilities = filtered
 	capabilities := append([]protocol.ProbeType(nil), baseCapabilities...)
-	if len(capabilities) == 0 && !r.clashIntegrationEnabled() {
+	if len(capabilities) == 0 && !r.clashIntegrationEnabled() && !r.googleStatusAvailable {
 		r.logger.Info("job worker disabled; executor has no supported probe types")
 		<-ctx.Done()
 		return
@@ -202,6 +211,9 @@ func (r *Runner) runJobWorker(ctx context.Context) {
 		cycleCapabilities := append([]protocol.ProbeType(nil), baseCapabilities...)
 		if r.clashIntegrationEnabled() && r.clashControlReady.Load() && !r.interactiveControlSupported.Load() {
 			cycleCapabilities = append(cycleCapabilities, protocol.ProbeTypeSelectorSwitch)
+		}
+		if r.googleStatusAvailable && r.googleStatusSupported.Load() {
+			cycleCapabilities = append(cycleCapabilities, protocol.ProbeTypeGoogleStatus)
 		}
 		if len(cycleCapabilities) != 0 {
 			r.runJobCycle(ctx, client, protocol.ClaimRequest{ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, SupportedProbeTypes: cycleCapabilities})
@@ -346,6 +358,13 @@ func emptyProbeResult(job protocol.Job) protocol.ProbeResult {
 		return protocol.ProbeResult{HTTP: &protocol.HTTPResult{}}
 	case protocol.ProbeTypeSelectorSwitch:
 		return protocol.ProbeResult{SelectorSwitch: &protocol.SelectorSwitchResult{}}
+	case protocol.ProbeTypeGoogleStatus:
+		return protocol.ProbeResult{GoogleStatus: &protocol.GoogleStatusResult{
+			YouTube: protocol.YouTubeResult{Status: protocol.YouTubeUnknown},
+			Search:  protocol.GoogleSearchResult{Status: protocol.GoogleSearchUnknown},
+			SignIn:  protocol.GoogleSignInResult{Status: protocol.GoogleSignInUnknown},
+			Gemini:  protocol.GeminiResult{Status: protocol.GeminiUnknown},
+		}}
 	default:
 		return protocol.ProbeResult{}
 	}

@@ -99,6 +99,8 @@ type Runner struct {
 	versionReportAccepted       atomic.Bool
 	upgradeAPISupported         atomic.Bool
 	interactiveControlSupported atomic.Bool
+	googleStatusSupported       atomic.Bool
+	googleStatusAvailable       bool
 	clashControlReady           atomic.Bool
 	interactiveControlReady     chan struct{}
 	interactiveControlOnce      sync.Once
@@ -146,6 +148,10 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
 		executor:  executor, interactiveControlReady: make(chan struct{}),
+		googleStatusAvailable: func() bool {
+			capable, ok := executor.(googleStatusCapability)
+			return ok && capable.SupportsGoogleStatus()
+		}(),
 	}, nil
 }
 
@@ -296,6 +302,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		r.upgradeAPISupported.Store(true)
 	}
 	r.interactiveControlSupported.Store(response.Capabilities.InteractiveControl)
+	r.googleStatusSupported.Store(response.Capabilities.GoogleStatus)
 	if response.Capabilities.InteractiveControl {
 		r.interactiveControlOnce.Do(func() { close(r.interactiveControlReady) })
 	}

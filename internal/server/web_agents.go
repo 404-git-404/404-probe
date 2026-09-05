@@ -32,8 +32,17 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
-	State     *webAgentStateView `json:"state"`
-	Outbounds webOutboundsView   `json:"outbounds"`
+	State        *webAgentStateView  `json:"state"`
+	Outbounds    webOutboundsView    `json:"outbounds"`
+	GoogleStatus webGoogleStatusView `json:"google_status"`
+}
+
+type webGoogleStatusView struct {
+	Supported bool                         `json:"supported"`
+	Pending   bool                         `json:"pending"`
+	Stale     bool                         `json:"stale"`
+	Result    *protocol.GoogleStatusResult `json:"result,omitempty"`
+	CheckedAt *int64                       `json:"checked_at,omitempty"`
 }
 
 type webOutboundsView struct {
@@ -190,6 +199,24 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		checkedAt := snapshot.CheckedAt
 		stale := a.now().Sub(time.UnixMilli(snapshot.CheckedAt)) > outboundSnapshotStaleAfter
 		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Status: snapshot.Status, Stale: stale, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
+	}
+	supported, err := a.store.GoogleStatusCapability(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	pending, err := a.store.GoogleStatusPending(ctx, agentID, a.now())
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	view.GoogleStatus = webGoogleStatusView{Supported: supported, Pending: pending, Stale: record.Agent.Revoked || record.Agent.DisabledAt != nil || !record.Online}
+	google, exists, err := a.store.GetGoogleStatus(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	if exists {
+		checkedAt := google.CheckedAt
+		view.GoogleStatus.Result = &google.Result
+		view.GoogleStatus.CheckedAt = &checkedAt
 	}
 	return view, nil
 }

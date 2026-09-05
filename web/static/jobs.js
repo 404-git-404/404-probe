@@ -95,6 +95,17 @@ function measurementLines(job) {
     const value = measurement.selector_switch;
     return [['当前出站', value.current || '—'], ['执行方式', value.changed ? '已切换' : '幂等，无需切换']];
   }
+  if (measurement.google_status) {
+    const value = measurement.google_status;
+    const youtube = value.youtube?.status === 'cn' ? 'CN · SENT TO CHINA' : value.youtube?.status === 'not_cn' ? value.youtube.region : 'UNKNOWN';
+    const gemini = `${(value.gemini?.status || 'unknown').toUpperCase()}${value.gemini?.region ? ` [${value.gemini.region}]` : ''}`;
+    return [
+      ['YouTube', youtube],
+      ['Google Search', (value.search?.status || 'unknown').toUpperCase()],
+      ['Google Sign-in', (value.signin?.status || 'unknown').toUpperCase()],
+      ['Gemini', gemini],
+    ];
+  }
   return [];
 }
 

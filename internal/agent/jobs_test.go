@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -345,6 +346,43 @@ func TestConfiguredClashDiscoveryAdvertisesSelectorSwitchCapability(t *testing.T
 	waitSignal(t, done, "selector worker shutdown")
 	if len(claim.SupportedProbeTypes) != 1 || claim.SupportedProbeTypes[0] != protocol.ProbeTypeSelectorSwitch {
 		t.Fatalf("capabilities=%v", claim.SupportedProbeTypes)
+	}
+}
+
+func TestGoogleStatusClaimRequiresCurrentNegotiation(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		t.Run(fmt.Sprint(supported), func(t *testing.T) {
+			claims := make(chan protocol.ClaimRequest, 8)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var claim protocol.ClaimRequest
+				if err := json.NewDecoder(r.Body).Decode(&claim); err != nil {
+					t.Error(err)
+				}
+				claims <- claim
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+			runner := newJobTestRunner(t, server.URL, time.Second, time.Hour, NewProbeExecutor())
+			runner.googleStatusSupported.Store(supported)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan struct{})
+			go func() { runner.runJobWorker(ctx); close(done) }()
+			select {
+			case claim := <-claims:
+				found := false
+				for _, kind := range claim.SupportedProbeTypes {
+					found = found || kind == protocol.ProbeTypeGoogleStatus
+				}
+				if found != supported {
+					t.Errorf("capabilities=%v negotiated=%t", claim.SupportedProbeTypes, supported)
+				}
+			case <-time.After(2 * time.Second):
+				t.Error("no claim")
+			}
+			cancel()
+			waitSignal(t, done, "google worker shutdown")
+		})
 	}
 }
 

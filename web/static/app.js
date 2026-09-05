@@ -251,6 +251,63 @@ async function setAgentDisabled(agent, disabled, button) {
   }
 }
 
+const googleLabels = {
+  youtube: {unknown: 'UNKNOWN', cn: 'CN · SENT TO CHINA'},
+  search: {unknown: 'UNKNOWN', ok: 'OK', challenge: 'CHALLENGE', blocked: 'BLOCKED'},
+  signin: {unknown: 'UNKNOWN', reachable: 'REACHABLE', challenge: 'CHALLENGE', blocked: 'BLOCKED'},
+  gemini: {unknown: 'UNKNOWN', available: 'AVAILABLE', blocked: 'BLOCKED'},
+};
+
+function googleStatusSummary(agent) {
+  const google = agent.google_status;
+  if (!google?.supported) return 'Google: Unsupported';
+  if (!google.result) return google.pending ? 'Google: 检测中…' : 'Google: 尚未检测';
+  const result = google.result;
+  const yt = result.youtube?.status === 'not_cn' ? result.youtube.region : googleLabels.youtube[result.youtube?.status] || 'UNKNOWN';
+  const search = googleLabels.search[result.search?.status] || 'UNKNOWN';
+  const signin = googleLabels.signin[result.signin?.status] || 'UNKNOWN';
+  let gemini = googleLabels.gemini[result.gemini?.status] || 'UNKNOWN';
+  if (result.gemini?.status === 'available' && result.gemini.region) gemini += ` ${result.gemini.region}`;
+  return `Google: YT ${yt} · Search ${search} · Login ${signin} · Gemini ${gemini}`;
+}
+
+function googleStatusState(google) {
+  if (!google?.supported) return 'Unsupported';
+  if (google.pending) return '检测中…';
+  if (!google.result) return '尚未检测';
+  const statuses = [google.result.youtube?.status, google.result.search?.status, google.result.signin?.status, google.result.gemini?.status];
+  const unknown = statuses.filter(status => !status || status === 'unknown').length;
+  if (unknown === statuses.length) return '检测失败';
+  if (unknown) return '部分结果未知';
+  if (google.stale) return '最后结果（stale）';
+  return '';
+}
+
+async function rerunGoogleStatus(agent, button, feedback) {
+  if (!mutationCSRFToken) return;
+  button.disabled = true;
+  button.textContent = '检测中…';
+  feedback.textContent = '';
+  try {
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agent.agent_id)}/google-status`, {
+      method: 'POST', cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken}, body: '{}',
+    });
+    if (response.status === 401) { location.assign('/login'); return; }
+    if (!response.ok) {
+      let message = '检测请求失败';
+      try { message = (await response.json()).error?.message || message; } catch (error) { /* use safe fallback */ }
+      throw new Error(message);
+    }
+    agents.set(agent.agent_id, {...agent, google_status: {...agent.google_status, pending: true}});
+    render();
+  } catch (error) {
+    button.textContent = '重新检测';
+    button.disabled = false;
+    feedback.textContent = error.message || '检测请求失败';
+  }
+}
+
 for (const button of document.querySelectorAll('[data-copy-target]')) {
   button.addEventListener('click', async () => {
     const target = document.querySelector(`#${button.dataset.copyTarget}`);
@@ -338,6 +395,36 @@ function render() {
     }
     card.append(network);
 
+    const google = document.createElement('div');
+    google.className = 'google-status-compact';
+    const googleText = document.createElement('div');
+    googleText.className = 'google-service-values';
+    setReadableText(googleText, googleStatusSummary(agent));
+    if (agent.google_status?.result) {
+      const result = agent.google_status.result;
+      googleText.replaceChildren();
+      for (const [label, value] of [
+        ['YT', result.youtube.status === 'not_cn' ? result.youtube.region : googleLabels.youtube[result.youtube.status]],
+        ['Search', googleLabels.search[result.search.status]],
+        ['Sign-in', googleLabels.signin[result.signin.status]],
+        ['Gemini', `${googleLabels.gemini[result.gemini.status]}${result.gemini.region ? ` [${result.gemini.region}]` : ''}`],
+      ]) {
+        const item = document.createElement('span');
+        item.textContent = `${label}: ${value || 'UNKNOWN'}`;
+        if (label === 'YT' && result.youtube.status === 'cn') item.className = 'google-cn';
+        googleText.append(item);
+      }
+    }
+    const googleFeedback = document.createElement('small');
+    googleFeedback.textContent = googleStatusState(agent.google_status);
+    const googleButton = document.createElement('button');
+    googleButton.type = 'button';
+    googleButton.textContent = agent.google_status?.pending ? '检测中…' : '重新检测';
+    googleButton.disabled = !mutationCSRFToken || !agent.google_status?.supported || !agent.online || Boolean(agent.disabled_at) || agent.revoked || Boolean(agent.google_status?.pending);
+    googleButton.addEventListener('click', () => rerunGoogleStatus(agent, googleButton, googleFeedback));
+    google.append(googleText, googleFeedback, googleButton);
+    card.append(google);
+
     const meta = document.createElement('div');
     meta.className = 'meta';
     for (const text of [
@@ -345,6 +432,7 @@ function render() {
       `${state.os || '未知 OS'} / ${state.arch || '未知架构'}`,
       `Version: ${agent.version || 'unknown'}`,
       `Last Seen: ${seen(agent.last_seen)}`,
+      agent.google_status?.checked_at ? `Google checked: ${seen(agent.google_status.checked_at)}${agent.google_status.stale ? ' · stale' : ''}` : '',
       agent.upgrade ? `Upgrade: ${upgradeLabel(agent.upgrade)}` : '',
     ]) {
       if (!text) continue;
@@ -404,7 +492,7 @@ async function hydrateDetails(records) {
   const worker = async () => {
     while (next < pending.length) {
       const record = pending[next++];
-      const detail = record.detail_loaded ? {} : await readJSON(`/api/v1/web/agents/${encodeURIComponent(record.agent_id)}`);
+      const detail = await readJSON(`/api/v1/web/agents/${encodeURIComponent(record.agent_id)}`);
       const upgrade = await readOptionalJSON(`/api/v1/web/agents/${encodeURIComponent(record.agent_id)}/upgrade`);
       agents.set(record.agent_id, {...agents.get(record.agent_id), ...detail, upgrade, detail_loaded: true});
     }

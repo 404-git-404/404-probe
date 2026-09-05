@@ -113,6 +113,47 @@ func TestWebLoginPagePreservesSameOriginForFormSubmission(t *testing.T) {
 	}
 }
 
+func TestWebRootRedirectContractAndStaleSessionRecovery(t *testing.T) {
+	app, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	root := webRequest(app, http.MethodGet, "/", nil, nil)
+	if root.Code != http.StatusSeeOther || root.Header().Get("Location") != "/login" {
+		t.Fatalf("anonymous root status=%d location=%q", root.Code, root.Header().Get("Location"))
+	}
+	login := webRequest(app, http.MethodGet, "/login", nil, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("follow login status=%d", login.Code)
+	}
+	authenticated := postWebLogin(t, app, "test-password", "https://probe.test")
+	cookie := sessionCookieFromResponse(t, app, authenticated)
+	dashboard := webRequest(app, http.MethodGet, "/", nil, cookie)
+	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), `id="agents"`) {
+		t.Fatalf("dashboard status=%d body=%s", dashboard.Code, dashboard.Body.String())
+	}
+	loginAgain := webRequest(app, http.MethodGet, "/login", nil, cookie)
+	if loginAgain.Code != http.StatusSeeOther || loginAgain.Header().Get("Location") != "/" {
+		t.Fatalf("authenticated login status=%d location=%q", loginAgain.Code, loginAgain.Header().Get("Location"))
+	}
+	stale := &http.Cookie{Name: app.webAuth.sessionCookieName(), Value: "stale-session"}
+	recovered := webRequest(app, http.MethodGet, "/", nil, stale)
+	if recovered.Code != http.StatusSeeOther || recovered.Header().Get("Location") != "/login" || !clearsCookie(recovered, app.webAuth.sessionCookieName()) {
+		t.Fatalf("stale root status=%d location=%q cookies=%v", recovered.Code, recovered.Header().Get("Location"), recovered.Result().Cookies())
+	}
+	favicon := webRequest(app, http.MethodGet, "/favicon.ico", nil, stale)
+	if favicon.Code != http.StatusNoContent || len(favicon.Result().Cookies()) != 0 {
+		t.Fatalf("favicon status=%d cookies=%v", favicon.Code, favicon.Result().Cookies())
+	}
+}
+
+func clearsCookie(response *httptest.ResponseRecorder, name string) bool {
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == name && cookie.Value == "" && cookie.MaxAge < 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func TestWebLoginFaviconDoesNotRotateCSRFToken(t *testing.T) {
 	app, store, _ := newWebAuthenticationTestApp(t)
 	defer store.Close()

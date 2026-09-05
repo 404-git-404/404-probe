@@ -236,7 +236,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishState(state)
 	}
-	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true, InteractiveControl: true}})
+	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true}})
 }
 
 func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +257,39 @@ func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid claim request")
 		return
+	}
+	googleCapable := false
+	currentAgent, snapshotErr := a.store.GetAgentSnapshot(r.Context(), agentID, a.now(), a.offlineTimeout)
+	if snapshotErr != nil {
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read agent")
+		return
+	}
+	if currentAgent.State != nil && (currentAgent.State.Epoch != request.AgentEpoch || currentAgent.State.SessionID != request.SessionID) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	for _, probeType := range request.SupportedProbeTypes {
+		if probeType == protocol.ProbeTypeGoogleStatus {
+			googleCapable = true
+			break
+		}
+	}
+	negotiated, err := a.store.NegotiateGoogleStatusCapability(r.Context(), agentID, googleCapable, request.AgentEpoch, request.SessionID, a.now())
+	if err != nil {
+		a.logger.Error("record Google Status capability", "agent_id", agentID, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not claim job")
+		return
+	}
+	if negotiated && googleCapable && currentAgent.Online {
+		created, err := a.store.EnsureGoogleStatusJob(r.Context(), agentID, a.now())
+		if err != nil && !errors.Is(err, storage.ErrGoogleStatusPending) && !errors.Is(err, storage.ErrOutstandingJobsFull) && !errors.Is(err, storage.ErrGoogleStatusUnsupported) {
+			a.logger.Error("schedule Google Status", "agent_id", agentID, "error", err)
+			writeJobError(w, http.StatusInternalServerError, "internal_error", "could not claim job")
+			return
+		}
+		if created {
+			_ = a.publishAgentDetail(r.Context(), agentID)
+		}
 	}
 	job, err := a.store.ClaimJob(r.Context(), agentID, request, a.now(), jobLeaseDuration)
 	if err != nil {
@@ -313,6 +346,11 @@ func (a *App) handleJobResult(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.writeResultError(w, agentID, err)
 		return
+	}
+	if job.ProbeType == protocol.ProbeTypeGoogleStatus && !ack.Duplicate {
+		if err := a.publishAgentDetail(r.Context(), agentID); err != nil {
+			a.logger.Warn("publish Google Status Web event", "agent_id", agentID, "error", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Accepted  bool   `json:"accepted"`

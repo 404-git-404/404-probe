@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -348,6 +348,39 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	if version < 9 {
+		for _, statement := range []string{
+			`CREATE TABLE agent_google_status_capabilities (
+				agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+				supported INTEGER NOT NULL CHECK(supported IN (0,1)),
+				updated_at INTEGER NOT NULL
+			)`,
+			`CREATE TABLE agent_google_status (
+				agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+				youtube_status TEXT NOT NULL CHECK(youtube_status IN ('unknown','cn','not_cn')),
+				youtube_region TEXT,
+				sent_to_china INTEGER CHECK(sent_to_china IN (0,1)),
+				youtube_error TEXT,
+				search_status TEXT NOT NULL CHECK(search_status IN ('unknown','ok','challenge','blocked')),
+				search_error TEXT,
+				signin_status TEXT NOT NULL CHECK(signin_status IN ('unknown','reachable','challenge','blocked')),
+				signin_error TEXT,
+				gemini_status TEXT NOT NULL CHECK(gemini_status IN ('unknown','available','blocked')),
+				gemini_region TEXT,
+				gemini_error TEXT,
+				checked_at INTEGER NOT NULL,
+				unknown_streak INTEGER NOT NULL,
+				next_due_at INTEGER NOT NULL
+			)`,
+			`CREATE UNIQUE INDEX idx_probe_jobs_one_pending_google_status ON probe_jobs(agent_id)
+				WHERE probe_type='google_status' AND status IN ('queued','leased')`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(9, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 9: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
@@ -650,6 +683,13 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	}
 	if err := writeStateTx(ctx, tx, state); err != nil {
 		return State{}, false, "", err
+	}
+	// A new Agent process must negotiate Google Status again. Keep the last
+	// measurement, but never inherit a prior session's supported capability.
+	if !exists || r.Epoch != previous.Epoch {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM agent_google_status_capabilities WHERE agent_id=?`, authenticatedID); err != nil {
+			return State{}, false, "", err
+		}
 	}
 	if err := aggregateMinuteTx(ctx, tx, state); err != nil {
 		return State{}, false, "", err

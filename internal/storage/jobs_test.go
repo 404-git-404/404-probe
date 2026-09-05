@@ -40,6 +40,8 @@ func oneShot(id, agentID string, at time.Time, probeType protocol.ProbeType) Cre
 		params.Config = protocol.ProbeConfig{HTTP: &protocol.HTTPConfig{URL: "https://example.com/health", Method: "GET"}}
 	case protocol.ProbeTypeSelectorSwitch:
 		params.Config = protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}}
+	case protocol.ProbeTypeGoogleStatus:
+		params.Config = protocol.ProbeConfig{GoogleStatus: &protocol.GoogleStatusConfig{}}
 	}
 	return params
 }
@@ -68,6 +70,15 @@ func resultFor(job *protocol.Job, success bool) protocol.JobResult {
 		result.Result = protocol.ProbeResult{TCPConnect: &protocol.TCPConnectResult{ConnectMS: 20}}
 	case protocol.ProbeTypeHTTP:
 		result.Result = protocol.ProbeResult{HTTP: &protocol.HTTPResult{DNSMS: 1, ConnectMS: 2, TLSMS: 3, TTFBMS: 20, TotalMS: 25, StatusCode: 200}}
+	case protocol.ProbeTypeGoogleStatus:
+		sent := false
+		result.ResolvedIP = ""
+		result.Result = protocol.ProbeResult{GoogleStatus: &protocol.GoogleStatusResult{
+			YouTube: protocol.YouTubeResult{Status: protocol.YouTubeNotCN, Region: "JP", SentToChina: &sent},
+			Search:  protocol.GoogleSearchResult{Status: protocol.GoogleSearchOK},
+			SignIn:  protocol.GoogleSignInResult{Status: protocol.GoogleSignInReachable},
+			Gemini:  protocol.GeminiResult{Status: protocol.GeminiAvailable, Region: "JPN"},
+		}}
 	}
 	return result
 }

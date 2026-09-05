@@ -9,6 +9,12 @@
 <body>
   <header><div><a class="back" href="/">← 返回</a><h1 id="title">Agent 历史</h1><p>最近 24 小时 · 1 分钟聚合</p></div><button id="logout" class="logout" type="button" disabled>退出</button></header>
   <main class="history-grid">
+    <article class="google-status-detail" aria-labelledby="google-status-title">
+      <h2 id="google-status-title">Google Status</h2>
+      <p id="google-status-state">正在加载</p>
+      <dl id="google-status-values"></dl>
+      <p id="google-status-checked"></p>
+    </article>
     <article class="outbounds" aria-labelledby="outbounds-title">
       <h2 id="outbounds-title">sing-box 出站选择器 <span>受控切换</span></h2>
       <p id="outbounds-status" class="outbounds-status">正在加载出站状态</p>

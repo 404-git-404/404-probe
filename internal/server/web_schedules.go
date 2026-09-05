@@ -193,6 +193,8 @@ func newWebScheduleConfigView(probeType protocol.ProbeType, config protocol.Prob
 		return webScheduleConfigView{Target: config.ICMPPing.Target, Count: config.ICMPPing.Count}, nil
 	case protocol.ProbeTypeSelectorSwitch:
 		return webScheduleConfigView{Selector: config.SelectorSwitch.Selector, Choice: config.SelectorSwitch.Choice}, nil
+	case protocol.ProbeTypeGoogleStatus:
+		return webScheduleConfigView{}, nil
 	default:
 		return webScheduleConfigView{}, fmt.Errorf("unknown probe type %q", probeType)
 	}

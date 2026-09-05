@@ -192,6 +192,38 @@ func TestVersionReportWaitsForServerCapability(t *testing.T) {
 	}
 }
 
+func TestGoogleStatusNegotiationResetsWhenServerDowngrades(t *testing.T) {
+	responses := []string{`{"accepted":true}`, `{"accepted":true,"capabilities":{"google_status":true}}`, `{"accepted":true}`}
+	index := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if _, exists := body["google_status"]; exists {
+			t.Error("new report field must never be sent")
+		}
+		_, _ = io.WriteString(w, responses[index])
+		index++
+	}))
+	defer server.Close()
+	runner, err := New(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second,
+		AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(staticReportCollector)
+	sequence := uint64(0)
+	for _, want := range []bool{false, true, false} {
+		if _, err := runner.sendReport(context.Background(), &sequence); err != nil {
+			t.Fatal(err)
+		}
+		if got := runner.googleStatusSupported.Load(); got != want {
+			t.Fatalf("negotiation=%t want=%t", got, want)
+		}
+	}
+}
+
 func TestPostClassifiesOnlyExplicitLifecycleSignals(t *testing.T) {
 	tests := []struct {
 		name         string

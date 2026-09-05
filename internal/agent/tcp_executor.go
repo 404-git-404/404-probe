@@ -131,13 +131,14 @@ func remoteIP(address net.Addr) string {
 // ProbeExecutor dispatches the production probe types implemented by the
 // agent. ICMP is advertised only when its runtime socket backend is available.
 type ProbeExecutor struct {
-	http Executor
-	tcp  Executor
-	icmp Executor
+	http   Executor
+	tcp    Executor
+	icmp   Executor
+	google Executor
 }
 
 func NewProbeExecutor() *ProbeExecutor {
-	return &ProbeExecutor{http: NewHTTPExecutor(), tcp: NewTCPExecutor(), icmp: NewICMPExecutor()}
+	return &ProbeExecutor{http: NewHTTPExecutor(), tcp: NewTCPExecutor(), icmp: NewICMPExecutor(), google: NewGoogleStatusExecutor()}
 }
 
 func (e *ProbeExecutor) SupportedProbeTypes() []protocol.ProbeType {
@@ -147,6 +148,8 @@ func (e *ProbeExecutor) SupportedProbeTypes() []protocol.ProbeType {
 	}
 	return capabilities
 }
+
+func (e *ProbeExecutor) SupportsGoogleStatus() bool { return e != nil && e.google != nil }
 
 func (e *ProbeExecutor) Execute(ctx context.Context, job protocol.Job) (Execution, error) {
 	switch job.ProbeType {
@@ -159,6 +162,8 @@ func (e *ProbeExecutor) Execute(ctx context.Context, job protocol.Job) (Executio
 			return e.icmp.Execute(ctx, job)
 		}
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
+	case protocol.ProbeTypeGoogleStatus:
+		return e.google.Execute(ctx, job)
 	default:
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	}
