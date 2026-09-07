@@ -10,6 +10,7 @@ const addAgentName = document.querySelector('#add-agent-name');
 const addAgentSubmit = document.querySelector('#add-agent-submit');
 const addAgentError = document.querySelector('#add-agent-error');
 const createdInstallCommand = document.querySelector('#created-install-command');
+const copyInstallCommand = document.querySelector('#copy-install-command');
 const createdEnrollment = document.querySelector('#created-enrollment');
 const removeAgentDialog = document.querySelector('#remove-agent-dialog');
 const removeAgentForm = document.querySelector('#remove-agent-form');
@@ -128,6 +129,7 @@ upgradeAgentForm.addEventListener('submit', async event => {
 
 function clearEnrollmentDialog() {
   createdInstallCommand.textContent = '';
+	copyInstallCommand.disabled = true;
   createdEnrollment.textContent = '';
   addAgentForm.reset();
   addAgentError.classList.add('hidden');
@@ -164,7 +166,8 @@ addAgentForm.addEventListener('submit', async event => {
     }
     if (!response.ok) throw new Error(response.statusText);
     const enrollment = await response.json();
-    createdInstallCommand.textContent = enrollment.install_command;
+    createdInstallCommand.textContent = enrollment.install_available ? enrollment.install_command : (enrollment.install_message || '当前 Server 构建无法生成安全安装命令');
+	copyInstallCommand.disabled = !enrollment.install_available;
     createdEnrollment.textContent = enrollment.enrollment_value;
     addAgentCreate.classList.add('hidden');
     addAgentResult.classList.remove('hidden');
@@ -252,7 +255,7 @@ async function setAgentDisabled(agent, disabled, button) {
 }
 
 const googleLabels = {
-  youtube: {unknown: 'UNKNOWN', cn: 'CN · SENT TO CHINA'},
+  youtube: {unknown: 'UNKNOWN', cn: 'CN'},
   search: {unknown: 'UNKNOWN', ok: 'OK', challenge: 'CHALLENGE', blocked: 'BLOCKED'},
   signin: {unknown: 'UNKNOWN', reachable: 'REACHABLE', challenge: 'CHALLENGE', blocked: 'BLOCKED'},
   gemini: {unknown: 'UNKNOWN', available: 'AVAILABLE', blocked: 'BLOCKED'},
@@ -424,6 +427,19 @@ function render() {
     googleButton.addEventListener('click', () => rerunGoogleStatus(agent, googleButton, googleFeedback));
     google.append(googleText, googleFeedback, googleButton);
     card.append(google);
+
+	const security = document.createElement('div');
+	security.className = 'security-compact';
+	const securityState = agent.security;
+	let securityText = 'Security: Unsupported';
+	if (securityState?.supported) {
+	  if (securityState.status === 'unavailable') securityText = 'Security: Setup required';
+	  else if (securityState.status === 'no_data') securityText = 'Security: Awaiting first audit';
+	  else if (securityState.status === 'failed') securityText = 'Security: Audit failed';
+	  else if (securityState.current) securityText = `Security: ${securityState.current.total_events} observed · ${securityState.current.tracked_sources} sources${securityState.delivery_gap ? ' · history gap' : securityState.stale ? ' · stale' : securityState.status === 'partial' ? ' · partial' : ''}`;
+	}
+	setReadableText(security, securityText);
+	card.append(security);
 
     const meta = document.createElement('div');
     meta.className = 'meta';

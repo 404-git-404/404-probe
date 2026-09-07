@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.8.0"
+readonly DEFAULT_VERSION="v0.9.0"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -15,6 +15,10 @@ readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
 readonly AGENT_UPDATER_UNIT="/etc/systemd/system/404-probe-agent-updater.service"
 readonly AGENT_UPDATER_STATE="/var/lib/404-probe-updater"
 readonly AGENT_UPDATER_SOCKET="/run/404-probe/agent-updater.sock"
+readonly SECURITY_STATE_DIRECTORY="/var/lib/404-probe-security"
+readonly SECURITY_EXPORT_DIRECTORY="${SECURITY_STATE_DIRECTORY}/export"
+readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.service"
+readonly SECURITY_TIMER_UNIT="/etc/systemd/system/404-probe-security-collect.timer"
 readonly SERVICE_USER="404-probe"
 readonly ENROLLMENT_PREFIX="404p1_"
 
@@ -25,6 +29,7 @@ INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED=0
 INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=0
 INSTALL_TRANSACTION_USER_CREATED=0
 INSTALL_TRANSACTION_UPDATER_STATE_CREATED=0
+INSTALL_TRANSACTION_SECURITY_STATE_CREATED=0
 INSTALL_TRANSACTION_PATHS=()
 
 die() {
@@ -41,6 +46,7 @@ usage() {
 Usage:
   404-probe-install                 interactive Server/Agent installation
   404-probe-install agent --server <origin>
+  404-probe-install setup-security  enable V0.9 local security audit on an existing Agent
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install uninstall <server|agent>
 
@@ -162,7 +168,9 @@ rollback_install_transaction() {
   elif [[ "${INSTALL_TRANSACTION_ROLE}" == "agent" ]]; then
 	 systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true
 	 systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
-    rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
+    rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json"
+	 systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service >/dev/null 2>&1 || true
+	 systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true
   fi
   for (( index=${#INSTALL_TRANSACTION_PATHS[@]}-1; index>=0; index-- )); do
     rm -f -- "${INSTALL_TRANSACTION_PATHS[index]}"
@@ -171,6 +179,7 @@ rollback_install_transaction() {
   (( INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED == 0 )) || rmdir -- "${CONFIG_DIRECTORY}" 2>/dev/null || true
   (( INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED == 0 )) || rmdir -- "${STATE_DIRECTORY}" 2>/dev/null || true
   (( INSTALL_TRANSACTION_UPDATER_STATE_CREATED == 0 )) || rmdir -- "${AGENT_UPDATER_STATE}" 2>/dev/null || true
+  (( INSTALL_TRANSACTION_SECURITY_STATE_CREATED == 0 )) || rm -rf -- "${SECURITY_STATE_DIRECTORY}"
   if (( INSTALL_TRANSACTION_USER_CREATED != 0 )); then
     printf '404-probe installer: preserved the new locked service account for a safe retry\n' >&2
   fi
@@ -247,6 +256,10 @@ readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
 readonly AGENT_UPDATER_UNIT="/etc/systemd/system/404-probe-agent-updater.service"
 readonly AGENT_UPDATER_STATE="/var/lib/404-probe-updater"
 readonly AGENT_UPDATER_SOCKET="/run/404-probe/agent-updater.sock"
+readonly SECURITY_STATE_DIRECTORY="/var/lib/404-probe-security"
+readonly SECURITY_EXPORT_DIRECTORY="${SECURITY_STATE_DIRECTORY}/export"
+readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.service"
+readonly SECURITY_TIMER_UNIT="/etc/systemd/system/404-probe-security-collect.timer"
 readonly CONFIG_DIRECTORY="/etc/404-probe"
 readonly STATE_DIRECTORY="/var/lib/404-probe"
 readonly SERVICE_USER="404-probe"
@@ -287,6 +300,8 @@ uninstall() {
     unit_path="${AGENT_UNIT}"; binary_path="${AGENT_BINARY}"
   fi
 	if [[ "${role}" == "agent" ]]; then
+	  systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service >/dev/null 2>&1 || true
+	  systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true
 	  if systemctl is-active --quiet 404-probe-agent-updater.service; then
 	    systemctl stop 404-probe-agent-updater.service || die "could not stop Agent updater; nothing was removed"
 	  fi
@@ -302,10 +317,12 @@ uninstall() {
   rm -f -- "${unit_path}" "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
-      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" \
+      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" \
 	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
+	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
 	  "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
 	rm -rf -- "${AGENT_UPDATER_STATE}"
+	rm -rf -- "${SECURITY_STATE_DIRECTORY}"
   fi
   systemctl daemon-reload
   printf 'Uninstalled %s. Re-running this command is safe.\n' "${role}"
@@ -316,12 +333,40 @@ uninstall() {
   fi
   printf 'Preserved systemd journal history, service user, and this installer helper.\n'
 }
+setup_security() {
+  [[ $# -eq 0 ]] || die "usage: 404-probe-install setup-security"
+  [[ -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" && -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" ]] \
+    || die "a safe existing Agent installation was not found"
+  [[ -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
+    || die "a safe existing Agent environment was not found"
+  [[ -f "${SECURITY_SERVICE_UNIT}" && ! -L "${SECURITY_SERVICE_UNIT}" && -f "${SECURITY_TIMER_UNIT}" && ! -L "${SECURITY_TIMER_UNIT}" ]] \
+    || die "Security units are not installed; rerun the version-pinned V0.9 install.sh setup-security command"
+  grep -Fxq "PROBE_404_SECURITY_EXPORT=${SECURITY_EXPORT_DIRECTORY}" "${CONFIG_DIRECTORY}/agent.env" \
+    && grep -Fxq "PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json" "${CONFIG_DIRECTORY}/agent.env" \
+    && grep -Fxq "ReadOnlyPaths=-${SECURITY_EXPORT_DIRECTORY}" "${AGENT_UNIT}" \
+    || die "Security configuration is incomplete; rerun the version-pinned V0.9 install.sh setup-security command"
+  local agent_was_active=0
+  systemctl is-active --quiet 404-probe-agent.service && agent_was_active=1
+  systemctl daemon-reload
+  systemctl start 404-probe-security-collect.service
+  [[ -f "${SECURITY_EXPORT_DIRECTORY}/current.json" && ! -L "${SECURITY_EXPORT_DIRECTORY}/current.json" ]] \
+    || die "security collector did not create its aggregate export"
+  runuser -u "${SERVICE_USER}" -- test -r "${SECURITY_EXPORT_DIRECTORY}/current.json" \
+    || die "Agent service account cannot read the security aggregate export"
+  if runuser -u "${SERVICE_USER}" -- test -w "${SECURITY_EXPORT_DIRECTORY}/current.json"; then
+    die "Agent service account can write the security aggregate export"
+  fi
+  systemctl enable --now 404-probe-security-collect.timer
+  (( agent_was_active == 0 )) || systemctl restart 404-probe-agent.service
+  printf '404-probe local security audit is enabled.\n'
+}
 
 require_root
 case "${1:-}" in
   enroll) shift; enroll "$@" ;;
+  setup-security) shift; setup_security "$@" ;;
   uninstall) shift; uninstall "$@" ;;
-  *) printf 'Usage: 404-probe-install enroll <name> | uninstall <server|agent>\n' >&2; exit 2 ;;
+  *) printf 'Usage: 404-probe-install enroll <name> | setup-security | uninstall <server|agent>\n' >&2; exit 2 ;;
 esac
 HELPER
 }
@@ -644,11 +689,187 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=CAP_NET_RAW
 AmbientCapabilities=CAP_NET_RAW
 ReadWritePaths=${STATE_DIRECTORY} /run/404-probe
+ReadOnlyPaths=-${SECURITY_EXPORT_DIRECTORY}
 
 [Install]
 WantedBy=multi-user.target
 EOF
 }
+
+install_security_collector() {
+  install -d -m 0750 -o root -g "${SERVICE_USER}" "${SECURITY_STATE_DIRECTORY}"
+  install -d -m 0700 -o root -g root "${SECURITY_STATE_DIRECTORY}/private" "${SECURITY_STATE_DIRECTORY}/private/outbox"
+  install -d -m 0750 -o root -g "${SERVICE_USER}" "${SECURITY_EXPORT_DIRECTORY}"
+  cat >"${SECURITY_SERVICE_UNIT}" <<EOF
+[Unit]
+Description=404-probe local sing-box security audit
+After=systemd-journald.service
+
+[Service]
+Type=oneshot
+User=root
+Group=${SERVICE_USER}
+UMask=0077
+ExecStart=${AGENT_BINARY} security-collect
+PrivateNetwork=true
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=${SECURITY_STATE_DIRECTORY}
+ReadOnlyPaths=-/var/log/journal -/run/log/journal
+EOF
+  cat >"${SECURITY_TIMER_UNIT}" <<EOF
+[Unit]
+Description=Daily 404-probe local security audit
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+AccuracySec=1m
+Unit=404-probe-security-collect.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  chmod 0644 "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}"
+}
+
+setup_security_existing() (
+  require_root_linux_systemd
+  [[ $# -eq 0 ]] || die "usage: 404-probe-install setup-security"
+  local backup_directory="" environment_candidate="" unit_candidate="" helper_candidate="" version_json expected_version item key count path expected
+  local service_existed=0 timer_existed=0 security_state_existed=0 helper_existed=0 committed=0
+  local agent_was_active=0 timer_was_active=0 timer_was_enabled=0 collector_was_active=0
+  [[ -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" && "$(stat -c '%U:%G:%a' "${AGENT_BINARY}")" == "root:root:755" ]] \
+    || die "a safe existing Agent binary was not found"
+  [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && "$(stat -c '%U:%G:%a' "${AGENT_UNIT}")" == "root:root:644" ]] \
+    || die "a safe existing Agent unit was not found"
+  [[ -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}/agent.env")" == "${SERVICE_USER}:${SERVICE_USER}:400" ]] \
+    || die "a safe existing Agent environment was not found"
+  validate_service_user
+  grep -Fxq "User=${SERVICE_USER}" "${AGENT_UNIT}" \
+    && grep -Fxq "Group=${SERVICE_USER}" "${AGENT_UNIT}" \
+    && grep -Fq "ExecStart=${AGENT_BINARY} " "${AGENT_UNIT}" \
+    && grep -Fxq "EnvironmentFile=${CONFIG_DIRECTORY}/agent.env" "${AGENT_UNIT}" \
+    || die "existing Agent unit is not a supported 404-probe installation"
+  for item in \
+    "${SECURITY_STATE_DIRECTORY}|root:${SERVICE_USER}:750" \
+    "${SECURITY_STATE_DIRECTORY}/private|root:root:700" \
+    "${SECURITY_STATE_DIRECTORY}/private/outbox|root:root:700" \
+    "${SECURITY_EXPORT_DIRECTORY}|root:${SERVICE_USER}:750"; do
+    path="${item%%|*}"
+    expected="${item#*|}"
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      [[ -d "${path}" && ! -L "${path}" && "$(stat -c '%U:%G:%a' "${path}")" == "${expected}" ]] \
+        || die "existing Security path is unsafe: ${path}"
+    fi
+  done
+  expected_version="${PROBE_404_VERSION:-${DEFAULT_VERSION}}"
+  version_json="$("${AGENT_BINARY}" version --json)" || die "could not verify the installed Agent build"
+  grep -Fq "\"version\":\"${expected_version}\"" <<<"${version_json}" \
+    && grep -Eq '"commit":"[^"]+"' <<<"${version_json}" \
+    && grep -Fq '"dirty":false' <<<"${version_json}" \
+    || die "installed Agent is not the verified ${expected_version} build; upgrade it before setup-security"
+
+  for item in \
+    "PROBE_404_SECURITY_EXPORT=${SECURITY_EXPORT_DIRECTORY}" \
+    "PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"; do
+    key="${item%%=*}"
+    count="$(grep -c "^${key}=" "${CONFIG_DIRECTORY}/agent.env" || true)"
+    (( count <= 1 )) || die "existing Agent environment has duplicate ${key} entries"
+    (( count == 0 )) || grep -Fxq "${item}" "${CONFIG_DIRECTORY}/agent.env" \
+      || die "existing Agent environment has a conflicting ${key} value"
+  done
+  grep -Fq "ReadWritePaths=${SECURITY_EXPORT_DIRECTORY}" "${AGENT_UNIT}" \
+    && die "existing Agent unit grants write access to the security export"
+
+  systemctl is-active --quiet 404-probe-agent.service && agent_was_active=1
+  systemctl is-active --quiet 404-probe-security-collect.timer && timer_was_active=1
+  systemctl is-enabled --quiet 404-probe-security-collect.timer && timer_was_enabled=1
+  systemctl is-active --quiet 404-probe-security-collect.service && collector_was_active=1
+
+  backup_directory="$(mktemp -d)"
+  cp --preserve=mode,ownership,timestamps -- "${CONFIG_DIRECTORY}/agent.env" "${backup_directory}/agent.env"
+  cp --preserve=mode,ownership,timestamps -- "${AGENT_UNIT}" "${backup_directory}/agent.service"
+  if [[ -e "${INSTALL_HELPER}" ]]; then
+    [[ -f "${INSTALL_HELPER}" && ! -L "${INSTALL_HELPER}" && "$(stat -c '%U:%G:%a' "${INSTALL_HELPER}")" == "root:root:755" ]] || die "unsafe installer helper path"
+    cp --preserve=mode,ownership,timestamps -- "${INSTALL_HELPER}" "${backup_directory}/install-helper"
+    helper_existed=1
+  fi
+  if [[ -e "${SECURITY_SERVICE_UNIT}" ]]; then
+    [[ -f "${SECURITY_SERVICE_UNIT}" && ! -L "${SECURITY_SERVICE_UNIT}" && "$(stat -c '%U:%G:%a' "${SECURITY_SERVICE_UNIT}")" == "root:root:644" ]] || die "unsafe security service unit path"
+    cp --preserve=mode,ownership,timestamps -- "${SECURITY_SERVICE_UNIT}" "${backup_directory}/security.service"
+    service_existed=1
+  fi
+  if [[ -e "${SECURITY_TIMER_UNIT}" ]]; then
+    [[ -f "${SECURITY_TIMER_UNIT}" && ! -L "${SECURITY_TIMER_UNIT}" && "$(stat -c '%U:%G:%a' "${SECURITY_TIMER_UNIT}")" == "root:root:644" ]] || die "unsafe security timer unit path"
+    cp --preserve=mode,ownership,timestamps -- "${SECURITY_TIMER_UNIT}" "${backup_directory}/security.timer"
+    timer_existed=1
+  fi
+  [[ -d "${SECURITY_STATE_DIRECTORY}" ]] && security_state_existed=1
+  trap 'status=$?; if (( committed == 0 )); then [[ -z "${environment_candidate}" ]] || rm -f -- "${environment_candidate}"; [[ -z "${unit_candidate}" ]] || rm -f -- "${unit_candidate}"; [[ -z "${helper_candidate}" ]] || rm -f -- "${helper_candidate}"; systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service >/dev/null 2>&1 || true; systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true; cp --preserve=mode,ownership,timestamps -- "${backup_directory}/agent.env" "${CONFIG_DIRECTORY}/agent.env"; cp --preserve=mode,ownership,timestamps -- "${backup_directory}/agent.service" "${AGENT_UNIT}"; if (( helper_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/install-helper" "${INSTALL_HELPER}"; else rm -f -- "${INSTALL_HELPER}"; fi; if (( service_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/security.service" "${SECURITY_SERVICE_UNIT}"; else rm -f -- "${SECURITY_SERVICE_UNIT}"; fi; if (( timer_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/security.timer" "${SECURITY_TIMER_UNIT}"; else rm -f -- "${SECURITY_TIMER_UNIT}"; fi; (( security_state_existed != 0 )) || rm -rf -- "${SECURITY_STATE_DIRECTORY}"; systemctl daemon-reload >/dev/null 2>&1 || true; if (( timer_was_enabled != 0 )); then systemctl enable 404-probe-security-collect.timer >/dev/null 2>&1 || true; else systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true; fi; if (( timer_was_active != 0 )); then systemctl start 404-probe-security-collect.timer >/dev/null 2>&1 || true; else systemctl stop 404-probe-security-collect.timer >/dev/null 2>&1 || true; fi; (( collector_was_active == 0 )) || systemctl start 404-probe-security-collect.service >/dev/null 2>&1 || true; if (( agent_was_active != 0 )); then systemctl restart 404-probe-agent.service >/dev/null 2>&1 || true; else systemctl stop 404-probe-agent.service >/dev/null 2>&1 || true; fi; fi; rm -rf -- "${backup_directory}"; exit "${status}"' EXIT HUP INT TERM
+
+  environment_candidate="$(mktemp "${CONFIG_DIRECTORY}/.agent-security-env.XXXXXX")"
+  cp -- "${CONFIG_DIRECTORY}/agent.env" "${environment_candidate}"
+  grep -q '^PROBE_404_SECURITY_EXPORT=' "${environment_candidate}" || printf '%s\n' "PROBE_404_SECURITY_EXPORT=${SECURITY_EXPORT_DIRECTORY}" >>"${environment_candidate}"
+  grep -q '^PROBE_404_SECURITY_ACKS=' "${environment_candidate}" || printf '%s\n' "PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json" >>"${environment_candidate}"
+  chown "${SERVICE_USER}:${SERVICE_USER}" "${environment_candidate}"
+  chmod 0400 "${environment_candidate}"
+
+  unit_candidate="$(mktemp "$(dirname "${AGENT_UNIT}")/.agent-security-unit.XXXXXX")"
+  if grep -Fxq "ReadOnlyPaths=-${SECURITY_EXPORT_DIRECTORY}" "${AGENT_UNIT}"; then
+    cp -- "${AGENT_UNIT}" "${unit_candidate}"
+  else
+    awk -v line="ReadOnlyPaths=-${SECURITY_EXPORT_DIRECTORY}" '/^\[Install\]$/ && !done { print line; done=1 } { print } END { if (!done) exit 1 }' "${AGENT_UNIT}" >"${unit_candidate}" \
+      || die "could not add read-only security export to Agent unit"
+  fi
+  chown root:root "${unit_candidate}"
+  chmod 0644 "${unit_candidate}"
+
+  helper_candidate="$(mktemp)"
+  render_local_helper >"${helper_candidate}"
+  chmod 0600 "${helper_candidate}"
+  bash -n "${helper_candidate}" || die "generated installer helper failed its shell syntax check"
+  chown root:root "${helper_candidate}"
+  chmod 0755 "${helper_candidate}"
+
+  mv -f -- "${environment_candidate}" "${CONFIG_DIRECTORY}/agent.env"
+  mv -f -- "${unit_candidate}" "${AGENT_UNIT}"
+  mv -f -- "${helper_candidate}" "${INSTALL_HELPER}"
+  install_security_collector
+  systemctl daemon-reload
+  systemctl start 404-probe-security-collect.service
+  [[ -f "${SECURITY_EXPORT_DIRECTORY}/current.json" && ! -L "${SECURITY_EXPORT_DIRECTORY}/current.json" ]] \
+    || die "security collector did not create its aggregate export"
+  runuser -u "${SERVICE_USER}" -- test -r "${SECURITY_EXPORT_DIRECTORY}/current.json" \
+    || die "Agent service account cannot read the security aggregate export"
+  if runuser -u "${SERVICE_USER}" -- test -w "${SECURITY_EXPORT_DIRECTORY}/current.json"; then
+    die "Agent service account can write the security aggregate export"
+  fi
+  systemctl enable --now 404-probe-security-collect.timer
+  if (( agent_was_active != 0 )); then
+    systemctl restart 404-probe-agent.service
+    wait_for_service 404-probe-agent.service
+  else
+    systemctl stop 404-probe-agent.service
+  fi
+  committed=1
+  trap - EXIT HUP INT TERM
+  rm -rf -- "${backup_directory}"
+  note "404-probe ${expected_version} local security audit is enabled; Agent identity, credential, and epoch state were preserved."
+)
 
 bootstrap_existing_agent() (
   local candidate="/usr/local/bin/.404-probe-agent.bootstrap"
@@ -758,7 +979,9 @@ install_agent() {
   write_private_file "${CONFIG_DIRECTORY}/agent.env" "PROBE_404_SERVER=${server_url}
 PROBE_404_AGENT_ID=${agent_id}
 PROBE_404_TOKEN=${agent_token}
-PROBE_404_STATE=${STATE_DIRECTORY}/agent.epoch"
+PROBE_404_STATE=${STATE_DIRECTORY}/agent.epoch
+PROBE_404_SECURITY_EXPORT=${SECURITY_EXPORT_DIRECTORY}
+PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"
 
   insecure_option=""
   if [[ "${server_url}" == http://* ]]; then
@@ -766,12 +989,18 @@ PROBE_404_STATE=${STATE_DIRECTORY}/agent.epoch"
   fi
   track_install_path "${AGENT_UNIT}"
   track_install_path "${AGENT_UPDATER_UNIT}"
+	track_install_path "${SECURITY_SERVICE_UNIT}"
+	track_install_path "${SECURITY_TIMER_UNIT}"
   [[ -d "${AGENT_UPDATER_STATE}" ]] || INSTALL_TRANSACTION_UPDATER_STATE_CREATED=1
+  [[ -d "${SECURITY_STATE_DIRECTORY}" ]] || INSTALL_TRANSACTION_SECURITY_STATE_CREATED=1
   INSTALL_TRANSACTION_UNIT="404-probe-agent.service"
   render_agent_unit "${insecure_option}" >"${AGENT_UNIT}"
   chmod 0644 "${AGENT_UNIT}"
   install_agent_updater_unit
+	install_security_collector
   systemctl daemon-reload
+	systemctl start 404-probe-security-collect.service
+	systemctl enable --now 404-probe-security-collect.timer
   systemctl enable --now 404-probe-agent-updater.service
   wait_for_service 404-probe-agent-updater.service
   systemctl enable --now 404-probe-agent.service
@@ -834,6 +1063,10 @@ uninstall_role() {
     binary_path="${AGENT_BINARY}"
   fi
   if [[ "${role}" == "agent" ]]; then
+	if systemctl is-active --quiet 404-probe-security-collect.timer || systemctl is-active --quiet 404-probe-security-collect.service; then
+	  systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service || die "could not stop security collector; nothing was removed"
+	fi
+	systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true
     if systemctl is-active --quiet 404-probe-agent-updater.service; then
       systemctl stop 404-probe-agent-updater.service || die "could not stop Agent updater; nothing was removed"
     fi
@@ -849,10 +1082,12 @@ uninstall_role() {
   rm -f -- "${unit_path}" "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
-      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" \
+      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" \
       "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
+	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
       "/usr/local/bin/.404-probe-agent.bootstrap" "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
     rm -rf -- "${AGENT_UPDATER_STATE}"
+    rm -rf -- "${SECURITY_STATE_DIRECTORY}"
   fi
   systemctl daemon-reload
   note "Uninstalled ${role}. Re-running this command is safe."
@@ -868,7 +1103,7 @@ interactive_install() {
   require_root_linux_systemd
   local choice
   cat >/dev/tty <<'EOF'
-Install 404-probe V0.8.0
+Install 404-probe V0.9.0
 
   1) Server
   2) Agent
@@ -892,6 +1127,10 @@ main() {
     enroll)
       shift
       enroll_agent "$@"
+      ;;
+    setup-security)
+      shift
+      setup_security_existing "$@"
       ;;
     uninstall)
       shift

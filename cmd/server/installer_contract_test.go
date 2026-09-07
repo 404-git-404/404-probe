@@ -19,7 +19,7 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`readonly DEFAULT_VERSION="v0.8.0"`,
+		`readonly DEFAULT_VERSION="v0.9.0"`,
 		`404-probe-install agent --server <origin>`,
 		`[[ $# -eq 2 && "$1" == "--server" ]]`,
 		`IFS= read -r -s enrollment </dev/tty`,
@@ -141,6 +141,107 @@ func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
 	for _, forbidden := range []string{`--download-url`, `--binary-path`, `--command`, `AmbientCapabilities=CAP_SETUID CAP_SETGID`} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("installer expands updater authority through %q", forbidden)
+		}
+	}
+}
+
+func TestInstallerSecurityCollectorIsLocalLeastPrivilegeAndDurable(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`install -d -m 0750 -o root -g "${SERVICE_USER}" "${SECURITY_STATE_DIRECTORY}"`,
+		`install -d -m 0700 -o root -g root "${SECURITY_STATE_DIRECTORY}/private" "${SECURITY_STATE_DIRECTORY}/private/outbox"`,
+		`install -d -m 0750 -o root -g "${SERVICE_USER}" "${SECURITY_EXPORT_DIRECTORY}"`,
+		`ExecStart=${AGENT_BINARY} security-collect`,
+		`Group=${SERVICE_USER}`,
+		`PrivateNetwork=true`,
+		`ProtectSystem=strict`,
+		`RestrictAddressFamilies=AF_UNIX`,
+		"CapabilityBoundingSet=\n",
+		"AmbientCapabilities=\n",
+		`ReadWritePaths=${SECURITY_STATE_DIRECTORY}`,
+		`ReadOnlyPaths=-/var/log/journal -/run/log/journal`,
+		`OnCalendar=daily`,
+		`Persistent=true`,
+		`RandomizedDelaySec=15m`,
+		`systemctl start 404-probe-security-collect.service`,
+		`systemctl enable --now 404-probe-security-collect.timer`,
+		`PROBE_404_SECURITY_EXPORT=${SECURITY_EXPORT_DIRECTORY}`,
+		`PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json`,
+		`404-probe-install setup-security`,
+		`setup_security_existing`,
+		`runuser -u "${SERVICE_USER}" -- test -r "${SECURITY_EXPORT_DIRECTORY}/current.json"`,
+		`runuser -u "${SERVICE_USER}" -- test -w "${SECURITY_EXPORT_DIRECTORY}/current.json"`,
+		`ReadOnlyPaths=-${SECURITY_EXPORT_DIRECTORY}`,
+		`Agent identity, credential, and epoch state were preserved`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing security collector contract %q", required)
+		}
+	}
+	serviceStart := strings.Index(script, "Description=404-probe local sing-box security audit")
+	serviceEnd := strings.Index(script[serviceStart:], "\nEOF")
+	if serviceStart < 0 || serviceEnd < 0 {
+		t.Fatal("installer security service is missing")
+	}
+	service := script[serviceStart : serviceStart+serviceEnd]
+	for _, forbidden := range []string{"AF_INET", "AF_INET6", "EnvironmentFile=", "--unit", "--command", "--url", "--token"} {
+		if strings.Contains(service, forbidden) {
+			t.Fatalf("security collector service expands authority through %q:\n%s", forbidden, service)
+		}
+	}
+	helperStart := strings.Index(script, "cat <<'HELPER'\n")
+	if helperStart < 0 {
+		t.Fatal("rendered installer helper is missing")
+	}
+	helperBodyStart := helperStart + len("cat <<'HELPER'\n")
+	helperEnd := strings.Index(script[helperBodyStart:], "\nHELPER")
+	if helperEnd < 0 {
+		t.Fatal("rendered installer helper terminator is missing")
+	}
+	helper := script[helperStart : helperBodyStart+helperEnd]
+	for _, required := range []string{
+		`setup_security() {`,
+		`setup-security) shift; setup_security "$@" ;;`,
+		`runuser -u "${SERVICE_USER}" -- test -r "${SECURITY_EXPORT_DIRECTORY}/current.json"`,
+		`runuser -u "${SERVICE_USER}" -- test -w "${SECURITY_EXPORT_DIRECTORY}/current.json"`,
+	} {
+		if !strings.Contains(helper, required) {
+			t.Fatalf("rendered helper missing setup-security contract %q", required)
+		}
+	}
+}
+
+func TestInstallerSecuritySetupRollbackPreservesPriorServiceState(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`agent_was_active=0 timer_was_active=0 timer_was_enabled=0 collector_was_active=0`,
+		`systemctl is-active --quiet 404-probe-agent.service && agent_was_active=1`,
+		`systemctl is-active --quiet 404-probe-security-collect.timer && timer_was_active=1`,
+		`systemctl is-enabled --quiet 404-probe-security-collect.timer && timer_was_enabled=1`,
+		`if (( timer_was_enabled != 0 )); then systemctl enable 404-probe-security-collect.timer`,
+		`if (( timer_was_active != 0 )); then systemctl start 404-probe-security-collect.timer`,
+		`if (( agent_was_active != 0 )); then systemctl restart 404-probe-agent.service`,
+		`else systemctl stop 404-probe-agent.service`,
+		`cp --preserve=mode,ownership,timestamps -- "${backup_directory}/install-helper" "${INSTALL_HELPER}"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("setup-security rollback missing prior-state contract %q", required)
 		}
 	}
 }

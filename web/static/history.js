@@ -5,11 +5,16 @@ const outboundList = document.querySelector('#outbounds-list');
 const googleState = document.querySelector('#google-status-state');
 const googleValues = document.querySelector('#google-status-values');
 const googleChecked = document.querySelector('#google-status-checked');
+const securityState = document.querySelector('#security-state');
+const securityWindow = document.querySelector('#security-window');
+const securitySources = document.querySelector('#security-sources');
 let mutationCSRFToken = '';
 let currentAgent = null;
 let switchingSelector = '';
 let selectorFeedback = null;
 const selectorOperations = new Map();
+const selectorDrafts = new Map();
+const selectorDraftKey = selector => `${id}\u0000${selector}`;
 
 const selectorErrors = {
   selector_not_found: '本地 Selector 已不存在，请刷新后重试',
@@ -131,6 +136,7 @@ async function switchOutbound(selector, choice) {
     const target = result?.current || choice;
     const refreshed = await refreshAgentUntil(encodedID, selector, target);
     currentAgent = refreshed.agent;
+	selectorDrafts.delete(selectorDraftKey(selector));
     switchingSelector = '';
     selectorFeedback = {
       selector,
@@ -181,11 +187,19 @@ function renderOutbounds(agent) {
     controls.className = 'selector-controls';
     const choices = document.createElement('select');
     choices.setAttribute('aria-label', `${selector.name} 目标出站`);
-    for (const choice of selector.choices || []) {
+	const draftKey = selectorDraftKey(selector.name);
+	const draft = selectorDrafts.get(draftKey);
+	const availableChoices = selector.choices || [];
+	if (draft && !availableChoices.includes(draft)) {
+	  selectorDrafts.delete(draftKey);
+	  selectorFeedback = {selector: selector.name, message: '先前选择已不在最新选项中，请重新选择', error: true};
+	}
+	const selectedChoice = draft && availableChoices.includes(draft) ? draft : selector.current;
+    for (const choice of availableChoices) {
       const option = document.createElement('option');
       option.value = choice;
       option.textContent = choice === selector.current ? `${choice}（当前）` : choice;
-      option.selected = choice === selector.current;
+      option.selected = choice === selectedChoice;
       choices.append(option);
     }
     const button = document.createElement('button');
@@ -204,7 +218,7 @@ function renderOutbounds(agent) {
       button.disabled = blocked || choices.value === selector.current;
     };
     choices.disabled = blocked;
-    choices.addEventListener('change', updateButton);
+	choices.addEventListener('change', () => { selectorDrafts.set(draftKey, choices.value); updateButton(); });
     button.addEventListener('click', () => switchOutbound(selector.name, choices.value));
     updateButton();
     controls.append(choices, button, operationStatus);
@@ -237,7 +251,7 @@ function renderGoogleStatus(agent) {
     return;
   }
   const rows = [
-    ['YouTube', google.result.youtube?.status === 'cn' ? 'CN · SENT TO CHINA' : google.result.youtube?.status === 'not_cn' ? google.result.youtube.region : 'UNKNOWN'],
+    ['YouTube', google.result.youtube?.status === 'cn' ? 'CN' : google.result.youtube?.status === 'not_cn' ? google.result.youtube.region : 'UNKNOWN'],
     ['Google Search', (google.result.search?.status || 'unknown').toUpperCase()],
     ['Google Sign-in', (google.result.signin?.status || 'unknown').toUpperCase()],
     ['Gemini', `${(google.result.gemini?.status || 'unknown').toUpperCase()}${google.result.gemini?.region ? ` [${google.result.gemini.region}]` : ''}`],
@@ -248,6 +262,32 @@ function renderGoogleStatus(agent) {
     googleValues.append(term, description);
   }
   googleChecked.textContent = google.checked_at ? `Last checked: ${new Date(google.checked_at).toLocaleString()}` : '';
+}
+
+function renderSecurity(agent) {
+	const security = agent?.security;
+	securitySources.replaceChildren();
+	if (!security?.supported) {
+	  securityState.textContent = 'Unsupported（需要 v0.9 Agent）';
+	  securityWindow.textContent = '';
+	  return;
+	}
+	const labels = {unavailable: 'Setup required', no_data: '等待首次本地审计', complete: '完整', partial: '部分结果', failed: '采集失败'};
+	securityState.textContent = `${labels[security.status] || security.status}${security.stale ? ' · stale' : ''}${security.reason ? ` · ${security.reason}` : ''}`;
+	const batch = security.current;
+	if (!batch) {
+	  securityWindow.textContent = '';
+	  return;
+	}
+	securityWindow.textContent = `实际审计窗口：${new Date(batch.window_start).toLocaleString()} – ${new Date(batch.window_end).toLocaleString()} · ${batch.total_events} 条观察 · ${batch.tracked_sources} 个来源${security.delivery_gap ? ` · 历史缺口（上次已接收 ${new Date(security.previous_collected_at).toLocaleString()}）` : ''}`;
+	for (const source of batch.sources || []) {
+	  const row = document.createElement('div'); row.className = 'security-source';
+	  const identity = document.createElement('code'); identity.textContent = source.ip;
+	  const behavior = document.createElement('strong'); behavior.textContent = (source.classifications || []).join(' + ');
+	  const detail = document.createElement('span'); detail.textContent = `${source.count} 次 · ${new Date(source.first_seen).toLocaleString()} – ${new Date(source.last_seen).toLocaleString()}`;
+	  row.append(identity, behavior, detail); securitySources.append(row);
+	}
+	if (!securitySources.children.length) securitySources.textContent = batch.status === 'complete' ? '本窗口未观察到匹配事件' : '没有可展示的完整来源数据';
 }
 
 function draw(canvas, points, key, color, format) {
@@ -326,6 +366,7 @@ async function load() {
     document.querySelector('#title').textContent = `${state.hostname || agent.name || 'Agent'} · 历史`;
     renderOutbounds(agent);
     renderGoogleStatus(agent);
+	renderSecurity(agent);
     const points = history.points;
     empty.classList.toggle('hidden', points.length > 0);
     if (!points.length) {
@@ -344,6 +385,7 @@ async function load() {
     empty.textContent = '加载失败';
     outboundStatus.textContent = '出站状态加载失败';
     googleState.textContent = 'Google Status 加载失败';
+	securityState.textContent = 'Security 数据加载失败';
   }
 }
 
@@ -356,4 +398,5 @@ events.addEventListener('agent', event => {
   currentAgent = {...currentAgent, ...update};
   renderOutbounds(currentAgent);
   renderGoogleStatus(currentAgent);
+	renderSecurity(currentAgent);
 });

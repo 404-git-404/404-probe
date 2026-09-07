@@ -35,6 +35,18 @@ type webAgentDetailView struct {
 	State        *webAgentStateView  `json:"state"`
 	Outbounds    webOutboundsView    `json:"outbounds"`
 	GoogleStatus webGoogleStatusView `json:"google_status"`
+	Security     webSecurityView     `json:"security"`
+}
+
+type webSecurityView struct {
+	Supported           bool                    `json:"supported"`
+	Status              protocol.SecurityStatus `json:"status"`
+	Reason              string                  `json:"reason,omitempty"`
+	Stale               bool                    `json:"stale"`
+	UpdatedAt           *int64                  `json:"updated_at,omitempty"`
+	Current             *protocol.SecurityBatch `json:"current,omitempty"`
+	DeliveryGap         bool                    `json:"delivery_gap,omitempty"`
+	PreviousCollectedAt int64                   `json:"previous_collected_at,omitempty"`
 }
 
 type webGoogleStatusView struct {
@@ -87,9 +99,16 @@ type webAgentCollectionView struct {
 }
 
 type webAgentHistoryView struct {
-	AgentID string                     `json:"agent_id"`
-	Hours   int                        `json:"hours"`
-	Points  []webAgentHistoryPointView `json:"points"`
+	AgentID  string                     `json:"agent_id"`
+	Hours    int                        `json:"hours"`
+	Points   []webAgentHistoryPointView `json:"points"`
+	Security []webSecurityRecordView    `json:"security"`
+}
+
+type webSecurityRecordView struct {
+	protocol.SecurityBatch
+	DeliveryGap         bool  `json:"delivery_gap,omitempty"`
+	PreviousCollectedAt int64 `json:"previous_collected_at,omitempty"`
 }
 
 type webAgentHistoryPointView struct {
@@ -218,6 +237,27 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		view.GoogleStatus.Result = &google.Result
 		view.GoogleStatus.CheckedAt = &checkedAt
 	}
+	capability, supported, err := a.store.SecurityCapability(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	view.Security = webSecurityView{Supported: supported && capability.Supported, Status: protocol.SecurityStatusUnavailable,
+		Stale: record.Agent.Revoked || record.Agent.DisabledAt != nil || !record.Online}
+	if view.Security.Supported && record.State != nil && capability.Epoch == record.State.Epoch && capability.SessionID == record.State.SessionID {
+		updated := capability.UpdatedAt
+		view.Security.Status, view.Security.Reason, view.Security.UpdatedAt = capability.Status, capability.Reason, &updated
+		current, err := a.store.CurrentSecurity(ctx, agentID, capability, a.now())
+		if err != nil {
+			return webAgentDetailView{}, err
+		}
+		if current != nil {
+			batch := current.Batch
+			view.Security.Current = &batch
+			view.Security.DeliveryGap = current.DeliveryGap
+			view.Security.PreviousCollectedAt = current.PreviousCollectedAt
+			view.Security.Stale = view.Security.Stale || protocol.SecurityStale(batch.CollectedAt, a.now())
+		}
+	}
 	return view, nil
 }
 
@@ -272,7 +312,17 @@ func (a *App) handleGetWebAgentHistory(w http.ResponseWriter, r *http.Request) {
 	for _, point := range points {
 		views = append(views, newWebAgentHistoryPointView(point))
 	}
-	writeJSON(w, http.StatusOK, webAgentHistoryView{AgentID: agentID, Hours: hours, Points: views})
+	securityRecords, err := a.store.SecurityHistory(r.Context(), agentID, a.now().Add(-storage.SecurityRetention), 31, a.now())
+	if err != nil {
+		a.logger.Error("read Web agent security history", "agent_id", agentID, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read agent history")
+		return
+	}
+	security := make([]webSecurityRecordView, 0, len(securityRecords))
+	for _, record := range securityRecords {
+		security = append(security, webSecurityRecordView{SecurityBatch: record.Batch, DeliveryGap: record.DeliveryGap, PreviousCollectedAt: record.PreviousCollectedAt})
+	}
+	writeJSON(w, http.StatusOK, webAgentHistoryView{AgentID: agentID, Hours: hours, Points: views, Security: security})
 }
 
 func (a *App) handleWebAgentCollectionMethodNotAllowed(w http.ResponseWriter, _ *http.Request) {

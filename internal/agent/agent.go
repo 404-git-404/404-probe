@@ -40,6 +40,9 @@ type Config struct {
 	OutboundInterval            time.Duration
 	AgentVersion                string
 	UpdaterSocket               string
+	SecurityExportDir           string
+	SecurityAckPath             string
+	SecurityInterval            time.Duration
 }
 
 var (
@@ -63,7 +66,7 @@ func (c Config) Validate() error {
 	if u.Scheme != "https" && !(u.Scheme == "http" && c.AllowInsecureHTTP) {
 		return errors.New("server URL must use HTTPS; pass --allow-insecure-http only for local development")
 	}
-	if c.Interval <= 0 || c.JobInterval < 0 || c.DisabledInterval < 0 || c.Timeout <= 0 {
+	if c.Interval <= 0 || c.JobInterval < 0 || c.DisabledInterval < 0 || c.Timeout <= 0 || c.SecurityInterval < 0 {
 		return errors.New("report interval and timeout must be positive; job and disabled intervals must not be negative")
 	}
 	if strings.TrimSpace(c.StatePath) == "" {
@@ -100,6 +103,7 @@ type Runner struct {
 	upgradeAPISupported         atomic.Bool
 	interactiveControlSupported atomic.Bool
 	googleStatusSupported       atomic.Bool
+	securitySupported           atomic.Bool
 	googleStatusAvailable       bool
 	clashControlReady           atomic.Bool
 	selectorJobMu               sync.Mutex
@@ -109,6 +113,8 @@ type Runner struct {
 	selectorJobSubmitted        bool
 	interactiveControlReady     chan struct{}
 	interactiveControlOnce      sync.Once
+	securityReady               chan struct{}
+	securityOnce                sync.Once
 }
 
 type reportCollector interface {
@@ -132,6 +138,15 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 	if config.ClashAPIURL != "" && config.OutboundInterval == 0 {
 		config.OutboundInterval = time.Minute
 	}
+	if config.SecurityExportDir == "" {
+		config.SecurityExportDir = "/var/lib/404-probe-security/export"
+	}
+	if config.SecurityAckPath == "" {
+		config.SecurityAckPath = "/var/lib/404-probe/agent.security-acks.json"
+	}
+	if config.SecurityInterval == 0 {
+		config.SecurityInterval = 5 * time.Minute
+	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -152,7 +167,7 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 	return &Runner{
 		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
-		executor:  executor, interactiveControlReady: make(chan struct{}),
+		executor:  executor, interactiveControlReady: make(chan struct{}), securityReady: make(chan struct{}),
 		googleStatusAvailable: func() bool {
 			capable, ok := executor.(googleStatusCapability)
 			return ok && capable.SupportsGoogleStatus()
@@ -170,6 +185,11 @@ func (r *Runner) Run(ctx context.Context) error {
 		go func() {
 			defer workers.Done()
 			r.runJobWorker(workerContext)
+		}()
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			r.runSecurityWorker(workerContext)
 		}()
 		if r.config.UpdaterSocket != "" {
 			workers.Add(1)
@@ -308,8 +328,12 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	r.interactiveControlSupported.Store(response.Capabilities.InteractiveControl)
 	r.googleStatusSupported.Store(response.Capabilities.GoogleStatus)
+	r.securitySupported.Store(response.Capabilities.Security)
 	if response.Capabilities.InteractiveControl {
 		r.interactiveControlOnce.Do(func() { close(r.interactiveControlReady) })
+	}
+	if response.Capabilities.Security {
+		r.securityOnce.Do(func() { close(r.securityReady) })
 	}
 	r.logger.Debug("report accepted", "sequence", *sequence)
 	return true, nil

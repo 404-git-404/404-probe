@@ -204,6 +204,12 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 			t.Fatal(err)
 		}
 	}
+	for _, table := range []string{"agent_security_batches", "agent_security_capabilities"} {
+		if _, err := db.Exec(`DROP TABLE ` + table); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX idx_probe_jobs_one_active_lease ON probe_jobs(agent_id) WHERE status='leased'`); err != nil {
 		db.Close()
 		t.Fatal(err)

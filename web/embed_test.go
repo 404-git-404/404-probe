@@ -196,13 +196,18 @@ func TestAgentCardsUseCompactResponsiveLayout(t *testing.T) {
 	for _, required := range []string{
 		`.agent-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))`,
 		`header,main,footer{width:min(1440px,calc(100% - 32px))`,
-		`.agent-card{height:490px`, `grid-template-rows:46px 116px 58px 88px 70px 36px`,
+		`.agent-card{min-width:0;overflow:hidden;display:flex;flex-direction:column`,
 		`grid-template-columns:repeat(3,minmax(0,1fr))`, `.agent-card .metric:last-child{grid-column:2/-1}`,
 		`max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`,
 		`.agent-card .card-actions{align-items:center;flex-direction:row}`,
 	} {
 		if !strings.Contains(stylesheet, required) {
 			t.Fatalf("dashboard stylesheet missing fixed-card rule %q", required)
+		}
+	}
+	for _, forbidden := range []string{`.agent-card{height:490px`, `min-height:490px`, `grid-template-rows:46px 116px 58px 88px 70px 36px`} {
+		if strings.Contains(stylesheet, forbidden) {
+			t.Fatalf("dashboard stylesheet retains fixed-card layout %q", forbidden)
 		}
 	}
 	for _, forbidden := range []string{"resize:", "draggable", "localStorage", "dashboard-preference"} {
@@ -220,14 +225,49 @@ func TestGoogleStatusUIShowsAllCanonicalStates(t *testing.T) {
 	appBytes, _ := fs.ReadFile(static, "app.js")
 	htmlBytes, _ := fs.ReadFile(static, "history.html")
 	historyBytes, _ := fs.ReadFile(static, "history.js")
+	jobsBytes, _ := fs.ReadFile(static, "jobs.js")
 	app, historyHTML, history := string(appBytes), string(htmlBytes), string(historyBytes)
-	for _, marker := range []string{"SENT TO CHINA", "CHALLENGE", "BLOCKED", "REACHABLE", "AVAILABLE", "Unsupported", "尚未检测", "检测中…", "检测失败", "部分结果未知", "重新检测", "/google-status"} {
+	for _, marker := range []string{"CN", "CHALLENGE", "BLOCKED", "REACHABLE", "AVAILABLE", "Unsupported", "尚未检测", "检测中…", "检测失败", "部分结果未知", "重新检测", "/google-status"} {
 		if !strings.Contains(app, marker) {
 			t.Errorf("app.js missing %q", marker)
 		}
 	}
-	if !strings.Contains(historyHTML, "Google Status") || !strings.Contains(history, "Last checked") || !strings.Contains(history, "SENT TO CHINA") {
+	if !strings.Contains(historyHTML, "Google Status") || !strings.Contains(history, "Last checked") || !strings.Contains(history, "'CN'") || strings.Contains(app+history+string(jobsBytes), "SENT TO CHINA") {
 		t.Fatal("history detail is missing complete Google Status rendering")
+	}
+}
+
+func TestSelectorDraftsSurviveRefreshAndSecurityUIIsPresent(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyBytes, _ := fs.ReadFile(static, "history.js")
+	appBytes, _ := fs.ReadFile(static, "app.js")
+	historyHTMLBytes, _ := fs.ReadFile(static, "history.html")
+	history, app, historyHTML := string(historyBytes), string(appBytes), string(historyHTMLBytes)
+	for _, required := range []string{
+		`const selectorDrafts = new Map()`,
+		"const selectorDraftKey = selector => `${id}\\u0000${selector}`",
+		`selectorDrafts.set(draftKey, choices.value)`,
+		`selectorDrafts.delete(selectorDraftKey(selector))`,
+		`先前选择已不在最新选项中，请重新选择`,
+		`renderSecurity(currentAgent)`,
+		`security.delivery_gap`,
+	} {
+		if !strings.Contains(history, required) {
+			t.Fatalf("history UI missing selector/Security state contract %q", required)
+		}
+	}
+	for _, required := range []string{`Security: Setup required`, `securityState.delivery_gap`, `className = 'security-compact'`} {
+		if !strings.Contains(app, required) {
+			t.Fatalf("dashboard missing Security status contract %q", required)
+		}
+	}
+	for _, required := range []string{`class="security-detail"`, `id="security-state"`, `id="security-sources"`} {
+		if !strings.Contains(historyHTML, required) {
+			t.Fatalf("history page missing Security detail contract %q", required)
+		}
 	}
 }
 

@@ -10,12 +10,13 @@ import (
 	"unicode/utf8"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/buildinfo"
 )
 
 const (
 	maxWebAgentCreateBodyBytes = 2 << 10
 	maxWebAgentNameBytes       = 128
-	webAgentInstallerURL       = "https://raw.githubusercontent.com/404-git-404/404-probe/v0.8.0/install.sh"
+	webAgentInstallerBaseURL   = "https://raw.githubusercontent.com/404-git-404/404-probe"
 )
 
 type webAgentCreateRequest struct {
@@ -23,9 +24,11 @@ type webAgentCreateRequest struct {
 }
 
 type webAgentEnrollmentView struct {
-	Agent           webAgentSummaryView `json:"agent"`
-	InstallCommand  string              `json:"install_command"`
-	EnrollmentValue string              `json:"enrollment_value"`
+	Agent            webAgentSummaryView `json:"agent"`
+	InstallCommand   string              `json:"install_command"`
+	EnrollmentValue  string              `json:"enrollment_value"`
+	InstallAvailable bool                `json:"install_available"`
+	InstallMessage   string              `json:"install_message,omitempty"`
 }
 
 func (a *App) handleCreateWebAgent(w http.ResponseWriter, r *http.Request) {
@@ -73,12 +76,19 @@ func (a *App) handleCreateWebAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	installCommand, installAvailable := webAgentInstallCommand(a.webAuth.publicOrigin.String(), a.buildInfo)
+	installMessage := ""
+	if !installAvailable {
+		installMessage = "Server is a development or unverifiable build; use a verified release build before copying an install command."
+	}
 	writeJSON(w, http.StatusCreated, webAgentEnrollmentView{
 		Agent: webAgentSummaryView{
 			AgentID: agentID, Name: request.Name, CreatedAt: createdAt.UnixMilli(),
 		},
-		InstallCommand:  webAgentInstallCommand(a.webAuth.publicOrigin.String()),
-		EnrollmentValue: enrollment,
+		InstallCommand:   installCommand,
+		EnrollmentValue:  enrollment,
+		InstallAvailable: installAvailable,
+		InstallMessage:   installMessage,
 	})
 }
 
@@ -107,8 +117,12 @@ func validWebAgentName(value string) bool {
 	return true
 }
 
-func webAgentInstallCommand(origin string) string {
-	return fmt.Sprintf("curl -fsSL %s | sudo bash -s -- agent --server %s", shellSingleQuote(webAgentInstallerURL), shellSingleQuote(origin))
+func webAgentInstallCommand(origin string, info buildinfo.Info) (string, bool) {
+	if !info.UpgradeEligible() || !buildinfo.IsCanonicalVersion(info.Version) {
+		return "", false
+	}
+	installerURL := webAgentInstallerBaseURL + "/" + info.Version + "/install.sh"
+	return fmt.Sprintf("curl -fsSL %s | sudo env PROBE_404_VERSION=%s bash -s -- agent --server %s", shellSingleQuote(installerURL), shellSingleQuote(info.Version), shellSingleQuote(origin)), true
 }
 
 func shellSingleQuote(value string) string {

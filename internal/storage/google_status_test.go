@@ -199,7 +199,7 @@ func TestGoogleStatusV8MigrationPreservesDualLaneAndData(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version, err := store.SchemaVersion(ctx); err != nil || version != 9 {
+		if version, err := store.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
 			t.Fatalf("version=%d err=%v", version, err)
 		}
 		if _, err := store.GetProbeJob(ctx, "old-job"); err != nil {

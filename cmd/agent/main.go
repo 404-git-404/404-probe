@@ -14,6 +14,7 @@ import (
 
 	"404-probe/internal/agent"
 	"404-probe/internal/buildinfo"
+	"404-probe/internal/securitycollector"
 	"404-probe/internal/updater"
 )
 
@@ -39,6 +40,19 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "security-collect" {
+		if len(os.Args) != 2 {
+			slog.Error("security collector accepts no arguments")
+			os.Exit(2)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := securitycollector.Run(ctx, securitycollector.StateRoot, time.Now()); err != nil {
+			slog.Error("security collector stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("agent stopped", "error", err)
 		os.Exit(1)
@@ -60,9 +74,11 @@ func run() error {
 	clashAPI := flag.String("sing-box-clash-api", env("PROBE_404_SING_BOX_CLASH_API", agent.DefaultClashAPIURL), "local sing-box Clash API loopback origin")
 	outboundInterval := flag.Duration("outbound-interval", time.Minute, "sing-box outbound discovery interval")
 	updaterSocket := flag.String("updater-socket", env("PROBE_404_UPDATER_SOCKET", "/run/404-probe/agent-updater.sock"), "restricted Agent updater socket")
+	securityExport := flag.String("security-export", env("PROBE_404_SECURITY_EXPORT", "/var/lib/404-probe-security/export"), "read-only local security aggregate export")
+	securityAcks := flag.String("security-acks", env("PROBE_404_SECURITY_ACKS", "/var/lib/404-probe/agent.security-acks.json"), "security upload acknowledgement state")
 	flag.Parse()
 	_, legacyClashSecret := os.LookupEnv("PROBE_404_SING_BOX_CLASH_SECRET")
-	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket}, slog.Default())
+	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute}, slog.Default())
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}

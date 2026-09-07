@@ -87,6 +87,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/report", a.handleReport)
 	mux.HandleFunc("POST /api/v1/agent/outbounds", a.handleAgentOutbounds)
 	mux.HandleFunc("/api/v1/agent/outbounds", requirePost)
+	mux.HandleFunc("POST /api/v1/agent/security", a.handleAgentSecurity)
+	mux.HandleFunc("/api/v1/agent/security", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/claim", a.handleClaimJob)
 	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/control/claim", a.handleClaimControl)
@@ -236,7 +238,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishState(state)
 	}
-	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true}})
+	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true}})
 }
 
 func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {
@@ -565,6 +567,9 @@ func (a *App) CleanupLoop() {
 		case <-ticker.C:
 			if err := a.store.CleanupHistory(a.shutdown, a.now().Add(-30*24*time.Hour)); err != nil && a.shutdown.Err() == nil {
 				a.logger.Error("clean history", "error", err)
+			}
+			if err := a.store.CleanupSecurityHistory(a.shutdown, a.now().Add(-storage.SecurityRetention)); err != nil && a.shutdown.Err() == nil {
+				a.logger.Error("clean security history", "error", err)
 			}
 		}
 	}

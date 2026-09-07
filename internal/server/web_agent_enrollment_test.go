@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/buildinfo"
 )
 
 func webAgentCreateResponse(t *testing.T, app *App, body string, configure func(*http.Request, *webSession)) *httptest.ResponseRecorder {
@@ -34,6 +35,7 @@ func webAgentCreateResponse(t *testing.T, app *App, body string, configure func(
 func TestWebAgentCreateMutationBoundary(t *testing.T) {
 	app, store, _ := newWebAuthenticationTestApp(t)
 	defer store.Close()
+	app.buildInfo = buildinfo.Info{Version: "v0.9.0", Commit: strings.Repeat("a", 40)}
 	valid := `{"name":"lax-01"}`
 
 	unauthenticated := webRequest(app, http.MethodPost, "/api/v1/web/agents", strings.NewReader(`{`), nil)
@@ -84,6 +86,7 @@ func TestWebAgentCreateMutationBoundary(t *testing.T) {
 func TestWebAgentCreateAndShownOnceCredential(t *testing.T) {
 	app, store, _ := newWebAuthenticationTestApp(t)
 	defer store.Close()
+	app.buildInfo = buildinfo.Info{Version: "v0.9.0", Commit: strings.Repeat("a", 40)}
 	var logs bytes.Buffer
 	app.logger = slog.New(slog.NewTextHandler(&logs, nil))
 
@@ -98,7 +101,7 @@ func TestWebAgentCreateAndShownOnceCredential(t *testing.T) {
 	if created.Agent.AgentID == "" || created.Agent.Name != "lax-01" || created.Agent.Revoked || created.Agent.Online || created.Agent.LastSeen != nil {
 		t.Fatalf("agent=%+v", created.Agent)
 	}
-	if !strings.Contains(created.InstallCommand, "/v0.8.0/install.sh") || strings.Contains(created.InstallCommand, created.EnrollmentValue) ||
+	if !created.InstallAvailable || !strings.Contains(created.InstallCommand, "/v0.9.0/install.sh") || !strings.Contains(created.InstallCommand, "PROBE_404_VERSION='v0.9.0'") || strings.Contains(created.InstallCommand, created.EnrollmentValue) ||
 		!strings.Contains(created.InstallCommand, "--server 'https://probe.test'") {
 		t.Fatalf("install command=%q", created.InstallCommand)
 	}
@@ -153,10 +156,13 @@ func TestWebAgentCreateRejectsInvalidNames(t *testing.T) {
 }
 
 func TestWebAgentInstallCommandQuotesOrigin(t *testing.T) {
-	command := webAgentInstallCommand("https://probe.example.com")
-	want := "curl -fsSL '" + webAgentInstallerURL + "' | sudo bash -s -- agent --server 'https://probe.example.com'"
-	if command != want {
+	command, available := webAgentInstallCommand("https://probe.example.com", buildinfo.Info{Version: "v0.9.0", Commit: "abc"})
+	want := "curl -fsSL '" + webAgentInstallerBaseURL + "/v0.9.0/install.sh' | sudo env PROBE_404_VERSION='v0.9.0' bash -s -- agent --server 'https://probe.example.com'"
+	if !available || command != want {
 		t.Fatalf("command=%q want=%q", command, want)
+	}
+	if command, available := webAgentInstallCommand("https://probe.example.com", buildinfo.Info{Version: "dev", Commit: "abc"}); available || command != "" {
+		t.Fatalf("dev command=%q available=%t", command, available)
 	}
 	if quoted := shellSingleQuote("a'b"); quoted != `'a'"'"'b'` {
 		t.Fatalf("quoted=%q", quoted)

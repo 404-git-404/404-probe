@@ -26,6 +26,11 @@ func TestMigratesV4DatabaseWithAgentsEnabledByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`DROP INDEX idx_agent_security_retention`,
+		`DROP INDEX idx_agent_security_history`,
+		`DROP TABLE agent_security_batches`,
+		`DROP TABLE agent_security_capabilities`,
+		`DELETE FROM schema_migrations WHERE version=10`,
 		`DROP INDEX idx_probe_jobs_one_pending_google_status`,
 		`DROP TABLE agent_google_status`,
 		`DROP TABLE agent_google_status_capabilities`,

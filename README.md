@@ -30,6 +30,28 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-ag
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-server ./cmd/server
 ```
 
+## Upgrade to V0.9
+
+V0.9 adds local sing-box REALITY security observability. A root-only, fixed-purpose daily systemd oneshot reads only `sing-box.service` journal JSON, stores its cursor and private outbox under `/var/lib/404-probe-security/private`, and exports bounded aggregate batches under `/var/lib/404-probe-security/export`. The normal locked `404-probe` Agent can read those aggregates but cannot read the private cursor/outbox, write the export, invoke arbitrary journal queries, or perform firewall/ban actions. It uploads only canonical source IP, counts, time bounds, and typed classifications; raw journal messages and ports never leave the host.
+
+First upgrade an existing V0.8 Agent through the Web UI. Because remote upgrade deliberately replaces only the verified Agent binary and cannot install a new root helper, enable the V0.9 collector once on each Agent host with the version-pinned installer:
+
+```bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v0.9.0/install.sh | sudo bash -s -- setup-security
+```
+
+`setup-security` is local-only, idempotent, and fails closed unless the existing binary, unit, private environment, service account, and exact verified V0.9.0 build pass validation. It preserves Agent identity, credential, Server URL, and epoch state; adds only the fixed Security paths and units; checks the generated aggregate is readable but not writable by the Agent; and restores changed files if setup fails. Fresh V0.9 Agent installs include this setup automatically. A dashboard status of `Setup required` means this local step is still needed.
+
+Stop the Server and back up its database before first opening it with V0.9. The migration advances schema V9 to V10 by adding negotiated Security capability and immutable, idempotent batch history. Security batches are retained for 30 days; existing telemetry retention behavior is unchanged. Do not downgrade a migrated database.
+
+```bash
+sudo systemctl stop 404-probe-server
+sudo cp -a /var/lib/404-probe/404-probe.db /var/lib/404-probe/404-probe.db.pre-v0.9
+sudo ./404-probe-server agent list --db /var/lib/404-probe/404-probe.db
+```
+
+Collection is cursor-based and crash-safe. Each run is bounded to 100,000 lines, 64 MiB, 90 seconds, 4,096 tracked IPs, and 100 uploaded sources. Partial input, truncation, invalid cursors, malformed trusted fields, and delivery coverage gaps are surfaced explicitly instead of being presented as complete data. See `RELEASE_NOTES_v0.9.md` for thresholds, trust boundaries, and limitations.
+
 ## Upgrade to V0.8
 
 V0.8 introduces version reporting and a narrowly scoped Agent updater. A V0.7 Agent cannot receive the first upgrade remotely because it has neither the protocol nor the privileged updater. Bootstrap each existing Agent locally with the V0.8 installer; it preserves the Agent ID, credential, Server URL, epoch, and optional local Clash configuration:
@@ -116,7 +138,7 @@ This local, repeatable command stops and disables the Agent service, then remove
 
 All Web mutations require an authenticated Web session, the exact configured Origin, `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
 
-Agent cards use a fixed five-slot layout for identity, metrics, network, metadata, and actions. Online, offline, long-name, and never-reported cards keep the same height on desktop and mobile. Long text is truncated in the card while its complete value remains available through `title`, accessible labels, and the authenticated Agent detail response. Card resizing, dragging, per-Agent layouts, and metric visibility preferences are not supported.
+Agent cards use a compact responsive flow for identity, metrics, network, Google status, Security status, metadata, and actions. Cards grow with available status content instead of relying on fixed pixel heights or fixed grid rows. Long text is truncated in the card while its complete value remains available through `title`, accessible labels, and the authenticated Agent detail response. Card resizing, dragging, per-Agent layouts, and metric visibility preferences are not supported.
 
 ## Start the server
 

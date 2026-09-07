@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 10
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -25,6 +25,8 @@ var (
 	ErrUpgradeNotFound          = errors.New("upgrade operation not found")
 	ErrUpgradeConflict          = errors.New("agent already has an active upgrade")
 	ErrUpgradeTransition        = errors.New("invalid upgrade status transition")
+	ErrSecurityConflict         = errors.New("security batch ID content conflict")
+	ErrSecurityFence            = errors.New("security submission session is stale")
 )
 
 type Store struct{ db *sql.DB }
@@ -381,6 +383,47 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	if version < 10 {
+		for _, statement := range []string{
+			`CREATE TABLE agent_security_capabilities (
+				agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+				supported INTEGER NOT NULL CHECK(supported IN (0,1)),
+				status TEXT NOT NULL CHECK(status IN ('unavailable','no_data','complete','partial','failed')),
+				reason TEXT,
+				epoch INTEGER NOT NULL,
+				session_id TEXT NOT NULL,
+				current_batch_id TEXT,
+				current_collected_at INTEGER NOT NULL DEFAULT 0,
+				updated_at INTEGER NOT NULL
+			)`,
+			`CREATE TABLE agent_security_batches (
+				agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+				batch_id TEXT NOT NULL,
+				content_hash BLOB NOT NULL,
+				epoch INTEGER NOT NULL,
+				session_id TEXT NOT NULL,
+				window_start INTEGER NOT NULL,
+				window_end INTEGER NOT NULL,
+				collected_at INTEGER NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('complete','partial','failed')),
+				reason TEXT,
+				total_events INTEGER NOT NULL,
+				source_count INTEGER NOT NULL,
+				payload_json TEXT NOT NULL,
+				received_at INTEGER NOT NULL,
+				delivery_gap INTEGER NOT NULL DEFAULT 0 CHECK(delivery_gap IN (0,1)),
+				previous_collected_at INTEGER NOT NULL DEFAULT 0 CHECK(previous_collected_at >= 0),
+				PRIMARY KEY(agent_id,batch_id)
+			)`,
+			`CREATE INDEX idx_agent_security_history ON agent_security_batches(agent_id,collected_at DESC,batch_id DESC)`,
+			`CREATE INDEX idx_agent_security_retention ON agent_security_batches(received_at)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(10, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 10: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
@@ -688,6 +731,9 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	// measurement, but never inherit a prior session's supported capability.
 	if !exists || r.Epoch != previous.Epoch {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM agent_google_status_capabilities WHERE agent_id=?`, authenticatedID); err != nil {
+			return State{}, false, "", err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM agent_security_capabilities WHERE agent_id=?`, authenticatedID); err != nil {
 			return State{}, false, "", err
 		}
 	}
