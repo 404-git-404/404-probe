@@ -50,7 +50,7 @@ type journalEntry struct {
 	Unit      string          `json:"_SYSTEMD_UNIT"`
 	Cursor    string          `json:"__CURSOR"`
 	Timestamp json.RawMessage `json:"__REALTIME_TIMESTAMP"`
-	Message   *string         `json:"MESSAGE"`
+	Message   json.RawMessage `json:"MESSAGE"`
 }
 
 type sourceAccumulator struct {
@@ -289,14 +289,22 @@ func parseJournal(reader io.Reader, requestedStart, requestedEnd int64, collecte
 		if stamp > batch.WindowEnd {
 			batch.WindowEnd = stamp
 		}
-		if entry.Message == nil {
+		message, present, err := journalMessage(entry.Message)
+		if !present {
 			markPartial(&batch, "missing_message")
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
 			continue
 		}
-		ip, reality, valid := sourceIP(*entry.Message)
+		if err != nil {
+			markPartial(&batch, "malformed_or_untrusted_lines")
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			continue
+		}
+		ip, reality, valid := sourceIP(message)
 		if !reality {
 			if errors.Is(readErr, io.EOF) {
 				break
@@ -387,6 +395,31 @@ func journalTimestampMS(raw json.RawMessage) (int64, error) {
 		return 0, errors.New("invalid timestamp")
 	}
 	return microseconds / 1000, nil
+}
+
+// journalctl emits fields containing non-printable bytes as JSON byte arrays.
+// sing-box colorized journal messages therefore need both the ordinary string
+// representation and the bounded byte-array representation to be accepted.
+func journalMessage(raw json.RawMessage) (string, bool, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", false, nil
+	}
+	if raw[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return "", true, err
+		}
+		return text, true, nil
+	}
+	if raw[0] == '[' {
+		var value []uint8
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return "", true, err
+		}
+		return string(value), true, nil
+	}
+	return "", true, errors.New("invalid journal message encoding")
 }
 
 func sourceIP(message string) (string, bool, bool) {

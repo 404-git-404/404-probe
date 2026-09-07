@@ -14,7 +14,19 @@ import (
 )
 
 func journalLine(cursor string, at time.Time, message string) string {
-	value := journalEntry{Unit: journalUnit, Cursor: cursor, Timestamp: json.RawMessage(`"` + strconv.FormatInt(at.UnixMicro(), 10) + `"`), Message: &message}
+	encoded, _ := json.Marshal(message)
+	value := journalEntry{Unit: journalUnit, Cursor: cursor, Timestamp: json.RawMessage(`"` + strconv.FormatInt(at.UnixMicro(), 10) + `"`), Message: encoded}
+	data, _ := json.Marshal(value)
+	return string(data)
+}
+
+func journalByteArrayLine(cursor string, at time.Time, message string) string {
+	values := make([]int, len(message))
+	for index := range message {
+		values[index] = int(message[index])
+	}
+	encoded, _ := json.Marshal(values)
+	value := journalEntry{Unit: journalUnit, Cursor: cursor, Timestamp: json.RawMessage(`"` + strconv.FormatInt(at.UnixMicro(), 10) + `"`), Message: encoded}
 	data, _ := json.Marshal(value)
 	return string(data)
 }
@@ -37,6 +49,25 @@ func TestParseJournalRequiresRealityAndHandlesIPv6AndDuplicateCursor(t *testing.
 	}
 	if parsed.batch.Sources[0].IP == "" || parsed.batch.Sources[1].IP == "" {
 		t.Fatal("missing canonical IP")
+	}
+}
+
+func TestParseJournalAcceptsJournaldByteArrayMessage(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	message := "\x1b[31mERROR\x1b[0m inbound: process connection from 192.0.2.8:443: REALITY: processed invalid connection"
+	parsed := parseJournal(strings.NewReader(journalByteArrayLine("c1", now.Add(-time.Second), message)), now.Add(-time.Hour).UnixMilli(), now.UnixMilli(), now)
+	if parsed.batch.Status != protocol.SecurityStatusComplete || parsed.batch.TotalEvents != 1 || len(parsed.batch.Sources) != 1 || parsed.batch.Sources[0].IP != "192.0.2.8" {
+		t.Fatalf("parsed=%+v", parsed)
+	}
+}
+
+func TestParseJournalRejectsInvalidJournaldByteArrayAndContinues(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	invalid := `{"_SYSTEMD_UNIT":"sing-box.service","__CURSOR":"c1","__REALTIME_TIMESTAMP":"` + strconv.FormatInt(now.Add(-time.Minute).UnixMicro(), 10) + `","MESSAGE":[256]}`
+	input := invalid + "\n" + journalLine("c2", now.Add(-time.Second), reality("192.0.2.9:443"))
+	parsed := parseJournal(strings.NewReader(input), now.Add(-time.Hour).UnixMilli(), now.UnixMilli(), now)
+	if parsed.batch.Status != protocol.SecurityStatusPartial || parsed.batch.Reason != "malformed_or_untrusted_lines" || parsed.batch.TotalEvents != 1 || parsed.cursor != "c2" {
+		t.Fatalf("parsed=%+v", parsed)
 	}
 }
 
