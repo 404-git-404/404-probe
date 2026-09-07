@@ -413,9 +413,18 @@ func journalMessage(raw json.RawMessage) (string, bool, error) {
 		return text, true, nil
 	}
 	if raw[0] == '[' {
-		var value []uint8
-		if err := json.Unmarshal(raw, &value); err != nil {
+		var encoded []json.RawMessage
+		if err := json.Unmarshal(raw, &encoded); err != nil {
 			return "", true, err
+		}
+		value := make([]byte, len(encoded))
+		for index, item := range encoded {
+			item = bytes.TrimSpace(item)
+			parsed, err := strconv.ParseUint(string(item), 10, 8)
+			if err != nil {
+				return "", true, errors.New("invalid journal message byte")
+			}
+			value[index] = byte(parsed)
 		}
 		return string(value), true, nil
 	}
