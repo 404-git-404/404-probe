@@ -41,6 +41,15 @@ func TestSetupSecurityFailureRestoresStoppedAgentAndActiveTimer(t *testing.T) {
 	functionSource := script[start : start+end+3]
 
 	testParent := filepath.Join(filepath.Dir(filename), "..", "..", ".tools")
+	createdParent := false
+	if err := os.Mkdir(testParent, 0700); err == nil {
+		createdParent = true
+	} else if !os.IsExist(err) {
+		t.Fatal(err)
+	}
+	if createdParent {
+		t.Cleanup(func() { _ = os.Remove(testParent) })
+	}
 	rootNative, err := os.MkdirTemp(testParent, "installer-rollback-")
 	if err != nil {
 		t.Fatal(err)
