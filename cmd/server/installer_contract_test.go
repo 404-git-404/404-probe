@@ -34,6 +34,30 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 }
 
+func TestReleaseBuildExportsLFInstallerFromTag(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate release build contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "scripts", "build-release-assets.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`git show "${tag_commit}:install.sh" >"${installer_path}"`,
+		`LC_ALL=C grep -q $'\r' "${installer_path}"`,
+		`bash -n "${installer_path}"`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("release build missing tagged LF installer contract %q", required)
+		}
+	}
+	if strings.Contains(script, `cp install.sh "${OUTPUT_DIRECTORY}`) || strings.Contains(script, `cp "${ROOT_DIRECTORY}/install.sh"`) {
+		t.Fatal("release build copies the checkout installer instead of exporting the tagged blob")
+	}
+}
+
 func TestInstallerAgentServiceRestartsOnlyAfterFailure(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {

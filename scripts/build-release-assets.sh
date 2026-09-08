@@ -42,6 +42,18 @@ tag_commit="$(git rev-parse --verify "${VERSION}^{commit}")"
 
 mkdir -p "${OUTPUT_DIRECTORY}"
 
+installer_path="${OUTPUT_DIRECTORY}/install.sh"
+git show "${tag_commit}:install.sh" >"${installer_path}"
+[[ -s "${installer_path}" ]] || {
+  printf 'tagged installer is empty\n' >&2
+  exit 1
+}
+if LC_ALL=C grep -q $'\r' "${installer_path}"; then
+  printf 'tagged installer contains carriage returns\n' >&2
+  exit 1
+fi
+bash -n "${installer_path}"
+
 asset_paths=()
 for architecture in amd64 arm64; do
   for role in server agent; do
