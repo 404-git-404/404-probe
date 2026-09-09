@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,7 +26,9 @@ import (
 	"golang.org/x/term"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
+	"404-probe/internal/releasemetadata"
 	appserver "404-probe/internal/server"
 	"404-probe/internal/storage"
 )
@@ -40,6 +45,12 @@ func run(args []string) error {
 		return usageError()
 	}
 	switch args[0] {
+	case "version":
+		return versionCommand(args[1:])
+	case "database":
+		return databaseCommand(args[1:])
+	case "release":
+		return releaseCommand(args[1:])
 	case "serve":
 		return serve(args[1:])
 	case "agent":
@@ -60,7 +71,134 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
+	return errors.New("usage: 404-probe-server version [--json] | release verify [flags] | database <verify|migrate-copy|migrate-protected> --db path | serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
+}
+
+func versionCommand(args []string) error {
+	info := buildinfo.Current()
+	if len(args) == 0 {
+		fmt.Println(info.Version)
+		return nil
+	}
+	if len(args) == 1 && args[0] == "--json" {
+		return json.NewEncoder(os.Stdout).Encode(info)
+	}
+	if len(args) == 3 && args[0] == "inspect" && args[1] == "--json" {
+		inspected, err := buildinfo.InspectExecutable(args[2])
+		if err != nil {
+			return fmt.Errorf("inspect executable: %w", err)
+		}
+		return json.NewEncoder(os.Stdout).Encode(inspected)
+	}
+	return errors.New("usage: 404-probe-server version [--json] | version inspect --json <executable>")
+}
+
+func databaseCommand(args []string) error {
+	if len(args) == 0 || (args[0] != "verify" && args[0] != "migrate-copy" && args[0] != "migrate-protected") {
+		return errors.New("usage: 404-probe-server database <verify|migrate-copy|migrate-protected> --db path")
+	}
+	mode := args[0]
+	flags := flag.NewFlagSet("database "+mode, flag.ContinueOnError)
+	dbPath := flags.String("db", "", "SQLite database path")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*dbPath) == "" {
+		return errors.New("usage: 404-probe-server database <verify|migrate-copy|migrate-protected> --db path")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var result storage.DatabaseVerification
+	var err error
+	if mode == "verify" {
+		result, err = storage.VerifyReadOnly(ctx, *dbPath)
+	} else if mode == "migrate-copy" {
+		result, err = storage.MigrateCopy(ctx, *dbPath)
+	} else {
+		result, err = storage.MigrateProtected(ctx, *dbPath)
+	}
+	if err != nil {
+		return fmt.Errorf("database %s: %w", mode, err)
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func releaseCommand(args []string) error {
+	if len(args) == 0 || args[0] != "verify" {
+		return errors.New("usage: 404-probe-server release verify --version vX.Y.Z --metadata path --checksums path --asset path")
+	}
+	flags := flag.NewFlagSet("release verify", flag.ContinueOnError)
+	target := flags.String("version", "", "canonical target release")
+	metadataPath := flags.String("metadata", "", "release metadata path")
+	checksumsPath := flags.String("checksums", "", "checksum manifest path")
+	assetPath := flags.String("asset", "", "release asset path")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || !buildinfo.IsCanonicalVersion(*target) || *metadataPath == "" || *checksumsPath == "" || *assetPath == "" {
+		return errors.New("usage: 404-probe-server release verify --version vX.Y.Z --metadata path --checksums path --asset path")
+	}
+	result, err := verifyReleaseAsset(*target, *metadataPath, *checksumsPath, *assetPath, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+type releaseVerification struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	SHA256  string `json:"sha256"`
+}
+
+func verifyReleaseAsset(target, metadataPath, checksumsPath, assetPath, goos, goarch string) (releaseVerification, error) {
+	metadataBytes, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return releaseVerification{}, err
+	}
+	document, err := releasemetadata.Decode(metadataBytes)
+	if err != nil {
+		return releaseVerification{}, err
+	}
+	name := filepath.Base(assetPath)
+	selected, err := releasemetadata.Select(document, target, name, goos, goarch)
+	if err != nil {
+		return releaseVerification{}, err
+	}
+	assetBytes, err := os.ReadFile(assetPath)
+	if err != nil {
+		return releaseVerification{}, err
+	}
+	digestBytes := sha256.Sum256(assetBytes)
+	digest := hex.EncodeToString(digestBytes[:])
+	if digest != selected.SHA256 {
+		return releaseVerification{}, errors.New("release metadata asset checksum mismatch")
+	}
+	manifest, err := os.ReadFile(checksumsPath)
+	if err != nil {
+		return releaseVerification{}, err
+	}
+	matchCount := 0
+	for _, line := range strings.Split(strings.TrimSuffix(string(manifest), "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || len(fields[0]) != 64 {
+			return releaseVerification{}, errors.New("checksum manifest is malformed")
+		}
+		decoded, decodeErr := hex.DecodeString(fields[0])
+		if decodeErr != nil || hex.EncodeToString(decoded) != fields[0] {
+			return releaseVerification{}, errors.New("checksum manifest digest is invalid")
+		}
+		if fields[1] == name {
+			matchCount++
+			if fields[0] != digest {
+				return releaseVerification{}, errors.New("checksum manifest asset mismatch")
+			}
+		}
+	}
+	if matchCount != 1 {
+		return releaseVerification{}, errors.New("checksum manifest must contain the asset exactly once")
+	}
+	return releaseVerification{Version: document.Version, Commit: document.Commit, SHA256: digest}, nil
 }
 
 func serve(args []string) error {

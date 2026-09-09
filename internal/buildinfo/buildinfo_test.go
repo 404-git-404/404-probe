@@ -1,6 +1,9 @@
 package buildinfo
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestCompareVersions(t *testing.T) {
 	for _, test := range []struct {
@@ -17,5 +20,15 @@ func TestCompareVersions(t *testing.T) {
 		if got != test.want || ok != test.ok {
 			t.Fatalf("CompareVersions(%q,%q)=(%d,%t) want (%d,%t)", test.left, test.right, got, ok, test.want, test.ok)
 		}
+	}
+}
+
+func TestInspectExecutableRejectsNonGoFile(t *testing.T) {
+	path := t.TempDir() + "/not-a-go-binary"
+	if err := os.WriteFile(path, []byte("no"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InspectExecutable(path); err == nil {
+		t.Fatal("non-Go file was accepted")
 	}
 }

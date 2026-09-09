@@ -33,6 +33,9 @@ type Asset struct {
 }
 
 func Decode(data []byte) (Document, error) {
+	if err := rejectDuplicateObjectKeys(data); err != nil {
+		return Document{}, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var document Document
@@ -47,6 +50,61 @@ func Decode(data []byte) (Document, error) {
 		return Document{}, err
 	}
 	return document, nil
+}
+
+func rejectDuplicateObjectKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := make(map[string]struct{})
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("release metadata object key is invalid")
+				}
+				if _, exists := seen[key]; exists {
+					return fmt.Errorf("release metadata contains duplicate key %q", key)
+				}
+				seen[key] = struct{}{}
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		case '[':
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		default:
+			return errors.New("release metadata contains an unexpected delimiter")
+		}
+	}
+	if err := walk(); err != nil {
+		return errors.New("release metadata is not strict JSON")
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("release metadata contains trailing data")
+	}
+	return nil
 }
 
 func Validate(document Document) error {

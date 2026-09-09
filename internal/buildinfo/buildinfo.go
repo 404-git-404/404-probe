@@ -1,6 +1,8 @@
 package buildinfo
 
 import (
+	stdbuildinfo "debug/buildinfo"
+	"errors"
 	"regexp"
 	"runtime/debug"
 	"strconv"
@@ -18,6 +20,51 @@ type Info struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit,omitempty"`
 	Dirty   bool   `json:"dirty"`
+}
+
+type ExecutableInfo struct {
+	Path   string `json:"path"`
+	Commit string `json:"commit"`
+	Dirty  bool   `json:"dirty"`
+	GOOS   string `json:"goos"`
+	GOARCH string `json:"goarch"`
+}
+
+func InspectExecutable(path string) (ExecutableInfo, error) {
+	metadata, err := stdbuildinfo.ReadFile(path)
+	if err != nil {
+		return ExecutableInfo{}, err
+	}
+	result := ExecutableInfo{Path: metadata.Path}
+	var revisionSeen, modifiedSeen, goosSeen, goarchSeen bool
+	for _, setting := range metadata.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			if revisionSeen {
+				return ExecutableInfo{}, errors.New("duplicate vcs.revision")
+			}
+			revisionSeen, result.Commit = true, setting.Value
+		case "vcs.modified":
+			if modifiedSeen || (setting.Value != "true" && setting.Value != "false") {
+				return ExecutableInfo{}, errors.New("invalid vcs.modified")
+			}
+			modifiedSeen, result.Dirty = true, setting.Value == "true"
+		case "GOOS":
+			if goosSeen {
+				return ExecutableInfo{}, errors.New("duplicate GOOS")
+			}
+			goosSeen, result.GOOS = true, setting.Value
+		case "GOARCH":
+			if goarchSeen {
+				return ExecutableInfo{}, errors.New("duplicate GOARCH")
+			}
+			goarchSeen, result.GOARCH = true, setting.Value
+		}
+	}
+	if !revisionSeen || !modifiedSeen || !goosSeen || !goarchSeen {
+		return ExecutableInfo{}, errors.New("executable build settings are incomplete")
+	}
+	return result, nil
 }
 
 func Current() Info {

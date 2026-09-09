@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,8 +17,55 @@ import (
 
 	"404-probe/internal/auth"
 	"404-probe/internal/protocol"
+	"404-probe/internal/releasemetadata"
 	"404-probe/internal/storage"
 )
+
+func TestVerifyReleaseAssetStrictlyBindsMetadataManifestAndBytes(t *testing.T) {
+	directory := t.TempDir()
+	assetPath := filepath.Join(directory, "404-probe-server-linux-amd64")
+	assetBytes := []byte("candidate")
+	if err := os.WriteFile(assetPath, assetBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digestBytes := sha256.Sum256(assetBytes)
+	digest := hex.EncodeToString(digestBytes[:])
+	commit := strings.Repeat("a", 40)
+	document := releasemetadata.Document{SchemaVersion: releasemetadata.SchemaVersion, Version: "v0.9.1", Commit: commit, Assets: []releasemetadata.Asset{{
+		Name: filepath.Base(assetPath), GOOS: "linux", GOARCH: "amd64", SHA256: digest,
+	}}}
+	metadata, err := releasemetadata.Encode(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataPath := filepath.Join(directory, "RELEASE-METADATA.json")
+	checksumsPath := filepath.Join(directory, "SHA256SUMS")
+	if err := os.WriteFile(metadataPath, metadata, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(checksumsPath, []byte(digest+"  "+filepath.Base(assetPath)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := verifyReleaseAsset("v0.9.1", metadataPath, checksumsPath, assetPath, "linux", "amd64")
+	if err != nil || result.Commit != commit || result.SHA256 != digest {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+
+	wrongBinding := bytes.Replace(metadata, []byte(digest), []byte(strings.Repeat("b", 64)), 1)
+	if err := os.WriteFile(metadataPath, wrongBinding, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyReleaseAsset("v0.9.1", metadataPath, checksumsPath, assetPath, "linux", "amd64"); err == nil {
+		t.Fatal("metadata checksum bound to different bytes was accepted")
+	}
+	duplicate := bytes.Replace(metadata, []byte(`"version": "v0.9.1"`), []byte(`"version": "v0.9.1", "version": "v0.9.1"`), 1)
+	if err := os.WriteFile(metadataPath, duplicate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyReleaseAsset("v0.9.1", metadataPath, checksumsPath, assetPath, "linux", "amd64"); err == nil {
+		t.Fatal("duplicate metadata key was accepted")
+	}
+}
 
 func TestLoadControlTokenHash(t *testing.T) {
 	token, wantHash, err := auth.NewToken()

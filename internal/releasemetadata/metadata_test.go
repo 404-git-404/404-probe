@@ -59,9 +59,16 @@ func TestMetadataStrictJSONAndTargetMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	unknown := strings.Replace(string(data), `"version":`, `"unknown":true,"version":`, 1)
+	duplicate := strings.Replace(string(data), `"version": "v0.8.1"`, `"version": "v0.8.1", "version": "v0.8.1"`, 1)
+	duplicateAsset := strings.Replace(string(data), `"name": "404-probe-agent-linux-amd64"`, `"name": "404-probe-agent-linux-amd64", "name": "404-probe-agent-linux-amd64"`, 1)
 	for _, value := range []string{unknown, string(data) + `{}`} {
 		if _, err := Decode([]byte(value)); err == nil {
 			t.Fatal("non-strict metadata accepted")
+		}
+	}
+	for _, value := range []string{duplicate, duplicateAsset} {
+		if _, err := Decode([]byte(value)); err == nil {
+			t.Fatal("duplicate metadata key accepted")
 		}
 	}
 	document := validDocument()

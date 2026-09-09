@@ -77,6 +77,8 @@ done
 
 go run ./cmd/release-metadata --version "${VERSION}" --commit "${head_commit}" \
   --output "${OUTPUT_DIRECTORY}" "${asset_paths[@]}"
+bash "${ROOT_DIRECTORY}/scripts/write-installer-checksum.sh" \
+  "${installer_path}" "${OUTPUT_DIRECTORY}/SHA256SUMS"
 
 (
   cd "${OUTPUT_DIRECTORY}"

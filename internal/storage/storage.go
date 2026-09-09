@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,6 +32,12 @@ var (
 )
 
 type Store struct{ db *sql.DB }
+
+type DatabaseVerification struct {
+	SchemaVersion int    `json:"schema_version"`
+	Integrity     string `json:"integrity"`
+	Mode          string `json:"mode"`
+}
 
 type Agent struct {
 	ID         string `json:"id"`
@@ -127,6 +135,94 @@ func Open(ctx context.Context, path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// VerifyReadOnly checks an existing database without running migrations or
+// changing SQLite journal settings. It is safe to use against the live Server
+// database after the service has started.
+func VerifyReadOnly(ctx context.Context, path string) (DatabaseVerification, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return DatabaseVerification{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return DatabaseVerification{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return DatabaseVerification{}, errors.New("database is not a regular file")
+	}
+	dsn := "file:" + filepath.ToSlash(abs) + "?mode=ro"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return DatabaseVerification{}, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if err := checkSupportedSchemaVersion(ctx, db); err != nil {
+		return DatabaseVerification{}, err
+	}
+	version, err := schemaVersion(ctx, db)
+	if err != nil {
+		return DatabaseVerification{}, err
+	}
+	var integrity string
+	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
+		return DatabaseVerification{}, fmt.Errorf("integrity check: %w", err)
+	}
+	if integrity != "ok" {
+		return DatabaseVerification{}, fmt.Errorf("integrity check returned %q", integrity)
+	}
+	return DatabaseVerification{SchemaVersion: version, Integrity: integrity, Mode: "read-only"}, nil
+}
+
+// MigrateCopy upgrades and verifies an operator-provided staging copy. Callers
+// must never pass the live production database to this explicit command.
+func MigrateCopy(ctx context.Context, path string) (DatabaseVerification, error) {
+	return migrateAndVerify(ctx, path, "migrated-copy")
+}
+
+// MigrateProtected upgrades a stopped production database after the caller has
+// completed and persisted a consistent backup.
+func MigrateProtected(ctx context.Context, path string) (DatabaseVerification, error) {
+	return migrateAndVerify(ctx, path, "migrated-protected")
+}
+
+func migrateAndVerify(ctx context.Context, path, mode string) (DatabaseVerification, error) {
+	store, err := Open(ctx, path)
+	if err != nil {
+		return DatabaseVerification{}, err
+	}
+	defer store.Close()
+	version, err := store.SchemaVersion(ctx)
+	if err != nil {
+		return DatabaseVerification{}, err
+	}
+	var integrity string
+	if err := store.db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
+		return DatabaseVerification{}, fmt.Errorf("integrity check: %w", err)
+	}
+	if integrity != "ok" {
+		return DatabaseVerification{}, fmt.Errorf("integrity check returned %q", integrity)
+	}
+	return DatabaseVerification{SchemaVersion: version, Integrity: integrity, Mode: mode}, nil
+}
+
+func schemaVersion(ctx context.Context, db *sql.DB) (int, error) {
+	var exists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'
+	)`).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("inspect schema version: %w", err)
+	}
+	if !exists {
+		return 0, nil
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	return version, nil
+}
 
 func (s *Store) migrate(ctx context.Context) error {
 	if err := checkSupportedSchemaVersion(ctx, s.db); err != nil {

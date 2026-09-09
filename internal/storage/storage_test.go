@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,6 +34,53 @@ func testStore(t *testing.T, path string) (*Store, string, string) {
 		t.Fatal(err)
 	}
 	return s, id, token
+}
+
+func TestDatabaseVerificationSeparatesReadOnlyAndCopyMigration(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "verify.db")
+	store, _, _ := testStore(t, path)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly, err := VerifyReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readOnly.Mode != "read-only" || readOnly.Integrity != "ok" || readOnly.SchemaVersion != currentSchemaVersion {
+		t.Fatalf("unexpected read-only result: %+v", readOnly)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("read-only verification changed the database")
+	}
+	migrated, err := MigrateCopy(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.Mode != "migrated-copy" || migrated.Integrity != "ok" || migrated.SchemaVersion != currentSchemaVersion {
+		t.Fatalf("unexpected migrated-copy result: %+v", migrated)
+	}
+}
+
+func TestVerifyReadOnlyAgainstLiveWALDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "live.db")
+	store, _, _ := testStore(t, path)
+	defer store.Close()
+	result, err := VerifyReadOnly(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != "read-only" || result.Integrity != "ok" || result.SchemaVersion != currentSchemaVersion {
+		t.Fatalf("unexpected live verification: %+v", result)
+	}
 }
 
 func validReport(id string, epoch uint64, session, boot string, sequence, rx, tx uint64) protocol.Report {

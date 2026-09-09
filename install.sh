@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.9.0"
+readonly DEFAULT_VERSION="v0.9.1"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -21,6 +21,12 @@ readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.s
 readonly SECURITY_TIMER_UNIT="/etc/systemd/system/404-probe-security-collect.timer"
 readonly SERVICE_USER="404-probe"
 readonly ENROLLMENT_PREFIX="404p1_"
+readonly SERVER_UPGRADE_DIRECTORY="/var/lib/404-probe-upgrade"
+readonly SERVER_UPGRADE_STATE="${SERVER_UPGRADE_DIRECTORY}/pending"
+readonly SERVER_UPGRADE_BACKUP="${SERVER_UPGRADE_DIRECTORY}/backup"
+readonly SERVER_UPGRADE_CANDIDATE="/usr/local/bin/.404-probe-server.candidate"
+readonly SERVER_UPGRADE_LOCK_DIRECTORY="/run/404-probe-upgrade"
+readonly SERVER_UPGRADE_LOCK="${SERVER_UPGRADE_LOCK_DIRECTORY}/server.lock"
 
 INSTALL_TRANSACTION_ACTIVE=0
 INSTALL_TRANSACTION_ROLE=""
@@ -41,10 +47,53 @@ note() {
   printf '\n%s\n' "$*"
 }
 
+canonical_version() {
+  [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+}
+
+target_version() {
+  local version="${PROBE_404_VERSION:-${DEFAULT_VERSION}}"
+  canonical_version "${version}" || die "target version must use canonical vX.Y.Z form"
+  printf '%s\n' "${version}"
+}
+
+bootstrap_latest_installer() (
+  local effective latest release_base temporary_directory installer checksum_line status
+  if [[ -n "${PROBE_404_VERSION:-}" ]]; then
+    latest="${PROBE_404_VERSION}"
+    canonical_version "${latest}" || die "explicit target version must use canonical vX.Y.Z form"
+  else
+    effective="$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+      --output /dev/null --write-out '%{url_effective}' "https://github.com/${REPOSITORY}/releases/latest")" \
+      || die "could not resolve the latest stable release"
+    latest="${effective##*/}"
+    canonical_version "${latest}" || die "latest stable release returned a non-canonical version"
+    [[ "${effective}" == "https://github.com/${REPOSITORY}/releases/tag/${latest}" ]] \
+      || die "latest stable release redirected outside the official repository"
+  fi
+  release_base="https://github.com/${REPOSITORY}/releases/download/${latest}"
+  temporary_directory="$(mktemp -d)"
+  trap 'rm -rf -- "${temporary_directory}"' EXIT
+  installer="${temporary_directory}/install.sh"
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output "${installer}" "${release_base}/install.sh"
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output "${temporary_directory}/SHA256SUMS" "${release_base}/SHA256SUMS"
+  checksum_line="$(grep -E '^[[:xdigit:]]{64}  install\.sh$' "${temporary_directory}/SHA256SUMS" || true)"
+  [[ "$(printf '%s\n' "${checksum_line}" | grep -c .)" -eq 1 ]] || die "latest release does not authenticate install.sh exactly once"
+  (cd "${temporary_directory}" && printf '%s\n' "${checksum_line}" | sha256sum --check --strict -) \
+    || die "latest release installer checksum verification failed"
+  if LC_ALL=C grep -q $'\r' "${installer}"; then
+    die "latest release installer contains carriage returns"
+  fi
+  bash -n "${installer}" || die "latest release installer failed syntax validation"
+  PROBE_404_INSTALLER_BOOTSTRAPPED=1 PROBE_404_VERSION="${latest}" bash "${installer}" "$@"
+  status=$?
+  exit "${status}"
+)
+
 usage() {
   cat <<'EOF'
 Usage:
-  404-probe-install                 interactive Server/Agent installation
+  404-probe-install                 install, or offer a protected existing-Server upgrade
   404-probe-install agent --server <origin>
   404-probe-install setup-security  enable V0.9 local security audit on an existing Agent
   404-probe-install enroll <name>   create one Agent enrollment token
@@ -61,7 +110,7 @@ require_root_linux_systemd() {
   [[ "$(uname -s)" == "Linux" ]] || die "only Linux is supported"
   command -v systemctl >/dev/null 2>&1 || die "systemd is required"
   [[ -d /run/systemd/system ]] || die "systemd is not running"
-  for command_name in awk base64 cmp curl getent install mktemp runuser sha256sum stat; do
+  for command_name in awk base64 basename cmp curl df dirname flock getent install mktemp readlink runuser sha256sum sort stat sync tar; do
     command -v "${command_name}" >/dev/null 2>&1 || die "required command not found: ${command_name}"
   done
 }
@@ -217,9 +266,9 @@ download_binary() (
   local destination="$2"
   local architecture version asset release_base temporary_directory checksum_line
   architecture="$(detect_architecture)"
-  version="${PROBE_404_VERSION:-${DEFAULT_VERSION}}"
+  version="$(target_version)"
   asset="404-probe-${role}-linux-${architecture}"
-  release_base="${PROBE_404_RELEASE_BASE_URL:-https://github.com/${REPOSITORY}/releases/download/${version}}"
+  release_base="https://github.com/${REPOSITORY}/releases/download/${version}"
   temporary_directory="$(mktemp -d)"
   trap 'rm -rf -- "${temporary_directory}"' EXIT
 
@@ -456,6 +505,7 @@ wait_for_service() {
 
 wait_for_server_readiness() {
   local unit="$1"
+  local origin="${2:-http://127.0.0.1:8080}"
   local attempts=20
   local service_state status_code
   while (( attempts > 0 )); do
@@ -469,7 +519,7 @@ wait_for_server_readiness() {
     esac
 
     status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --connect-timeout 1 --max-time 1 --request POST \
-      http://127.0.0.1:8080/api/v1/agent/jobs/claim || true)"
+      "${origin}/api/v1/agent/jobs/claim" || true)"
     case "${status_code}" in
       401) return ;;
       ""|000) ;;
@@ -776,7 +826,7 @@ setup_security_existing() (
         || die "existing Security path is unsafe: ${path}"
     fi
   done
-  expected_version="${PROBE_404_VERSION:-${DEFAULT_VERSION}}"
+  expected_version="$(target_version)"
   version_json="$("${AGENT_BINARY}" version --json)" || die "could not verify the installed Agent build"
   grep -Fq "\"version\":\"${expected_version}\"" <<<"${version_json}" \
     && grep -Eq '"commit":"[^"]+"' <<<"${version_json}" \
@@ -1099,11 +1149,400 @@ uninstall_role() {
   printf 'Preserved systemd journal history, service user, and installer helper.\n'
 }
 
+json_string_field() {
+  local json="$1" field="$2"
+  printf '%s\n' "${json}" | sed -n "s/.*\"${field}\":\"\([^\"]*\)\".*/\1/p"
+}
+
+compare_versions() {
+  local left="$1" right="$2" lmajor lminor lpatch rmajor rminor rpatch
+  canonical_version "${left}" && canonical_version "${right}" || return 2
+  IFS=. read -r lmajor lminor lpatch <<<"${left#v}"
+  IFS=. read -r rmajor rminor rpatch <<<"${right#v}"
+  for pair in "${lmajor}:${rmajor}" "${lminor}:${rminor}" "${lpatch}:${rpatch}"; do
+    if (( 10#${pair%%:*} < 10#${pair#*:} )); then printf '%s\n' -1; return; fi
+    if (( 10#${pair%%:*} > 10#${pair#*:} )); then printf '%s\n' 1; return; fi
+  done
+  printf '%s\n' 0
+}
+
+download_server_upgrade_candidate() (
+  local target="$1" architecture asset release_base temporary_directory checksum_line version_json candidate_version candidate_commit release_json release_commit
+  architecture="$(detect_architecture)"
+  asset="404-probe-server-linux-${architecture}"
+  release_base="https://github.com/${REPOSITORY}/releases/download/${target}"
+  temporary_directory="$(mktemp -d)"
+  trap 'rm -rf -- "${temporary_directory}"' EXIT
+  if [[ -n "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" ]]; then
+    for name in "${asset}" SHA256SUMS RELEASE-METADATA.json; do
+      [[ -f "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" && ! -L "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" ]] \
+        || die "local release asset not found or unsafe: ${name}"
+      cp -- "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" "${temporary_directory}/${name}"
+    done
+  else
+    for name in "${asset}" SHA256SUMS RELEASE-METADATA.json; do
+      curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --output "${temporary_directory}/${name}" "${release_base}/${name}"
+    done
+  fi
+  checksum_line="$(grep -E "^[[:xdigit:]]{64}  ${asset}$" "${temporary_directory}/SHA256SUMS" || true)"
+  [[ "$(printf '%s\n' "${checksum_line}" | grep -c .)" -eq 1 ]] || die "SHA256SUMS does not authenticate ${asset} exactly once"
+  (cd "${temporary_directory}" && printf '%s\n' "${checksum_line}" | sha256sum --check --strict -) \
+    || die "SHA256 verification failed for ${asset}"
+  install -m 0755 -o root -g root "${temporary_directory}/${asset}" "${SERVER_UPGRADE_CANDIDATE}"
+  release_json="$("${SERVER_UPGRADE_CANDIDATE}" release verify --version "${target}" \
+    --metadata "${temporary_directory}/RELEASE-METADATA.json" --checksums "${temporary_directory}/SHA256SUMS" \
+    --asset "${temporary_directory}/${asset}")" || die "strict release metadata verification failed"
+  release_commit="$(json_string_field "${release_json}" commit)"
+  version_json="$("${SERVER_UPGRADE_CANDIDATE}" version --json)" || die "candidate does not provide Server version JSON"
+  candidate_version="$(json_string_field "${version_json}" version)"
+  candidate_commit="$(json_string_field "${version_json}" commit)"
+  [[ "${candidate_version}" == "${target}" && "${candidate_commit}" =~ ^[0-9a-f]{40}$ && "${version_json}" == *'"dirty":false'* ]] \
+    || die "candidate build identity is invalid"
+  [[ "${release_commit}" == "${candidate_commit}" ]] \
+    || die "candidate commit does not match release metadata"
+)
+
+identify_installed_server_version() {
+  local version_json version inspected commit
+  if version_json="$("${SERVER_BINARY}" version --json 2>/dev/null)"; then
+    version="$(json_string_field "${version_json}" version)"
+    canonical_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
+      || die "installed Server returned an untrusted build identity; no files were changed"
+    printf '%s\n' "${version}"
+    return
+  fi
+  inspected="$("${SERVER_UPGRADE_CANDIDATE}" version inspect --json "${SERVER_BINARY}" 2>/dev/null)" \
+    || die "installed Server build cannot be identified safely; no files were changed"
+  commit="$(json_string_field "${inspected}" commit)"
+  [[ "${inspected}" == *'"dirty":false'* ]] || die "installed Server is a modified build; no files were changed"
+  case "${commit}" in
+    e3a614d54eb868e14a1382455579f3872e26463d) printf '%s\n' v0.8.0 ;;
+    4dfbd3e9018123d9e8a43a5857a5f0f6758abe35) printf '%s\n' v0.8.1 ;;
+    05d566e41063764c3322cf5264eb8329366d1240) printf '%s\n' v0.9.0 ;;
+    *) die "installed legacy Server is unknown (commit ${commit:-unavailable}); refusing to guess its version" ;;
+  esac
+}
+
+write_server_upgrade_state() {
+  local phase="$1" active="$2" enabled="$3" target="$4" temporary
+  temporary="${SERVER_UPGRADE_STATE}.new"
+  printf 'phase=%s\noriginal_active=%s\noriginal_enabled=%s\ntarget=%s\n' \
+    "${phase}" "${active}" "${enabled}" "${target}" >"${temporary}" || return 1
+  chmod 0600 "${temporary}" || return 1
+  sync -f "${temporary}" || return 1
+  mv -f -- "${temporary}" "${SERVER_UPGRADE_STATE}" || return 1
+  sync -f "${SERVER_UPGRADE_STATE}" || return 1
+  sync -f "${SERVER_UPGRADE_DIRECTORY}" || return 1
+}
+
+clear_server_upgrade_state() {
+  local content
+  content="$(<"${SERVER_UPGRADE_STATE}")" || return 1
+  rm -f -- "${SERVER_UPGRADE_STATE}" || return 1
+  if ! sync -f "${SERVER_UPGRADE_DIRECTORY}"; then
+    printf '%s\n' "${content}" >"${SERVER_UPGRADE_STATE}" || true
+    chmod 0600 "${SERVER_UPGRADE_STATE}" || true
+    sync -f "${SERVER_UPGRADE_STATE}" >/dev/null 2>&1 || true
+    return 1
+  fi
+}
+
+server_upgrade_state_value() {
+  local key="$1"
+  sed -n "s/^${key}=//p" "${SERVER_UPGRADE_STATE}"
+}
+
+database_has_open_handles() {
+  local fd resolved target
+  for fd in /proc/[0-9]*/fd/*; do
+    [[ -e "${fd}" ]] || continue
+    resolved="$(readlink -f "${fd}" 2>/dev/null || true)"
+    for target in "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"; do
+      [[ "${resolved}" != "${target}" ]] || return 0
+    done
+  done
+  return 1
+}
+
+existing_regular_files_kb() {
+  local path bytes=0 size
+  for path in "$@"; do
+    [[ -e "${path}" ]] || continue
+    [[ -f "${path}" && ! -L "${path}" ]] || return 1
+    size="$(stat -c '%s' "${path}")" || return 1
+    [[ "${size}" =~ ^[0-9]+$ ]] || return 1
+    bytes=$((bytes + size))
+  done
+  printf '%s\n' "$(((bytes + 1023) / 1024))"
+}
+
+create_server_upgrade_backup_manifest() {
+  local backup="$1" file
+  tar -cpf "${backup}/config.tar" -C "${backup}" config || return 1
+  : >"${backup}/database-files" || return 1
+  for file in 404-probe.db 404-probe.db-wal 404-probe.db-shm; do
+    [[ ! -e "${backup}/database/${file}" ]] || printf '%s\n' "${file}" >>"${backup}/database-files" || return 1
+  done
+  (
+    cd "${backup}" || exit 1
+    sha256sum server-binary server.service config.tar database-files || exit 1
+    while IFS= read -r file; do sha256sum "database/${file}" || exit 1; done <database-files
+  ) >"${backup}/SHA256SUMS" || return 1
+  chmod 0600 "${backup}/config.tar" "${backup}/database-files" "${backup}/SHA256SUMS" || return 1
+  sync -f "${backup}/server-binary" "${backup}/server.service" "${backup}/config.tar" \
+    "${backup}/database-files" "${backup}/SHA256SUMS" "${backup}/database/404-probe.db" || return 1
+  sync -f "${backup}" "${backup}/database" || return 1
+}
+
+verify_server_upgrade_backup() {
+  local backup="$1" file expected_lines=4 actual_lines expected_names actual_names
+  [[ -d "${backup}" && ! -L "${backup}" && "$(stat -c '%U:%G:%a' "${backup}")" == root:root:700 ]] || return 1
+  [[ -d "${backup}/database" && ! -L "${backup}/database" ]] || return 1
+  for file in complete server-binary server.service config.tar database-files SHA256SUMS database/404-probe.db; do
+    [[ -f "${backup}/${file}" && ! -L "${backup}/${file}" ]] || return 1
+  done
+  [[ "$(sed -n '1p' "${backup}/database-files")" == 404-probe.db ]] || return 1
+  [[ "$(grep -Ec '^404-probe\.db(-wal|-shm)?$' "${backup}/database-files")" -eq "$(grep -c . "${backup}/database-files")" ]] || return 1
+  [[ "$(sort -u "${backup}/database-files" | grep -c .)" -eq "$(grep -c . "${backup}/database-files")" ]] || return 1
+  for file in 404-probe.db 404-probe.db-wal 404-probe.db-shm; do
+    if [[ -e "${backup}/database/${file}" ]]; then
+      grep -Fxq "${file}" "${backup}/database-files" || return 1
+    elif grep -Fxq "${file}" "${backup}/database-files"; then
+      return 1
+    fi
+  done
+  while IFS= read -r file; do
+    [[ -f "${backup}/database/${file}" && ! -L "${backup}/database/${file}" ]] || return 1
+    expected_lines=$((expected_lines + 1))
+  done <"${backup}/database-files"
+  for file in "${backup}/database"/*; do
+    [[ -e "${file}" ]] || continue
+    [[ -f "${file}" && ! -L "${file}" ]] || return 1
+    grep -Fxq "$(basename "${file}")" "${backup}/database-files" || return 1
+  done
+  actual_lines="$(grep -Ec '^[[:xdigit:]]{64} [ *](server-binary|server\.service|config\.tar|database-files|database/404-probe\.db(-wal|-shm)?)$' "${backup}/SHA256SUMS")"
+  [[ "${actual_lines}" -eq "${expected_lines}" && "${actual_lines}" -eq "$(grep -c . "${backup}/SHA256SUMS")" ]] || return 1
+  expected_names="$({ printf '%s\n' server-binary server.service config.tar database-files; while IFS= read -r file; do printf 'database/%s\n' "${file}"; done <"${backup}/database-files"; } | sort)" || return 1
+  actual_names="$(awk '{name=$2; sub(/^\*/, "", name); print name}' "${backup}/SHA256SUMS" | sort)" || return 1
+  [[ "${actual_names}" == "${expected_names}" ]] || return 1
+  (cd "${backup}" && sha256sum --check --strict SHA256SUMS >/dev/null) || return 1
+}
+
+restore_server_upgrade() {
+  local phase active enabled target restore_temporary
+  [[ -f "${SERVER_UPGRADE_STATE}" && ! -L "${SERVER_UPGRADE_STATE}" ]] || return 1
+  phase="$(server_upgrade_state_value phase)" || return 1
+  active="$(server_upgrade_state_value original_active)" || return 1
+  enabled="$(server_upgrade_state_value original_enabled)" || return 1
+  target="$(server_upgrade_state_value target)" || return 1
+  [[ "${active}" =~ ^[01]$ && "${enabled}" =~ ^[01]$ ]] || return 1
+  canonical_version "${target}" || return 1
+  systemctl stop 404-probe-server.service >/dev/null 2>&1 || true
+  if systemctl is-active --quiet 404-probe-server.service; then
+    printf '404-probe installer: recovery stopped because the Server could not be stopped\n' >&2
+    return 1
+  fi
+  case "${phase}" in
+    prepared|stopped-unbacked) ;;
+    backup-complete|migration-started|binary-replaced|candidate-started)
+      verify_server_upgrade_backup "${SERVER_UPGRADE_BACKUP}" || {
+          printf '404-probe installer: backup is incomplete; leaving the Server stopped and preserving recovery files\n' >&2
+          return 1
+        }
+      if [[ "${phase}" == "migration-started" || "${phase}" == "binary-replaced" || "${phase}" == "candidate-started" ]]; then
+        rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" || return 1
+        while IFS= read -r file; do
+          cp -a -- "${SERVER_UPGRADE_BACKUP}/database/${file}" "${STATE_DIRECTORY}/${file}" || return 1
+        done <"${SERVER_UPGRADE_BACKUP}/database-files"
+        restore_temporary="${SERVER_BINARY}.restore"
+        cp -a -- "${SERVER_UPGRADE_BACKUP}/server-binary" "${restore_temporary}" || return 1
+        mv -f -- "${restore_temporary}" "${SERVER_BINARY}" || return 1
+        sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" || return 1
+        sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" || return 1
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+  if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || return 1
+  else systemctl disable 404-probe-server.service >/dev/null || return 1; fi
+  if (( active != 0 )); then systemctl start 404-probe-server.service || return 1
+  else systemctl stop 404-probe-server.service >/dev/null 2>&1 || true; fi
+  clear_server_upgrade_state || return 1
+  rm -f -- "${SERVER_UPGRADE_CANDIDATE}" || return 1
+  rm -rf -- "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || return 1
+  return 0
+}
+
+server_upgrade_trap() {
+  local status="$1"
+  trap - EXIT HUP INT TERM
+  if (( status != 0 )) && [[ -f "${SERVER_UPGRADE_STATE}" ]]; then
+    printf '\n404-probe installer: upgrade failed; restoring the pre-upgrade Server state...\n' >&2
+    if ! restore_server_upgrade; then
+      printf '404-probe installer: automatic recovery is incomplete. Leave the Server stopped and preserve %s.\n' "${SERVER_UPGRADE_DIRECTORY}" >&2
+    fi
+  fi
+  exit "${status}"
+}
+
+upgrade_existing_server() (
+  local target current comparison active=0 enabled=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
+  if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
+    [[ -d "${SERVER_UPGRADE_LOCK_DIRECTORY}" && ! -L "${SERVER_UPGRADE_LOCK_DIRECTORY}" \
+      && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK_DIRECTORY}")" == "root:root:700" ]] \
+      || die "Server upgrade lock directory is unsafe"
+  else
+    install -d -m 0700 -o root -g root "${SERVER_UPGRADE_LOCK_DIRECTORY}"
+  fi
+  if [[ -e "${SERVER_UPGRADE_LOCK}" ]]; then
+    [[ -f "${SERVER_UPGRADE_LOCK}" && ! -L "${SERVER_UPGRADE_LOCK}" \
+      && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK}")" == "root:root:600" ]] \
+      || die "Server upgrade lock file is unsafe"
+  else
+    install -m 0600 -o root -g root /dev/null "${SERVER_UPGRADE_LOCK}"
+  fi
+  exec 9<>"${SERVER_UPGRADE_LOCK}"
+  flock -n 9 || die "another Server upgrade is already running"
+  trap 'rm -f -- "${SERVER_UPGRADE_CANDIDATE}"' EXIT
+  if [[ -e "${SERVER_UPGRADE_DIRECTORY}" ]]; then
+    [[ -d "${SERVER_UPGRADE_DIRECTORY}" && ! -L "${SERVER_UPGRADE_DIRECTORY}" \
+      && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_DIRECTORY}")" == "root:root:700" ]] \
+      || die "Server upgrade directory is unsafe; no files were changed"
+  else
+    install -d -m 0700 -o root -g root "${SERVER_UPGRADE_DIRECTORY}"
+  fi
+  if [[ -e "${SERVER_UPGRADE_STATE}" ]]; then
+    note "An interrupted Server upgrade was found; restoring its recorded pre-upgrade state first."
+    restore_server_upgrade || die "interrupted upgrade recovery requires manual attention; recovery files were preserved"
+    die "interrupted upgrade was recovered; run the installer again to start a fresh upgrade"
+  fi
+  [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" && -f "${SERVER_UNIT}" && ! -L "${SERVER_UNIT}" \
+    && -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" && -f "${SERVER_DATABASE}" && ! -L "${SERVER_DATABASE}" ]] \
+    || die "existing Server installation is incomplete or unsupported; no files were changed"
+  [[ ! -e "${AGENT_UNIT}" && ! -e "${AGENT_BINARY}" ]] || die "mixed Server/Agent installation is unsupported"
+  [[ "$(stat -c '%U:%G:%a' "${SERVER_BINARY}")" == "root:root:755" ]] || die "installed Server binary ownership or mode is unsafe"
+  [[ "$(stat -c '%U:%G:%a' "${SERVER_UNIT}")" == "root:root:644" ]] || die "installed Server unit ownership or mode is unsafe"
+  grep -Fxq "User=${SERVICE_USER}" "${SERVER_UNIT}" \
+    && grep -Fq "ExecStart=${SERVER_BINARY} serve " "${SERVER_UNIT}" \
+    && grep -Fq -- "--db ${SERVER_DATABASE}" "${SERVER_UNIT}" \
+    || die "installed Server unit is not a supported 404-probe layout"
+  listen="$(sed -n "s#^ExecStart=${SERVER_BINARY} serve --listen \([^ ]*\) .*#\1#p" "${SERVER_UNIT}")"
+  [[ "$(printf '%s\n' "${listen}" | grep -c .)" -eq 1 ]] || die "installed Server listen address is ambiguous"
+  if [[ "${listen}" =~ ^(127\.0\.0\.1|localhost):([0-9]{1,5})$ || "${listen}" =~ ^\[::1\]:([0-9]{1,5})$ ]]; then
+    origin="http://${listen}"
+  else
+    die "installed Server listen address is not a supported loopback endpoint"
+  fi
+  target="$(target_version)"
+  rm -f -- "${SERVER_UPGRADE_CANDIDATE}"
+  download_server_upgrade_candidate "${target}"
+  current="$(identify_installed_server_version)"
+  comparison="$(compare_versions "${current}" "${target}")"
+  if [[ "${comparison}" == 0 ]]; then
+    rm -f -- "${SERVER_UPGRADE_CANDIDATE}"
+    note "404-probe Server is already ${target}; no files were changed."
+    exit 0
+  fi
+  [[ "${comparison}" == -1 ]] || die "refusing to downgrade Server ${current} to ${target}"
+  runuser -u "${SERVICE_USER}" -- "${SERVER_UPGRADE_CANDIDATE}" database verify --db "${SERVER_DATABASE}" >/dev/null \
+    || die "candidate cannot read and verify the existing database without migration"
+  active_state="$(systemctl is-active 404-probe-server.service 2>/dev/null || true)"
+  enabled_state="$(systemctl is-enabled 404-probe-server.service 2>/dev/null || true)"
+  [[ "${active_state}" == active || "${active_state}" == inactive ]] \
+    || die "Server service state ${active_state:-unknown} is not safe for an automated upgrade"
+  [[ "${enabled_state}" == enabled || "${enabled_state}" == disabled ]] \
+    || die "Server enablement state ${enabled_state:-unknown} is not safe for an automated upgrade"
+  [[ "${active_state}" == active ]] && active=1
+  [[ "${enabled_state}" == enabled ]] && enabled=1
+  database_kb="$(existing_regular_files_kb "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm")" \
+    || die "database, WAL, or SHM path is unsafe"
+  required_kb=$(( database_kb * 3 + 131072 ))
+  available_kb="$(df -Pk "${SERVER_UPGRADE_DIRECTORY}" | awk 'NR==2 {print $4}')"
+  [[ "${available_kb}" =~ ^[0-9]+$ && "${available_kb}" -ge "${required_kb}" ]] \
+    || die "insufficient free space for protected upgrade (need ${required_kb} KiB, have ${available_kb:-unknown} KiB)"
+  cat >/dev/tty <<EOF
+404-probe Server upgrade
+
+  Role:             Server
+  Current build:    ${current} ($(sha256sum "${SERVER_BINARY}" | awk '{print $1}'))
+  Target release:   ${target}
+  Database impact:  protected backup, migration, integrity verification, automatic rollback on failure
+  Preserved:        configuration, credentials, domain/listen settings, systemd enabled/active state
+
+EOF
+  printf 'Proceed with this Server upgrade? [y/N]: ' >/dev/tty
+  IFS= read -r answer </dev/tty
+  [[ "${answer}" == y || "${answer}" == Y ]] || { rm -f -- "${SERVER_UPGRADE_CANDIDATE}"; die "upgrade cancelled; no files were changed"; }
+
+  rm -rf -- "${SERVER_UPGRADE_DIRECTORY}/backup.previous" || die "could not rotate previous Server backup"
+  if [[ -e "${SERVER_UPGRADE_BACKUP}" ]]; then
+    [[ -d "${SERVER_UPGRADE_BACKUP}" && ! -L "${SERVER_UPGRADE_BACKUP}" ]] || die "existing Server backup path is unsafe"
+    mv -- "${SERVER_UPGRADE_BACKUP}" "${SERVER_UPGRADE_DIRECTORY}/backup.previous" || die "could not rotate previous Server backup"
+  fi
+  install -d -m 0700 -o root -g root "${SERVER_UPGRADE_BACKUP}" "${SERVER_UPGRADE_BACKUP}/database"
+  write_server_upgrade_state prepared "${active}" "${enabled}" "${target}" || die "could not persist prepared upgrade state"
+  trap 'server_upgrade_trap $?' EXIT
+  trap 'exit 130' HUP INT TERM
+  systemctl stop 404-probe-server.service || die "could not stop Server; upgrade did not begin"
+  systemctl is-active --quiet 404-probe-server.service && die "Server is still active; upgrade did not begin"
+  write_server_upgrade_state stopped-unbacked "${active}" "${enabled}" "${target}" || die "could not persist stopped upgrade state"
+  database_has_open_handles && die "a process still has the Server database open; refusing to take an inconsistent backup"
+  cp -a -- "${SERVER_BINARY}" "${SERVER_UPGRADE_BACKUP}/server-binary" || die "could not back up Server binary"
+  cp -a -- "${SERVER_UNIT}" "${SERVER_UPGRADE_BACKUP}/server.service" || die "could not back up Server unit"
+  cp -a -- "${CONFIG_DIRECTORY}" "${SERVER_UPGRADE_BACKUP}/config" || die "could not back up Server configuration"
+  for path in "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"; do
+    [[ ! -e "${path}" ]] || cp -a -- "${path}" "${SERVER_UPGRADE_BACKUP}/database/" || die "could not back up $(basename "${path}")"
+  done
+  create_server_upgrade_backup_manifest "${SERVER_UPGRADE_BACKUP}" || die "could not create a durable Server backup manifest"
+  touch "${SERVER_UPGRADE_BACKUP}/complete" || die "could not mark Server backup complete"
+  chmod 0600 "${SERVER_UPGRADE_BACKUP}/complete" || die "could not protect Server backup marker"
+  sync -f "${SERVER_UPGRADE_BACKUP}/complete" || die "could not persist Server backup marker"
+  sync -f "${SERVER_UPGRADE_BACKUP}" || die "could not persist Server backup directory"
+  verify_server_upgrade_backup "${SERVER_UPGRADE_BACKUP}" || die "new Server backup failed complete integrity verification"
+  write_server_upgrade_state backup-complete "${active}" "${enabled}" "${target}" || die "could not persist completed backup state"
+  rm -rf -- "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || die "could not clear old migration staging"
+  install -d -m 0700 -o "${SERVICE_USER}" -g "${SERVICE_USER}" "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || die "could not create migration staging"
+  cp -a -- "${SERVER_UPGRADE_BACKUP}/database/." "${STATE_DIRECTORY}/.404-probe-upgrade-staging/" || die "could not stage database backup"
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || die "could not protect migration staging"
+  runuser -u "${SERVICE_USER}" -- "${SERVER_UPGRADE_CANDIDATE}" database migrate-copy --db "${STATE_DIRECTORY}/.404-probe-upgrade-staging/404-probe.db" >/dev/null \
+    || die "candidate migration rehearsal failed on the protected database copy"
+  write_server_upgrade_state migration-started "${active}" "${enabled}" "${target}" || die "could not persist production migration state"
+  runuser -u "${SERVICE_USER}" -- "${SERVER_UPGRADE_CANDIDATE}" database migrate-protected --db "${SERVER_DATABASE}" >/dev/null \
+    || die "production database migration failed"
+  mv -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_BINARY}" || die "could not atomically replace Server binary"
+  write_server_upgrade_state binary-replaced "${active}" "${enabled}" "${target}" || die "could not persist binary replacement state"
+  version_json="$("${SERVER_BINARY}" version --json)"
+  [[ "$(json_string_field "${version_json}" version)" == "${target}" && "${version_json}" == *'"dirty":false'* ]] \
+    || die "installed candidate identity check failed"
+  if (( active != 0 )); then
+    systemctl start 404-probe-server.service || die "candidate Server failed to start"
+    write_server_upgrade_state candidate-started "${active}" "${enabled}" "${target}" || die "could not persist candidate startup state"
+    wait_for_server_readiness 404-probe-server.service "${origin}"
+    pid="$(systemctl show -p MainPID --value 404-probe-server.service)"
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || die "candidate Server has no main process"
+    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    [[ "${executable}" == "${SERVER_BINARY}" ]] || die "running Server process is not the installed candidate"
+  fi
+  runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" database verify --db "${SERVER_DATABASE}" >/dev/null \
+    || die "post-upgrade database query and integrity verification failed"
+  if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || die "could not restore enabled state"
+  else systemctl disable 404-probe-server.service >/dev/null || die "could not restore disabled state"; fi
+  (( active != 0 )) || systemctl stop 404-probe-server.service >/dev/null 2>&1 || true
+  rm -rf -- "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || die "could not clear migration staging"
+  sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" || die "could not persist upgraded Server files"
+  sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" || die "could not persist upgraded Server directories"
+  clear_server_upgrade_state || die "could not durably commit Server upgrade state"
+  rm -f -- "${SERVER_UPGRADE_CANDIDATE}" || die "could not clear Server candidate staging"
+  trap - EXIT HUP INT TERM
+  note "404-probe Server upgraded from ${current} to ${target}. The protected backup remains at ${SERVER_UPGRADE_BACKUP}."
+)
+
 interactive_install() {
   require_root_linux_systemd
   local choice
   cat >/dev/tty <<'EOF'
-Install 404-probe V0.9.0
+Install 404-probe V0.9.1
 
   1) Server
   2) Agent
@@ -1118,7 +1557,30 @@ EOF
   esac
 }
 
+install_or_upgrade() {
+  require_root_linux_systemd
+  if [[ -e "${SERVER_UNIT}" || -e "${SERVER_BINARY}" || -e "${SERVER_DATABASE}" || -e "${CONFIG_DIRECTORY}/server.env" ]]; then
+    upgrade_existing_server
+    return
+  fi
+  if [[ -e "${AGENT_UNIT}" || -e "${AGENT_BINARY}" || -e "${CONFIG_DIRECTORY}/agent.env" ]]; then
+    [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" \
+      && -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
+      || die "existing Agent installation is incomplete or unsupported; no files were changed"
+    note "Existing 404-probe Agent detected. Agent upgrades remain controlled by the Server Web interface."
+    printf 'No Agent identity, credential, epoch, service, or security state was changed.\n'
+    printf 'If this Agent predates the local security collector, run: sudo 404-probe-install setup-security\n'
+    return
+  fi
+  interactive_install
+}
+
 main() {
+  case "${1:-}" in -h|--help|help) usage; return ;; esac
+  if [[ -z "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" && -z "${PROBE_404_INSTALLER_BOOTSTRAPPED:-}" ]]; then
+    bootstrap_latest_installer "$@"
+    exit $?
+  fi
   case "${1:-}" in
     agent)
       shift
@@ -1140,7 +1602,7 @@ main() {
       usage
       ;;
     "")
-      interactive_install
+      install_or_upgrade
       ;;
     *)
       usage >&2

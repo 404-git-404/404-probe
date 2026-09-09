@@ -8,6 +8,14 @@ On a fresh Linux VPS with systemd, run the unified installer and choose Server o
 curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo bash
 ```
 
+The same command detects an existing supported Server and offers one local, explicit upgrade confirmation. It resolves the latest canonical stable release from the fixed official repository, verifies the release installer, metadata, checksum manifest, candidate build identity, database, and available space before stopping the service, then preserves the existing configuration, credentials, database, listen/domain settings, and systemd state. A root-only persistent transaction and consistent pre-migration backup allow an interrupted or failed upgrade to restore the old binary and database before the old service is restarted. Existing Agents remain on the Server Web upgrade path.
+
+To repeatably target one official release instead of `latest`, pass the canonical version to the privileged shell:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo PROBE_404_VERSION=v0.9.1 bash
+```
+
 For a Server, enter its public Web URL (for example, `https://probe.example.com`) and set the Web administrator password. The installer exposes `http://127.0.0.1:8080` as cloudflared's local origin, but 404-probe does not provision or manage Cloudflare Tunnel; Tunnel configuration remains external. Create each Agent's shown-once enrollment value on the Server:
 
 ```bash

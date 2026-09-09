@@ -19,7 +19,7 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`readonly DEFAULT_VERSION="v0.9.0"`,
+		`readonly DEFAULT_VERSION="v0.9.1"`,
 		`404-probe-install agent --server <origin>`,
 		`[[ $# -eq 2 && "$1" == "--server" ]]`,
 		`IFS= read -r -s enrollment </dev/tty`,
@@ -31,6 +31,65 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	if strings.Contains(script, "--enrollment") || strings.Contains(script, "--token PERMANENT_SECRET") {
 		t.Fatal("installer accepts an Agent credential through command arguments")
+	}
+}
+
+func TestInstallerServerUpgradeTransactionContract(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`bootstrap_latest_installer`,
+		`latest stable release returned a non-canonical version`,
+		`SHA256SUMS does not authenticate ${asset} exactly once`,
+		`RELEASE-METADATA.json`,
+		`Proceed with this Server upgrade? [y/N]:`,
+		`write_server_upgrade_state prepared`,
+		`write_server_upgrade_state stopped-unbacked`,
+		`write_server_upgrade_state backup-complete`,
+		`write_server_upgrade_state migration-started`,
+		`write_server_upgrade_state binary-replaced`,
+		`database_has_open_handles`,
+		`database migrate-copy --db`,
+		`database migrate-protected --db`,
+		`database verify --db`,
+		`restore_server_upgrade`,
+		`original_active=`,
+		`original_enabled=`,
+		`running Server process is not the installed candidate`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing Server upgrade contract %q", required)
+		}
+	}
+	if strings.Contains(script, `PROBE_404_RELEASE_BASE_URL`) {
+		t.Fatal("production installer permits an arbitrary release origin")
+	}
+}
+
+func TestReleaseManifestAuthenticatesInstaller(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "scripts", "build-release-assets.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	line := `bash "${ROOT_DIRECTORY}/scripts/write-installer-checksum.sh"` + " \\\n" +
+		`  "${installer_path}" "${OUTPUT_DIRECTORY}/SHA256SUMS"`
+	if strings.Count(script, line) != 1 {
+		t.Fatal("release manifest must authenticate install.sh exactly once")
+	}
+	if strings.Contains(script, `sha256sum "${installer_path}" | sed`) {
+		t.Fatal("release manifest depends on platform-specific sha256sum filename markers")
 	}
 }
 
