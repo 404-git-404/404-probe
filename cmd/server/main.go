@@ -49,6 +49,8 @@ func run(args []string) error {
 		return versionCommand(args[1:])
 	case "database":
 		return databaseCommand(args[1:])
+	case "web-domain":
+		return webDomainCommand(args[1:])
 	case "release":
 		return releaseCommand(args[1:])
 	case "serve":
@@ -71,7 +73,82 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server version [--json] | release verify [flags] | database <verify|migrate-copy|migrate-protected> --db path | serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
+	return errors.New("usage: 404-probe-server version [--json] | release verify [flags] | database <verify|migrate-copy|migrate-protected> --db path | web-domain <list|add|remove|disable> --db path [--json] [suffix] | serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
+}
+
+type webDomainCommandResult struct {
+	Changed bool                    `json:"changed"`
+	Policy  storage.WebDomainPolicy `json:"policy"`
+}
+
+func webDomainCommand(args []string) error {
+	if len(args) == 0 || (args[0] != "list" && args[0] != "add" && args[0] != "remove" && args[0] != "disable") {
+		return errors.New("usage: 404-probe-server web-domain <list|add|remove|disable> --db path [--json] [suffix]")
+	}
+	action := args[0]
+	flags := flag.NewFlagSet("web-domain "+action, flag.ContinueOnError)
+	dbPath := flags.String("db", "", "SQLite database path")
+	jsonOutput := flags.Bool("json", false, "write JSON output")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	arguments := flags.Args()
+	if strings.TrimSpace(*dbPath) == "" || ((action == "add" || action == "remove") && len(arguments) != 1) ||
+		((action == "list" || action == "disable") && len(arguments) != 0) {
+		return errors.New("usage: 404-probe-server web-domain <list|add|remove|disable> --db path [--json] [suffix]")
+	}
+	store, err := openStore(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	result := webDomainCommandResult{}
+	switch action {
+	case "list":
+		result.Policy, err = store.GetWebDomainPolicy(context.Background())
+	case "add":
+		result.Changed, result.Policy, err = store.AddWebDomainSuffix(context.Background(), arguments[0], time.Now())
+	case "remove":
+		result.Changed, result.Policy, err = store.RemoveWebDomainSuffix(context.Background(), arguments[0], time.Now())
+	case "disable":
+		result.Changed, result.Policy, err = store.DisableWebDomainSuffixes(context.Background(), time.Now())
+	}
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
+	fmt.Printf("Mode: %s\n", result.Policy.Mode)
+	if len(result.Policy.Suffixes) == 0 {
+		fmt.Println("Registered suffixes: (none)")
+	} else {
+		fmt.Println("Registered suffixes:")
+		for _, item := range result.Policy.Suffixes {
+			fmt.Printf("  %s\n", item.Suffix)
+		}
+	}
+	switch action {
+	case "add":
+		if result.Changed {
+			fmt.Println("Domain suffix added; suffix mode is active.")
+		} else {
+			fmt.Println("Domain suffix was already registered; no change.")
+		}
+	case "remove":
+		if result.Changed {
+			fmt.Println("Domain suffix removed.")
+		} else {
+			fmt.Println("Domain suffix was not registered; no change.")
+		}
+	case "disable":
+		if result.Changed {
+			fmt.Println("Suffix mode disabled; exact-origin mode is active.")
+		} else {
+			fmt.Println("Exact-origin mode was already active; no change.")
+		}
+	}
+	return nil
 }
 
 func versionCommand(args []string) error {

@@ -226,6 +226,14 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 		db.Close()
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`DROP TABLE web_domain_suffixes`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE web_domain_policy`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN agent_upgrade_capable`); err != nil {
 		db.Close()
 		t.Fatal(err)

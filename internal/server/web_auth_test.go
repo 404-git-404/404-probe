@@ -29,6 +29,7 @@ func newWebAuthenticationTestApp(t *testing.T) (*App, *storage.Store, string) {
 func webLoginPage(t *testing.T, app *App) (*http.Cookie, string, *httptest.ResponseRecorder) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/login", nil)
+	request.Host = app.webAuth.publicOrigin.Host
 	response := httptest.NewRecorder()
 	app.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -55,6 +56,7 @@ func postWebLogin(t *testing.T, app *App, password, origin string) *httptest.Res
 	loginCookie, token, _ := webLoginPage(t, app)
 	form := url.Values{"csrf_token": {token}, "password": {password}}
 	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	request.Host = app.webAuth.publicOrigin.Host
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", origin)
 	request.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -77,6 +79,9 @@ func sessionCookieFromResponse(t *testing.T, app *App, response *httptest.Respon
 
 func webRequest(app *App, method, path string, body io.Reader, cookie *http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, body)
+	if app.webAuth != nil {
+		request.Host = app.webAuth.publicOrigin.Host
+	}
 	if cookie != nil {
 		request.AddCookie(cookie)
 	}
@@ -169,6 +174,7 @@ func TestWebLoginFaviconDoesNotRotateCSRFToken(t *testing.T) {
 
 	form := url.Values{"csrf_token": {token}, "password": {"wrong"}}
 	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	request.Host = app.webAuth.publicOrigin.Host
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", "https://probe.test")
 	request.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -247,6 +253,7 @@ func TestWebLoginRejectsOriginCSRFAndReplays(t *testing.T) {
 	loginCookie, token, _ := webLoginPage(t, app)
 	form := url.Values{"csrf_token": {token}, "password": {"wrong"}}
 	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	request.Host = app.webAuth.publicOrigin.Host
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", "https://probe.test")
 	request.AddCookie(loginCookie)
@@ -256,6 +263,7 @@ func TestWebLoginRejectsOriginCSRFAndReplays(t *testing.T) {
 		t.Fatalf("first status=%d body=%s", first.Code, first.Body.String())
 	}
 	replay := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	replay.Host = app.webAuth.publicOrigin.Host
 	replay.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	replay.Header.Set("Origin", "https://probe.test")
 	replay.AddCookie(loginCookie)
@@ -276,11 +284,12 @@ func TestWebLoginRecoversAfterServerRestart(t *testing.T) {
 
 	oldCookie, oldToken, _ := webLoginPage(t, app)
 	app.webAuth.mu.Lock()
-	app.webAuth.loginTokens = make(map[string]time.Time)
+	app.webAuth.loginTokens = make(map[string]webLoginToken)
 	app.webAuth.mu.Unlock()
 
 	oldForm := url.Values{"csrf_token": {oldToken}, "password": {"test-password"}}
 	request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(oldForm.Encode()))
+	request.Host = app.webAuth.publicOrigin.Host
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", "https://probe.test")
 	request.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -310,6 +319,7 @@ func TestWebLoginRecoversAfterServerRestart(t *testing.T) {
 
 	freshForm := url.Values{"csrf_token": {match[1]}, "password": {"test-password"}}
 	retry := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(freshForm.Encode()))
+	retry.Host = app.webAuth.publicOrigin.Host
 	retry.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	retry.Header.Set("Origin", "https://probe.test")
 	retry.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -329,6 +339,7 @@ func TestWebLogoutCSRFAndImmediateInvalidation(t *testing.T) {
 	session := app.webAuth.authenticate(cookie.Value, app.now())
 	bad := url.Values{"csrf_token": {"wrong"}}
 	badRequest := httptest.NewRequest(http.MethodPost, "/logout", strings.NewReader(bad.Encode()))
+	badRequest.Host = app.webAuth.publicOrigin.Host
 	badRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	badRequest.Header.Set("Origin", "https://probe.test")
 	badRequest.AddCookie(cookie)
@@ -339,6 +350,7 @@ func TestWebLogoutCSRFAndImmediateInvalidation(t *testing.T) {
 	}
 	form := url.Values{"csrf_token": {session.csrfToken}}
 	request := httptest.NewRequest(http.MethodPost, "/logout", strings.NewReader(form.Encode()))
+	request.Host = app.webAuth.publicOrigin.Host
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", "https://probe.test")
 	request.AddCookie(cookie)
@@ -373,6 +385,7 @@ func TestWebLogoutClosesAuthenticatedSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	eventRequest.Host = app.webAuth.publicOrigin.Host
 	eventRequest.AddCookie(cookie)
 	events, err := client.Do(eventRequest)
 	if err != nil || events.StatusCode != http.StatusOK {
@@ -388,6 +401,7 @@ func TestWebLogoutClosesAuthenticatedSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	logoutRequest.Host = app.webAuth.publicOrigin.Host
 	logoutRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	logoutRequest.Header.Set("Origin", "https://probe.test")
 	logoutRequest.AddCookie(cookie)

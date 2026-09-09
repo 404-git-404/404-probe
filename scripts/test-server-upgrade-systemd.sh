@@ -11,7 +11,9 @@ source_database="${4:-}"
 expected_agent_listing=""
 original_schema=""
 old_server_sha="$(sha256sum "${old_server_source}" | awk '{print $1}')"
+old_server_version_json="$("${old_server_source}" version --json)"
 candidate_sha="$(sha256sum "${asset_directory}/404-probe-server-linux-amd64" | awk '{print $1}')"
+old_helper_sha=""
 
 readonly test_root="/var/lib/404-probe-upgrade-rehearsal"
 readonly test_config="/etc/404-probe-upgrade-rehearsal"
@@ -65,7 +67,10 @@ setup_old_server() {
   install -d -m 0750 -o root -g 404-probe "${test_config}"
   install -d -m 0755 -o root -g root "${test_binary_directory}"
   install -m 0755 -o root -g root "${old_server_source}" "${test_binary}"
-  printf 'PROBE_404_WEB_PUBLIC_ORIGIN=http://127.0.0.1:33444\n' >"${test_config}/server.env"
+  printf '#!/usr/bin/env bash\nprintf "old helper fixture\\n"\n' >"${test_binary_directory}/install-helper"
+  chmod 0755 "${test_binary_directory}/install-helper"
+  old_helper_sha="$(sha256sum "${test_binary_directory}/install-helper" | awk '{print $1}')"
+  printf 'PROBE_404_WEB_PUBLIC_ORIGIN=https://legacy.navolyn.com\n' >"${test_config}/server.env"
   chown root:404-probe "${test_config}/server.env"
   chmod 0640 "${test_config}/server.env"
   if [[ -n "${source_database}" ]]; then
@@ -130,16 +135,38 @@ PY
 }
 
 run_upgrade() {
-  printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.1 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null
+  printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null
 }
 
 assert_upgraded() {
   systemctl is-active --quiet "${test_service}"
   systemctl is-enabled --quiet "${test_service}"
-  "${test_binary}" version --json | grep -Fq '"version":"v0.9.1"'
+  "${test_binary}" version --json | grep -Fq '"version":"v0.9.2"'
   runuser -u 404-probe -- "${test_binary}" database verify --db "${test_root}/404-probe.db" | grep -Fq '"integrity":"ok"'
-  [[ "$(database_schema)" == 10 ]]
+  [[ "$(database_schema)" == 11 ]]
   [[ "$(runuser -u 404-probe -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
+  "${test_binary_directory}/install-helper" --help | grep -Fq 'domains [list|add|remove|disable]'
+  "${test_binary_directory}/install-helper" domains list | grep -Fq 'Mode: exact'
+}
+
+test_domain_menu() {
+  local output
+  output="$(printf '2\na.navolyn.com\n2\nnavolyn.com\n3\nnavolyn.com\ny\n2\nexample.com\n1\n3\nexample.com\ny\n4\ny\n5\n' | \
+    script -qec "${test_binary_directory}/install-helper domains" /dev/null)"
+  printf '%s\n' "${output}" | grep -Fq '404-probe login domain management'
+  printf '%s\n' "${output}" | grep -Fq 'domain suffix must be a registrable domain, not a public suffix or subdomain'
+  printf '%s\n' "${output}" | grep -Fq 'cannot remove the last Web domain suffix'
+  [[ "$(printf '%s\n' "${output}" | grep -Fc 'Domain policy was not changed; choose another action or exit.')" -ge 2 ]]
+  printf '%s\n' "${output}" | grep -Fq 'navolyn.com'
+  printf '%s\n' "${output}" | grep -Fq 'example.com'
+  "${test_binary_directory}/install-helper" domains list | grep -Fq 'Mode: exact'
+  "${test_binary_directory}/install-helper" domains add navolyn.com | grep -Fq 'suffix mode is active'
+  if "${test_binary_directory}/install-helper" domains remove navolyn.com >/dev/null 2>&1; then
+    printf 'helper removed the final suffix\n' >&2
+    exit 1
+  fi
+  printf 'y\n' | script -qec "${test_binary_directory}/install-helper domains disable" /dev/null >/dev/null
+  "${test_binary_directory}/install-helper" domains list | grep -Fq 'Mode: exact'
 }
 
 transform_installer
@@ -155,9 +182,9 @@ systemctl disable --now "${test_service}" >/dev/null
 run_upgrade
 [[ "$(systemctl is-active "${test_service}" 2>/dev/null || true)" == inactive ]]
 [[ "$(systemctl is-enabled "${test_service}" 2>/dev/null || true)" == disabled ]]
-"${test_binary}" version --json | grep -Fq '"version":"v0.9.1"'
+"${test_binary}" version --json | grep -Fq '"version":"v0.9.2"'
 runuser -u 404-probe -- "${test_binary}" database verify --db "${test_root}/404-probe.db" | grep -Fq '"integrity":"ok"'
-[[ "$(database_schema)" == 10 ]]
+[[ "$(database_schema)" == 11 ]]
 [[ "$(runuser -u 404-probe -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
 printf 'isolated inactive+disabled upgrade passed migrated_schema=%s\n' "$(database_schema)"
 
@@ -165,26 +192,65 @@ setup_old_server
 cp -- "${transformed}" "${crash_transformed}"
 sed -i '/write_server_upgrade_state binary-replaced .*could not persist binary replacement state/a\  if [[ "${PROBE_404_TEST_CRASH_PHASE:-}" == binary-replaced ]]; then kill -KILL "${BASHPID}"; fi' "${crash_transformed}"
 chmod 0700 "${crash_transformed}"
-if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.1 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=binary-replaced bash ${crash_transformed}" /dev/null; then
+if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=binary-replaced bash ${crash_transformed}" /dev/null; then
   printf 'SIGKILL injection unexpectedly succeeded\n' >&2
   exit 1
 fi
 [[ -f "${test_upgrade}/pending" ]] || { printf 'SIGKILL did not preserve pending state\n' >&2; exit 1; }
-if script -qec "env PROBE_404_VERSION=v0.9.1 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
+if script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
   printf 'recovery rerun unexpectedly continued past conservative recovery\n' >&2
   exit 1
 fi
 systemctl is-active --quiet "${test_service}"
 systemctl is-enabled --quiet "${test_service}"
-if "${test_binary}" version --json >/dev/null 2>&1; then
-  printf 'old binary was not restored after SIGKILL\n' >&2
-  exit 1
-fi
+[[ "$("${test_binary}" version --json)" == "${old_server_version_json}" ]] || { printf 'old Server version was not restored after SIGKILL\n' >&2; exit 1; }
 [[ "$(database_schema)" == "${original_schema}" ]] || { printf 'pre-migration schema was not restored after SIGKILL\n' >&2; exit 1; }
 [[ "$(sha256sum "${test_binary}" | awk '{print $1}')" == "${old_server_sha}" ]] || { printf 'old binary SHA was not restored after SIGKILL\n' >&2; exit 1; }
+[[ "$(sha256sum "${test_binary_directory}/install-helper" | awk '{print $1}')" == "${old_helper_sha}" ]] || { printf 'old helper SHA was not restored after SIGKILL\n' >&2; exit 1; }
 [[ "$(runuser -u 404-probe -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
 [[ ! -e "${test_upgrade}/pending" ]] || { printf 'pending state survived conservative recovery\n' >&2; exit 1; }
 run_upgrade
 assert_upgraded
 printf 'isolated SIGKILL recovery passed restored_schema=%s old_sha=%s; fresh retry schema=%s\n' \
   "${original_schema}" "${old_server_sha}" "$(database_schema)"
+
+setup_old_server
+cp -- "${transformed}" "${crash_transformed}"
+sed -i '/write_server_upgrade_state helper-replaced .*could not persist local helper replacement state/a\  if [[ "${PROBE_404_TEST_CRASH_PHASE:-}" == helper-replaced ]]; then kill -KILL "${BASHPID}"; fi' "${crash_transformed}"
+chmod 0700 "${crash_transformed}"
+if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=helper-replaced bash ${crash_transformed}" /dev/null; then
+  printf 'helper-replaced SIGKILL injection unexpectedly succeeded\n' >&2
+  exit 1
+fi
+[[ -f "${test_upgrade}/pending" ]] || { printf 'helper SIGKILL did not preserve pending state\n' >&2; exit 1; }
+if script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
+  printf 'helper recovery rerun unexpectedly continued past conservative recovery\n' >&2
+  exit 1
+fi
+[[ "$(sha256sum "${test_binary}" | awk '{print $1}')" == "${old_server_sha}" ]] || { printf 'old binary SHA was not restored after helper SIGKILL\n' >&2; exit 1; }
+[[ "$(sha256sum "${test_binary_directory}/install-helper" | awk '{print $1}')" == "${old_helper_sha}" ]] || { printf 'old helper SHA was not restored after helper SIGKILL\n' >&2; exit 1; }
+[[ "$(database_schema)" == "${original_schema}" ]] || { printf 'schema was not restored after helper SIGKILL\n' >&2; exit 1; }
+run_upgrade
+assert_upgraded
+test_domain_menu
+printf 'isolated helper-replaced SIGKILL recovery and fresh retry passed\n'
+
+setup_old_server
+rm -f -- "${test_binary_directory}/install-helper"
+cp -- "${transformed}" "${crash_transformed}"
+sed -i '/write_server_upgrade_state helper-replaced .*could not persist local helper replacement state/a\  if [[ "${PROBE_404_TEST_CRASH_PHASE:-}" == helper-replaced ]]; then kill -KILL "${BASHPID}"; fi' "${crash_transformed}"
+chmod 0700 "${crash_transformed}"
+if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=helper-replaced bash ${crash_transformed}" /dev/null; then
+  printf 'missing-helper SIGKILL injection unexpectedly succeeded\n' >&2
+  exit 1
+fi
+if script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
+  printf 'missing-helper recovery rerun unexpectedly continued past conservative recovery\n' >&2
+  exit 1
+fi
+[[ ! -e "${test_binary_directory}/install-helper" ]] || { printf 'pre-upgrade helper absence was not restored after SIGKILL\n' >&2; exit 1; }
+[[ "$("${test_binary}" version --json)" == "${old_server_version_json}" ]] || { printf 'old Server version was not restored for missing-helper recovery\n' >&2; exit 1; }
+[[ "$(database_schema)" == "${original_schema}" ]] || { printf 'schema was not restored for missing-helper recovery\n' >&2; exit 1; }
+run_upgrade
+assert_upgraded
+printf 'isolated missing-helper SIGKILL recovery and fresh retry passed\n'

@@ -86,6 +86,37 @@ func TestLoadControlTokenHash(t *testing.T) {
 	}
 }
 
+func TestWebDomainCommandLifecycle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "domains.db")
+	if err := webDomainCommand([]string{"list", "--db", path, "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := webDomainCommand([]string{"add", "--db", path, "--json", "navolyn.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := webDomainCommand([]string{"add", "--db", path, "--json", "example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := webDomainCommand([]string{"remove", "--db", path, "--json", "example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := webDomainCommand([]string{"remove", "--db", path, "--json", "navolyn.com"}); !errors.Is(err, storage.ErrLastWebDomainSuffix) {
+		t.Fatalf("last remove err=%v", err)
+	}
+	if err := webDomainCommand([]string{"disable", "--db", path, "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	policy, err := store.GetWebDomainPolicy(context.Background())
+	if err != nil || policy.Mode != storage.WebDomainModeExact || len(policy.Suffixes) != 0 {
+		t.Fatalf("policy=%+v err=%v", policy, err)
+	}
+}
+
 func TestLoadWebPasswordHash(t *testing.T) {
 	encoded, err := auth.HashPassword([]byte("test-password"))
 	if err != nil {

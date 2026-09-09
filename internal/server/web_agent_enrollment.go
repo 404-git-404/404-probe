@@ -76,7 +76,12 @@ func (a *App) handleCreateWebAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	installCommand, installAvailable := webAgentInstallCommand(a.webAuth.publicOrigin.String(), a.buildInfo)
+	target := webTargetFromContext(r)
+	if target == nil {
+		writeJobError(w, http.StatusForbidden, "forbidden", "Web request host is not allowed")
+		return
+	}
+	installCommand, installAvailable := webAgentInstallCommand(target.origin.String(), a.buildInfo)
 	installMessage := ""
 	if !installAvailable {
 		installMessage = "Server is a development or unverifiable build; use a verified release build before copying an install command."

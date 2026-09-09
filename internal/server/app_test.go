@@ -56,6 +56,7 @@ func testApp(t *testing.T) (*App, *storage.Store, string, string) {
 
 func addTestWebSession(t *testing.T, app *App, request *http.Request) *webSession {
 	t.Helper()
+	request.Host = app.webAuth.publicOrigin.Host
 	plain, session, err := app.webAuth.createSession(app.now())
 	if err != nil {
 		t.Fatal(err)

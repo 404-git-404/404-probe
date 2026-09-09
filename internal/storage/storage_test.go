@@ -193,7 +193,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	}
 	for _, statement := range []string{
 		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
-		`INSERT INTO schema_migrations(version,applied_at) VALUES(11,5000)`,
+		`INSERT INTO schema_migrations(version,applied_at) VALUES(12,5000)`,
 		`CREATE TABLE future_fixture (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`,
 		`INSERT INTO future_fixture(id,value) VALUES(1,'future-data')`,
 	} {
@@ -216,7 +216,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 		store.Close()
 		t.Fatal("future schema was opened")
 	}
-	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 11") {
+	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 12") {
 		t.Fatalf("future schema error=%v", err)
 	}
 
@@ -227,7 +227,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	defer db.Close()
 	var version int
 	var appliedAt int64
-	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 11 || appliedAt != 5000 {
+	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 12 || appliedAt != 5000 {
 		t.Fatalf("migration metadata changed: version=%d applied_at=%d err=%v", version, appliedAt, err)
 	}
 	var fixtureValue string

@@ -13,11 +13,12 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/storage"
+	"404-probe/internal/webdomain"
 )
 
 const (
@@ -53,10 +54,11 @@ type webAuthenticator struct {
 	passwordHash string
 	publicOrigin *url.URL
 	secureCookie bool
+	store        *storage.Store
 
 	mu            sync.Mutex
 	sessions      map[string]*webSession
-	loginTokens   map[string]time.Time
+	loginTokens   map[string]webLoginToken
 	ipFailures    map[string][]time.Time
 	globalFailure []time.Time
 	passwordSlots chan struct{}
@@ -68,9 +70,23 @@ type webSession struct {
 	createdAt time.Time
 	lastSeen  time.Time
 	done      chan struct{}
+	origin    string
+	policyRev int64
+}
+
+type webLoginToken struct {
+	expiresAt time.Time
+	origin    string
+	policyRev int64
+}
+
+type webAllowedTarget struct {
+	origin    *url.URL
+	policyRev int64
 }
 
 type webSessionContextKey struct{}
+type webTargetContextKey struct{}
 
 type webLoginPageView struct {
 	CSRFToken string
@@ -83,7 +99,7 @@ func WithWebAuthentication(config WebAuthenticationConfig) Option {
 		if app.webAuth != nil {
 			return errors.New("Web authentication is already configured")
 		}
-		authenticator, err := newWebAuthenticator(config)
+		authenticator, err := newWebAuthenticator(config, app.store)
 		if err != nil {
 			return err
 		}
@@ -92,7 +108,7 @@ func WithWebAuthentication(config WebAuthenticationConfig) Option {
 	}
 }
 
-func newWebAuthenticator(config WebAuthenticationConfig) (*webAuthenticator, error) {
+func newWebAuthenticator(config WebAuthenticationConfig, stores ...*storage.Store) (*webAuthenticator, error) {
 	if err := auth.ParsePasswordHash(config.PasswordHash); err != nil {
 		return nil, errors.New("Web password hash is invalid")
 	}
@@ -100,47 +116,32 @@ func newWebAuthenticator(config WebAuthenticationConfig) (*webAuthenticator, err
 	if err != nil {
 		return nil, err
 	}
+	var store *storage.Store
+	if len(stores) != 0 {
+		store = stores[0]
+	}
 	return &webAuthenticator{
-		passwordHash: config.PasswordHash, publicOrigin: origin, secureCookie: origin.Scheme == "https",
-		sessions: make(map[string]*webSession), loginTokens: make(map[string]time.Time),
+		passwordHash: config.PasswordHash, publicOrigin: origin, secureCookie: origin.Scheme == "https", store: store,
+		sessions: make(map[string]*webSession), loginTokens: make(map[string]webLoginToken),
 		ipFailures: make(map[string][]time.Time), passwordSlots: make(chan struct{}, 2),
 	}, nil
 }
 
 func parseWebPublicOrigin(value string, allowInsecure bool) (*url.URL, error) {
-	origin, err := url.Parse(value)
-	if err != nil || origin.User != nil || origin.Host == "" || origin.RawQuery != "" || origin.Fragment != "" ||
-		(origin.Path != "" && origin.Path != "/") {
-		return nil, errors.New("Web public origin must be an absolute origin without a path")
-	}
-	origin.Path = ""
-	switch origin.Scheme {
-	case "https":
-	case "http":
-		if !allowInsecure || !webLoopbackHost(origin.Hostname()) {
-			return nil, errors.New("Web public origin must use HTTPS; insecure HTTP is allowed only for explicit loopback development")
-		}
-	default:
-		return nil, errors.New("Web public origin must use HTTPS")
-	}
-	return origin, nil
+	return webdomain.ParsePublicOrigin(value, allowInsecure)
 }
 
 func webLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
+	return webdomain.LoopbackHost(host)
 }
 
 func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
-	mux.HandleFunc("GET /login", a.handleWebLoginPage)
-	mux.HandleFunc("POST /login", a.handleWebLogin)
-	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLoginPage)))
+	mux.Handle("POST /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLogin)))
+	mux.Handle("GET /favicon.ico", a.requireWebTarget(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		w.WriteHeader(http.StatusNoContent)
-	})
+	})))
 	mux.Handle("POST /logout", a.requireWebSession(http.HandlerFunc(a.handleWebLogout), true))
 	mux.Handle("GET /api/v1/web/session", a.requireWebSession(http.HandlerFunc(a.handleWebSession), true))
 	mux.Handle("GET /api/v1/web/version", a.requireWebSession(http.HandlerFunc(a.handleGetWebVersion), true))
@@ -182,8 +183,71 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 		setWebNoStore(w)
 		http.NotFound(w, r)
 	})
-	mux.Handle("GET /style.css", static)
+	mux.Handle("GET /style.css", a.requireWebTarget(static))
 	mux.Handle("/", a.requireWebSession(static, false))
+}
+
+func (a *App) requireWebTarget(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.webAuth == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		target, err := a.webAuth.allowedTarget(r)
+		if err != nil {
+			setWebNoStore(w)
+			writeJobError(w, http.StatusForbidden, "forbidden", "Web request host is not allowed")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), webTargetContextKey{}, target)))
+	})
+}
+
+func (w *webAuthenticator) allowedTarget(r *http.Request) (*webAllowedTarget, error) {
+	target, err := webdomain.TargetOrigin(w.publicOrigin.Scheme, r.Host)
+	if err != nil {
+		return nil, err
+	}
+	if target.Scheme == "http" && !webdomain.LoopbackHost(target.Hostname()) {
+		return nil, errors.New("insecure Web targets are allowed only on loopback")
+	}
+	policy := storage.WebDomainPolicy{Mode: storage.WebDomainModeExact}
+	if w.store != nil {
+		policy, err = w.store.GetWebDomainPolicy(r.Context())
+		if err != nil {
+			return nil, err
+		}
+	}
+	if policy.Mode == storage.WebDomainModeExact {
+		if target.String() != w.publicOrigin.String() {
+			return nil, errors.New("Web request host does not match the exact public origin")
+		}
+		return &webAllowedTarget{origin: target, policyRev: policy.Revision}, nil
+	}
+	for _, item := range policy.Suffixes {
+		if webdomain.MatchesSuffix(target.Hostname(), item.Suffix) {
+			return &webAllowedTarget{origin: target, policyRev: policy.Revision}, nil
+		}
+	}
+	return nil, errors.New("Web request host does not match an allowed domain suffix")
+}
+
+func webTargetFromContext(r *http.Request) *webAllowedTarget {
+	target, _ := r.Context().Value(webTargetContextKey{}).(*webAllowedTarget)
+	return target
+}
+
+func (w *webAuthenticator) sessionOriginAllowed(ctx context.Context, session *webSession) bool {
+	if session == nil {
+		return false
+	}
+	parsed, err := webdomain.ParseRequestOrigin(session.origin)
+	if err != nil || parsed.Scheme != w.publicOrigin.Scheme {
+		return false
+	}
+	request := (&http.Request{Host: parsed.Host}).WithContext(ctx)
+	target, err := w.allowedTarget(request)
+	return err == nil && target.origin.String() == session.origin && target.policyRev == session.policyRev
 }
 
 func (a *App) requireWebMutation(next http.Handler) http.Handler {
@@ -209,13 +273,19 @@ func (a *App) requireWebSession(next http.Handler, api bool) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		target, err := a.webAuth.allowedTarget(r)
+		if err != nil {
+			writeJobError(w, http.StatusForbidden, "forbidden", "Web request host is not allowed")
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), webTargetContextKey{}, target))
 		cookie, err := r.Cookie(a.webAuth.sessionCookieName())
 		if err != nil {
 			a.writeWebUnauthenticated(w, r, api)
 			return
 		}
 		session := a.webAuth.authenticate(cookie.Value, a.now())
-		if session == nil {
+		if session == nil || session.origin != target.origin.String() || session.policyRev != target.policyRev {
 			a.webAuth.clearSessionCookie(w)
 			a.writeWebUnauthenticated(w, r, api)
 			return
@@ -239,14 +309,19 @@ func (a *App) handleWebLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	target := webTargetFromContext(r)
+	if target == nil {
+		writeJobError(w, http.StatusForbidden, "forbidden", "Web request host is not allowed")
+		return
+	}
 	if cookie, err := r.Cookie(a.webAuth.sessionCookieName()); err == nil {
-		if a.webAuth.authenticate(cookie.Value, a.now()) != nil {
+		if session := a.webAuth.authenticate(cookie.Value, a.now()); session != nil && session.origin == target.origin.String() && session.policyRev == target.policyRev {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 		a.webAuth.clearSessionCookie(w)
 	}
-	a.renderWebLogin(w, http.StatusOK, false, false)
+	a.renderWebLogin(w, r, http.StatusOK, false, false)
 }
 
 func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +330,8 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !a.webAuth.sameOriginRequest(r) {
+	target := webTargetFromContext(r)
+	if target == nil || !a.webAuth.sameOriginRequest(r) {
 		writeJobError(w, http.StatusForbidden, "forbidden", "request rejected")
 		return
 	}
@@ -270,25 +346,25 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	loginCookie, err := r.Cookie(a.webAuth.loginCookieName())
-	if err != nil || !a.webAuth.consumeLoginToken(loginCookie.Value, r.PostForm.Get("csrf_token"), a.now()) {
-		a.renderWebLogin(w, http.StatusForbidden, false, true)
+	if err != nil || !a.webAuth.consumeLoginToken(loginCookie.Value, r.PostForm.Get("csrf_token"), target.origin.String(), target.policyRev, a.now()) {
+		a.renderWebLogin(w, r, http.StatusForbidden, false, true)
 		return
 	}
 	client := webClientAddress(r.RemoteAddr)
 	if !a.webAuth.beginPasswordCheck(client, a.now()) {
 		w.Header().Set("Retry-After", "60")
-		a.renderWebLogin(w, http.StatusTooManyRequests, true, false)
+		a.renderWebLogin(w, r, http.StatusTooManyRequests, true, false)
 		return
 	}
 	valid := auth.VerifyPassword(a.webAuth.passwordHash, []byte(r.PostForm.Get("password")))
 	a.webAuth.endPasswordCheck()
 	if !valid {
 		a.webAuth.recordLoginFailure(client, a.now())
-		a.renderWebLogin(w, http.StatusUnauthorized, true, false)
+		a.renderWebLogin(w, r, http.StatusUnauthorized, true, false)
 		return
 	}
 	a.webAuth.recordLoginSuccess(client, a.now())
-	plain, _, err := a.webAuth.createSession(a.now())
+	plain, _, err := a.webAuth.createSessionForTarget(a.now(), target.origin.String(), target.policyRev)
 	if err != nil {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not create session")
 		return
@@ -299,8 +375,13 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusSeeOther)
 }
 
-func (a *App) renderWebLogin(w http.ResponseWriter, status int, failed, expired bool) {
-	token, err := a.webAuth.issueLoginToken(a.now())
+func (a *App) renderWebLogin(w http.ResponseWriter, r *http.Request, status int, failed, expired bool) {
+	target := webTargetFromContext(r)
+	if target == nil {
+		writeJobError(w, http.StatusForbidden, "forbidden", "Web request host is not allowed")
+		return
+	}
+	token, err := a.webAuth.issueLoginToken(target.origin.String(), target.policyRev, a.now())
 	if err != nil {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not create login request")
 		return
@@ -378,16 +459,26 @@ func webClientAddress(remote string) string {
 }
 
 func (w *webAuthenticator) sameOriginRequest(r *http.Request) bool {
-	if fetchSite := r.Header.Get("Sec-Fetch-Site"); fetchSite != "" && fetchSite != "same-origin" {
+	fetchSites := r.Header.Values("Sec-Fetch-Site")
+	if len(fetchSites) > 1 || (len(fetchSites) == 1 && fetchSites[0] != "same-origin") {
 		return false
 	}
-	origin, err := url.Parse(r.Header.Get("Origin"))
-	return err == nil && origin.User == nil && origin.RawQuery == "" && origin.Fragment == "" &&
-		(origin.Path == "" || origin.Path == "/") && strings.EqualFold(origin.Scheme, w.publicOrigin.Scheme) &&
-		strings.EqualFold(origin.Host, w.publicOrigin.Host)
+	if len(r.Header.Values("Origin")) != 1 {
+		return false
+	}
+	target := webTargetFromContext(r)
+	if target == nil {
+		var err error
+		target, err = w.allowedTarget(r)
+		if err != nil {
+			return false
+		}
+	}
+	origin, err := webdomain.ParseRequestOrigin(r.Header.Get("Origin"))
+	return err == nil && origin.String() == target.origin.String()
 }
 
-func (w *webAuthenticator) issueLoginToken(now time.Time) (string, error) {
+func (w *webAuthenticator) issueLoginToken(origin string, policyRev int64, now time.Time) (string, error) {
 	plain, err := randomWebToken()
 	if err != nil {
 		return "", err
@@ -399,11 +490,11 @@ func (w *webAuthenticator) issueLoginToken(now time.Time) (string, error) {
 	if len(w.loginTokens) >= webLoginTokenLimit {
 		w.removeOldestLoginTokenLocked()
 	}
-	w.loginTokens[key] = now.Add(webLoginTokenTTL)
+	w.loginTokens[key] = webLoginToken{expiresAt: now.Add(webLoginTokenTTL), origin: origin, policyRev: policyRev}
 	return plain, nil
 }
 
-func (w *webAuthenticator) consumeLoginToken(cookie, form string, now time.Time) bool {
+func (w *webAuthenticator) consumeLoginToken(cookie, form, origin string, policyRev int64, now time.Time) bool {
 	if subtle.ConstantTimeCompare([]byte(cookie), []byte(form)) != 1 || !validWebToken(form) {
 		return false
 	}
@@ -411,12 +502,24 @@ func (w *webAuthenticator) consumeLoginToken(cookie, form string, now time.Time)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.pruneLoginTokensLocked(now)
-	expiresAt, ok := w.loginTokens[key]
+	token, ok := w.loginTokens[key]
 	delete(w.loginTokens, key)
-	return ok && now.Before(expiresAt)
+	return ok && token.origin == origin && token.policyRev == policyRev && now.Before(token.expiresAt)
 }
 
 func (w *webAuthenticator) createSession(now time.Time) (string, *webSession, error) {
+	policyRev := int64(0)
+	if w.store != nil {
+		policy, err := w.store.GetWebDomainPolicy(context.Background())
+		if err != nil {
+			return "", nil, err
+		}
+		policyRev = policy.Revision
+	}
+	return w.createSessionForTarget(now, w.publicOrigin.String(), policyRev)
+}
+
+func (w *webAuthenticator) createSessionForTarget(now time.Time, origin string, policyRev int64) (string, *webSession, error) {
 	plain, err := randomWebToken()
 	if err != nil {
 		return "", nil, err
@@ -425,7 +528,7 @@ func (w *webAuthenticator) createSession(now time.Time) (string, *webSession, er
 	if err != nil {
 		return "", nil, err
 	}
-	session := &webSession{key: webTokenKey(plain), csrfToken: csrf, createdAt: now, lastSeen: now, done: make(chan struct{})}
+	session := &webSession{key: webTokenKey(plain), csrfToken: csrf, createdAt: now, lastSeen: now, done: make(chan struct{}), origin: origin, policyRev: policyRev}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.pruneSessionsLocked(now)
@@ -584,8 +687,8 @@ func (w *webAuthenticator) removeSessionLocked(session *webSession) {
 }
 
 func (w *webAuthenticator) pruneLoginTokensLocked(now time.Time) {
-	for key, expiresAt := range w.loginTokens {
-		if !now.Before(expiresAt) {
+	for key, token := range w.loginTokens {
+		if !now.Before(token.expiresAt) {
 			delete(w.loginTokens, key)
 		}
 	}
@@ -594,9 +697,9 @@ func (w *webAuthenticator) pruneLoginTokensLocked(now time.Time) {
 func (w *webAuthenticator) removeOldestLoginTokenLocked() {
 	oldestKey := ""
 	var oldest time.Time
-	for key, expiresAt := range w.loginTokens {
-		if oldestKey == "" || expiresAt.Before(oldest) {
-			oldestKey, oldest = key, expiresAt
+	for key, token := range w.loginTokens {
+		if oldestKey == "" || token.expiresAt.Before(oldest) {
+			oldestKey, oldest = key, token.expiresAt
 		}
 	}
 	delete(w.loginTokens, oldestKey)

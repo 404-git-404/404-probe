@@ -7,15 +7,17 @@ temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 
 server_binary="${temporary}/usr/local/bin/404-probe-server"
+install_helper="${temporary}/usr/local/sbin/404-probe-install"
 server_unit="${temporary}/etc/systemd/system/404-probe-server.service"
 config_directory="${temporary}/etc/404-probe"
 state_directory="${temporary}/var/lib/404-probe"
 upgrade_directory="${temporary}/var/lib/404-probe-upgrade"
 lock_directory="${temporary}/run/404-probe-upgrade"
-mkdir -p "$(dirname "${server_binary}")" "$(dirname "${server_unit}")" "${config_directory}" "${state_directory}" "${upgrade_directory}" "${lock_directory}"
+mkdir -p "$(dirname "${server_binary}")" "$(dirname "${install_helper}")" "$(dirname "${server_unit}")" "${config_directory}" "${state_directory}" "${upgrade_directory}" "${lock_directory}"
 chmod 0700 "${upgrade_directory}" "${lock_directory}"
 
 source <(sed -e '$d' \
+	-e "s|readonly INSTALL_HELPER=\"/usr/local/sbin/404-probe-install\"|readonly INSTALL_HELPER=\"${install_helper}\"|" \
   -e "s|readonly SERVER_BINARY=\"/usr/local/bin/404-probe-server\"|readonly SERVER_BINARY=\"${server_binary}\"|" \
   -e "s|readonly CONFIG_DIRECTORY=\"/etc/404-probe\"|readonly CONFIG_DIRECTORY=\"${config_directory}\"|" \
   -e "s|readonly STATE_DIRECTORY=\"/var/lib/404-probe\"|readonly STATE_DIRECTORY=\"${state_directory}\"|" \
@@ -59,11 +61,31 @@ make_backup() {
   chmod 0700 "${SERVER_UPGRADE_BACKUP}"
   printf 'old-binary' >"${SERVER_UPGRADE_BACKUP}/server-binary"
   printf 'old-unit' >"${SERVER_UPGRADE_BACKUP}/server.service"
+  printf '1\n' >"${SERVER_UPGRADE_BACKUP}/helper-state"
+  printf 'old-helper' >"${SERVER_UPGRADE_BACKUP}/install-helper"
   printf 'secret' >"${SERVER_UPGRADE_BACKUP}/config/server.env"
   printf 'old-database' >"${SERVER_UPGRADE_BACKUP}/database/404-probe.db"
   create_server_upgrade_backup_manifest "${SERVER_UPGRADE_BACKUP}" || return 1
   : >"${SERVER_UPGRADE_BACKUP}/complete"
   chmod 0600 "${SERVER_UPGRADE_BACKUP}/complete"
+}
+
+make_legacy_backup() {
+  rm -rf -- "${SERVER_UPGRADE_BACKUP}"
+  mkdir -p "${SERVER_UPGRADE_BACKUP}/config" "${SERVER_UPGRADE_BACKUP}/database"
+  chmod 0700 "${SERVER_UPGRADE_BACKUP}"
+  printf 'old-binary' >"${SERVER_UPGRADE_BACKUP}/server-binary"
+  printf 'old-unit' >"${SERVER_UPGRADE_BACKUP}/server.service"
+  printf 'secret' >"${SERVER_UPGRADE_BACKUP}/config/server.env"
+  printf 'old-database' >"${SERVER_UPGRADE_BACKUP}/database/404-probe.db"
+  tar -cpf "${SERVER_UPGRADE_BACKUP}/config.tar" -C "${SERVER_UPGRADE_BACKUP}" config
+  printf '404-probe.db\n' >"${SERVER_UPGRADE_BACKUP}/database-files"
+  (
+    cd "${SERVER_UPGRADE_BACKUP}"
+    sha256sum server-binary server.service config.tar database-files database/404-probe.db
+  ) >"${SERVER_UPGRADE_BACKUP}/SHA256SUMS"
+  chmod 0600 "${SERVER_UPGRADE_BACKUP}/config.tar" "${SERVER_UPGRADE_BACKUP}/database-files" "${SERVER_UPGRADE_BACKUP}/SHA256SUMS"
+  : >"${SERVER_UPGRADE_BACKUP}/complete"
 }
 
 SHA_FAIL_MODE=primary
@@ -83,6 +105,7 @@ verify_server_upgrade_backup "${SERVER_UPGRADE_BACKUP}" || { printf 'valid backu
 printf 'corruption' >>"${SERVER_UPGRADE_BACKUP}/database/404-probe.db"
 printf 'new-database' >"${SERVER_DATABASE}"
 printf 'new-binary' >"${SERVER_BINARY}"
+printf 'new-helper' >"${INSTALL_HELPER}"
 write_server_upgrade_state migration-started 1 1 v0.9.1
 if restore_server_upgrade; then
   printf 'corrupted backup was accepted\n' >&2
@@ -118,6 +141,7 @@ SYNC_FAIL=0
 restore_server_upgrade || { printf 'valid recovery failed\n' >&2; exit 1; }
 [[ "$(<"${SERVER_DATABASE}")" == old-database ]] || { printf 'old DB was not restored\n' >&2; exit 1; }
 [[ "$(<"${SERVER_BINARY}")" == old-binary ]] || { printf 'old binary was not restored\n' >&2; exit 1; }
+[[ "$(<"${INSTALL_HELPER}")" == old-helper ]] || { printf 'old helper was not restored\n' >&2; exit 1; }
 grep -q '^start 404-probe-server.service$' "${systemctl_log}" || { printf 'original active state was not restored\n' >&2; exit 1; }
 [[ ! -e "${SERVER_UPGRADE_STATE}" ]] || { printf 'pending state survived successful recovery\n' >&2; exit 1; }
 
@@ -129,6 +153,28 @@ write_server_upgrade_state migration-started 0 0 v0.9.1
 restore_server_upgrade || { printf 'inactive recovery failed\n' >&2; exit 1; }
 grep -q '^disable 404-probe-server.service$' "${systemctl_log}" || { printf 'original disabled state was not restored\n' >&2; exit 1; }
 ! grep -q '^start ' "${systemctl_log}" || { printf 'originally inactive Server was started\n' >&2; exit 1; }
+
+make_backup
+printf '0\n' >"${SERVER_UPGRADE_BACKUP}/helper-state"
+rm -f -- "${SERVER_UPGRADE_BACKUP}/install-helper"
+create_server_upgrade_backup_manifest "${SERVER_UPGRADE_BACKUP}"
+: >"${SERVER_UPGRADE_BACKUP}/complete"
+printf 'new-database' >"${SERVER_DATABASE}"
+printf 'new-binary' >"${SERVER_BINARY}"
+printf 'new-helper' >"${INSTALL_HELPER}"
+write_server_upgrade_state helper-replaced 0 0 v0.9.1
+restore_server_upgrade || { printf 'missing-helper recovery failed\n' >&2; exit 1; }
+[[ ! -e "${INSTALL_HELPER}" ]] || { printf 'helper absence was not restored\n' >&2; exit 1; }
+
+make_legacy_backup
+printf 'new-database' >"${SERVER_DATABASE}"
+printf 'new-binary' >"${SERVER_BINARY}"
+printf 'old-helper' >"${INSTALL_HELPER}"
+write_server_upgrade_state binary-replaced 1 1 v0.9.1
+restore_server_upgrade || { printf 'legacy v0.9.1 recovery failed\n' >&2; exit 1; }
+[[ "$(<"${SERVER_DATABASE}")" == old-database ]] || { printf 'legacy old DB was not restored\n' >&2; exit 1; }
+[[ "$(<"${SERVER_BINARY}")" == old-binary ]] || { printf 'legacy old binary was not restored\n' >&2; exit 1; }
+[[ "$(<"${INSTALL_HELPER}")" == old-helper ]] || { printf 'legacy recovery changed the helper\n' >&2; exit 1; }
 
 fixture_directory="${temporary}/release-fixture"
 fake_bin="${temporary}/fake-bin"

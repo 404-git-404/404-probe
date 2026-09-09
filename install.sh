@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.9.1"
+readonly DEFAULT_VERSION="v0.9.2"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -25,6 +25,7 @@ readonly SERVER_UPGRADE_DIRECTORY="/var/lib/404-probe-upgrade"
 readonly SERVER_UPGRADE_STATE="${SERVER_UPGRADE_DIRECTORY}/pending"
 readonly SERVER_UPGRADE_BACKUP="${SERVER_UPGRADE_DIRECTORY}/backup"
 readonly SERVER_UPGRADE_CANDIDATE="/usr/local/bin/.404-probe-server.candidate"
+readonly SERVER_UPGRADE_HELPER_CANDIDATE="${INSTALL_HELPER}.candidate"
 readonly SERVER_UPGRADE_LOCK_DIRECTORY="/run/404-probe-upgrade"
 readonly SERVER_UPGRADE_LOCK="${SERVER_UPGRADE_LOCK_DIRECTORY}/server.lock"
 
@@ -315,6 +316,9 @@ readonly SERVICE_USER="404-probe"
 readonly ENROLLMENT_PREFIX="404p1_"
 
 die() { printf '404-probe helper: %s\n' "$*" >&2; exit 1; }
+usage() {
+  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | setup-security | uninstall <server|agent>\n'
+}
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
   command -v systemctl >/dev/null 2>&1 || die "systemd is required"
@@ -338,6 +342,100 @@ enroll() {
   printf 'Enrollment token (shown once; store it securely):\n%s%s\n' "${ENROLLMENT_PREFIX}" "${payload}"
   printf '\nPaste this value only at the hidden Agent installer prompt.\n'
   unset payload
+}
+server_origin() {
+  local count
+  [[ -f "${CONFIG_DIRECTORY}/server.env" && ! -L "${CONFIG_DIRECTORY}/server.env" ]] \
+    || die "a safe local Server environment was not found"
+  count="$(grep -c '^PROBE_404_WEB_PUBLIC_ORIGIN=' "${CONFIG_DIRECTORY}/server.env" || true)"
+  [[ "${count}" -eq 1 ]] || die "the local Server public origin is missing or ambiguous"
+  sed -n 's/^PROBE_404_WEB_PUBLIC_ORIGIN=//p' "${CONFIG_DIRECTORY}/server.env"
+}
+run_domain_command() {
+  local action="$1"
+  shift
+  [[ -x "${SERVER_BINARY}" && -f "${SERVER_DATABASE}" && -f "${SERVER_UNIT}" ]] \
+    || die "a local 404-probe Server installation was not found"
+  runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" web-domain "${action}" --db "${SERVER_DATABASE}" "$@"
+}
+show_domain_policy() {
+  printf 'Configured exact origin: %s\n' "$(server_origin)"
+  run_domain_command list
+}
+https_suffix_mode_supported() {
+  [[ "$(server_origin)" == https://* ]] || {
+    printf 'Domain suffix mode requires an HTTPS public origin.\n' >&2
+    return 1
+  }
+}
+require_https_suffix_mode() {
+  https_suffix_mode_supported || die "domain suffix mode is unavailable"
+}
+menu_domain_command() {
+  if ! "$@"; then
+    printf 'Domain policy was not changed; choose another action or exit.\n' >&2
+    return 0
+  fi
+}
+domains_menu() {
+  local choice suffix answer
+  while true; do
+    cat >/dev/tty <<'EOF'
+
+404-probe login domain management
+
+  1) View policy and registered suffixes
+  2) Add a root domain suffix
+  3) Remove a root domain suffix
+  4) Disable suffix mode and return to the exact origin
+  5) Exit
+
+EOF
+    printf 'Choose [1-5]: ' >/dev/tty
+    IFS= read -r choice </dev/tty
+    case "${choice}" in
+      1) menu_domain_command show_domain_policy ;;
+      2)
+        printf 'Root domain suffix to add: ' >/dev/tty
+        IFS= read -r suffix </dev/tty
+        if https_suffix_mode_supported; then
+          menu_domain_command run_domain_command add "${suffix}"
+        fi
+        ;;
+      3)
+        printf 'Root domain suffix to remove: ' >/dev/tty
+        IFS= read -r suffix </dev/tty
+        printf 'Removing it immediately rejects Web requests and sessions on that suffix. Continue? [y/N]: ' >/dev/tty
+        IFS= read -r answer </dev/tty
+        [[ "${answer}" == y || "${answer}" == Y ]] || { printf 'No change.\n'; continue; }
+        menu_domain_command run_domain_command remove "${suffix}"
+        ;;
+      4) menu_domain_command domains_disable ;;
+      5) return ;;
+      *) printf 'Choose a number from 1 to 5.\n' >&2 ;;
+    esac
+  done
+}
+domains_disable() {
+  local origin answer
+  origin="$(server_origin)"
+  printf 'Disabling suffix mode will allow only the exact origin %s. Continue? [y/N]: ' "${origin}" >/dev/tty
+  IFS= read -r answer </dev/tty
+  [[ "${answer}" == y || "${answer}" == Y ]] || { printf 'No change.\n'; return; }
+  run_domain_command disable
+}
+domains() {
+  if [[ $# -eq 0 ]]; then
+    domains_menu
+    return
+  fi
+  case "$1" in
+    list) [[ $# -eq 1 ]] || die "usage: 404-probe-install domains list"; show_domain_policy ;;
+    add) [[ $# -eq 2 ]] || die "usage: 404-probe-install domains add <root-domain>"; require_https_suffix_mode; run_domain_command add "$2" ;;
+    remove) [[ $# -eq 2 ]] || die "usage: 404-probe-install domains remove <root-domain>"; run_domain_command remove "$2" ;;
+    disable) [[ $# -eq 1 ]] || die "usage: 404-probe-install domains disable"; domains_disable ;;
+    *) die "usage: 404-probe-install domains [list|add <root-domain>|remove <root-domain>|disable]" ;;
+  esac
 }
 uninstall() {
   [[ $# -eq 1 && ( "$1" == "server" || "$1" == "agent" ) ]] \
@@ -412,10 +510,12 @@ setup_security() {
 
 require_root
 case "${1:-}" in
+  -h|--help|help) usage ;;
   enroll) shift; enroll "$@" ;;
+  domains) shift; domains "$@" ;;
   setup-security) shift; setup_security "$@" ;;
   uninstall) shift; uninstall "$@" ;;
-  *) printf 'Usage: 404-probe-install enroll <name> | setup-security | uninstall <server|agent>\n' >&2; exit 2 ;;
+  *) usage >&2; exit 2 ;;
 esac
 HELPER
 }
@@ -467,6 +567,15 @@ prompt_web_origin() {
   fi
   [[ "${value}" =~ ^https://(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9._-]+)(:[0-9]{1,5})?$ ]] \
     || die "Web origin must be an HTTPS origin without credentials, path, query, or fragment (or the loopback default)"
+  printf '%s\n' "${value}"
+}
+
+prompt_web_domain_suffixes() {
+  local value
+  printf 'Allowed root domain suffixes, comma-separated [exact origin only]: ' >/dev/tty
+  IFS= read -r value </dev/tty
+  [[ -z "${value}" || "${value}" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(,[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+)*$ ]] \
+    || die "Domain suffixes must be comma-separated ASCII root domains without spaces, scheme, port, or path"
   printf '%s\n' "${value}"
 }
 
@@ -547,8 +656,21 @@ install_server() {
   [[ ! -e "${SERVER_DATABASE}" ]] || die "existing Server database was found; refusing to alter it"
   [[ ! -e "${SERVER_BINARY}" ]] || die "${SERVER_BINARY} already exists; refusing to overwrite it"
 
-  local web_origin web_password_hash control_token insecure_option
+  local web_origin web_suffixes web_origin_host web_password_hash control_token insecure_option suffix suffix_matches_origin=0
+  local -a requested_suffixes=()
   web_origin="$(prompt_web_origin)"
+  web_suffixes="$(prompt_web_domain_suffixes)"
+  if [[ -n "${web_suffixes}" ]]; then
+    web_origin_host="${web_origin#*://}"
+    web_origin_host="${web_origin_host%%:*}"
+    web_origin_host="${web_origin_host,,}"
+    IFS=, read -r -a requested_suffixes <<<"${web_suffixes}"
+    for suffix in "${requested_suffixes[@]}"; do
+      suffix="${suffix,,}"
+      [[ "${web_origin_host}" == "${suffix}" || "${web_origin_host}" == *."${suffix}" ]] && suffix_matches_origin=1
+    done
+    (( suffix_matches_origin != 0 )) || die "At least one domain suffix must contain the configured Web public origin host"
+  fi
   note "Set the Web administrator password. The password hasher reads it without echoing it."
 
   begin_install_transaction server
@@ -560,6 +682,16 @@ install_server() {
   install_local_helper
   track_install_path "${SERVER_BINARY}"
   download_binary server "${SERVER_BINARY}"
+  if [[ -n "${web_suffixes}" ]]; then
+    track_install_path "${SERVER_DATABASE}"
+    track_install_path "${SERVER_DATABASE}-wal"
+    track_install_path "${SERVER_DATABASE}-shm"
+    IFS=, read -r -a requested_suffixes <<<"${web_suffixes}"
+    for suffix in "${requested_suffixes[@]}"; do
+      runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" web-domain add --db "${SERVER_DATABASE}" "${suffix}" >/dev/null \
+        || die "could not register Web domain suffix ${suffix}"
+    done
+  fi
   if ! web_password_hash="$("${SERVER_BINARY}" web password-hash </dev/tty)"; then
     die "Web password setup failed"
   fi
@@ -1286,19 +1418,64 @@ create_server_upgrade_backup_manifest() {
   done
   (
     cd "${backup}" || exit 1
-    sha256sum server-binary server.service config.tar database-files || exit 1
+    sha256sum server-binary server.service config.tar database-files helper-state || exit 1
+    [[ "$(<helper-state)" != 1 ]] || sha256sum install-helper || exit 1
     while IFS= read -r file; do sha256sum "database/${file}" || exit 1; done <database-files
   ) >"${backup}/SHA256SUMS" || return 1
-  chmod 0600 "${backup}/config.tar" "${backup}/database-files" "${backup}/SHA256SUMS" || return 1
+  chmod 0600 "${backup}/config.tar" "${backup}/database-files" "${backup}/helper-state" "${backup}/SHA256SUMS" || return 1
   sync -f "${backup}/server-binary" "${backup}/server.service" "${backup}/config.tar" \
-    "${backup}/database-files" "${backup}/SHA256SUMS" "${backup}/database/404-probe.db" || return 1
+    "${backup}/database-files" "${backup}/helper-state" "${backup}/SHA256SUMS" "${backup}/database/404-probe.db" || return 1
+  [[ "$(<"${backup}/helper-state")" != 1 ]] || sync -f "${backup}/install-helper" || return 1
   sync -f "${backup}" "${backup}/database" || return 1
 }
 
 verify_server_upgrade_backup() {
+  local backup="$1" file expected_lines=5 actual_lines expected_names actual_names helper_state
+  [[ -d "${backup}" && ! -L "${backup}" && "$(stat -c '%U:%G:%a' "${backup}")" == root:root:700 ]] || return 1
+  [[ -d "${backup}/database" && ! -L "${backup}/database" ]] || return 1
+  for file in complete server-binary server.service config.tar database-files helper-state SHA256SUMS database/404-probe.db; do
+    [[ -f "${backup}/${file}" && ! -L "${backup}/${file}" ]] || return 1
+  done
+  helper_state="$(<"${backup}/helper-state")" || return 1
+  [[ "${helper_state}" =~ ^[01]$ ]] || return 1
+  if [[ "${helper_state}" == 1 ]]; then
+    [[ -f "${backup}/install-helper" && ! -L "${backup}/install-helper" ]] || return 1
+    expected_lines=$((expected_lines + 1))
+  else
+    [[ ! -e "${backup}/install-helper" ]] || return 1
+  fi
+  [[ "$(sed -n '1p' "${backup}/database-files")" == 404-probe.db ]] || return 1
+  [[ "$(grep -Ec '^404-probe\.db(-wal|-shm)?$' "${backup}/database-files")" -eq "$(grep -c . "${backup}/database-files")" ]] || return 1
+  [[ "$(sort -u "${backup}/database-files" | grep -c .)" -eq "$(grep -c . "${backup}/database-files")" ]] || return 1
+  for file in 404-probe.db 404-probe.db-wal 404-probe.db-shm; do
+    if [[ -e "${backup}/database/${file}" ]]; then
+      grep -Fxq "${file}" "${backup}/database-files" || return 1
+    elif grep -Fxq "${file}" "${backup}/database-files"; then
+      return 1
+    fi
+  done
+  while IFS= read -r file; do
+    [[ -f "${backup}/database/${file}" && ! -L "${backup}/database/${file}" ]] || return 1
+    expected_lines=$((expected_lines + 1))
+  done <"${backup}/database-files"
+  for file in "${backup}/database"/*; do
+    [[ -e "${file}" ]] || continue
+    [[ -f "${file}" && ! -L "${file}" ]] || return 1
+    grep -Fxq "$(basename "${file}")" "${backup}/database-files" || return 1
+  done
+  actual_lines="$(grep -Ec '^[[:xdigit:]]{64} [ *](server-binary|server\.service|config\.tar|database-files|helper-state|install-helper|database/404-probe\.db(-wal|-shm)?)$' "${backup}/SHA256SUMS")"
+  [[ "${actual_lines}" -eq "${expected_lines}" && "${actual_lines}" -eq "$(grep -c . "${backup}/SHA256SUMS")" ]] || return 1
+  expected_names="$({ printf '%s\n' server-binary server.service config.tar database-files helper-state; [[ "${helper_state}" != 1 ]] || printf '%s\n' install-helper; while IFS= read -r file; do printf 'database/%s\n' "${file}"; done <"${backup}/database-files"; } | sort)" || return 1
+  actual_names="$(awk '{name=$2; sub(/^\*/, "", name); print name}' "${backup}/SHA256SUMS" | sort)" || return 1
+  [[ "${actual_names}" == "${expected_names}" ]] || return 1
+  (cd "${backup}" && sha256sum --check --strict SHA256SUMS >/dev/null) || return 1
+}
+
+verify_legacy_server_upgrade_backup() {
   local backup="$1" file expected_lines=4 actual_lines expected_names actual_names
   [[ -d "${backup}" && ! -L "${backup}" && "$(stat -c '%U:%G:%a' "${backup}")" == root:root:700 ]] || return 1
   [[ -d "${backup}/database" && ! -L "${backup}/database" ]] || return 1
+  [[ ! -e "${backup}/helper-state" && ! -e "${backup}/install-helper" ]] || return 1
   for file in complete server-binary server.service config.tar database-files SHA256SUMS database/404-probe.db; do
     [[ -f "${backup}/${file}" && ! -L "${backup}/${file}" ]] || return 1
   done
@@ -1330,7 +1507,7 @@ verify_server_upgrade_backup() {
 }
 
 restore_server_upgrade() {
-  local phase active enabled target restore_temporary
+  local phase active enabled target restore_temporary helper_restore_temporary helper_state legacy_backup=0
   [[ -f "${SERVER_UPGRADE_STATE}" && ! -L "${SERVER_UPGRADE_STATE}" ]] || return 1
   phase="$(server_upgrade_state_value phase)" || return 1
   active="$(server_upgrade_state_value original_active)" || return 1
@@ -1345,12 +1522,16 @@ restore_server_upgrade() {
   fi
   case "${phase}" in
     prepared|stopped-unbacked) ;;
-    backup-complete|migration-started|binary-replaced|candidate-started)
-      verify_server_upgrade_backup "${SERVER_UPGRADE_BACKUP}" || {
+    backup-complete|migration-started|binary-replaced|candidate-started|helper-replaced)
+      if [[ -e "${SERVER_UPGRADE_BACKUP}/helper-state" ]]; then
+        verify_server_upgrade_backup "${SERVER_UPGRADE_BACKUP}"
+      else
+        [[ "${phase}" != helper-replaced ]] && verify_legacy_server_upgrade_backup "${SERVER_UPGRADE_BACKUP}" && legacy_backup=1
+      fi || {
           printf '404-probe installer: backup is incomplete; leaving the Server stopped and preserving recovery files\n' >&2
           return 1
         }
-      if [[ "${phase}" == "migration-started" || "${phase}" == "binary-replaced" || "${phase}" == "candidate-started" ]]; then
+      if [[ "${phase}" == "migration-started" || "${phase}" == "binary-replaced" || "${phase}" == "candidate-started" || "${phase}" == "helper-replaced" ]]; then
         rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" || return 1
         while IFS= read -r file; do
           cp -a -- "${SERVER_UPGRADE_BACKUP}/database/${file}" "${STATE_DIRECTORY}/${file}" || return 1
@@ -1361,6 +1542,18 @@ restore_server_upgrade() {
         sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" || return 1
         sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" || return 1
       fi
+      if (( legacy_backup == 0 )); then
+        helper_state="$(<"${SERVER_UPGRADE_BACKUP}/helper-state")" || return 1
+        if [[ "${helper_state}" == 1 ]]; then
+          helper_restore_temporary="${INSTALL_HELPER}.restore"
+          cp -a -- "${SERVER_UPGRADE_BACKUP}/install-helper" "${helper_restore_temporary}" || return 1
+          mv -f -- "${helper_restore_temporary}" "${INSTALL_HELPER}" || return 1
+          sync -f "${INSTALL_HELPER}" || return 1
+        else
+          rm -f -- "${INSTALL_HELPER}" || return 1
+        fi
+        sync -f "$(dirname "${INSTALL_HELPER}")" || return 1
+      fi
       ;;
     *) return 1 ;;
   esac
@@ -1370,6 +1563,7 @@ restore_server_upgrade() {
   else systemctl stop 404-probe-server.service >/dev/null 2>&1 || true; fi
   clear_server_upgrade_state || return 1
   rm -f -- "${SERVER_UPGRADE_CANDIDATE}" || return 1
+  rm -f -- "${SERVER_UPGRADE_HELPER_CANDIDATE}" || return 1
   rm -rf -- "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || return 1
   return 0
 }
@@ -1387,7 +1581,7 @@ server_upgrade_trap() {
 }
 
 upgrade_existing_server() (
-  local target current comparison active=0 enabled=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
+  local target current comparison active=0 enabled=0 helper_existed=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
   if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
     [[ -d "${SERVER_UPGRADE_LOCK_DIRECTORY}" && ! -L "${SERVER_UPGRADE_LOCK_DIRECTORY}" \
       && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK_DIRECTORY}")" == "root:root:700" ]] \
@@ -1404,7 +1598,7 @@ upgrade_existing_server() (
   fi
   exec 9<>"${SERVER_UPGRADE_LOCK}"
   flock -n 9 || die "another Server upgrade is already running"
-  trap 'rm -f -- "${SERVER_UPGRADE_CANDIDATE}"' EXIT
+  trap 'rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"' EXIT
   if [[ -e "${SERVER_UPGRADE_DIRECTORY}" ]]; then
     [[ -d "${SERVER_UPGRADE_DIRECTORY}" && ! -L "${SERVER_UPGRADE_DIRECTORY}" \
       && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_DIRECTORY}")" == "root:root:700" ]] \
@@ -1423,6 +1617,11 @@ upgrade_existing_server() (
   [[ ! -e "${AGENT_UNIT}" && ! -e "${AGENT_BINARY}" ]] || die "mixed Server/Agent installation is unsupported"
   [[ "$(stat -c '%U:%G:%a' "${SERVER_BINARY}")" == "root:root:755" ]] || die "installed Server binary ownership or mode is unsafe"
   [[ "$(stat -c '%U:%G:%a' "${SERVER_UNIT}")" == "root:root:644" ]] || die "installed Server unit ownership or mode is unsafe"
+  if [[ -e "${INSTALL_HELPER}" ]]; then
+    [[ -f "${INSTALL_HELPER}" && ! -L "${INSTALL_HELPER}" && "$(stat -c '%U:%G:%a' "${INSTALL_HELPER}")" == "root:root:755" ]] \
+      || die "installed helper ownership or mode is unsafe"
+    helper_existed=1
+  fi
   grep -Fxq "User=${SERVICE_USER}" "${SERVER_UNIT}" \
     && grep -Fq "ExecStart=${SERVER_BINARY} serve " "${SERVER_UNIT}" \
     && grep -Fq -- "--db ${SERVER_DATABASE}" "${SERVER_UNIT}" \
@@ -1436,11 +1635,15 @@ upgrade_existing_server() (
   fi
   target="$(target_version)"
   rm -f -- "${SERVER_UPGRADE_CANDIDATE}"
+  rm -f -- "${SERVER_UPGRADE_HELPER_CANDIDATE}"
   download_server_upgrade_candidate "${target}"
+  render_local_helper >"${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "could not render upgraded local helper"
+  chmod 0755 "${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "could not protect upgraded local helper"
+  bash -n "${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "upgraded local helper failed syntax validation"
   current="$(identify_installed_server_version)"
   comparison="$(compare_versions "${current}" "${target}")"
   if [[ "${comparison}" == 0 ]]; then
-    rm -f -- "${SERVER_UPGRADE_CANDIDATE}"
+    rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"
     note "404-probe Server is already ${target}; no files were changed."
     exit 0
   fi
@@ -1491,6 +1694,10 @@ EOF
   cp -a -- "${SERVER_BINARY}" "${SERVER_UPGRADE_BACKUP}/server-binary" || die "could not back up Server binary"
   cp -a -- "${SERVER_UNIT}" "${SERVER_UPGRADE_BACKUP}/server.service" || die "could not back up Server unit"
   cp -a -- "${CONFIG_DIRECTORY}" "${SERVER_UPGRADE_BACKUP}/config" || die "could not back up Server configuration"
+  printf '%s\n' "${helper_existed}" >"${SERVER_UPGRADE_BACKUP}/helper-state" || die "could not record local helper state"
+  if (( helper_existed != 0 )); then
+    cp -a -- "${INSTALL_HELPER}" "${SERVER_UPGRADE_BACKUP}/install-helper" || die "could not back up local helper"
+  fi
   for path in "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"; do
     [[ ! -e "${path}" ]] || cp -a -- "${path}" "${SERVER_UPGRADE_BACKUP}/database/" || die "could not back up $(basename "${path}")"
   done
@@ -1526,14 +1733,18 @@ EOF
   fi
   runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" database verify --db "${SERVER_DATABASE}" >/dev/null \
     || die "post-upgrade database query and integrity verification failed"
+  mv -f -- "${SERVER_UPGRADE_HELPER_CANDIDATE}" "${INSTALL_HELPER}" || die "could not atomically replace local helper"
+  write_server_upgrade_state helper-replaced "${active}" "${enabled}" "${target}" || die "could not persist local helper replacement state"
+  "${INSTALL_HELPER}" --help >/dev/null || die "upgraded local helper failed its help check"
+  "${INSTALL_HELPER}" domains list >/dev/null || die "upgraded local helper failed its offline domain-management check"
   if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || die "could not restore enabled state"
   else systemctl disable 404-probe-server.service >/dev/null || die "could not restore disabled state"; fi
   (( active != 0 )) || systemctl stop 404-probe-server.service >/dev/null 2>&1 || true
   rm -rf -- "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || die "could not clear migration staging"
-  sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" || die "could not persist upgraded Server files"
-  sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" || die "could not persist upgraded Server directories"
+  sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" "${INSTALL_HELPER}" || die "could not persist upgraded Server files"
+  sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" "$(dirname "${INSTALL_HELPER}")" || die "could not persist upgraded Server directories"
   clear_server_upgrade_state || die "could not durably commit Server upgrade state"
-  rm -f -- "${SERVER_UPGRADE_CANDIDATE}" || die "could not clear Server candidate staging"
+  rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "could not clear Server candidate staging"
   trap - EXIT HUP INT TERM
   note "404-probe Server upgraded from ${current} to ${target}. The protected backup remains at ${SERVER_UPGRADE_BACKUP}."
 )
@@ -1542,7 +1753,7 @@ interactive_install() {
   require_root_linux_systemd
   local choice
   cat >/dev/tty <<'EOF'
-Install 404-probe V0.9.1
+Install 404-probe V0.9.2
 
   1) Server
   2) Agent

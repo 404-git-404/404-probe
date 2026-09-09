@@ -534,9 +534,17 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-sessionDone(session):
 			return
 		case message := <-ch:
+			if session != nil && !a.webAuth.sessionOriginAllowed(r.Context(), session) {
+				a.webAuth.revokeSession(session)
+				return
+			}
 			_, _ = fmt.Fprintf(w, "event: agent\ndata: %s\n\n", message)
 			flusher.Flush()
 		case <-keepalive.C:
+			if session != nil && !a.webAuth.sessionOriginAllowed(r.Context(), session) {
+				a.webAuth.revokeSession(session)
+				return
+			}
 			_, _ = fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		}

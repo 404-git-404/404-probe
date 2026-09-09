@@ -19,7 +19,7 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`readonly DEFAULT_VERSION="v0.9.1"`,
+		`readonly DEFAULT_VERSION="v0.9.2"`,
 		`404-probe-install agent --server <origin>`,
 		`[[ $# -eq 2 && "$1" == "--server" ]]`,
 		`IFS= read -r -s enrollment </dev/tty`,
@@ -55,6 +55,7 @@ func TestInstallerServerUpgradeTransactionContract(t *testing.T) {
 		`write_server_upgrade_state backup-complete`,
 		`write_server_upgrade_state migration-started`,
 		`write_server_upgrade_state binary-replaced`,
+		`write_server_upgrade_state helper-replaced`,
 		`database_has_open_handles`,
 		`database migrate-copy --db`,
 		`database migrate-protected --db`,
@@ -63,6 +64,10 @@ func TestInstallerServerUpgradeTransactionContract(t *testing.T) {
 		`original_active=`,
 		`original_enabled=`,
 		`running Server process is not the installed candidate`,
+		`helper-state`,
+		`SERVER_UPGRADE_HELPER_CANDIDATE`,
+		`"${INSTALL_HELPER}" domains list`,
+		`verify_legacy_server_upgrade_backup`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("installer missing Server upgrade contract %q", required)
@@ -70,6 +75,44 @@ func TestInstallerServerUpgradeTransactionContract(t *testing.T) {
 	}
 	if strings.Contains(script, `PROBE_404_RELEASE_BASE_URL`) {
 		t.Fatal("production installer permits an arbitrary release origin")
+	}
+}
+
+func TestInstallerOfflineDomainManagementContract(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`404-probe-install domains list`,
+		`404-probe-install domains add <root-domain>`,
+		`404-probe-install domains remove <root-domain>`,
+		`404-probe-install domains disable`,
+		`404-probe login domain management`,
+		`runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" web-domain "${action}" --db "${SERVER_DATABASE}"`,
+		`Disabling suffix mode will allow only the exact origin`,
+		`Configured exact origin:`,
+		`Domain policy was not changed; choose another action or exit.`,
+		`Domain suffix mode requires an HTTPS public origin`,
+		`prompt_web_domain_suffixes`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing domain-management contract %q", required)
+		}
+	}
+	helperStart := strings.Index(script, "cat <<'HELPER'\n")
+	helperEnd := strings.Index(script[helperStart+1:], "\nHELPER")
+	if helperStart < 0 || helperEnd < 0 {
+		t.Fatal("rendered local helper is missing")
+	}
+	helper := script[helperStart : helperStart+1+helperEnd]
+	if strings.Contains(helper, "curl ") || strings.Contains(helper, "bootstrap_latest_installer") {
+		t.Fatal("installed domain-management helper requires network bootstrap")
 	}
 }
 

@@ -123,6 +123,7 @@ func TestWebSelectorSwitchTrustBoundaryAndAgentStates(t *testing.T) {
 		}
 	}
 	request := httptest.NewRequest(http.MethodPost, webAgentPathPrefix+agentID+"/outbounds/switch", strings.NewReader(body))
+	request.Host = app.webAuth.publicOrigin.Host
 	request.Header.Set("Content-Type", "application/json")
 	unauthenticated := httptest.NewRecorder()
 	app.Handler().ServeHTTP(unauthenticated, request)

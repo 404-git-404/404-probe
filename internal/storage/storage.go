@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 10
+const currentSchemaVersion = 11
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -29,6 +29,7 @@ var (
 	ErrUpgradeTransition        = errors.New("invalid upgrade status transition")
 	ErrSecurityConflict         = errors.New("security batch ID content conflict")
 	ErrSecurityFence            = errors.New("security submission session is stale")
+	ErrLastWebDomainSuffix      = errors.New("cannot remove the last Web domain suffix while suffix mode is enabled")
 )
 
 type Store struct{ db *sql.DB }
@@ -517,6 +518,26 @@ func (s *Store) migrate(ctx context.Context) error {
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migration 10: %w", err)
+			}
+		}
+	}
+	if version < 11 {
+		for _, statement := range []string{
+			`CREATE TABLE web_domain_policy (
+				id INTEGER PRIMARY KEY CHECK(id=1),
+				mode TEXT NOT NULL CHECK(mode IN ('exact','suffix')),
+				revision INTEGER NOT NULL CHECK(revision>=0),
+				updated_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO web_domain_policy(id,mode,revision,updated_at) VALUES(1,'exact',0,unixepoch())`,
+			`CREATE TABLE web_domain_suffixes (
+				suffix TEXT PRIMARY KEY,
+				created_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(11, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 11: %w", err)
 			}
 		}
 	}

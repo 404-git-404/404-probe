@@ -10,6 +10,30 @@ curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.
 
 The same command detects an existing supported Server and offers one local, explicit upgrade confirmation. It resolves the latest canonical stable release from the fixed official repository, verifies the release installer, metadata, checksum manifest, candidate build identity, database, and available space before stopping the service, then preserves the existing configuration, credentials, database, listen/domain settings, and systemd state. A root-only persistent transaction and consistent pre-migration backup allow an interrupted or failed upgrade to restore the old binary and database before the old service is restarted. Existing Agents remain on the Server Web upgrade path.
 
+V0.9.2 adds an explicit, persistent login-domain policy. Existing installations
+remain in exact-origin mode after migration and do not automatically trust a
+parent domain. A local administrator can enable suffix mode and manage multiple
+registrable root domains without editing configuration or restarting the Server:
+
+```bash
+sudo 404-probe-install domains
+sudo 404-probe-install domains list
+sudo 404-probe-install domains add navolyn.com
+sudo 404-probe-install domains remove navolyn.com
+sudo 404-probe-install domains disable
+```
+
+Registering `navolyn.com` permits that root and any dot-delimited subdomain, but
+not `evilnavolyn.com` or `navolyn.com.evil.example`. The request Origin must
+still exactly match the current request's scheme, host, and effective port.
+Cookies remain host-only, so a new subdomain requires a new login. Suffix changes
+take effect immediately and persist in the Server database. Any actual add,
+remove, or disable change invalidates all existing Web sessions and login tokens,
+so administrators and users must log in again; a duplicate add is a no-op and
+does not invalidate credentials. The last suffix cannot be removed; use
+`domains disable` with local confirmation to return to the configured exact
+origin.
+
 To repeatably target one official release instead of `latest`, pass the canonical version to the privileged shell:
 
 ```bash
@@ -144,7 +168,7 @@ sudo 404-probe-install uninstall agent
 
 This local, repeatable command stops and disables the Agent service, then removes its systemd unit, binary, private environment file, and epoch/state files. It is safe to rerun after a partial cleanup. It preserves systemd journal history, the locked service account, and the installer helper. It does not contact the Server or delete Server-side telemetry. `uninstall server` similarly removes the Server unit and binary, but deliberately preserves Server configuration, credentials, and the database.
 
-All Web mutations require an authenticated Web session, the exact configured Origin, `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
+All Web mutations require an authenticated Web session, the full canonical Origin admitted for the current request (with exact scheme, host, and effective port), `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
 
 Agent cards use a compact responsive flow for identity, metrics, network, Google status, Security status, metadata, and actions. Cards grow with available status content instead of relying on fixed pixel heights or fixed grid rows. Long text is truncated in the card while its complete value remains available through `title`, accessible labels, and the authenticated Agent detail response. Card resizing, dragging, per-Agent layouts, and metric visibility preferences are not supported.
 
