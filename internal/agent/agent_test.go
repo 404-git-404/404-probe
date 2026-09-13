@@ -46,6 +46,14 @@ func TestConfigRequiresHTTPSUnlessExplicitlyAllowed(t *testing.T) {
 	if err := base.Validate(); err != nil {
 		t.Fatalf("HTTPS rejected: %v", err)
 	}
+	base.CountryCode = "ZZ"
+	if base.Validate() == nil {
+		t.Fatal("invalid persisted country code accepted")
+	}
+	base.CountryCode = "US"
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid persisted country code rejected: %v", err)
+	}
 }
 
 func TestPersistentEpochIncrementsAcrossRunnerStarts(t *testing.T) {
@@ -189,6 +197,146 @@ func TestVersionReportWaitsForServerCapability(t *testing.T) {
 	}
 	if bodies[1]["agent_version"] != "v0.8.0" || !runner.upgradeAPISupported.Load() || !runner.versionReportAccepted.Load() {
 		t.Fatalf("second report=%v upgrade=%t accepted=%t", bodies[1], runner.upgradeAPISupported.Load(), runner.versionReportAccepted.Load())
+	}
+}
+
+func TestNewReportFieldsWaitForServerCapabilities(t *testing.T) {
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, body)
+		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{LinuxMetricsReport: true, CountryCodeReport: true}})
+	}))
+	defer server.Close()
+	runner, err := New(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"), CountryCode: "US"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(ctx context.Context) (protocol.Report, error) {
+		report, err := staticReportCollector(ctx)
+		steal, readRate, writeRate, busy := 2.5, 1024.0, 2048.0, 40.0
+		report.CPUCores = 4
+		report.CPUStealPercent, report.DiskReadRate, report.DiskWriteRate, report.DiskBusyPercent = &steal, &readRate, &writeRate, &busy
+		return report, err
+	})
+	sequence := uint64(0)
+	if _, err := runner.sendReport(context.Background(), &sequence); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.sendReport(context.Background(), &sequence); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("bodies=%d", len(bodies))
+	}
+	for _, field := range []string{"cpu_cores", "cpu_steal_percent", "disk_read_rate", "disk_write_rate", "disk_busy_percent", "country_code"} {
+		if _, exists := bodies[0][field]; exists {
+			t.Fatalf("first report sent unnegotiated %s: %v", field, bodies[0])
+		}
+	}
+	if bodies[1]["country_code"] != "US" || bodies[1]["cpu_cores"] != float64(4) || bodies[1]["cpu_steal_percent"] != 2.5 || bodies[1]["disk_read_rate"] != 1024.0 || bodies[1]["disk_write_rate"] != 2048.0 || bodies[1]["disk_busy_percent"] != 40.0 {
+		t.Fatalf("second report did not send negotiated fields: %v", bodies[1])
+	}
+}
+
+func TestNewReportRemainsAcceptedByStrictV092Server(t *testing.T) {
+	type legacyReport struct {
+		AgentID             string  `json:"agent_id"`
+		Epoch               uint64  `json:"epoch"`
+		SessionID           string  `json:"session_id"`
+		Sequence            uint64  `json:"sequence"`
+		CollectedAt         int64   `json:"collected_at"`
+		Hostname            string  `json:"hostname"`
+		OS                  string  `json:"os"`
+		Arch                string  `json:"arch"`
+		AgentVersion        string  `json:"agent_version,omitempty"`
+		AgentUpgradeCapable bool    `json:"agent_upgrade_capable,omitempty"`
+		BootID              string  `json:"boot_id"`
+		Uptime              uint64  `json:"uptime"`
+		CPUPercent          float64 `json:"cpu_percent"`
+		Load1               float64 `json:"load1"`
+		Load5               float64 `json:"load5"`
+		Load15              float64 `json:"load15"`
+		RAMUsed             uint64  `json:"ram_used"`
+		RAMTotal            uint64  `json:"ram_total"`
+		RAMPercent          float64 `json:"ram_percent"`
+		SwapUsed            uint64  `json:"swap_used"`
+		SwapTotal           uint64  `json:"swap_total"`
+		SwapPercent         float64 `json:"swap_percent"`
+		DiskUsed            uint64  `json:"disk_used"`
+		DiskTotal           uint64  `json:"disk_total"`
+		DiskPercent         float64 `json:"disk_percent"`
+		RXBytes             uint64  `json:"rx_bytes"`
+		TXBytes             uint64  `json:"tx_bytes"`
+	}
+	decodeErrors := make(chan error, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		var report legacyReport
+		if err := decoder.Decode(&report); err != nil {
+			decodeErrors <- err
+			http.Error(w, "invalid report", http.StatusBadRequest)
+			return
+		}
+		decodeErrors <- nil
+		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true})
+	}))
+	defer server.Close()
+	runner, err := New(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"), CountryCode: "US"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(ctx context.Context) (protocol.Report, error) {
+		report, err := staticReportCollector(ctx)
+		steal, readRate, writeRate, busy := 2.5, 1024.0, 2048.0, 40.0
+		report.CPUCores = 4
+		report.CPUStealPercent, report.DiskReadRate, report.DiskWriteRate, report.DiskBusyPercent = &steal, &readRate, &writeRate, &busy
+		return report, err
+	})
+	sequence := uint64(0)
+	for i := 0; i < 2; i++ {
+		accepted, err := runner.sendReport(context.Background(), &sequence)
+		if err != nil || !accepted {
+			t.Fatalf("report %d accepted=%t err=%v", i+1, accepted, err)
+		}
+		if err := <-decodeErrors; err != nil {
+			t.Fatalf("strict v0.9.2 decoder rejected report %d: %v", i+1, err)
+		}
+	}
+}
+
+func TestInvalidAutomaticCountryFallsBackToUnknown(t *testing.T) {
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, body)
+		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{CountryCodeReport: true}})
+	}))
+	defer server.Close()
+	runner, err := New(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(ctx context.Context) (protocol.Report, error) {
+		report, err := staticReportCollector(ctx)
+		report.CountryCode = "ZZ"
+		return report, err
+	})
+	sequence := uint64(0)
+	for i := 0; i < 2; i++ {
+		if accepted, err := runner.sendReport(context.Background(), &sequence); err != nil || !accepted {
+			t.Fatalf("report %d accepted=%t err=%v", i+1, accepted, err)
+		}
+	}
+	if _, exists := bodies[1]["country_code"]; exists {
+		t.Fatalf("invalid automatic country was reported instead of unknown: %v", bodies[1])
 	}
 }
 
@@ -381,7 +529,7 @@ func TestRunReportsRetriesServerErrors(t *testing.T) {
 
 func TestRevocationEndToEndStopsAgentAndPreservesState(t *testing.T) {
 	ctx := context.Background()
-	store, err := storage.Open(ctx, ":memory:")
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "revocation.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +682,7 @@ func (lifecycleExecutor) Execute(context.Context, protocol.Job) (Execution, erro
 
 func TestDisableResumeAndRevokeLifecycleEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	store, err := storage.Open(ctx, ":memory:")
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "lifecycle.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

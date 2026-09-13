@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,7 @@ type Config struct {
 	NetworkIncludes             []string
 	NetworkExcludes             []string
 	ClashAPIURL                 string
+	SelectorOrderPath           string
 	LegacyClashSecretConfigured bool
 	OutboundInterval            time.Duration
 	AgentVersion                string
@@ -43,6 +45,7 @@ type Config struct {
 	SecurityExportDir           string
 	SecurityAckPath             string
 	SecurityInterval            time.Duration
+	CountryCode                 string
 }
 
 var (
@@ -51,8 +54,9 @@ var (
 )
 
 const (
-	DefaultDisabledInterval = time.Minute
-	DefaultClashAPIURL      = "http://127.0.0.1:9090"
+	DefaultDisabledInterval  = time.Minute
+	DefaultClashAPIURL       = "http://127.0.0.1:9090"
+	DefaultSelectorOrderPath = "/etc/404-probe/selector-order.json"
 )
 
 func (c Config) Validate() error {
@@ -72,8 +76,14 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.StatePath) == "" {
 		return errors.New("state path is required")
 	}
+	if c.CountryCode != "" && !protocol.ValidCountryCode(c.CountryCode) {
+		return errors.New("country code must be a supported uppercase ISO alpha-2 code")
+	}
 	if c.ClashAPIURL == "" {
 		return nil
+	}
+	if c.SelectorOrderPath != "" && (!filepath.IsAbs(c.SelectorOrderPath) || strings.ContainsRune(c.SelectorOrderPath, 0)) {
+		return errors.New("selector order metadata path must be absolute")
 	}
 	if c.OutboundInterval <= 0 {
 		return errors.New("outbound discovery interval must be positive")
@@ -99,6 +109,8 @@ type Runner struct {
 	sessionID                   string
 	executor                    Executor
 	reportAgentVersion          bool
+	reportLinuxMetrics          bool
+	reportCountryCode           bool
 	versionReportAccepted       atomic.Bool
 	upgradeAPISupported         atomic.Bool
 	interactiveControlSupported atomic.Bool
@@ -106,6 +118,7 @@ type Runner struct {
 	securitySupported           atomic.Bool
 	googleStatusAvailable       bool
 	clashControlReady           atomic.Bool
+	outboundMu                  sync.Mutex
 	selectorJobMu               sync.Mutex
 	selectorJobKey              string
 	selectorJobResult           protocol.JobResult
@@ -166,7 +179,7 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 	}
 	return &Runner{
 		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
-		collector: collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
+		collector: &collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
 		executor:  executor, interactiveControlReady: make(chan struct{}), securityReady: make(chan struct{}),
 		googleStatusAvailable: func() bool {
 			capable, ok := executor.(googleStatusCapability)
@@ -297,6 +310,19 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	(*sequence)++
 	measurement.AgentID = r.config.AgentID
+	if r.config.CountryCode != "" {
+		measurement.CountryCode = r.config.CountryCode
+	}
+	if !r.reportLinuxMetrics {
+		measurement.CPUCores = 0
+		measurement.CPUStealPercent = nil
+		measurement.DiskReadRate = nil
+		measurement.DiskWriteRate = nil
+		measurement.DiskBusyPercent = nil
+	}
+	if !r.reportCountryCode || (measurement.CountryCode != "" && !protocol.ValidCountryCode(measurement.CountryCode)) {
+		measurement.CountryCode = ""
+	}
 	if r.reportAgentVersion {
 		measurement.AgentVersion = r.config.AgentVersion
 		measurement.AgentUpgradeCapable = r.updaterAvailable()
@@ -322,6 +348,12 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	if response.Capabilities.AgentVersionReport {
 		r.reportAgentVersion = true
+	}
+	if response.Capabilities.LinuxMetricsReport {
+		r.reportLinuxMetrics = true
+	}
+	if response.Capabilities.CountryCodeReport {
+		r.reportCountryCode = true
 	}
 	if response.Capabilities.AgentUpgrade {
 		r.upgradeAPISupported.Store(true)

@@ -3,12 +3,13 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.9.2"
+readonly DEFAULT_VERSION="v0.9.3"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
 readonly CONFIG_DIRECTORY="/etc/404-probe"
 readonly STATE_DIRECTORY="/var/lib/404-probe"
+readonly SELECTOR_ORDER_FILE="${CONFIG_DIRECTORY}/selector-order.json"
 readonly SERVER_DATABASE="${STATE_DIRECTORY}/404-probe.db"
 readonly SERVER_UNIT="/etc/systemd/system/404-probe-server.service"
 readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
@@ -97,6 +98,7 @@ Usage:
   404-probe-install                 install, or offer a protected existing-Server upgrade
   404-probe-install agent --server <origin>
   404-probe-install setup-security  enable V0.9 local security audit on an existing Agent
+  404-probe-install selector-order <absolute-sing-box-config.json>
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install uninstall <server|agent>
 
@@ -312,12 +314,13 @@ readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.s
 readonly SECURITY_TIMER_UNIT="/etc/systemd/system/404-probe-security-collect.timer"
 readonly CONFIG_DIRECTORY="/etc/404-probe"
 readonly STATE_DIRECTORY="/var/lib/404-probe"
+readonly SELECTOR_ORDER_FILE="${CONFIG_DIRECTORY}/selector-order.json"
 readonly SERVICE_USER="404-probe"
 readonly ENROLLMENT_PREFIX="404p1_"
 
 die() { printf '404-probe helper: %s\n' "$*" >&2; exit 1; }
 usage() {
-  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | setup-security | uninstall <server|agent>\n'
+  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent>\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
@@ -437,6 +440,45 @@ domains() {
     *) die "usage: 404-probe-install domains [list|add <root-domain>|remove <root-domain>|disable]" ;;
   esac
 }
+selector_order() {
+  [[ $# -eq 1 ]] || die "usage: 404-probe-install selector-order <sing-box-config.json>"
+  local config="$1" size owner permissions
+  [[ -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" \
+    && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}")" == "root:${SERVICE_USER}:750" ]] \
+    || die "selector metadata directory must be root:${SERVICE_USER} mode 0750"
+  if [[ -e "${SELECTOR_ORDER_FILE}" || -L "${SELECTOR_ORDER_FILE}" ]]; then
+    [[ -f "${SELECTOR_ORDER_FILE}" && ! -L "${SELECTOR_ORDER_FILE}" \
+      && "$(stat -c '%U:%G:%a' "${SELECTOR_ORDER_FILE}")" == "root:${SERVICE_USER}:640" ]] \
+      || die "existing selector order metadata is unsafe"
+  fi
+  [[ "${config}" == /* && -f "${config}" && ! -L "${config}" ]] \
+    || die "sing-box config must be an absolute regular non-symlink file"
+  size="$(stat -c '%s' "${config}")"
+  owner="$(stat -c '%U' "${config}")"
+  permissions="$(stat -c '%a' "${config}")"
+  [[ "${size}" =~ ^[0-9]+$ && "${size}" -gt 0 && "${size}" -le 8388608 ]] \
+    || die "sing-box config must be non-empty and no larger than 8 MiB"
+  [[ "${owner}" == root && "${permissions}" =~ ^[0-7]{3,4}$ ]] \
+    || die "sing-box config must be root-owned with ordinary file permissions"
+  (( (8#${permissions} & 022) == 0 )) || die "sing-box config must not be group- or world-writable"
+  [[ -x "${AGENT_BINARY}" && -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" ]] \
+    || die "a safe local 404-probe Agent installation was not found"
+  "${AGENT_BINARY}" selector-order extract --config "${config}" --output "${SELECTOR_ORDER_FILE}" \
+    || die "could not extract selector order; only standard JSON with a top-level outbounds array is supported"
+  [[ -f "${SELECTOR_ORDER_FILE}" && ! -L "${SELECTOR_ORDER_FILE}" ]] \
+    || die "selector order extractor did not create a regular file"
+  chown -h root:"${SERVICE_USER}" "${SELECTOR_ORDER_FILE}"
+  chmod 0640 "${SELECTOR_ORDER_FILE}"
+  [[ "$(stat -c '%U:%G:%a' "${SELECTOR_ORDER_FILE}")" == "root:${SERVICE_USER}:640" ]] \
+    || die "selector order metadata ownership or mode is unsafe"
+  runuser -u "${SERVICE_USER}" -- test -r "${SELECTOR_ORDER_FILE}" \
+    || die "Agent service account cannot read selector order metadata"
+  if runuser -u "${SERVICE_USER}" -- test -w "${CONFIG_DIRECTORY}" \
+    || runuser -u "${SERVICE_USER}" -- test -w "${SELECTOR_ORDER_FILE}"; then
+    die "Agent service account can modify selector order metadata"
+  fi
+  printf 'Selector order metadata refreshed. The Agent will use it on its next discovery interval.\n'
+}
 uninstall() {
   [[ $# -eq 1 && ( "$1" == "server" || "$1" == "agent" ) ]] \
     || die "usage: 404-probe-install uninstall <server|agent>"
@@ -464,7 +506,7 @@ uninstall() {
   rm -f -- "${unit_path}" "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
-      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" \
+      "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${SELECTOR_ORDER_FILE}" \
 	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
 	  "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
@@ -513,6 +555,7 @@ case "${1:-}" in
   -h|--help|help) usage ;;
   enroll) shift; enroll "$@" ;;
   domains) shift; domains "$@" ;;
+  selector-order) shift; selector_order "$@" ;;
   setup-security) shift; setup_security "$@" ;;
   uninstall) shift; uninstall "$@" ;;
   *) usage >&2; exit 2 ;;
@@ -1053,6 +1096,87 @@ setup_security_existing() (
   note "404-probe ${expected_version} local security audit is enabled; Agent identity, credential, and epoch state were preserved."
 )
 
+setup_selector_order_existing() (
+  require_root_linux_systemd
+  [[ $# -eq 1 ]] || die "usage: 404-probe-install selector-order <sing-box-config.json>"
+  local config="$1" size owner permissions version_json expected_version backup_directory helper_candidate="" metadata_existed=0 helper_existed=0 committed=0
+  [[ -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" && "$(stat -c '%U:%G:%a' "${AGENT_BINARY}")" == "root:root:755" ]] \
+    || die "a safe existing Agent binary was not found"
+  [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && "$(stat -c '%U:%G:%a' "${AGENT_UNIT}")" == "root:root:644" ]] \
+    || die "a safe existing Agent unit was not found"
+  [[ -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
+    || die "a safe existing Agent environment was not found"
+  validate_service_user
+  [[ -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" \
+    && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}")" == "root:${SERVICE_USER}:750" ]] \
+    || die "selector metadata directory must be root:${SERVICE_USER} mode 0750"
+  grep -Fxq "User=${SERVICE_USER}" "${AGENT_UNIT}" \
+    && grep -Fxq "Group=${SERVICE_USER}" "${AGENT_UNIT}" \
+    && grep -Fq "ExecStart=${AGENT_BINARY} " "${AGENT_UNIT}" \
+    && grep -Fxq "EnvironmentFile=${CONFIG_DIRECTORY}/agent.env" "${AGENT_UNIT}" \
+    || die "existing Agent unit is not a supported 404-probe installation"
+  expected_version="$(target_version)"
+  version_json="$("${AGENT_BINARY}" version --json)" || die "could not verify the installed Agent build"
+  grep -Fq "\"version\":\"${expected_version}\"" <<<"${version_json}" \
+    && grep -Eq '"commit":"[^"]+"' <<<"${version_json}" \
+    && grep -Fq '"dirty":false' <<<"${version_json}" \
+    || die "installed Agent is not the verified ${expected_version} build; upgrade it before selector-order setup"
+  [[ "${config}" == /* && -f "${config}" && ! -L "${config}" ]] \
+    || die "sing-box config must be an absolute regular non-symlink file"
+  size="$(stat -c '%s' "${config}")"
+  owner="$(stat -c '%U' "${config}")"
+  permissions="$(stat -c '%a' "${config}")"
+  [[ "${size}" =~ ^[0-9]+$ && "${size}" -gt 0 && "${size}" -le 8388608 ]] \
+    || die "sing-box config must be non-empty and no larger than 8 MiB"
+  [[ "${owner}" == root && "${permissions}" =~ ^[0-7]{3,4}$ ]] \
+    || die "sing-box config must be root-owned with ordinary file permissions"
+  (( (8#${permissions} & 022) == 0 )) || die "sing-box config must not be group- or world-writable"
+  if [[ -e "${SELECTOR_ORDER_FILE}" || -L "${SELECTOR_ORDER_FILE}" ]]; then
+    [[ -f "${SELECTOR_ORDER_FILE}" && ! -L "${SELECTOR_ORDER_FILE}" \
+      && "$(stat -c '%U:%G:%a' "${SELECTOR_ORDER_FILE}")" == "root:${SERVICE_USER}:640" ]] \
+      || die "existing selector order metadata is unsafe"
+    metadata_existed=1
+  fi
+  if [[ -e "${INSTALL_HELPER}" || -L "${INSTALL_HELPER}" ]]; then
+    [[ -f "${INSTALL_HELPER}" && ! -L "${INSTALL_HELPER}" \
+      && "$(stat -c '%U:%G:%a' "${INSTALL_HELPER}")" == "root:root:755" ]] \
+      || die "existing installer helper is unsafe"
+    helper_existed=1
+  fi
+
+  backup_directory="$(mktemp -d)"
+  (( metadata_existed == 0 )) || cp --preserve=mode,ownership,timestamps -- "${SELECTOR_ORDER_FILE}" "${backup_directory}/selector-order.json"
+  (( helper_existed == 0 )) || cp --preserve=mode,ownership,timestamps -- "${INSTALL_HELPER}" "${backup_directory}/install-helper"
+  trap 'status=$?; if (( committed == 0 )); then if (( metadata_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/selector-order.json" "${SELECTOR_ORDER_FILE}"; else rm -f -- "${SELECTOR_ORDER_FILE}"; fi; if (( helper_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/install-helper" "${INSTALL_HELPER}"; else rm -f -- "${INSTALL_HELPER}"; fi; fi; [[ -z "${helper_candidate}" ]] || rm -f -- "${helper_candidate}"; rm -rf -- "${backup_directory}"; exit "${status}"' EXIT HUP INT TERM
+
+  "${AGENT_BINARY}" selector-order extract --config "${config}" --output "${SELECTOR_ORDER_FILE}" \
+    || die "could not extract selector order; only standard JSON with a top-level outbounds array is supported"
+  [[ -f "${SELECTOR_ORDER_FILE}" && ! -L "${SELECTOR_ORDER_FILE}" ]] \
+    || die "selector order extractor did not create a regular file"
+  chown -h root:"${SERVICE_USER}" "${SELECTOR_ORDER_FILE}"
+  chmod 0640 "${SELECTOR_ORDER_FILE}"
+  [[ "$(stat -c '%U:%G:%a' "${SELECTOR_ORDER_FILE}")" == "root:${SERVICE_USER}:640" ]] \
+    || die "selector order metadata ownership or mode is unsafe"
+  runuser -u "${SERVICE_USER}" -- test -r "${SELECTOR_ORDER_FILE}" \
+    || die "Agent service account cannot read selector order metadata"
+  if runuser -u "${SERVICE_USER}" -- test -w "${CONFIG_DIRECTORY}" \
+    || runuser -u "${SERVICE_USER}" -- test -w "${SELECTOR_ORDER_FILE}"; then
+    die "Agent service account can modify selector order metadata"
+  fi
+
+  helper_candidate="$(mktemp "$(dirname "${INSTALL_HELPER}")/.404-probe-install.selector.XXXXXX")"
+  render_local_helper >"${helper_candidate}"
+  bash -n "${helper_candidate}" || die "generated installer helper failed its shell syntax check"
+  chown root:root "${helper_candidate}"
+  chmod 0755 "${helper_candidate}"
+  mv -f -- "${helper_candidate}" "${INSTALL_HELPER}"
+  helper_candidate=""
+  committed=1
+  trap - EXIT HUP INT TERM
+  rm -rf -- "${backup_directory}"
+  note "Selector order metadata is enabled for ${expected_version}; Agent identity and service state were preserved."
+)
+
 bootstrap_existing_agent() (
   local candidate="/usr/local/bin/.404-probe-agent.bootstrap"
   local previous="/usr/local/bin/.404-probe-agent.previous"
@@ -1131,7 +1255,7 @@ install_agent() {
     || die "existing Agent state was found; refusing to alter it"
   [[ ! -e "${AGENT_BINARY}" ]] || die "${AGENT_BINARY} already exists; refusing to overwrite it"
 
-  local server_url="${1:-}" enrollment credentials agent_id agent_token insecure_option
+  local server_url="${1:-}" enrollment credentials agent_id agent_token insecure_option permissions country_code
   if [[ -z "${server_url}" ]]; then
     printf 'Server URL: ' >/dev/tty
     IFS= read -r server_url </dev/tty
@@ -1157,11 +1281,43 @@ install_agent() {
   install_local_helper
   track_install_path "${AGENT_BINARY}"
   download_binary agent "${AGENT_BINARY}"
+	country_code=""
+	if country_code="$("${AGENT_BINARY}" country-code lookup 2>/dev/null)"; then
+		note "Agent egress country/region was identified once during installation as ${country_code}."
+	else
+		country_code=""
+		note "Agent egress country/region could not be identified; installation will continue with an unknown location."
+	fi
+	if [[ -f /etc/sing-box/config.json && ! -L /etc/sing-box/config.json && "$(stat -c '%U' /etc/sing-box/config.json)" == root ]]; then
+	  permissions="$(stat -c '%a' /etc/sing-box/config.json)"
+	  if [[ "${permissions}" =~ ^[0-7]{3,4}$ ]] && (( (8#${permissions} & 022) == 0 )); then
+	    track_install_path "${SELECTOR_ORDER_FILE}"
+	    if "${AGENT_BINARY}" selector-order extract --config /etc/sing-box/config.json --output "${SELECTOR_ORDER_FILE}"; then
+	      [[ -f "${SELECTOR_ORDER_FILE}" && ! -L "${SELECTOR_ORDER_FILE}" ]] \
+	        || die "selector order extractor did not create a regular file"
+	      chown -h root:"${SERVICE_USER}" "${SELECTOR_ORDER_FILE}"
+	      chmod 0640 "${SELECTOR_ORDER_FILE}"
+	      [[ "$(stat -c '%U:%G:%a' "${SELECTOR_ORDER_FILE}")" == "root:${SERVICE_USER}:640" ]] \
+	        || die "selector order metadata ownership or mode is unsafe"
+	      runuser -u "${SERVICE_USER}" -- test -r "${SELECTOR_ORDER_FILE}" \
+	        || die "Agent service account cannot read selector order metadata"
+	      if runuser -u "${SERVICE_USER}" -- test -w "${CONFIG_DIRECTORY}" \
+	        || runuser -u "${SERVICE_USER}" -- test -w "${SELECTOR_ORDER_FILE}"; then
+	        die "Agent service account can modify selector order metadata"
+	      fi
+	    else
+	      rm -f -- "${SELECTOR_ORDER_FILE}"
+	      note "sing-box selector order could not be extracted; Agent will use deterministic name order until configured locally."
+	    fi
+	  fi
+	fi
   track_install_path "${CONFIG_DIRECTORY}/agent.env"
   write_private_file "${CONFIG_DIRECTORY}/agent.env" "PROBE_404_SERVER=${server_url}
 PROBE_404_AGENT_ID=${agent_id}
 PROBE_404_TOKEN=${agent_token}
 PROBE_404_STATE=${STATE_DIRECTORY}/agent.epoch
+PROBE_404_COUNTRY_CODE=${country_code}
+PROBE_404_SELECTOR_ORDER=${SELECTOR_ORDER_FILE}
 PROBE_404_SECURITY_EXPORT=${SECURITY_EXPORT_DIRECTORY}
 PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"
 
@@ -1781,6 +1937,7 @@ install_or_upgrade() {
     note "Existing 404-probe Agent detected. Agent upgrades remain controlled by the Server Web interface."
     printf 'No Agent identity, credential, epoch, service, or security state was changed.\n'
     printf 'If this Agent predates the local security collector, run: sudo 404-probe-install setup-security\n'
+    printf 'To enable config-order selectors, run the current version-pinned install.sh with: selector-order /absolute/path/to/config.json\n'
     return
   fi
   interactive_install
@@ -1804,6 +1961,10 @@ main() {
     setup-security)
       shift
       setup_security_existing "$@"
+      ;;
+    selector-order)
+      shift
+      setup_selector_order_existing "$@"
       ;;
     uninstall)
       shift

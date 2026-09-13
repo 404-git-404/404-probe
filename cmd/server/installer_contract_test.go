@@ -32,6 +32,29 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	if strings.Contains(script, "--enrollment") || strings.Contains(script, "--token PERMANENT_SECRET") {
 		t.Fatal("installer accepts an Agent credential through command arguments")
 	}
+	for _, required := range []string{
+		`country_code="$("${AGENT_BINARY}" country-code lookup 2>/dev/null)"`,
+		`PROBE_404_COUNTRY_CODE=${country_code}`,
+		`installation will continue with an unknown location`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing one-time country lookup contract %q", required)
+		}
+	}
+	if strings.Count(script, `country-code lookup`) != 1 {
+		t.Fatalf("country lookup must occur exactly once in the fresh-install path")
+	}
+	installStart := strings.Index(script, "install_agent() {")
+	installEnd := strings.Index(script[installStart:], "\ninstall_agent_command() {")
+	if installStart < 0 || installEnd < 0 {
+		t.Fatal("could not isolate install_agent")
+	}
+	installAgent := script[installStart : installStart+installEnd]
+	existingBootstrap := strings.Index(installAgent, "bootstrap_existing_agent")
+	lookup := strings.Index(installAgent, "country-code lookup")
+	if existingBootstrap < 0 || lookup < 0 || existingBootstrap > lookup {
+		t.Fatal("existing Agent bootstrap can reach the external country lookup")
+	}
 }
 
 func TestInstallerServerUpgradeTransactionContract(t *testing.T) {

@@ -407,7 +407,9 @@ func (r *Runner) executeSelectorSwitch(ctx context.Context, job protocol.Job) (E
 	if !r.clashIntegrationEnabled() || job.Config.SelectorSwitch == nil {
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	}
-	client := clashClient{endpoint: r.config.ClashAPIURL, client: r.client}
+	r.outboundMu.Lock()
+	defer r.outboundMu.Unlock()
+	client := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath}
 	result, err := client.switchSelector(ctx, job.Config.SelectorSwitch.Selector, job.Config.SelectorSwitch.Choice)
 	if err != nil {
 		category := "clash_api_unavailable"
@@ -419,9 +421,9 @@ func (r *Runner) executeSelectorSwitch(ctx context.Context, job protocol.Job) (E
 		return Execution{Success: false, ErrorCategory: category, ErrorMessage: message,
 			Result: protocol.ProbeResult{SelectorSwitch: &protocol.SelectorSwitchResult{}}}, nil
 	}
-	selectors, discoverErr := client.discover(ctx)
+	selectors, orderSource, discoverErr := client.discoverOrdered(ctx)
 	if discoverErr == nil {
-		snapshot := protocol.OutboundSnapshot{Available: true, Selectors: selectors}
+		snapshot := protocol.OutboundSnapshot{Available: true, OrderSource: orderSource, Selectors: selectors}
 		if r.interactiveControlSupported.Load() {
 			snapshot.Status = protocol.OutboundStatusConnected
 		}

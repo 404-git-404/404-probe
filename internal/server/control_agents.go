@@ -28,28 +28,33 @@ type controlAgentDetailView struct {
 }
 
 type controlAgentStateView struct {
-	Hostname    string  `json:"hostname"`
-	OS          string  `json:"os"`
-	Arch        string  `json:"arch"`
-	Uptime      uint64  `json:"uptime"`
-	CPUPercent  float64 `json:"cpu_percent"`
-	Load1       float64 `json:"load1"`
-	Load5       float64 `json:"load5"`
-	Load15      float64 `json:"load15"`
-	RAMUsed     uint64  `json:"ram_used"`
-	RAMTotal    uint64  `json:"ram_total"`
-	RAMPercent  float64 `json:"ram_percent"`
-	SwapUsed    uint64  `json:"swap_used"`
-	SwapTotal   uint64  `json:"swap_total"`
-	SwapPercent float64 `json:"swap_percent"`
-	DiskUsed    uint64  `json:"disk_used"`
-	DiskTotal   uint64  `json:"disk_total"`
-	DiskPercent float64 `json:"disk_percent"`
-	RXRate      float64 `json:"rx_rate"`
-	TXRate      float64 `json:"tx_rate"`
-	RXTotal     uint64  `json:"rx_total"`
-	TXTotal     uint64  `json:"tx_total"`
-	CollectedAt int64   `json:"collected_at"`
+	CountryCode     string   `json:"country_code,omitempty"`
+	Hostname        string   `json:"hostname"`
+	OS              string   `json:"os"`
+	Arch            string   `json:"arch"`
+	Uptime          uint64   `json:"uptime"`
+	CPUPercent      float64  `json:"cpu_percent"`
+	CPUStealPercent *float64 `json:"cpu_steal_percent,omitempty"`
+	Load1           float64  `json:"load1"`
+	Load5           float64  `json:"load5"`
+	Load15          float64  `json:"load15"`
+	RAMUsed         uint64   `json:"ram_used"`
+	RAMTotal        uint64   `json:"ram_total"`
+	RAMPercent      float64  `json:"ram_percent"`
+	SwapUsed        uint64   `json:"swap_used"`
+	SwapTotal       uint64   `json:"swap_total"`
+	SwapPercent     float64  `json:"swap_percent"`
+	DiskUsed        uint64   `json:"disk_used"`
+	DiskTotal       uint64   `json:"disk_total"`
+	DiskPercent     float64  `json:"disk_percent"`
+	DiskReadRate    *float64 `json:"disk_read_rate,omitempty"`
+	DiskWriteRate   *float64 `json:"disk_write_rate,omitempty"`
+	DiskBusyPercent *float64 `json:"disk_busy_percent,omitempty"`
+	RXRate          float64  `json:"rx_rate"`
+	TXRate          float64  `json:"tx_rate"`
+	RXTotal         uint64   `json:"rx_total"`
+	TXTotal         uint64   `json:"tx_total"`
+	CollectedAt     int64    `json:"collected_at"`
 }
 
 type controlAgentCollectionView struct {
@@ -176,11 +181,12 @@ func newControlAgentSummaryView(record storage.AgentSnapshot) controlAgentSummar
 
 func newControlAgentStateView(state storage.State) *controlAgentStateView {
 	return &controlAgentStateView{
-		Hostname: state.Hostname, OS: state.OS, Arch: state.Arch, Uptime: state.Uptime,
-		CPUPercent: state.CPUPercent, Load1: state.Load1, Load5: state.Load5, Load15: state.Load15,
+		CountryCode: state.CountryCode, Hostname: state.Hostname, OS: state.OS, Arch: state.Arch, Uptime: state.Uptime,
+		CPUPercent: state.CPUPercent, CPUStealPercent: state.CPUStealPercent, Load1: state.Load1, Load5: state.Load5, Load15: state.Load15,
 		RAMUsed: state.RAMUsed, RAMTotal: state.RAMTotal, RAMPercent: state.RAMPercent,
 		SwapUsed: state.SwapUsed, SwapTotal: state.SwapTotal, SwapPercent: state.SwapPercent,
 		DiskUsed: state.DiskUsed, DiskTotal: state.DiskTotal, DiskPercent: state.DiskPercent,
+		DiskReadRate: state.DiskReadRate, DiskWriteRate: state.DiskWriteRate, DiskBusyPercent: state.DiskBusyPercent,
 		RXRate: state.RXRate, TXRate: state.TXRate, RXTotal: state.RXTotal, TXTotal: state.TXTotal,
 		CollectedAt: state.CollectedAt,
 	}

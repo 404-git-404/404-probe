@@ -36,6 +36,29 @@ func testStore(t *testing.T, path string) (*Store, string, string) {
 	return s, id, token
 }
 
+func TestOpenInitializesPragmasOnReplacementConnections(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "replacement.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	store.db.SetMaxIdleConns(0)
+	for attempt := 0; attempt < 3; attempt++ {
+		var foreignKeys, busyTimeout int
+		if err := store.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.db.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+			t.Fatal(err)
+		}
+		if foreignKeys != 1 || busyTimeout != 5000 {
+			t.Fatalf("replacement connection %d pragmas foreign_keys=%d busy_timeout=%d", attempt+1, foreignKeys, busyTimeout)
+		}
+	}
+}
+
 func TestDatabaseVerificationSeparatesReadOnlyAndCopyMigration(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "verify.db")
@@ -85,6 +108,31 @@ func TestVerifyReadOnlyAgainstLiveWALDatabase(t *testing.T) {
 
 func validReport(id string, epoch uint64, session, boot string, sequence, rx, tx uint64) protocol.Report {
 	return protocol.Report{AgentID: id, Epoch: epoch, SessionID: session, Sequence: sequence, CollectedAt: time.Now().UnixMilli(), Hostname: "vps-1", OS: "debian 12", Arch: "amd64", BootID: boot, Uptime: 100, CPUPercent: 12, Load1: .1, Load5: .2, Load15: .3, RAMUsed: 50, RAMTotal: 100, RAMPercent: 50, SwapUsed: 0, SwapTotal: 0, SwapPercent: 0, DiskUsed: 20, DiskTotal: 100, DiskPercent: 20, RXBytes: rx, TXBytes: tx}
+}
+
+func TestOptionalLinuxMetricsAndCountryRoundTripAndOldAgentCompatibility(t *testing.T) {
+	s, id, _ := testStore(t, ":memory:")
+	defer s.Close()
+	ctx := context.Background()
+	old := validReport(id, 1, "old", "boot", 1, 10, 20)
+	state, accepted, _, err := s.ProcessReport(ctx, id, old, time.Unix(100, 0))
+	if err != nil || !accepted {
+		t.Fatalf("old report accepted=%t err=%v", accepted, err)
+	}
+	if state.CPUStealPercent != nil || state.DiskReadRate != nil || state.DiskWriteRate != nil || state.DiskBusyPercent != nil || state.CountryCode != "" {
+		t.Fatal("old reports must preserve new telemetry as unknown")
+	}
+	steal, readRate, writeRate, busy := 3.5, 4096.0, 2048.0, 72.0
+	current := validReport(id, 2, "new", "boot", 1, 30, 40)
+	current.CPUStealPercent, current.DiskReadRate, current.DiskWriteRate, current.DiskBusyPercent = &steal, &readRate, &writeRate, &busy
+	current.CountryCode = "US"
+	state, accepted, _, err = s.ProcessReport(ctx, id, current, time.Unix(110, 0))
+	if err != nil || !accepted {
+		t.Fatalf("new report accepted=%t err=%v", accepted, err)
+	}
+	if state.CPUStealPercent == nil || *state.CPUStealPercent != steal || state.DiskReadRate == nil || *state.DiskReadRate != readRate || state.DiskWriteRate == nil || *state.DiskWriteRate != writeRate || state.DiskBusyPercent == nil || *state.DiskBusyPercent != busy || state.CountryCode != "US" {
+		t.Fatalf("new telemetry did not round-trip: %+v", state)
+	}
 }
 
 func TestMigrationAndAuthentication(t *testing.T) {
@@ -193,7 +241,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	}
 	for _, statement := range []string{
 		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
-		`INSERT INTO schema_migrations(version,applied_at) VALUES(12,5000)`,
+		`INSERT INTO schema_migrations(version,applied_at) VALUES(15,5000)`,
 		`CREATE TABLE future_fixture (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`,
 		`INSERT INTO future_fixture(id,value) VALUES(1,'future-data')`,
 	} {
@@ -216,7 +264,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 		store.Close()
 		t.Fatal("future schema was opened")
 	}
-	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 12") {
+	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 15") {
 		t.Fatalf("future schema error=%v", err)
 	}
 
@@ -227,7 +275,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	defer db.Close()
 	var version int
 	var appliedAt int64
-	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 12 || appliedAt != 5000 {
+	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 15 || appliedAt != 5000 {
 		t.Fatalf("migration metadata changed: version=%d applied_at=%d err=%v", version, appliedAt, err)
 	}
 	var fixtureValue string

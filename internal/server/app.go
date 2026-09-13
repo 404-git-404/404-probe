@@ -238,7 +238,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishState(state)
 	}
-	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true}})
+	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true}})
 }
 
 func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {

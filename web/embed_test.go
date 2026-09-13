@@ -142,11 +142,11 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 		`agent.disabled_at ? '● PAUSED'`,
 		`stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable'`,
 		`stateAction.textContent = agent.disabled_at ? '恢复' : '暂停'`,
-		`const metricsStale = Boolean(agent.disabled_at || state.stale)`,
-		`metric('CPU', metricsStale ? '—' : pct(state.cpu_percent))`,
-		`['↓', metricsStale ? 0 : state.rx_rate, state.rx_total]`,
+		`const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale)`,
+		`metricTile('cpu', '◉', 'CPU'`,
+		`['下载', '↓', state.rx_rate, state.rx_total]`, `metricsStale ? '—' : bytes(rate, true)`,
 		"/${action}`", `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`,
-		`if (!agent.revoked) management.append(stateAction)`,
+		`if (!agent.revoked) management.append(upgrade, stateAction)`,
 	} {
 		if !strings.Contains(javascript, required) {
 			t.Fatalf("dashboard script missing pause/resume behavior %q", required)
@@ -159,7 +159,7 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 	}
 }
 
-func TestAgentCardsUseCompactResponsiveLayout(t *testing.T) {
+func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	static, err := fs.Sub(Files, "static")
 	if err != nil {
 		t.Fatal(err)
@@ -186,20 +186,29 @@ func TestAgentCardsUseCompactResponsiveLayout(t *testing.T) {
 		`card.className = 'card agent-card'`, `title.className = 'card-identity'`,
 		`card.dataset.agentId = agent.agent_id`, `status.dataset.agentState = stateName`,
 		`remove.dataset.agentId = agent.agent_id`,
-		`line.className = 'meta-line'`, `element.title = value`,
-		`element.setAttribute('aria-label', accessibleValue)`, `state.hostname || agent.name || '未知主机'`,
+		`metricTile('cpu'`, `metricTile('memory'`, `metricTile('disk'`, `metricTile('disk-io'`,
+		`note.title = detail`, `usedPercent >= 100 ? 'critical' : usedPercent >= 80 ? 'warning' : 'healthy'`,
+		`cpuStealRow(state, metricsStale)`, `for (const agent of list)`,
+		`setReadableText(heading, agent.name || state.hostname || '未命名 VPS')`,
+		`googleStatusPanel(agent)`, `detailPanel.className = 'card-detail-panel'`,
+		`detailToggle.textContent = '详情'`, `editPlan.textContent = agent.plan ? '编辑套餐' : '添加套餐'`,
+		`compactPrice(agent.plan)`, `compactBandwidth(agent.plan)`,
 	} {
 		if !strings.Contains(javascript, required) {
 			t.Fatalf("dashboard script missing fixed-card behavior %q", required)
 		}
 	}
 	for _, required := range []string{
-		`.agent-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))`,
-		`header,main,footer{width:min(1440px,calc(100% - 32px))`,
+		`@media(min-width:821px){.agent-grid{grid-template-columns:repeat(4,minmax(0,1fr))`,
+		`header,main,footer{width:min(1760px,calc(100% - 24px))`,
 		`.agent-card{min-width:0;overflow:hidden;display:flex;flex-direction:column`,
-		`grid-template-columns:repeat(3,minmax(0,1fr))`, `.agent-card .metric:last-child{grid-column:2/-1}`,
-		`max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`,
-		`.agent-card .card-actions{align-items:center;flex-direction:row}`,
+		`.google-checks{display:grid;grid-template-columns:1fr 1fr`,
+		`.agent-card .card-actions{display:flex`, `white-space:nowrap`,
+		`.agent-card h2{font-size:15px`, `white-space:nowrap;overflow:hidden;text-overflow:ellipsis`,
+		`.plan-drawer{position:fixed`, `@media(max-width:700px)`,
+		`.resource-grid{grid-template-columns:repeat(2,minmax(0,1fr))`,
+		`backdrop-filter:blur(16px)`,
+		`.progress-track::after{content:""`,
 	} {
 		if !strings.Contains(stylesheet, required) {
 			t.Fatalf("dashboard stylesheet missing fixed-card rule %q", required)
@@ -217,6 +226,44 @@ func TestAgentCardsUseCompactResponsiveLayout(t *testing.T) {
 	}
 }
 
+func TestDashboardContinuousListAndTelemetryStatusContracts(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appBytes, _ := fs.ReadFile(static, "app.js")
+	indexBytes, _ := fs.ReadFile(static, "index.html")
+	flagBytes, flagErr := fs.ReadFile(static, "vendor/flag-icons/4x3/us.svg")
+	licenseBytes, licenseErr := fs.ReadFile(static, "vendor/flag-icons/LICENSE")
+	app, html := string(appBytes), string(indexBytes)
+	for _, marker := range []string{
+		`for (const agent of list)`,
+		`Number(rate) * 8 / Number(plan.bandwidth_bps) * 100`,
+		`utilizationTone(percent, 2, 10)`, `utilizationTone(percent, 60, 85)`,
+		`state.cpu_steal_percent`, `state.disk_read_rate`, `state.disk_write_rate`, `state.disk_busy_percent`,
+		`countryMark(agent.country_code, agent.country_source)`, `country_code_override: '#plan-country-code'`,
+		`/vendor/flag-icons/4x3/${normalized.toLowerCase()}.svg`,
+		`.focus({preventScroll: true})`,
+	} {
+		if !strings.Contains(app, marker) {
+			t.Errorf("dashboard missing continuous-list/telemetry contract %q", marker)
+		}
+	}
+	if flagErr != nil || len(flagBytes) == 0 || licenseErr != nil || !strings.Contains(string(licenseBytes), "MIT License") {
+		t.Errorf("bundled local flag asset/license missing: flag=%v license=%v", flagErr, licenseErr)
+	}
+	for _, marker := range []string{`status-legend`, `id="plan-country-code"`} {
+		if !strings.Contains(html, marker) {
+			t.Errorf("dashboard HTML missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{`agentsPerPage`, `currentAgentPage`, `list.slice(pageStart`, `id="agent-pagination"`} {
+		if strings.Contains(app+html, forbidden) {
+			t.Errorf("dashboard still contains removed UI pagination %q", forbidden)
+		}
+	}
+}
+
 func TestGoogleStatusUIShowsAllCanonicalStates(t *testing.T) {
 	static, err := fs.Sub(Files, "static")
 	if err != nil {
@@ -227,13 +274,18 @@ func TestGoogleStatusUIShowsAllCanonicalStates(t *testing.T) {
 	historyBytes, _ := fs.ReadFile(static, "history.js")
 	jobsBytes, _ := fs.ReadFile(static, "jobs.js")
 	app, historyHTML, history := string(appBytes), string(htmlBytes), string(historyBytes)
-	for _, marker := range []string{"CN", "CHALLENGE", "BLOCKED", "REACHABLE", "AVAILABLE", "Unsupported", "尚未检测", "检测中…", "检测失败", "部分结果未知", "重新检测", "/google-status"} {
+	for _, marker := range []string{"CN · 送中", "非 CN", "正常", "需验证", "受限", "可达", "可用", "未知", "尚未检测", "检测中", "旧结果", "重新检测", "/google-status"} {
 		if !strings.Contains(app, marker) {
 			t.Errorf("app.js missing %q", marker)
 		}
 	}
-	if !strings.Contains(historyHTML, "Google Status") || !strings.Contains(history, "Last checked") || !strings.Contains(history, "'CN'") || strings.Contains(app+history+string(jobsBytes), "SENT TO CHINA") {
+	if !strings.Contains(historyHTML, "Google / YouTube 检测") || !strings.Contains(history, "检测时间：") || !strings.Contains(history, "CN · 送中") || strings.Contains(app+history+string(jobsBytes), "SENT TO CHINA") {
 		t.Fatal("history detail is missing complete Google Status rendering")
+	}
+	for _, marker := range []string{"Agent 详情", "Load 1 / 5 / 15", "Swap", "Agent 版本", "运行时长", "最近上报", "样本时间"} {
+		if !strings.Contains(historyHTML+history, marker) {
+			t.Errorf("history detail missing %q", marker)
+		}
 	}
 }
 
@@ -243,9 +295,8 @@ func TestSelectorDraftsSurviveRefreshAndSecurityUIIsPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	historyBytes, _ := fs.ReadFile(static, "history.js")
-	appBytes, _ := fs.ReadFile(static, "app.js")
 	historyHTMLBytes, _ := fs.ReadFile(static, "history.html")
-	history, app, historyHTML := string(historyBytes), string(appBytes), string(historyHTMLBytes)
+	history, historyHTML := string(historyBytes), string(historyHTMLBytes)
 	for _, required := range []string{
 		`const selectorDrafts = new Map()`,
 		"const selectorDraftKey = selector => `${id}\\u0000${selector}`",
@@ -257,11 +308,6 @@ func TestSelectorDraftsSurviveRefreshAndSecurityUIIsPresent(t *testing.T) {
 	} {
 		if !strings.Contains(history, required) {
 			t.Fatalf("history UI missing selector/Security state contract %q", required)
-		}
-	}
-	for _, required := range []string{`Security: Setup required`, `securityState.delivery_gap`, `className = 'security-compact'`} {
-		if !strings.Contains(app, required) {
-			t.Fatalf("dashboard missing Security status contract %q", required)
 		}
 	}
 	for _, required := range []string{`class="security-detail"`, `id="security-state"`, `id="security-sources"`} {

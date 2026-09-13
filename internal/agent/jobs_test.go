@@ -325,6 +325,93 @@ func TestRunnerSelectorSwitchSuccessSurvivesSnapshotPublicationRace(t *testing.T
 	}
 }
 
+func TestSelectorSwitchCannotBeOverwrittenByStalePeriodicDiscovery(t *testing.T) {
+	var gets atomic.Int32
+	var stateMu sync.Mutex
+	current := "hk"
+	posted := make([]string, 0, 2)
+	firstRead := make(chan struct{})
+	releaseFirstRead := make(chan struct{})
+	secondRead := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/proxies":
+			read := gets.Add(1)
+			stateMu.Lock()
+			observed := current
+			stateMu.Unlock()
+			if read == 1 {
+				close(firstRead)
+				<-releaseFirstRead
+			} else if read == 2 {
+				close(secondRead)
+			}
+			_, _ = io.WriteString(w, `{"proxies":{"proxy":{"type":"Selector","name":"proxy","now":"`+observed+`","all":["hk","jp"]}}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/proxies/proxy":
+			stateMu.Lock()
+			current = "jp"
+			stateMu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agent/outbounds":
+			var snapshot protocol.OutboundSnapshot
+			if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+				t.Error(err)
+				http.Error(w, "invalid", http.StatusBadRequest)
+				return
+			}
+			stateMu.Lock()
+			posted = append(posted, snapshot.Selectors[0].Current)
+			stateMu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]bool{"accepted": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	runner := newJobTestRunner(t, server.URL, time.Second, time.Hour, UnsupportedExecutor{})
+	runner.config.ClashAPIURL = server.URL
+	runner.config.OutboundInterval = time.Hour
+	runner.client = server.Client()
+	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
+	discoveryDone := make(chan struct{})
+	go func() {
+		runner.runOutboundDiscovery(discoveryCtx)
+		close(discoveryDone)
+	}()
+	<-firstRead
+
+	job := protocol.Job{
+		ProtocolVersion: protocol.JobProtocolVersion, JobID: "stale-periodic-discovery", ProbeType: protocol.ProbeTypeSelectorSwitch,
+		Config:    protocol.ProbeConfig{SelectorSwitch: &protocol.SelectorSwitchConfig{Selector: "proxy", Choice: "jp"}},
+		CreatedAt: 1000, NotBefore: 1000, ExpiresAt: 10000, TimeoutMS: 1000, Attempt: 1,
+		LeaseToken: "lease", LeaseExpiresAt: 9000,
+	}
+	switchDone := make(chan protocol.JobResult, 1)
+	go func() { switchDone <- runner.executeJob(context.Background(), job) }()
+	var result protocol.JobResult
+	select {
+	case <-secondRead:
+		// Without serialization the switch runs around the blocked old read.
+		result = <-switchDone
+		close(releaseFirstRead)
+	case <-time.After(50 * time.Millisecond):
+		close(releaseFirstRead)
+		result = <-switchDone
+	}
+	cancelDiscovery()
+	<-discoveryDone
+	if !result.Success || result.Result.SelectorSwitch == nil || result.Result.SelectorSwitch.Current != "jp" {
+		t.Fatalf("result=%+v", result)
+	}
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	if len(posted) != 2 || posted[0] != "hk" || posted[1] != "jp" {
+		t.Fatalf("posted snapshots=%v, want [hk jp]", posted)
+	}
+}
+
 func TestRunnerSerializesSameSelectorLeaseAcrossClaimLanes(t *testing.T) {
 	var currentMu sync.Mutex
 	current := "hk"

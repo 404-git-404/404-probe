@@ -135,15 +135,15 @@ PY
 }
 
 run_upgrade() {
-  printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null
+  printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.3 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null
 }
 
 assert_upgraded() {
   systemctl is-active --quiet "${test_service}"
   systemctl is-enabled --quiet "${test_service}"
-  "${test_binary}" version --json | grep -Fq '"version":"v0.9.2"'
+  "${test_binary}" version --json | grep -Fq '"version":"v0.9.3"'
   runuser -u 404-probe -- "${test_binary}" database verify --db "${test_root}/404-probe.db" | grep -Fq '"integrity":"ok"'
-  [[ "$(database_schema)" == 11 ]]
+  [[ "$(database_schema)" == 14 ]]
   [[ "$(runuser -u 404-probe -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
   "${test_binary_directory}/install-helper" --help | grep -Fq 'domains [list|add|remove|disable]'
   "${test_binary_directory}/install-helper" domains list | grep -Fq 'Mode: exact'
@@ -182,9 +182,9 @@ systemctl disable --now "${test_service}" >/dev/null
 run_upgrade
 [[ "$(systemctl is-active "${test_service}" 2>/dev/null || true)" == inactive ]]
 [[ "$(systemctl is-enabled "${test_service}" 2>/dev/null || true)" == disabled ]]
-"${test_binary}" version --json | grep -Fq '"version":"v0.9.2"'
+"${test_binary}" version --json | grep -Fq '"version":"v0.9.3"'
 runuser -u 404-probe -- "${test_binary}" database verify --db "${test_root}/404-probe.db" | grep -Fq '"integrity":"ok"'
-[[ "$(database_schema)" == 11 ]]
+[[ "$(database_schema)" == 14 ]]
 [[ "$(runuser -u 404-probe -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
 printf 'isolated inactive+disabled upgrade passed migrated_schema=%s\n' "$(database_schema)"
 
@@ -192,12 +192,12 @@ setup_old_server
 cp -- "${transformed}" "${crash_transformed}"
 sed -i '/write_server_upgrade_state binary-replaced .*could not persist binary replacement state/a\  if [[ "${PROBE_404_TEST_CRASH_PHASE:-}" == binary-replaced ]]; then kill -KILL "${BASHPID}"; fi' "${crash_transformed}"
 chmod 0700 "${crash_transformed}"
-if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=binary-replaced bash ${crash_transformed}" /dev/null; then
+if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.3 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=binary-replaced bash ${crash_transformed}" /dev/null; then
   printf 'SIGKILL injection unexpectedly succeeded\n' >&2
   exit 1
 fi
 [[ -f "${test_upgrade}/pending" ]] || { printf 'SIGKILL did not preserve pending state\n' >&2; exit 1; }
-if script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
+if script -qec "env PROBE_404_VERSION=v0.9.3 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
   printf 'recovery rerun unexpectedly continued past conservative recovery\n' >&2
   exit 1
 fi
@@ -218,12 +218,12 @@ setup_old_server
 cp -- "${transformed}" "${crash_transformed}"
 sed -i '/write_server_upgrade_state helper-replaced .*could not persist local helper replacement state/a\  if [[ "${PROBE_404_TEST_CRASH_PHASE:-}" == helper-replaced ]]; then kill -KILL "${BASHPID}"; fi' "${crash_transformed}"
 chmod 0700 "${crash_transformed}"
-if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=helper-replaced bash ${crash_transformed}" /dev/null; then
+if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.3 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=helper-replaced bash ${crash_transformed}" /dev/null; then
   printf 'helper-replaced SIGKILL injection unexpectedly succeeded\n' >&2
   exit 1
 fi
 [[ -f "${test_upgrade}/pending" ]] || { printf 'helper SIGKILL did not preserve pending state\n' >&2; exit 1; }
-if script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
+if script -qec "env PROBE_404_VERSION=v0.9.3 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
   printf 'helper recovery rerun unexpectedly continued past conservative recovery\n' >&2
   exit 1
 fi
@@ -240,11 +240,11 @@ rm -f -- "${test_binary_directory}/install-helper"
 cp -- "${transformed}" "${crash_transformed}"
 sed -i '/write_server_upgrade_state helper-replaced .*could not persist local helper replacement state/a\  if [[ "${PROBE_404_TEST_CRASH_PHASE:-}" == helper-replaced ]]; then kill -KILL "${BASHPID}"; fi' "${crash_transformed}"
 chmod 0700 "${crash_transformed}"
-if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=helper-replaced bash ${crash_transformed}" /dev/null; then
+if printf 'y\n' | script -qec "env PROBE_404_VERSION=v0.9.3 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CRASH_PHASE=helper-replaced bash ${crash_transformed}" /dev/null; then
   printf 'missing-helper SIGKILL injection unexpectedly succeeded\n' >&2
   exit 1
 fi
-if script -qec "env PROBE_404_VERSION=v0.9.2 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
+if script -qec "env PROBE_404_VERSION=v0.9.3 PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null; then
   printf 'missing-helper recovery rerun unexpectedly continued past conservative recovery\n' >&2
   exit 1
 fi

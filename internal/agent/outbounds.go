@@ -15,12 +15,14 @@ import (
 )
 
 func (r *Runner) runOutboundDiscovery(ctx context.Context) {
-	local := clashClient{endpoint: r.config.ClashAPIURL, client: r.client}
+	local := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath}
 	var lastStatus protocol.OutboundStatus
 	capabilityReady := (<-chan struct{})(r.interactiveControlReady)
 	for {
-		selectors, discoverErr := local.discover(ctx)
+		r.outboundMu.Lock()
+		selectors, orderSource, discoverErr := local.discoverOrdered(ctx)
 		if ctx.Err() != nil {
+			r.outboundMu.Unlock()
 			return
 		}
 		status := outboundStatus(discoverErr)
@@ -35,17 +37,22 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 			lastStatus = status
 		}
 		snapshot := protocol.OutboundSnapshot{Available: available, Selectors: selectors}
+		if available {
+			snapshot.OrderSource = orderSource
+		}
 		if r.interactiveControlSupported.Load() {
 			snapshot.Status = status
 		}
-		if err := r.postOutboundSnapshot(ctx, snapshot); err != nil {
+		publishErr := r.postOutboundSnapshot(ctx, snapshot)
+		r.outboundMu.Unlock()
+		if publishErr != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			if errors.Is(err, ErrAgentDisabled) || errors.Is(err, ErrAgentRevoked) {
+			if errors.Is(publishErr, ErrAgentDisabled) || errors.Is(publishErr, ErrAgentRevoked) {
 				return
 			}
-			r.logger.Warn("publish outbound snapshot failed; will retry", "error", err)
+			r.logger.Warn("publish outbound snapshot failed; will retry", "error", publishErr)
 		}
 		delay := r.config.OutboundInterval
 		if !available && delay > 10*time.Second {

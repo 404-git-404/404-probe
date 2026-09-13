@@ -118,7 +118,7 @@ func TestControlAgentDetailWhitelistAndRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, ok := detail["state"].(map[string]any)
-	if !ok || state["hostname"] != "host" || detail["agent_id"] != controlAgentA || detail["online"] != true {
+	if !ok || state["hostname"] != "host" || state["country_code"] != "US" || detail["agent_id"] != controlAgentA || detail["online"] != true {
 		t.Fatalf("detail=%s", response.Body.String())
 	}
 	for _, forbidden := range []string{"token", "token_hash", "epoch", "session_id", "sequence", "boot_id", "raw_rx", "raw_tx", "lease_token", "result_hash"} {
@@ -157,11 +157,13 @@ func addControlAgent(t *testing.T, store *storage.Store, id, name string, create
 
 func processControlAgentReport(t *testing.T, store *storage.Store, id string, receivedAt time.Time) {
 	t.Helper()
+	steal, diskRead, diskWrite, diskBusy := 3.0, 4096.0, 2048.0, 72.0
 	report := protocol.Report{
 		AgentID: id, Epoch: 1, SessionID: "session", Sequence: 1, CollectedAt: receivedAt.UnixMilli(),
 		Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 10,
 		CPUPercent: 5, Load1: 1, Load5: 2, Load15: 3, RAMUsed: 10, RAMTotal: 20, RAMPercent: 50,
 		SwapUsed: 1, SwapTotal: 2, SwapPercent: 50, DiskUsed: 30, DiskTotal: 60, DiskPercent: 50,
+		CPUStealPercent: &steal, DiskReadRate: &diskRead, DiskWriteRate: &diskWrite, DiskBusyPercent: &diskBusy, CountryCode: "US",
 		RXBytes: 100, TXBytes: 200,
 	}
 	if _, accepted, reason, err := store.ProcessReport(context.Background(), id, report, receivedAt); err != nil || !accepted {

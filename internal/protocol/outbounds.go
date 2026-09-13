@@ -30,9 +30,10 @@ type OutboundSelector struct {
 }
 
 type OutboundSnapshot struct {
-	Available bool               `json:"available"`
-	Status    OutboundStatus     `json:"status,omitempty"`
-	Selectors []OutboundSelector `json:"selectors"`
+	Available   bool               `json:"available"`
+	Status      OutboundStatus     `json:"status,omitempty"`
+	OrderSource string             `json:"order_source,omitempty"`
+	Selectors   []OutboundSelector `json:"selectors"`
 }
 
 func (s OutboundSnapshot) Validate() error {
@@ -47,6 +48,12 @@ func (s OutboundSnapshot) Validate() error {
 	}
 	if !s.Available && len(s.Selectors) != 0 {
 		return errors.New("unavailable snapshot must not contain selectors")
+	}
+	if s.OrderSource != "" && s.OrderSource != "config" && s.OrderSource != "name" {
+		return errors.New("outbound order source is invalid")
+	}
+	if !s.Available && s.OrderSource != "" {
+		return errors.New("unavailable snapshot must not contain an order source")
 	}
 	if len(s.Selectors) > MaxOutboundSelectors {
 		return fmt.Errorf("selectors must contain at most %d entries", MaxOutboundSelectors)

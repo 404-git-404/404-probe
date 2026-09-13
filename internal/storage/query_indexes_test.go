@@ -234,6 +234,24 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 		db.Close()
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`DROP TABLE agent_plans`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN country_code`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	for _, column := range []string{"disk_busy", "disk_write_rate", "disk_read_rate", "cpu_steal"} {
+		if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN ` + column); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN cpu_cores`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN agent_upgrade_capable`); err != nil {
 		db.Close()
 		t.Fatal(err)

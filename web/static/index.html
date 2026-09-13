@@ -8,7 +8,7 @@
 </head>
 <body>
   <header><div><h1>404-probe</h1><p>已认证 Agent 观测 · <span id="server-version">Server unknown</span></p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
-  <main><div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid agent-grid" aria-live="polite"></section></main>
+  <main><div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid agent-grid" aria-live="polite"></section><p class="status-legend"><span class="tone-dot healthy"></span>正常 <span class="tone-dot warning"></span>注意 / 接近阈值 <span class="tone-dot critical"></span>异常 / 已到期 <span class="tone-dot unknown"></span>未知 / 旧结果</p></main>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <div id="add-agent-create">
       <h2 id="add-agent-title">添加 Agent</h2>
@@ -50,6 +50,25 @@
       <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">撤销并移除</button></div>
     </form>
   </dialog>
+  <dialog id="plan-dialog" class="plan-drawer" aria-labelledby="plan-title">
+    <form id="plan-form" autocomplete="off">
+      <div class="drawer-head"><div><span class="eyebrow">套餐资料</span><h2 id="plan-title">编辑套餐</h2><p id="plan-agent-name"></p></div><button id="plan-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
+      <div class="plan-section">
+        <label class="toggle-row"><span><strong>统计计费流量</strong><small>持续统计套餐用量，缺测会明确标记</small></span><input id="plan-traffic-enabled" type="checkbox"></label>
+        <div id="plan-traffic-fields" class="progressive-fields hidden">
+          <div class="form-grid three"><label>计费方向<select id="plan-traffic-mode"><option value="sum">RX + TX</option><option value="tx">仅 TX</option><option value="rx">仅 RX</option></select></label><label>套餐流量<input id="plan-quota-value" inputmode="decimal" placeholder="5"></label><label>单位<select id="plan-quota-unit"><option>TB</option><option>GB</option><option>TiB</option><option>GiB</option></select></label></div>
+          <div class="form-grid three"><label>周期<select id="plan-cycle-kind"><option value="monthly">月</option><option value="yearly">年</option><option value="days">天</option></select></label><label>每<input id="plan-cycle-count" type="number" min="1" max="120" value="1"></label><label>周期起点<input id="plan-cycle-anchor" type="date"></label></div>
+          <div class="calibration-row"><label>当前周期已用量校准<input id="plan-calibration-value" inputmode="decimal" placeholder="可选，仅在对账时填写"></label><label>单位<select id="plan-calibration-unit"><option>GB</option><option>TB</option><option>GiB</option><option>TiB</option></select></label><small>校准不会声称补齐过去的采样，只从此值继续累计。</small></div>
+        </div>
+      </div>
+      <div class="plan-section"><h3>带宽与价格</h3><div class="form-grid three"><label>套餐带宽<input id="plan-bandwidth-value" inputmode="decimal" placeholder="1000"></label><label>单位<select id="plan-bandwidth-unit"><option>Mbps</option><option>Gbps</option></select></label><label>币种<input id="plan-currency" maxlength="3" placeholder="USD"></label></div><div class="form-grid two"><label>购买价格<input id="plan-purchase-price" inputmode="decimal" placeholder="可选"></label><label>原始价格周期<select id="plan-purchase-period"><option value="">—</option><option value="once">一次性</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label><label>续费价格<input id="plan-renewal-price" inputmode="decimal" placeholder="可选"></label><label>续费周期<select id="plan-renewal-period"><option value="">—</option><option value="monthly">每月</option><option value="yearly">每年</option><option value="once">一次性</option></select></label></div></div>
+      <div class="plan-section"><h3>日期与时区</h3><div class="form-grid four"><label>购买日期<input id="plan-purchase-date" type="date"></label><label>下次续费<input id="plan-renewal-date" type="date"></label><label>到期日期<input id="plan-expiry-date" type="date"></label><label>时区<input id="plan-timezone" list="timezone-hints" placeholder="Asia/Shanghai"></label></div></div>
+      <div class="plan-section"><h3>出口国家/地区</h3><div class="form-grid two"><label>手动覆盖（ISO 两字母）<input id="plan-country-code" maxlength="2" autocapitalize="characters" placeholder="留空则使用 Agent 安装时识别值"></label><p class="field-note">例如 US、JP、DE。清空后恢复安装时缓存；没有缓存时显示中性地球图标，不会重新联网查询。</p></div></div>
+      <div id="plan-error" class="dialog-error hidden" role="alert"></div>
+      <div class="drawer-actions"><button id="plan-clear" class="text-danger" type="button">清除套餐资料</button><span></span><button id="plan-save" class="primary-action" type="submit">保存</button></div>
+    </form>
+  </dialog>
+  <datalist id="timezone-hints"><option value="UTC"><option value="Asia/Shanghai"><option value="Asia/Hong_Kong"><option value="America/Los_Angeles"><option value="Europe/London"></datalist>
   <footer>数据通过 Server 安全汇总</footer>
   <script src="/app.js" defer></script>
   <script src="/session.js" defer></script>

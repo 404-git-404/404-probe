@@ -2,9 +2,12 @@ const id = new URLSearchParams(location.search).get('id');
 const empty = document.querySelector('#history-empty');
 const outboundStatus = document.querySelector('#outbounds-status');
 const outboundList = document.querySelector('#outbounds-list');
+const agentRuntimeValues = document.querySelector('#agent-runtime-values');
 const googleState = document.querySelector('#google-status-state');
 const googleValues = document.querySelector('#google-status-values');
 const googleChecked = document.querySelector('#google-status-checked');
+const googleRerun = document.querySelector('#google-status-rerun');
+const googleFeedback = document.querySelector('#google-status-feedback');
 const securityState = document.querySelector('#security-state');
 const securityWindow = document.querySelector('#security-window');
 const securitySources = document.querySelector('#security-sources');
@@ -174,6 +177,11 @@ function renderOutbounds(agent) {
   else if (!outbounds.available) outboundStatus.textContent = `Clash API 不可用 · 上次成功：${lastUpdated}`;
   else if (outbounds.stale) outboundStatus.textContent = `状态已过期 · 最后检查：${lastChecked}`;
   else outboundStatus.textContent = switchingSelector ? `正在切换 ${switchingSelector}…` : `已连接 · 更新于 ${lastUpdated}`;
+  if (outbounds.available && !switchingSelector) {
+    outboundStatus.textContent += outbounds.order_source === 'config'
+      ? ' · 按 sing-box 配置顺序'
+      : ' · 名称回退排序（尚未加载配置顺序）';
+  }
   for (const selector of outbounds.selectors || []) {
     const details = document.createElement('details');
     details.open = switchingSelector === selector.name || selectorFeedback?.selector === selector.name || selectorOperations.has(selector.name);
@@ -230,11 +238,54 @@ function renderOutbounds(agent) {
   }
 }
 
+function detailBytes(value) {
+  let number = Number(value || 0);
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let index = 0;
+  while (number >= 1024 && index < units.length - 1) { number /= 1024; index++; }
+  return `${number.toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+function detailDuration(value) {
+  const seconds = Number(value || 0);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor(seconds % 86400 / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  return days ? `${days} 天 ${hours} 小时` : `${hours} 小时 ${minutes} 分`;
+}
+
+function renderAgentRuntime(agent) {
+  const state = agent?.state;
+  agentRuntimeValues.replaceChildren();
+  const rows = [
+    ['主机名', state?.hostname || '—'],
+    ['系统', [state?.os, state?.arch].filter(Boolean).join(' · ') || '—'],
+    ['Agent 版本', agent?.version || '—'],
+    ['CPU / 核心', state ? `${Number(state.cpu_percent || 0).toFixed(1)}%${state.cpu_cores ? ` · ${state.cpu_cores} 核` : ''}` : '—'],
+    ['CPU steal', state?.cpu_steal_percent == null ? '—' : `${Number(state.cpu_steal_percent).toFixed(1)}% · 等待宿主机 CPU`],
+    ['Load 1 / 5 / 15', state ? `${Number(state.load1 || 0).toFixed(2)} / ${Number(state.load5 || 0).toFixed(2)} / ${Number(state.load15 || 0).toFixed(2)}` : '—'],
+    ['RAM', state ? `${detailBytes(state.ram_used)} / ${detailBytes(state.ram_total)} · ${Number(state.ram_percent || 0).toFixed(1)}%` : '—'],
+    ['Swap', state ? `${detailBytes(state.swap_used)} / ${detailBytes(state.swap_total)} · ${Number(state.swap_percent || 0).toFixed(1)}%` : '—'],
+    ['磁盘', state ? `${detailBytes(state.disk_used)} / ${detailBytes(state.disk_total)} · ${Number(state.disk_percent || 0).toFixed(1)}%` : '—'],
+    ['磁盘 I/O', state?.disk_busy_percent == null ? '—' : `最忙磁盘 ${Number(state.disk_busy_percent).toFixed(1)}% · 所选设备合计读 ${detailBytes(state.disk_read_rate)}/s · 写 ${detailBytes(state.disk_write_rate)}/s`],
+    ['运行时长', state ? detailDuration(state.uptime) : '—'],
+    ['最近上报', agent?.last_seen ? new Date(agent.last_seen).toLocaleString() : '从未上报'],
+    ['样本时间', state?.collected_at ? new Date(state.collected_at).toLocaleString() : '—'],
+  ];
+  for (const [label, value] of rows) {
+    const term = document.createElement('dt'); term.textContent = label;
+    const description = document.createElement('dd'); description.textContent = value;
+    agentRuntimeValues.append(term, description);
+  }
+}
+
 function renderGoogleStatus(agent) {
   const google = agent?.google_status;
   googleValues.replaceChildren();
+  googleRerun.disabled = !mutationCSRFToken || !agent?.online || Boolean(agent?.disabled_at) || agent?.revoked || !google?.supported || google?.pending;
+  googleRerun.textContent = google?.pending ? '检测中…' : '重新检测';
   if (!google?.supported) {
-    googleState.textContent = 'Unsupported';
+    googleState.textContent = '当前 Agent 不支持检测';
     googleChecked.textContent = '';
     return;
   }
@@ -242,27 +293,51 @@ function renderGoogleStatus(agent) {
   const unknown = statuses.filter(status => !status || status === 'unknown').length;
   googleState.textContent = google.pending ? '检测中…'
     : !google.result ? '尚未检测'
-      : unknown === statuses.length ? '检测失败'
+      : google.stale ? '旧结果 · 等待在线后重新核实'
+        : unknown === statuses.length ? '检测失败'
         : unknown ? '部分结果未知'
-          : google.stale ? '最后结果（stale）' : '当前结果';
+          : '当前结果';
   if (!google.result) {
     googleValues.textContent = '尚未检测';
     googleChecked.textContent = '';
     return;
   }
   const rows = [
-    ['YouTube', google.result.youtube?.status === 'cn' ? 'CN' : google.result.youtube?.status === 'not_cn' ? google.result.youtube.region : 'UNKNOWN'],
-    ['Google Search', (google.result.search?.status || 'unknown').toUpperCase()],
-    ['Google Sign-in', (google.result.signin?.status || 'unknown').toUpperCase()],
-    ['Gemini', `${(google.result.gemini?.status || 'unknown').toUpperCase()}${google.result.gemini?.region ? ` [${google.result.gemini.region}]` : ''}`],
+    ['YouTube', google.result.youtube?.status === 'cn' ? 'CN · 送中' : google.result.youtube?.status === 'not_cn' ? `${google.result.youtube.region || ''}${google.result.youtube.region ? ' · ' : ''}非 CN` : '未知'],
+    ['Google Search', ({ok: '正常', challenge: '需验证', blocked: '受限'})[google.result.search?.status] || '未知'],
+    ['Google Sign-in', ({reachable: '可达', challenge: '需验证', blocked: '受限'})[google.result.signin?.status] || '未知'],
+    ['Gemini', google.result.gemini?.status === 'available' ? `可用${google.result.gemini.region ? ` · ${google.result.gemini.region}` : ''}` : google.result.gemini?.status === 'blocked' ? '受限' : '未知'],
   ];
   for (const [name, value] of rows) {
     const term = document.createElement('dt'); term.textContent = name;
     const description = document.createElement('dd'); description.textContent = value;
     googleValues.append(term, description);
   }
-  googleChecked.textContent = google.checked_at ? `Last checked: ${new Date(google.checked_at).toLocaleString()}` : '';
+  googleChecked.textContent = google.checked_at ? `检测时间：${new Date(google.checked_at).toLocaleString()}` : '';
 }
+
+googleRerun.addEventListener('click', async () => {
+  if (!currentAgent || !mutationCSRFToken || googleRerun.disabled) return;
+  googleRerun.disabled = true;
+  googleFeedback.textContent = '';
+  try {
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(id)}/google-status`, {
+      method: 'POST', cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken}, body: '{}',
+    });
+    if (response.status === 401) { location.assign('/login'); return; }
+    if (!response.ok) {
+      let message = '检测请求失败';
+      try { message = (await response.json()).error?.message || message; } catch (error) { /* keep fallback */ }
+      throw new Error(message);
+    }
+    currentAgent = {...currentAgent, google_status: {...currentAgent.google_status, pending: true}};
+    renderGoogleStatus(currentAgent);
+  } catch (error) {
+    googleFeedback.textContent = error.message || '检测请求失败';
+    renderGoogleStatus(currentAgent);
+  }
+});
 
 function renderSecurity(agent) {
 	const security = agent?.security;
@@ -303,8 +378,8 @@ function draw(canvas, points, key, color, format) {
   context.clearRect(0, 0, width, height);
   const values = points.map(point => Number(point[key] || 0));
   const maximum = Math.max(1, ...values) * 1.1;
-  context.strokeStyle = '#253044';
-  context.fillStyle = '#8f9bad';
+  context.strokeStyle = '#c8beb1';
+  context.fillStyle = '#7d7368';
   context.font = '11px system-ui';
   for (let index = 0; index <= 4; index++) {
     const y = padding + (height - padding * 2) * index / 4;
@@ -364,6 +439,7 @@ async function load() {
     currentAgent = agent;
     const state = agent.state || {};
     document.querySelector('#title').textContent = `${state.hostname || agent.name || 'Agent'} · 历史`;
+    renderAgentRuntime(agent);
     renderOutbounds(agent);
     renderGoogleStatus(agent);
 	renderSecurity(agent);
@@ -374,10 +450,10 @@ async function load() {
       return;
     }
     const render = () => {
-      draw(document.querySelector('#cpu'), points, 'cpu', '#53a7ff', value => `${value.toFixed(0)}%`);
-      draw(document.querySelector('#ram'), points, 'ram_percent', '#43d17e', value => `${value.toFixed(0)}%`);
-      draw(document.querySelector('#rx'), points, 'rx_rate', '#53a7ff', rate);
-      draw(document.querySelector('#tx'), points, 'tx_rate', '#4bd7dc', rate);
+      draw(document.querySelector('#cpu'), points, 'cpu', '#4f8b63', value => `${value.toFixed(0)}%`);
+      draw(document.querySelector('#ram'), points, 'ram_percent', '#c47729', value => `${value.toFixed(0)}%`);
+      draw(document.querySelector('#rx'), points, 'rx_rate', '#826247', rate);
+      draw(document.querySelector('#tx'), points, 'tx_rate', '#b84f48', rate);
     };
     render();
     addEventListener('resize', render);
@@ -396,6 +472,7 @@ events.addEventListener('agent', event => {
   const update = JSON.parse(event.data);
   if (!currentAgent || update.agent_id !== id) return;
   currentAgent = {...currentAgent, ...update};
+  renderAgentRuntime(currentAgent);
   renderOutbounds(currentAgent);
   renderGoogleStatus(currentAgent);
 	renderSecurity(currentAgent);

@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 
 	"404-probe/internal/protocol"
@@ -18,8 +17,9 @@ import (
 const maxClashResponseBytes = 1 << 20
 
 type clashClient struct {
-	endpoint string
-	client   *http.Client
+	endpoint  string
+	client    *http.Client
+	orderPath string
 }
 
 type clashProxy struct {
@@ -37,9 +37,14 @@ type selectorSwitchError struct {
 func (e *selectorSwitchError) Error() string { return e.message }
 
 func (c clashClient) discover(ctx context.Context) ([]protocol.OutboundSelector, error) {
+	selectors, _, err := c.discoverOrdered(ctx)
+	return selectors, err
+}
+
+func (c clashClient) discoverOrdered(ctx context.Context) ([]protocol.OutboundSelector, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.endpoint, "/")+"/proxies", nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	response, err := c.client.Do(req)
 	if err != nil {
@@ -48,31 +53,31 @@ func (c clashClient) discover(ctx context.Context) ([]protocol.OutboundSelector,
 		if errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) {
 			category = "clash_api_not_detected"
 		}
-		return nil, &selectorSwitchError{category: category, message: "local Clash API request failed"}
+		return nil, "", &selectorSwitchError{category: category, message: "local Clash API request failed"}
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxClashResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read Clash API response: %w", err)
+		return nil, "", fmt.Errorf("read Clash API response: %w", err)
 	}
 	if len(body) > maxClashResponseBytes {
-		return nil, errors.New("Clash API response is too large")
+		return nil, "", errors.New("Clash API response is too large")
 	}
 	if response.StatusCode != http.StatusOK {
 		category := "clash_api_unavailable"
 		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 			category = "clash_api_auth_required"
 		}
-		return nil, &selectorSwitchError{category: category, message: fmt.Sprintf("Clash API returned HTTP %d", response.StatusCode)}
+		return nil, "", &selectorSwitchError{category: category, message: fmt.Sprintf("Clash API returned HTTP %d", response.StatusCode)}
 	}
 	var wire struct {
 		Proxies map[string]clashProxy `json:"proxies"`
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
-		return nil, &selectorSwitchError{category: "clash_api_unavailable", message: "decode Clash API response failed"}
+		return nil, "", &selectorSwitchError{category: "clash_api_unavailable", message: "decode Clash API response failed"}
 	}
 	if wire.Proxies == nil {
-		return nil, errors.New("decode Clash API response: proxies field is required")
+		return nil, "", errors.New("decode Clash API response: proxies field is required")
 	}
 	selectors := make([]protocol.OutboundSelector, 0)
 	for key, proxy := range wire.Proxies {
@@ -85,15 +90,15 @@ func (c clashClient) discover(ctx context.Context) ([]protocol.OutboundSelector,
 		}
 		selector := protocol.OutboundSelector{Name: name, Current: proxy.Now, Choices: append([]string(nil), proxy.All...)}
 		if err := (protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{selector}}).Validate(); err != nil {
-			return nil, fmt.Errorf("invalid selector %q: %w", name, err)
+			return nil, "", fmt.Errorf("invalid selector %q: %w", name, err)
 		}
 		selectors = append(selectors, selector)
 	}
-	sort.Slice(selectors, func(i, j int) bool { return selectors[i].Name < selectors[j].Name })
+	orderSource := orderSelectors(selectors, c.orderPath)
 	if err := (protocol.OutboundSnapshot{Available: true, Selectors: selectors}).Validate(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return selectors, nil
+	return selectors, orderSource, nil
 }
 
 func (c clashClient) switchSelector(ctx context.Context, selectorName, choiceName string) (protocol.SelectorSwitchResult, error) {

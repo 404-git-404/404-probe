@@ -109,7 +109,8 @@ func TestWebAgentDetailHistoryWhitelistAndRouting(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
 	}
-	if detail.AgentID != controlAgentA || detail.State == nil || detail.State.Hostname != "host" || !detail.Online || detail.LastSeen == nil {
+	if detail.AgentID != controlAgentA || detail.State == nil || detail.State.Hostname != "host" || !detail.Online || detail.LastSeen == nil ||
+		detail.State.CPUStealPercent == nil || *detail.State.CPUStealPercent != 3 || detail.State.DiskBusyPercent == nil || *detail.State.DiskBusyPercent != 72 || detail.CountryCode != "US" || detail.CountrySource != "automatic" {
 		t.Fatalf("detail=%s", response.Body.String())
 	}
 	assertNoWebAgentSecrets(t, response.Body.String())
@@ -146,6 +147,28 @@ func TestWebAgentDetailHistoryWhitelistAndRouting(t *testing.T) {
 			t.Fatalf("method=%s path=%q status=%d cache=%q body=%s", test.method, test.path, response.Code,
 				response.Header().Get("Cache-Control"), response.Body.String())
 		}
+	}
+}
+
+func TestWebAgentCountryOverrideWinsAndCanReturnToAutomatic(t *testing.T) {
+	app, store, now := newWebAgentTestApp(t)
+	defer store.Close()
+	processControlAgentReport(t, store, controlAgentA, now.Add(-10*time.Second))
+
+	if _, err := store.PutAgentPlan(context.Background(), storage.AgentPlan{AgentID: controlAgentA, CountryCodeOverride: "JP"}, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	response := webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+controlAgentA)
+	var detail webAgentDetailView
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &detail) != nil || detail.CountryCode != "JP" || detail.CountrySource != "manual" {
+		t.Fatalf("manual detail status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := store.DeleteAgentPlan(context.Background(), controlAgentA); err != nil {
+		t.Fatal(err)
+	}
+	response = webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+controlAgentA)
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &detail) != nil || detail.CountryCode != "US" || detail.CountrySource != "automatic" {
+		t.Fatalf("automatic detail status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

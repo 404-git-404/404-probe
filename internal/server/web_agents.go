@@ -32,10 +32,13 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
-	State        *webAgentStateView  `json:"state"`
-	Outbounds    webOutboundsView    `json:"outbounds"`
-	GoogleStatus webGoogleStatusView `json:"google_status"`
-	Security     webSecurityView     `json:"security"`
+	CountryCode   string              `json:"country_code,omitempty"`
+	CountrySource string              `json:"country_source,omitempty"`
+	State         *webAgentStateView  `json:"state"`
+	Outbounds     webOutboundsView    `json:"outbounds"`
+	GoogleStatus  webGoogleStatusView `json:"google_status"`
+	Security      webSecurityView     `json:"security"`
+	Plan          *storage.AgentPlan  `json:"plan,omitempty"`
 }
 
 type webSecurityView struct {
@@ -58,39 +61,45 @@ type webGoogleStatusView struct {
 }
 
 type webOutboundsView struct {
-	Configured bool                        `json:"configured"`
-	Available  bool                        `json:"available"`
-	Status     protocol.OutboundStatus     `json:"status"`
-	Stale      bool                        `json:"stale"`
-	Selectors  []protocol.OutboundSelector `json:"selectors"`
-	CheckedAt  *int64                      `json:"checked_at"`
-	UpdatedAt  *int64                      `json:"updated_at"`
+	Configured  bool                        `json:"configured"`
+	Available   bool                        `json:"available"`
+	Status      protocol.OutboundStatus     `json:"status"`
+	Stale       bool                        `json:"stale"`
+	OrderSource string                      `json:"order_source,omitempty"`
+	Selectors   []protocol.OutboundSelector `json:"selectors"`
+	CheckedAt   *int64                      `json:"checked_at"`
+	UpdatedAt   *int64                      `json:"updated_at"`
 }
 
 type webAgentStateView struct {
-	Stale       bool    `json:"stale"`
-	Hostname    string  `json:"hostname"`
-	OS          string  `json:"os"`
-	Arch        string  `json:"arch"`
-	Uptime      uint64  `json:"uptime"`
-	CPUPercent  float64 `json:"cpu_percent"`
-	Load1       float64 `json:"load1"`
-	Load5       float64 `json:"load5"`
-	Load15      float64 `json:"load15"`
-	RAMUsed     uint64  `json:"ram_used"`
-	RAMTotal    uint64  `json:"ram_total"`
-	RAMPercent  float64 `json:"ram_percent"`
-	SwapUsed    uint64  `json:"swap_used"`
-	SwapTotal   uint64  `json:"swap_total"`
-	SwapPercent float64 `json:"swap_percent"`
-	DiskUsed    uint64  `json:"disk_used"`
-	DiskTotal   uint64  `json:"disk_total"`
-	DiskPercent float64 `json:"disk_percent"`
-	RXRate      float64 `json:"rx_rate"`
-	TXRate      float64 `json:"tx_rate"`
-	RXTotal     uint64  `json:"rx_total"`
-	TXTotal     uint64  `json:"tx_total"`
-	CollectedAt int64   `json:"collected_at"`
+	Stale           bool     `json:"stale"`
+	Hostname        string   `json:"hostname"`
+	OS              string   `json:"os"`
+	Arch            string   `json:"arch"`
+	Uptime          uint64   `json:"uptime"`
+	CPUPercent      float64  `json:"cpu_percent"`
+	CPUStealPercent *float64 `json:"cpu_steal_percent,omitempty"`
+	CPUCores        uint32   `json:"cpu_cores,omitempty"`
+	Load1           float64  `json:"load1"`
+	Load5           float64  `json:"load5"`
+	Load15          float64  `json:"load15"`
+	RAMUsed         uint64   `json:"ram_used"`
+	RAMTotal        uint64   `json:"ram_total"`
+	RAMPercent      float64  `json:"ram_percent"`
+	SwapUsed        uint64   `json:"swap_used"`
+	SwapTotal       uint64   `json:"swap_total"`
+	SwapPercent     float64  `json:"swap_percent"`
+	DiskUsed        uint64   `json:"disk_used"`
+	DiskTotal       uint64   `json:"disk_total"`
+	DiskPercent     float64  `json:"disk_percent"`
+	DiskReadRate    *float64 `json:"disk_read_rate,omitempty"`
+	DiskWriteRate   *float64 `json:"disk_write_rate,omitempty"`
+	DiskBusyPercent *float64 `json:"disk_busy_percent,omitempty"`
+	RXRate          float64  `json:"rx_rate"`
+	TXRate          float64  `json:"tx_rate"`
+	RXTotal         uint64   `json:"rx_total"`
+	TXTotal         uint64   `json:"tx_total"`
+	CollectedAt     int64    `json:"collected_at"`
 }
 
 type webAgentCollectionView struct {
@@ -210,6 +219,22 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	if record.State != nil {
 		view.State = newWebAgentStateView(*record.State, record.StateStale)
 	}
+	plan, planExists, err := a.store.GetAgentPlan(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	if planExists {
+		plan, err = storage.AgentPlanAt(plan, a.now())
+		if err != nil {
+			return webAgentDetailView{}, err
+		}
+		view.Plan = &plan
+	}
+	if plan.CountryCodeOverride != "" {
+		view.CountryCode, view.CountrySource = plan.CountryCodeOverride, "manual"
+	} else if record.State != nil && record.State.CountryCode != "" {
+		view.CountryCode, view.CountrySource = record.State.CountryCode, "automatic"
+	}
 	snapshot, configured, err := a.store.GetOutboundSnapshot(ctx, agentID)
 	if err != nil {
 		return webAgentDetailView{}, err
@@ -217,7 +242,7 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	if configured {
 		checkedAt := snapshot.CheckedAt
 		stale := a.now().Sub(time.UnixMilli(snapshot.CheckedAt)) > outboundSnapshotStaleAfter
-		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Status: snapshot.Status, Stale: stale, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
+		view.Outbounds = webOutboundsView{Configured: true, Available: snapshot.Available, Status: snapshot.Status, Stale: stale, OrderSource: snapshot.OrderSource, Selectors: snapshot.Selectors, CheckedAt: &checkedAt, UpdatedAt: snapshot.UpdatedAt}
 	}
 	supported, err := a.store.GoogleStatusCapability(ctx, agentID)
 	if err != nil {
@@ -393,16 +418,21 @@ func newWebAgentStateView(state storage.State, stale bool) *webAgentStateView {
 	view := &webAgentStateView{
 		Stale:    stale,
 		Hostname: state.Hostname, OS: state.OS, Arch: state.Arch, Uptime: state.Uptime,
-		CPUPercent: state.CPUPercent, Load1: state.Load1, Load5: state.Load5, Load15: state.Load15,
+		CPUPercent: state.CPUPercent, CPUStealPercent: state.CPUStealPercent, CPUCores: state.CPUCores, Load1: state.Load1, Load5: state.Load5, Load15: state.Load15,
 		RAMUsed: state.RAMUsed, RAMTotal: state.RAMTotal, RAMPercent: state.RAMPercent,
 		SwapUsed: state.SwapUsed, SwapTotal: state.SwapTotal, SwapPercent: state.SwapPercent,
 		DiskUsed: state.DiskUsed, DiskTotal: state.DiskTotal, DiskPercent: state.DiskPercent,
+		DiskReadRate: state.DiskReadRate, DiskWriteRate: state.DiskWriteRate, DiskBusyPercent: state.DiskBusyPercent,
 		RXRate: state.RXRate, TXRate: state.TXRate, RXTotal: state.RXTotal, TXTotal: state.TXTotal,
 		CollectedAt: state.CollectedAt,
 	}
 	if stale {
 		view.RXRate = 0
 		view.TXRate = 0
+		view.CPUStealPercent = nil
+		view.DiskReadRate = nil
+		view.DiskWriteRate = nil
+		view.DiskBusyPercent = nil
 	}
 	return view
 }

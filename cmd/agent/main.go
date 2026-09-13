@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,11 +16,26 @@ import (
 
 	"404-probe/internal/agent"
 	"404-probe/internal/buildinfo"
+	"404-probe/internal/geoip"
 	"404-probe/internal/securitycollector"
 	"404-probe/internal/updater"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "country-code" {
+		if err := runCountryCodeLookup(os.Args[2:], os.Stdout); err != nil {
+			slog.Error("country lookup failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "selector-order" {
+		if err := runSelectorOrder(os.Args[2:]); err != nil {
+			slog.Error("selector order extraction failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		info := buildinfo.Current()
 		if len(os.Args) == 3 && os.Args[2] == "--json" {
@@ -59,6 +76,36 @@ func main() {
 	}
 }
 
+func runCountryCodeLookup(arguments []string, output io.Writer) error {
+	if len(arguments) != 1 || arguments[0] != "lookup" {
+		return errors.New("usage: 404-probe-agent country-code lookup")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), geoip.DefaultTimeout)
+	defer cancel()
+	code, err := geoip.LookupCountryCode(ctx, geoip.Client(geoip.DefaultTimeout), geoip.Endpoint)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(output, code)
+	return err
+}
+
+func runSelectorOrder(arguments []string) error {
+	if len(arguments) == 0 || arguments[0] != "extract" {
+		return errors.New("usage: 404-probe-agent selector-order extract --config <path> --output <path>")
+	}
+	flags := flag.NewFlagSet("selector-order", flag.ContinueOnError)
+	config := flags.String("config", "", "absolute sing-box JSON config path")
+	output := flags.String("output", "", "absolute secret-free metadata output path")
+	if err := flags.Parse(arguments[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *config == "" || *output == "" {
+		return errors.New("usage: 404-probe-agent selector-order extract --config <path> --output <path>")
+	}
+	return agent.ExtractSelectorOrder(*config, *output)
+}
+
 func run() error {
 	server := flag.String("server", env("PROBE_404_SERVER", ""), "server base URL")
 	id := flag.String("agent-id", env("PROBE_404_AGENT_ID", ""), "agent ID created by the server")
@@ -72,13 +119,15 @@ func run() error {
 	include := flag.String("network-include", "", "comma-separated interface glob patterns")
 	exclude := flag.String("network-exclude", "", "comma-separated additional interface glob patterns")
 	clashAPI := flag.String("sing-box-clash-api", env("PROBE_404_SING_BOX_CLASH_API", agent.DefaultClashAPIURL), "local sing-box Clash API loopback origin")
+	selectorOrder := flag.String("selector-order", env("PROBE_404_SELECTOR_ORDER", agent.DefaultSelectorOrderPath), "local secret-free selector order metadata")
 	outboundInterval := flag.Duration("outbound-interval", time.Minute, "sing-box outbound discovery interval")
 	updaterSocket := flag.String("updater-socket", env("PROBE_404_UPDATER_SOCKET", "/run/404-probe/agent-updater.sock"), "restricted Agent updater socket")
 	securityExport := flag.String("security-export", env("PROBE_404_SECURITY_EXPORT", "/var/lib/404-probe-security/export"), "read-only local security aggregate export")
 	securityAcks := flag.String("security-acks", env("PROBE_404_SECURITY_ACKS", "/var/lib/404-probe/agent.security-acks.json"), "security upload acknowledgement state")
+	countryCode := flag.String("country-code", env("PROBE_404_COUNTRY_CODE", ""), "persisted install-time Agent egress country code")
 	flag.Parse()
 	_, legacyClashSecret := os.LookupEnv("PROBE_404_SING_BOX_CLASH_SECRET")
-	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute}, slog.Default())
+	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode}, slog.Default())
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}

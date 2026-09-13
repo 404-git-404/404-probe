@@ -1,5 +1,13 @@
 # 404-probe
 
+> V0.9.3 refreshes the dashboard with compact frosted status cards, continuous
+> scrolling, stable live refresh state, plan and traffic context, local
+> country/region flags, selector config ordering, and expanded Linux CPU/disk
+> telemetry. A fresh Agent installation performs one bounded request to
+> `https://ipwho.is/?fields=success,country_code` and persists only the validated
+> country code. Failure remains unknown and does not block installation;
+> restarts and upgrades never repeat the lookup.
+
 ## Quick Start
 
 On a fresh Linux VPS with systemd, run the unified installer and choose Server or Agent:
@@ -61,6 +69,30 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/linux-amd64/404-probe-se
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-agent ./cmd/agent
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/linux-arm64/404-probe-server ./cmd/server
 ```
+
+### Linux CPU steal and disk I/O telemetry
+
+New Agents report optional CPU steal and disk I/O fields. CPU steal is derived
+from consecutive aggregate `cpu` lines in `/proc/stat`; the total includes only
+user through steal, because `guest` and `guest_nice` are already accounted in
+user and nice. Disk rates use the kernel-defined 512-byte sector counters from
+`/proc/diskstats`. The collector selects non-pseudo entries from `/sys/block`
+at the highest non-overlapping logical layer. A whole disk is selected when none
+of its partitions backs a mapper; when only some partitions back LVM, dm-crypt,
+or MD, the parent disk is excluded and unmapped sibling partitions are counted
+beside the highest holder device. Nested holders likewise contribute only their
+topmost device. Read/write rates are summed across that selected set; busy
+percentage is the maximum `io_ticks`
+fraction of any selected device and therefore describes the most-busy disk, not
+physical saturation or remaining performance.
+
+The first sample, a counter rollback, restart, unreadable kernel files, or any
+change to the selected device set rebuilds the affected baseline and reports
+that metric as unknown. CPU and disk baselines are independent, so an unavailable
+disk topology does not suppress CPU steal (and vice versa). Older Agents omit the
+fields and remain compatible. Opening an
+existing Server database migrates it to schema 14; back it up first and do not
+downgrade it afterward.
 
 ## Upgrade to V0.9
 
@@ -142,6 +174,8 @@ POST /api/v1/web/agents/{agent_id}/revoke
 POST /api/v1/web/agents/{agent_id}/outbounds/switch
 GET /api/v1/web/agents/{agent_id}/upgrade
 POST /api/v1/web/agents/{agent_id}/upgrade
+GET /api/v1/web/agents/{agent_id}/plan
+PUT /api/v1/web/agents/{agent_id}/plan
 ```
 
 The default Agent collection contains non-revoked Agents, including paused Agents. It accepts `status=online|offline|disabled|revoked` for an explicit state filter. The Schedule collection accepts `agent_id`, `enabled=true|false`, and `probe_type=http|tcp_connect|icmp_ping`. The Job collection accepts `agent_id`, `schedule_id`, `probe_type`, `status`, `success`, and the documented created/finished time bounds. Every collection accepts `limit=1..100` and an opaque endpoint/filter-bound `cursor`. History accepts `hours=1..720`.
@@ -170,7 +204,9 @@ This local, repeatable command stops and disables the Agent service, then remove
 
 All Web mutations require an authenticated Web session, the full canonical Origin admitted for the current request (with exact scheme, host, and effective port), `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
 
-Agent cards use a compact responsive flow for identity, metrics, network, Google status, Security status, metadata, and actions. Cards grow with available status content instead of relying on fixed pixel heights or fixed grid rows. Long text is truncated in the card while its complete value remains available through `title`, accessible labels, and the authenticated Agent detail response. Card resizing, dragging, per-Agent layouts, and metric visibility preferences are not supported.
+Agent cards prioritize identity, availability, CPU/core count, RAM and disk usage, live network rates, and optional plan facts. Long Agent names use an ellipsis in the compact card and expose the complete name through the accessible label and tooltip. Swap, load, versions, report timestamps, Google status, Security status, and maintenance controls remain available through detail/history or the compact management menu instead of competing with the primary overview.
+
+Each Agent can store optional traffic, bandwidth, price, lifecycle-date, and IANA-timezone facts through the authenticated plan drawer. Traffic quantities retain the explicitly entered decimal or binary unit. Calendar cycles preserve the original anchor day (including month-end anchors) and use the plan timezone. Billing usage is derived only from accepted permanent network-counter deltas: duplicate or stale reports do not count twice, same-boot reconnects can recover their full monotonic delta, and reboots/resets or a crossed cycle boundary are marked partial rather than inventing history. A manual calibration sets an accounting boundary: if the next report delta spans that boundary, the ambiguous delta is conservatively skipped and coverage becomes partial; subsequent accepted deltas continue from the calibrated value. Plans without traffic accounting, including one-time purchases, retain their own date timezone.
 
 ## Start the server
 
@@ -235,6 +271,12 @@ Remove `--allow-insecure-http` when `PROBE_404_SERVER` uses HTTPS.
 ## Zero-configuration sing-box selector discovery and switching
 
 The Agent automatically probes the local Clash API at `http://127.0.0.1:9090` and publishes only the latest selector name, current choice, choices, discovery state, and timestamps. A manual loopback-only origin override is available through `PROBE_404_SING_BOX_CLASH_API`; credentials, paths, queries, fragments, and non-loopback hosts are rejected. Fresh installation asks for neither an API URL nor a secret.
+
+Selector cards follow the top-level sing-box `outbounds` order when the root installer can safely extract it into `/etc/404-probe/selector-order.json`. The containing directory remains `root:404-probe` mode `0750`, so the low-privilege Agent can read the strict, secret-free tag list but cannot replace its directory entry or access the full sing-box configuration. On an unusual config layout, stale metadata, or missing/invalid metadata, discovery falls back to deterministic name order and the UI states that fallback.
+
+For an existing Agent, first upgrade its binary through the Web UI, then run the matching version-pinned `install.sh selector-order /absolute/path/to/config.json` command on that Agent host. This verifies the installed build, preserves identity and service state, atomically installs the reviewed local helper, and creates the protected metadata. Afterward, refresh changed outbound order locally with `sudo 404-probe-install selector-order /absolute/path/to/config.json`; the next discovery interval picks it up without restarting the Agent.
+
+The Clash API itself is not an exact substitute for this metadata. In the [official sing-box Clash API implementation](https://github.com/SagerNet/sing-box/blob/testing/experimental/clashapi/proxies.go), each group's `all` array comes from that group's own member list, while synthetic `GLOBAL.all` is built from all visible outbounds and then moves the default outbound ahead of its original position for dashboard compatibility. `/proxies` is serialized as an object. Consequently, neither surface reliably preserves the exact top-level selector order required here; the root-side narrow extraction remains the authoritative path.
 
 404-probe does not support Clash API secrets. If the legacy `PROBE_404_SING_BOX_CLASH_SECRET` variable is present, only the sing-box integration fails closed; normal telemetry continues, and the Agent logs a fixed remediation message without reading or printing the value. Configure sing-box's Clash API without authentication and keep it bound to loopback.
 

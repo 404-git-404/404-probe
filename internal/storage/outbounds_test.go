@@ -13,7 +13,7 @@ func TestOutboundSnapshotLatestSuccessAndUnavailableState(t *testing.T) {
 	store, agentID, _ := testStore(t, ":memory:")
 	defer store.Close()
 	ctx := context.Background()
-	first := protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{{Name: "select", Current: "a", Choices: []string{"a", "b"}}}}
+	first := protocol.OutboundSnapshot{Available: true, OrderSource: "config", Selectors: []protocol.OutboundSelector{{Name: "select", Current: "a", Choices: []string{"a", "b"}}}}
 	if err := store.SaveOutboundSnapshot(ctx, agentID, first, time.Unix(200, 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestOutboundSnapshotLatestSuccessAndUnavailableState(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, configured, err := store.GetOutboundSnapshot(ctx, agentID)
-	if err != nil || !configured || got.Available || got.Status != protocol.OutboundStatusAuthRequired || got.CheckedAt != time.Unix(210, 0).UnixMilli() || got.UpdatedAt == nil || *got.UpdatedAt != time.Unix(200, 0).UnixMilli() || len(got.Selectors) != 1 {
+	if err != nil || !configured || got.Available || got.Status != protocol.OutboundStatusAuthRequired || got.OrderSource != "config" || got.CheckedAt != time.Unix(210, 0).UnixMilli() || got.UpdatedAt == nil || *got.UpdatedAt != time.Unix(200, 0).UnixMilli() || len(got.Selectors) != 1 {
 		t.Fatalf("snapshot=%+v configured=%t err=%v", got, configured, err)
 	}
 	replacement := protocol.OutboundSnapshot{Available: true, Selectors: []protocol.OutboundSelector{{Name: "other", Current: "x", Choices: []string{"x"}}}}
