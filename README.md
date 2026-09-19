@@ -200,7 +200,15 @@ To explicitly remove the software and private Agent state from its Linux host, r
 sudo 404-probe-install uninstall agent
 ```
 
-This local, repeatable command stops and disables the Agent service, then removes its systemd unit, binary, private environment file, and epoch/state files. It is safe to rerun after a partial cleanup. It preserves systemd journal history, the locked service account, and the installer helper. It does not contact the Server or delete Server-side telemetry. `uninstall server` similarly removes the Server unit and binary, but deliberately preserves Server configuration, credentials, and the database.
+Uninstall is intentionally destructive in v1.0: it shows the exact role and requires typing `DELETE 404-probe agent` (or `server`). For automation, pass the explicit `--confirm-delete-data` flag. Agent uninstall stops and disables the Agent, updater, and security collector, then removes their units, binary, credentials, selector metadata, epoch/security state, runtime files, managed candidates, and managed state directories. Server uninstall removes its service, binary, configuration, credentials, SQLite database (including WAL/SHM), and managed upgrade/rollback state. Both preserve systemd journal history and any unrecognized files, and neither removes sing-box or its configuration. The dedicated service account is removed only after its locked, non-interactive identity is verified and no recognized role or preserved directory remains.
+
+The installed helper removes itself last. To retry after an interrupted or completed uninstall, use the official version-pinned entry point; the command is idempotent:
+
+```bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v0.9.3/install.sh | sudo PROBE_404_VERSION=v0.9.3 bash -s -- uninstall agent --confirm-delete-data
+```
+
+Replace `agent` with `server` for the Server role. Local uninstall does not contact the Server or remove the Agent's Server-side telemetry; Web “permanent delete” is a separate tracked v1.0 operation.
 
 All Web mutations require an authenticated Web session, the full canonical Origin admitted for the current request (with exact scheme, host, and effective port), `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
 

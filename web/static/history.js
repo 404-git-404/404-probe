@@ -3,6 +3,8 @@ const empty = document.querySelector('#history-empty');
 const outboundStatus = document.querySelector('#outbounds-status');
 const outboundList = document.querySelector('#outbounds-list');
 const agentRuntimeValues = document.querySelector('#agent-runtime-values');
+const trafficReset = document.querySelector('#traffic-reset');
+const trafficResetFeedback = document.querySelector('#traffic-reset-feedback');
 const googleState = document.querySelector('#google-status-state');
 const googleValues = document.querySelector('#google-status-values');
 const googleChecked = document.querySelector('#google-status-checked');
@@ -17,6 +19,7 @@ let switchingSelector = '';
 let selectorFeedback = null;
 const selectorOperations = new Map();
 const selectorDrafts = new Map();
+const expandedSelectors = new Set();
 const selectorDraftKey = selector => `${id}\u0000${selector}`;
 
 const selectorErrors = {
@@ -162,6 +165,7 @@ async function switchOutbound(selector, choice) {
 }
 
 function renderOutbounds(agent) {
+  const focusedSelector = document.activeElement?.closest?.('details')?.querySelector('summary strong')?.textContent || '';
   const outbounds = agent?.outbounds;
   outboundList.replaceChildren();
   if (!outbounds || !outbounds.configured) {
@@ -184,7 +188,7 @@ function renderOutbounds(agent) {
   }
   for (const selector of outbounds.selectors || []) {
     const details = document.createElement('details');
-    details.open = switchingSelector === selector.name || selectorFeedback?.selector === selector.name || selectorOperations.has(selector.name);
+    details.open = expandedSelectors.has(selector.name) || switchingSelector === selector.name || selectorFeedback?.selector === selector.name;
     const summary = document.createElement('summary');
     const name = document.createElement('strong');
     name.textContent = selector.name;
@@ -231,10 +235,24 @@ function renderOutbounds(agent) {
     updateButton();
     controls.append(choices, button, operationStatus);
     details.append(summary, controls);
+    details.addEventListener('toggle', () => {
+      if (details.open) expandedSelectors.add(selector.name);
+      else expandedSelectors.delete(selector.name);
+    });
     outboundList.append(details);
   }
   if (!outboundList.children.length && outbounds.available) {
     outboundStatus.textContent += ' · 未发现 Selector';
+  }
+  if (focusedSelector) {
+    queueMicrotask(() => {
+      for (const details of outboundList.querySelectorAll('details')) {
+        if (details.querySelector('summary strong')?.textContent === focusedSelector) {
+          details.querySelector('select')?.focus({preventScroll: true});
+          break;
+        }
+      }
+    });
   }
 }
 
@@ -256,7 +274,9 @@ function detailDuration(value) {
 
 function renderAgentRuntime(agent) {
   const state = agent?.state;
+  const traffic = agent?.traffic;
   agentRuntimeValues.replaceChildren();
+  trafficReset.disabled = !mutationCSRFToken || !agent?.online || !state || Boolean(state.stale) || Boolean(agent?.disabled_at) || Boolean(agent?.revoked);
   const rows = [
     ['主机名', state?.hostname || '—'],
     ['系统', [state?.os, state?.arch].filter(Boolean).join(' · ') || '—'],
@@ -268,6 +288,9 @@ function renderAgentRuntime(agent) {
     ['Swap', state ? `${detailBytes(state.swap_used)} / ${detailBytes(state.swap_total)} · ${Number(state.swap_percent || 0).toFixed(1)}%` : '—'],
     ['磁盘', state ? `${detailBytes(state.disk_used)} / ${detailBytes(state.disk_total)} · ${Number(state.disk_percent || 0).toFixed(1)}%` : '—'],
     ['磁盘 I/O', state?.disk_busy_percent == null ? '—' : `最忙磁盘 ${Number(state.disk_busy_percent).toFixed(1)}% · 所选设备合计读 ${detailBytes(state.disk_read_rate)}/s · 写 ${detailBytes(state.disk_write_rate)}/s`],
+    ['累计入站', traffic ? detailBytes(traffic.rx_total) : '—'],
+    ['累计出站', traffic ? detailBytes(traffic.tx_total) : '—'],
+    ['累计起点', traffic?.started_at ? new Date(traffic.started_at).toLocaleString() : '首次有效样本'],
     ['运行时长', state ? detailDuration(state.uptime) : '—'],
     ['最近上报', agent?.last_seen ? new Date(agent.last_seen).toLocaleString() : '从未上报'],
     ['样本时间', state?.collected_at ? new Date(state.collected_at).toLocaleString() : '—'],
@@ -278,6 +301,27 @@ function renderAgentRuntime(agent) {
     agentRuntimeValues.append(term, description);
   }
 }
+
+trafficReset.addEventListener('click', async () => {
+  if (trafficReset.disabled || !currentAgent) return;
+  if (!confirm('只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？')) return;
+  trafficReset.disabled = true;
+  trafficResetFeedback.textContent = '正在记录新的累计起点…';
+  try {
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(id)}/traffic/reset`, {
+      method: 'POST', cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
+      body: JSON.stringify({request_id: requestID()}),
+    });
+    if (response.status === 401) { location.assign('/login'); return; }
+    if (!response.ok) throw new Error(await readError(response));
+    currentAgent = {...currentAgent, traffic: await response.json()};
+    trafficResetFeedback.textContent = '累计统计已从当前有效样本重新开始；套餐周期用量未改变。';
+  } catch (error) {
+    trafficResetFeedback.textContent = error.message || '无法重新开始累计统计';
+  }
+  renderAgentRuntime(currentAgent);
+});
 
 function renderGoogleStatus(agent) {
   const google = agent?.google_status;

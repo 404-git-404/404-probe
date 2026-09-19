@@ -19,7 +19,7 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`readonly DEFAULT_VERSION="v0.9.2"`,
+		`readonly DEFAULT_VERSION="v0.9.3"`,
 		`404-probe-install agent --server <origin>`,
 		`[[ $# -eq 2 && "$1" == "--server" ]]`,
 		`IFS= read -r -s enrollment </dev/tty`,
@@ -54,6 +54,39 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	lookup := strings.Index(installAgent, "country-code lookup")
 	if existingBootstrap < 0 || lookup < 0 || existingBootstrap > lookup {
 		t.Fatal("existing Agent bootstrap can reach the external country lookup")
+	}
+}
+
+func TestInstallerDownloadsAreBoundedResumableAndAuthenticated(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	for _, required := range []string{
+		`DOWNLOAD_CONNECT_TIMEOUT_SECONDS=10`,
+		`DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS=60`,
+		`DOWNLOAD_RETRY_MAX_SECONDS=180`,
+		`--retry-all-errors`,
+		`--continue-at -`,
+		`"${destination}.partial"`,
+		`?download=1`,
+		`https://raw.githubusercontent.com/${REPOSITORY}/${latest}/install.sh`,
+		`download_release_asset "${version}" "${asset}"`,
+		`download_release_asset "${target}" "${name}"`,
+		`sha256sum --check --strict`,
+		`strict release metadata verification failed`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installer missing reliable download contract %q", required)
+		}
+	}
+	if strings.Contains(script, `--insecure`) || strings.Contains(script, `-k `) {
+		t.Fatal("installer download disables TLS verification")
 	}
 }
 
@@ -227,7 +260,7 @@ func TestInstallerUsesZeroConfigurationLocalClashAPI(t *testing.T) {
 	}
 }
 
-func TestInstallerAgentUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
+func TestInstallerUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("could not locate installer contract test")
@@ -238,20 +271,30 @@ func TestInstallerAgentUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`404-probe-install uninstall <server|agent>`,
+		`404-probe-install uninstall <server|agent> [--confirm-delete-data]`,
+		`DELETE 404-probe ${role}`,
+		`uninstall deletes all ${role} data`,
 		`systemctl is-active --quiet "${unit}"`,
 		`systemctl disable "${unit}" >/dev/null 2>&1 || true`,
 		`rm -f -- "${unit_path}" "${binary_path}"`,
 		`"${CONFIG_DIRECTORY}/agent.env"`,
 		`"${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"`,
-		`Re-running this command is safe.`,
+		`"${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash"`,
+		`"${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"`,
+		`remove_owned_tree "${AGENT_UPDATER_STATE}"`,
+		`remove_owned_tree "${SECURITY_STATE_DIRECTORY}"`,
+		`remove_owned_tree "${SERVER_UPGRADE_DIRECTORY}"`,
+		`validate_service_user`,
+		`userdel "${SERVICE_USER}"`,
+		`rm -f -- "${INSTALL_HELPER}"`,
+		`Re-running the official version-pinned uninstall is safe.`,
 		`Preserved systemd journal history`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("installer missing uninstall contract %q", required)
 		}
 	}
-	for _, forbidden := range []string{`journalctl --vacuum`, `rm -rf -- "${STATE_DIRECTORY}"`, `systemctl disable --now "${unit}"`} {
+	for _, forbidden := range []string{`journalctl --vacuum`, `rm -rf -- "${STATE_DIRECTORY}"`, `rm -rf -- "${CONFIG_DIRECTORY}"`, `systemctl disable --now "${unit}"`} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("installer uninstall violates preservation or idempotency through %q", forbidden)
 		}

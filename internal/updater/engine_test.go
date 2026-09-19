@@ -1,9 +1,12 @@
 package updater
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,6 +49,75 @@ func TestProductionReleaseBaseIsOfficialRepository(t *testing.T) {
 	if officialReleaseBase != "https://github.com/404-git-404/404-probe/releases/download/" {
 		t.Fatalf("unexpected production release base %q", officialReleaseBase)
 	}
+}
+
+func TestFetchRetriesTransientStatusAndDoesNotRetryPermanentStatus(t *testing.T) {
+	var transientRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		transientRequests++
+		if transientRequests == 1 {
+			http.Error(w, "temporary", http.StatusGatewayTimeout)
+			return
+		}
+		_, _ = w.Write([]byte("verified"))
+	}))
+	defer server.Close()
+	engine := &Engine{config: EngineConfig{HTTPClient: server.Client(), DownloadAttempts: 3, RetryBaseDelay: time.Millisecond}}
+	data, err := engine.fetch(context.Background(), server.URL+"/asset", 64)
+	if err != nil || string(data) != "verified" || transientRequests != 2 {
+		t.Fatalf("data=%q requests=%d err=%v", data, transientRequests, err)
+	}
+
+	var permanentRequests int
+	permanent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		permanentRequests++
+		http.NotFound(w, nil)
+	}))
+	defer permanent.Close()
+	engine.config.HTTPClient = permanent.Client()
+	if _, err := engine.fetch(context.Background(), permanent.URL+"/missing", 64); err == nil || permanentRequests != 1 {
+		t.Fatalf("permanent status requests=%d err=%v", permanentRequests, err)
+	}
+}
+
+func TestFetchResumesPartialResponse(t *testing.T) {
+	const payload = "partial-download"
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			if request.Header.Get("Range") != "" {
+				t.Fatalf("first request unexpectedly had Range")
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&partialErrorReader{data: []byte(payload[:7])}), Header: make(http.Header), Request: request}, nil
+		}
+		if got := request.Header.Get("Range"); got != "bytes=7-" {
+			t.Fatalf("resume Range=%q", got)
+		}
+		return &http.Response{StatusCode: http.StatusPartialContent, Body: io.NopCloser(bytes.NewBufferString(payload[7:])), Header: make(http.Header), Request: request}, nil
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 3, RetryBaseDelay: time.Millisecond}}
+	data, err := engine.fetch(context.Background(), "https://example.test/asset", 64)
+	if err != nil || string(data) != payload || requests != 2 {
+		t.Fatalf("data=%q requests=%d err=%v", data, requests, err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+type partialErrorReader struct {
+	data []byte
+	done bool
+}
+
+func (r *partialErrorReader) Read(buffer []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	r.done = true
+	return copy(buffer, r.data), errors.New("connection reset")
 }
 
 func TestEngineHealthTimeoutRollsBack(t *testing.T) {

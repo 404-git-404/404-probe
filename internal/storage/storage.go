@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 14
+const currentSchemaVersion = 15
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -612,6 +612,22 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	if version < 15 {
+		for _, statement := range []string{
+			`CREATE TABLE agent_traffic_baselines (
+				agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+				rx_total INTEGER NOT NULL CHECK(rx_total >= 0),
+				tx_total INTEGER NOT NULL CHECK(tx_total >= 0),
+				started_at INTEGER NOT NULL,
+				request_id TEXT NOT NULL UNIQUE CHECK(length(request_id)=32 AND request_id NOT GLOB '*[^0-9a-f]*')
+			)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(15, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 15: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
@@ -741,6 +757,35 @@ func (s *Store) AddAgent(ctx context.Context, id, name string, tokenHash []byte,
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO agents(id,name,token_hash,created_at,updated_at) VALUES(?,?,?,?,?)`, id, name, tokenHash, now.UnixMilli(), now.UnixMilli())
 	return err
+}
+
+func (s *Store) RenameAgent(ctx context.Context, id, name string, now time.Time) (Agent, error) {
+	name = strings.TrimSpace(name)
+	if !validStorageID(id, 128) || name == "" || len(name) > 100 || strings.ContainsAny(name, "\r\n\x00") {
+		return Agent{}, errors.New("invalid agent name")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE agents SET name=?,updated_at=? WHERE id=? AND revoked=0`, name, now.UnixMilli(), id)
+	if err != nil {
+		return Agent{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return Agent{}, err
+	}
+	if changed != 1 {
+		return Agent{}, ErrAgentNotFound
+	}
+	var agent Agent
+	var revoked int
+	var disabled sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT id,name,revoked,disabled_at,created_at FROM agents WHERE id=?`, id).Scan(&agent.ID, &agent.Name, &revoked, &disabled, &agent.CreatedAt); err != nil {
+		return Agent{}, err
+	}
+	agent.Revoked = revoked != 0
+	if disabled.Valid {
+		agent.DisabledAt = &disabled.Int64
+	}
+	return agent, nil
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {

@@ -238,6 +238,10 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 		db.Close()
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`DROP TABLE agent_traffic_baselines`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN country_code`); err != nil {
 		db.Close()
 		t.Fatal(err)

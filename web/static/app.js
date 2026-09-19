@@ -33,6 +33,8 @@ const planError = document.querySelector('#plan-error');
 const agents = new Map();
 const revokedAgentIDs = new Set();
 const openManagementAgentIDs = new Set();
+const editingAgentNames = new Set();
+const agentNameDrafts = new Map();
 let mutationCSRFToken = '';
 let pendingRemoveAgentID = '';
 let pendingUpgradeAgentID = '';
@@ -722,6 +724,74 @@ function countryMark(code, source) {
   return mark;
 }
 
+async function readMutationError(response) {
+  try {
+    const body = await response.json();
+    return body.error?.message || body.message || response.statusText;
+  } catch (error) {
+    return response.statusText;
+  }
+}
+
+async function saveAgentName(agent, input, saveButton) {
+  const name = input.value.trim();
+  if (!name || name.length > 100) {
+    input.setCustomValidity('名称需为 1–100 个字符');
+    input.reportValidity();
+    return;
+  }
+  input.setCustomValidity('');
+  saveButton.disabled = true;
+  try {
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agent.agent_id)}/name`, {
+      method: 'PUT', cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
+      body: JSON.stringify({name}),
+    });
+    if (response.status === 401) { location.assign('/login'); return; }
+    if (!response.ok) throw new Error(await readMutationError(response));
+    const updated = await response.json();
+    agents.set(agent.agent_id, {...agent, name: updated.name});
+    editingAgentNames.delete(agent.agent_id);
+    agentNameDrafts.delete(agent.agent_id);
+    render();
+  } catch (error) {
+    input.setCustomValidity(error.message || '名称保存失败');
+    input.reportValidity();
+    saveButton.disabled = false;
+  }
+}
+
+function agentNameControl(agent, state) {
+  if (!editingAgentNames.has(agent.agent_id)) {
+    const group = document.createElement('span'); group.className = 'agent-name-display';
+    const heading = document.createElement('h2');
+    setReadableText(heading, agent.name || state.hostname || '未命名 VPS');
+    const edit = document.createElement('button');
+    edit.type = 'button'; edit.className = 'agent-name-edit'; edit.textContent = '✎'; edit.title = '编辑名称'; edit.setAttribute('aria-label', '编辑 Agent 名称');
+    edit.disabled = !mutationCSRFToken || agent.revoked;
+    edit.addEventListener('click', () => { editingAgentNames.add(agent.agent_id); agentNameDrafts.set(agent.agent_id, agent.name || ''); render(); });
+    group.append(heading, edit);
+    return group;
+  }
+  const group = document.createElement('span'); group.className = 'agent-name-editor';
+  const input = document.createElement('input');
+  input.value = agentNameDrafts.get(agent.agent_id) ?? agent.name ?? '';
+  input.maxLength = 100; input.setAttribute('aria-label', 'Agent 名称'); input.dataset.focusKey = 'name-input';
+  const save = document.createElement('button'); save.type = 'button'; save.textContent = '保存';
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = '取消';
+  input.addEventListener('input', () => agentNameDrafts.set(agent.agent_id, input.value));
+  save.addEventListener('click', () => saveAgentName(agent, input, save));
+  cancel.addEventListener('click', () => { editingAgentNames.delete(agent.agent_id); agentNameDrafts.delete(agent.agent_id); render(); });
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); save.click(); }
+    if (event.key === 'Escape') { event.preventDefault(); cancel.click(); }
+  });
+  group.append(input, save, cancel);
+  queueMicrotask(() => input.focus({preventScroll: true}));
+  return group;
+}
+
 function render() {
   const focusedControl = document.activeElement?.closest?.('[data-focus-key]');
   const focusedAgentID = focusedControl?.closest?.('.agent-card')?.dataset.agentId || '';
@@ -744,12 +814,10 @@ function render() {
     title.className = 'card-identity';
     const titleLine = document.createElement('div');
     titleLine.className = 'card-title-line';
-    const heading = document.createElement('h2');
-    setReadableText(heading, agent.name || state.hostname || '未命名 VPS');
     const name = document.createElement('div');
     name.className = 'name';
     setReadableText(name, [state.cpu_cores ? `${state.cpu_cores} 核` : '', state.os, state.arch].filter(Boolean).join(' · ') || '等待首次上报');
-    titleLine.append(countryMark(agent.country_code, agent.country_source), heading);
+    titleLine.append(countryMark(agent.country_code, agent.country_source), agentNameControl(agent, state));
     title.append(titleLine, name);
     const status = document.createElement('span');
     const stateName = agent.revoked ? 'revoked' : agent.disabled_at ? 'paused' : agent.online ? 'online' : 'offline';

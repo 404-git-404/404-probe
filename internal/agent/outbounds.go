@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -17,6 +18,9 @@ import (
 func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 	local := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath}
 	var lastStatus protocol.OutboundStatus
+	var lastPublished *protocol.OutboundSnapshot
+	var lastPublishedAt time.Time
+	consecutiveFailures := 0
 	capabilityReady := (<-chan struct{})(r.interactiveControlReady)
 	for {
 		r.outboundMu.Lock()
@@ -43,7 +47,15 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 		if r.interactiveControlSupported.Load() {
 			snapshot.Status = status
 		}
-		publishErr := r.postOutboundSnapshot(ctx, snapshot)
+		var publishErr error
+		if lastPublished == nil || !reflect.DeepEqual(*lastPublished, snapshot) || time.Since(lastPublishedAt) >= 5*time.Minute {
+			publishErr = r.postOutboundSnapshot(ctx, snapshot)
+			if publishErr == nil {
+				copy := snapshot
+				lastPublished = &copy
+				lastPublishedAt = time.Now()
+			}
+		}
 		r.outboundMu.Unlock()
 		if publishErr != nil {
 			if ctx.Err() != nil {
@@ -55,8 +67,16 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 			r.logger.Warn("publish outbound snapshot failed; will retry", "error", publishErr)
 		}
 		delay := r.config.OutboundInterval
-		if !available && delay > 10*time.Second {
-			delay = 10 * time.Second
+		if !available || publishErr != nil {
+			steps := []time.Duration{10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute}
+			index := consecutiveFailures
+			if index >= len(steps) {
+				index = len(steps) - 1
+			}
+			delay = jitterOutboundDelay(steps[index])
+			consecutiveFailures++
+		} else {
+			consecutiveFailures = 0
 		}
 		timer := time.NewTimer(delay)
 		select {
@@ -69,6 +89,13 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+func jitterOutboundDelay(delay time.Duration) time.Duration {
+	// Stable process-local jitter avoids synchronizing many Agents after a
+	// Server/network outage without requiring another source of authority.
+	nanos := time.Now().UnixNano()%2001 - 1000
+	return delay + time.Duration(int64(delay)*nanos/10000)
 }
 
 func stopTimer(timer *time.Timer) {

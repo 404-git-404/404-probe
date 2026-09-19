@@ -15,7 +15,7 @@ import (
 const (
 	webAgentPathPrefix         = "/api/v1/web/agents/"
 	webAgentCursorResource     = "web_agents"
-	outboundSnapshotStaleAfter = 2 * time.Minute
+	outboundSnapshotStaleAfter = 7 * time.Minute
 )
 
 type webAgentSummaryView struct {
@@ -32,13 +32,14 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
-	CountryCode   string              `json:"country_code,omitempty"`
-	CountrySource string              `json:"country_source,omitempty"`
-	State         *webAgentStateView  `json:"state"`
-	Outbounds     webOutboundsView    `json:"outbounds"`
-	GoogleStatus  webGoogleStatusView `json:"google_status"`
-	Security      webSecurityView     `json:"security"`
-	Plan          *storage.AgentPlan  `json:"plan,omitempty"`
+	CountryCode   string                 `json:"country_code,omitempty"`
+	CountrySource string                 `json:"country_source,omitempty"`
+	State         *webAgentStateView     `json:"state"`
+	Traffic       *storage.TrafficTotals `json:"traffic,omitempty"`
+	Outbounds     webOutboundsView       `json:"outbounds"`
+	GoogleStatus  webGoogleStatusView    `json:"google_status"`
+	Security      webSecurityView        `json:"security"`
+	Plan          *storage.AgentPlan     `json:"plan,omitempty"`
 }
 
 type webSecurityView struct {
@@ -218,6 +219,11 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
 	if record.State != nil {
 		view.State = newWebAgentStateView(*record.State, record.StateStale)
+		traffic, err := a.store.TrafficTotals(ctx, agentID)
+		if err != nil {
+			return webAgentDetailView{}, err
+		}
+		view.Traffic = &traffic
 	}
 	plan, planExists, err := a.store.GetAgentPlan(ctx, agentID)
 	if err != nil {

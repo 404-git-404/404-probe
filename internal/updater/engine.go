@@ -37,20 +37,23 @@ type Inspector func(string) (CandidateBuildInfo, error)
 type ServiceCommand func(context.Context, string) error
 
 type EngineConfig struct {
-	CurrentVersion string
-	GOOS           string
-	GOARCH         string
-	StateDirectory string
-	LiveBinary     string
-	StagedBinary   string
-	PreviousBinary string
-	HTTPClient     *http.Client
-	ReleaseBase    string
-	Inspect        Inspector
-	ServiceCommand ServiceCommand
-	HealthTimeout  time.Duration
-	Now            func() time.Time
-	OnCommitted    func()
+	CurrentVersion   string
+	GOOS             string
+	GOARCH           string
+	StateDirectory   string
+	LiveBinary       string
+	StagedBinary     string
+	PreviousBinary   string
+	HTTPClient       *http.Client
+	ReleaseBase      string
+	Inspect          Inspector
+	ServiceCommand   ServiceCommand
+	HealthTimeout    time.Duration
+	DownloadTimeout  time.Duration
+	RetryBaseDelay   time.Duration
+	DownloadAttempts int
+	Now              func() time.Time
+	OnCommitted      func()
 }
 
 type Engine struct {
@@ -76,6 +79,15 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	}
 	if config.HealthTimeout <= 0 {
 		config.HealthTimeout = 2 * time.Minute
+	}
+	if config.DownloadTimeout <= 0 {
+		config.DownloadTimeout = 3 * time.Minute
+	}
+	if config.RetryBaseDelay <= 0 {
+		config.RetryBaseDelay = time.Second
+	}
+	if config.DownloadAttempts <= 0 {
+		config.DownloadAttempts = 5
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -178,7 +190,11 @@ func (e *Engine) run(request Request) {
 	failureCode := ""
 	if err := e.setStatus("downloading", "", ""); err != nil {
 		failureCode = "stage_failed"
-	} else if err := e.downloadAndVerify(context.Background(), request.TargetVersion); err != nil {
+	} else if err := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), e.config.DownloadTimeout)
+		defer cancel()
+		return e.downloadAndVerify(ctx, request.TargetVersion)
+	}(); err != nil {
 		failureCode = classifyDownloadFailure(err)
 	} else if err := e.setStatus("staging", "", ""); err != nil {
 		failureCode = "stage_failed"
@@ -312,26 +328,75 @@ func (e *Engine) setReleaseCommit(commit string) error {
 }
 
 func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
+	urls := []string{url}
+	if strings.HasPrefix(url, officialReleaseBase) && !strings.Contains(url, "?") {
+		urls = append(urls, url+"?download=1")
 	}
-	response, err := e.config.HTTPClient.Do(request)
-	if err != nil {
-		return nil, err
+	var data []byte
+	var lastErr error
+	for attempt := 0; attempt < e.config.DownloadAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, urls[attempt%len(urls)], nil)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > 0 {
+			request.Header.Set("Range", fmt.Sprintf("bytes=%d-", len(data)))
+		}
+		response, err := e.config.HTTPClient.Do(request)
+		if err != nil {
+			lastErr = err
+		} else {
+			status := response.StatusCode
+			if status == http.StatusOK || status == http.StatusPartialContent {
+				if status == http.StatusOK && len(data) > 0 {
+					// The endpoint ignored Range. Restart this attempt rather than
+					// appending a second complete object to the partial bytes.
+					data = data[:0]
+				}
+				chunk, readErr := io.ReadAll(io.LimitReader(response.Body, limit-int64(len(data))+1))
+				closeErr := response.Body.Close()
+				data = append(data, chunk...)
+				if int64(len(data)) > limit {
+					return nil, errors.New("response is too large")
+				}
+				if readErr == nil {
+					readErr = closeErr
+				}
+				if readErr == nil {
+					return data, nil
+				}
+				lastErr = readErr
+			} else {
+				_ = response.Body.Close()
+				lastErr = fmt.Errorf("HTTP %d", status)
+				if !retryableHTTPStatus(status) {
+					return nil, lastErr
+				}
+			}
+		}
+		if attempt+1 == e.config.DownloadAttempts {
+			break
+		}
+		delay := e.config.RetryBaseDelay << attempt
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
+	if lastErr == nil {
+		lastErr = errors.New("download failed")
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, errors.New("response is too large")
-	}
-	return data, nil
+	return nil, lastErr
+}
+
+func retryableHTTPStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
 }
 
 func (e *Engine) stageCandidate() error {

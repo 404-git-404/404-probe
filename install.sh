@@ -29,6 +29,10 @@ readonly SERVER_UPGRADE_CANDIDATE="/usr/local/bin/.404-probe-server.candidate"
 readonly SERVER_UPGRADE_HELPER_CANDIDATE="${INSTALL_HELPER}.candidate"
 readonly SERVER_UPGRADE_LOCK_DIRECTORY="/run/404-probe-upgrade"
 readonly SERVER_UPGRADE_LOCK="${SERVER_UPGRADE_LOCK_DIRECTORY}/server.lock"
+readonly DOWNLOAD_CONNECT_TIMEOUT_SECONDS=10
+readonly DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS=60
+readonly DOWNLOAD_RETRY_MAX_SECONDS=180
+readonly DOWNLOAD_RETRIES=4
 
 INSTALL_TRANSACTION_ACTIVE=0
 INSTALL_TRANSACTION_ROLE=""
@@ -49,6 +53,45 @@ note() {
   printf '\n%s\n' "$*"
 }
 
+curl_with_retry() {
+  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT_SECONDS}" \
+    --max-time "${DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS}" \
+    --retry "${DOWNLOAD_RETRIES}" --retry-all-errors \
+    --retry-max-time "${DOWNLOAD_RETRY_MAX_SECONDS}" "$@"
+}
+
+# Download to a sibling partial file so curl can resume bytes received before a
+# transient timeout. The rename is atomic and callers authenticate the finished
+# file before use. Alternate URLs are fixed official entry points for the same
+# versioned asset; they never weaken the release identity checks.
+download_to_file() (
+  local destination="$1" url partial
+  shift
+  partial="${destination}.partial"
+  [[ ! -e "${partial}" || ( -f "${partial}" && ! -L "${partial}" ) ]] \
+    || die "unsafe partial download path: ${partial}"
+  for url in "$@"; do
+    if curl_with_retry --continue-at - --output "${partial}" "${url}"; then
+      [[ -f "${partial}" && ! -L "${partial}" ]] || die "download did not create a regular file"
+      mv -f -- "${partial}" "${destination}"
+      return 0
+    fi
+    note "Download entry failed; trying the next official entry for the same asset."
+  done
+  rm -f -- "${partial}"
+  return 1
+)
+
+download_release_asset() {
+  local version="$1" name="$2" destination="$3"
+  canonical_version "${version}" || die "release asset version must use canonical vX.Y.Z form"
+  [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "release asset name is invalid"
+  download_to_file "${destination}" \
+    "https://github.com/${REPOSITORY}/releases/download/${version}/${name}" \
+    "https://github.com/${REPOSITORY}/releases/download/${version}/${name}?download=1"
+}
+
 canonical_version() {
   [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
 }
@@ -65,7 +108,7 @@ bootstrap_latest_installer() (
     latest="${PROBE_404_VERSION}"
     canonical_version "${latest}" || die "explicit target version must use canonical vX.Y.Z form"
   else
-    effective="$(curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+    effective="$(curl_with_retry \
       --output /dev/null --write-out '%{url_effective}' "https://github.com/${REPOSITORY}/releases/latest")" \
       || die "could not resolve the latest stable release"
     latest="${effective##*/}"
@@ -77,8 +120,12 @@ bootstrap_latest_installer() (
   temporary_directory="$(mktemp -d)"
   trap 'rm -rf -- "${temporary_directory}"' EXIT
   installer="${temporary_directory}/install.sh"
-  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output "${installer}" "${release_base}/install.sh"
-  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output "${temporary_directory}/SHA256SUMS" "${release_base}/SHA256SUMS"
+  download_to_file "${installer}" \
+    "${release_base}/install.sh" \
+    "https://raw.githubusercontent.com/${REPOSITORY}/${latest}/install.sh" \
+    || die "could not download the ${latest} installer from official entries"
+  download_release_asset "${latest}" SHA256SUMS "${temporary_directory}/SHA256SUMS" \
+    || die "could not download the ${latest} checksum manifest from official entries"
   checksum_line="$(grep -E '^[[:xdigit:]]{64}  install\.sh$' "${temporary_directory}/SHA256SUMS" || true)"
   [[ "$(printf '%s\n' "${checksum_line}" | grep -c .)" -eq 1 ]] || die "latest release does not authenticate install.sh exactly once"
   (cd "${temporary_directory}" && printf '%s\n' "${checksum_line}" | sha256sum --check --strict -) \
@@ -100,11 +147,11 @@ Usage:
   404-probe-install setup-security  enable V0.9 local security audit on an existing Agent
   404-probe-install selector-order <absolute-sing-box-config.json>
   404-probe-install enroll <name>   create one Agent enrollment token
-  404-probe-install uninstall <server|agent>
+  404-probe-install uninstall <server|agent> [--confirm-delete-data]
 
-Agent uninstall removes its service unit, binary, private environment, and
-epoch/state files. Server uninstall preserves its configuration and database.
-Systemd journal history is preserved for both roles.
+Uninstall permanently removes the selected role's services, binaries,
+configuration, credentials, database/state, updater, and managed backups.
+Systemd journal history and unrecognized files are preserved.
 EOF
 }
 
@@ -267,11 +314,10 @@ prepare_directories() {
 download_binary() (
   local role="$1"
   local destination="$2"
-  local architecture version asset release_base temporary_directory checksum_line
+  local architecture version asset temporary_directory checksum_line
   architecture="$(detect_architecture)"
   version="$(target_version)"
   asset="404-probe-${role}-linux-${architecture}"
-  release_base="https://github.com/${REPOSITORY}/releases/download/${version}"
   temporary_directory="$(mktemp -d)"
   trap 'rm -rf -- "${temporary_directory}"' EXIT
 
@@ -282,10 +328,10 @@ download_binary() (
     cp -- "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${asset}" "${temporary_directory}/${asset}"
     cp -- "${PROBE_404_LOCAL_ASSET_DIRECTORY}/SHA256SUMS" "${temporary_directory}/SHA256SUMS"
   else
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-      --output "${temporary_directory}/${asset}" "${release_base}/${asset}"
-    curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-      --output "${temporary_directory}/SHA256SUMS" "${release_base}/SHA256SUMS"
+    download_release_asset "${version}" "${asset}" "${temporary_directory}/${asset}" \
+      || die "could not download ${asset} (${version}) from official entries"
+    download_release_asset "${version}" SHA256SUMS "${temporary_directory}/SHA256SUMS" \
+      || die "could not download SHA256SUMS (${version}) from official entries"
   fi
 
   checksum_line="$(grep -E "^[[:xdigit:]]{64}  ${asset}$" "${temporary_directory}/SHA256SUMS" || true)"
@@ -312,6 +358,8 @@ readonly SECURITY_STATE_DIRECTORY="/var/lib/404-probe-security"
 readonly SECURITY_EXPORT_DIRECTORY="${SECURITY_STATE_DIRECTORY}/export"
 readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.service"
 readonly SECURITY_TIMER_UNIT="/etc/systemd/system/404-probe-security-collect.timer"
+readonly SERVER_UPGRADE_DIRECTORY="/var/lib/404-probe-upgrade"
+readonly SERVER_UPGRADE_LOCK_DIRECTORY="/run/404-probe-upgrade"
 readonly CONFIG_DIRECTORY="/etc/404-probe"
 readonly STATE_DIRECTORY="/var/lib/404-probe"
 readonly SELECTOR_ORDER_FILE="${CONFIG_DIRECTORY}/selector-order.json"
@@ -320,11 +368,29 @@ readonly ENROLLMENT_PREFIX="404p1_"
 
 die() { printf '404-probe helper: %s\n' "$*" >&2; exit 1; }
 usage() {
-  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent>\n'
+  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data]\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
   command -v systemctl >/dev/null 2>&1 || die "systemd is required"
+}
+validate_removable_service_user() {
+  local passwd_entry shadow_entry group_entry name _ uid gid home shell password group_name members other_primary_users
+  id "${SERVICE_USER}" >/dev/null 2>&1 || return
+  passwd_entry="$(getent passwd "${SERVICE_USER}" || true)"
+  shadow_entry="$(getent shadow "${SERVICE_USER}" || true)"
+  [[ -n "${passwd_entry}" && -n "${shadow_entry}" ]] || die "cannot safely verify the service account"
+  IFS=: read -r name _ uid gid _ home shell <<<"${passwd_entry}"
+  IFS=: read -r _ password _ <<<"${shadow_entry}"
+  [[ "${name}" == "${SERVICE_USER}" && "${home}" == "${STATE_DIRECTORY}" ]] \
+    || die "service account identity is not owned by this installation"
+  case "${shell##*/}" in nologin|false) ;; *) die "service account has an interactive shell" ;; esac
+  [[ "${password}" == '!'* || "${password}" == '*'* ]] || die "service account password is not locked"
+  group_entry="$(getent group "${gid}" || true)"
+  IFS=: read -r group_name _ _ members <<<"${group_entry}"
+  [[ "${group_name}" == "${SERVICE_USER}" && -z "${members}" ]] || die "service group is shared or unexpected"
+  other_primary_users="$(getent passwd | awk -F: -v gid="${gid}" -v user="${SERVICE_USER}" '$4 == gid && $1 != user { print $1 }')"
+  [[ -z "${other_primary_users}" ]] || die "service group is used by another account"
 }
 enroll() {
   [[ $# -eq 1 ]] || die "usage: 404-probe-install enroll <agent-name>"
@@ -479,10 +545,29 @@ selector_order() {
   fi
   printf 'Selector order metadata refreshed. The Agent will use it on its next discovery interval.\n'
 }
+confirm_uninstall() {
+  local role="$1" confirmation="${2:-}" typed
+  [[ -z "${confirmation}" || "${confirmation}" == "--confirm-delete-data" ]] \
+    || die "unknown uninstall confirmation option: ${confirmation}"
+  if [[ "${confirmation}" == "--confirm-delete-data" ]]; then return; fi
+  [[ -r /dev/tty && -w /dev/tty ]] \
+    || die "uninstall deletes all ${role} data; rerun with --confirm-delete-data for non-interactive use"
+  printf 'This permanently deletes all 404-probe %s data. Type DELETE 404-probe %s: ' "${role}" "${role}" >/dev/tty
+  IFS= read -r typed </dev/tty
+  [[ "${typed}" == "DELETE 404-probe ${role}" ]] || die "uninstall confirmation did not match; nothing was removed"
+}
+remove_owned_tree() {
+  local path="$1"
+  [[ ! -L "${path}" ]] || die "refusing to remove symlinked managed directory: ${path}"
+  [[ ! -e "${path}" || -d "${path}" ]] || die "managed directory path is not a directory: ${path}"
+  [[ ! -d "${path}" ]] || rm -rf -- "${path}"
+}
 uninstall() {
-  [[ $# -eq 1 && ( "$1" == "server" || "$1" == "agent" ) ]] \
-    || die "usage: 404-probe-install uninstall <server|agent>"
+  [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
+    || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
   local role="$1" unit="404-probe-$1.service" unit_path binary_path
+  confirm_uninstall "${role}" "${2:-}"
+  validate_removable_service_user
   if [[ "${role}" == "server" ]]; then
     unit_path="${SERVER_UNIT}"; binary_path="${SERVER_BINARY}"
   else
@@ -510,17 +595,29 @@ uninstall() {
 	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
 	  "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
-	rm -rf -- "${AGENT_UPDATER_STATE}"
-	rm -rf -- "${SECURITY_STATE_DIRECTORY}"
-  fi
-  systemctl daemon-reload
-  printf 'Uninstalled %s. Re-running this command is safe.\n' "${role}"
-  if [[ "${role}" == "agent" ]]; then
-    printf 'Removed the Agent unit, binary, private environment, and epoch/state files.\n'
+	remove_owned_tree "${AGENT_UPDATER_STATE}"
+	remove_owned_tree "${SECURITY_STATE_DIRECTORY}"
+	remove_owned_tree /run/404-probe
   else
-    printf 'Preserved Server configuration, credentials, and database.\n'
+    rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
+      "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
+      /usr/local/bin/.404-probe-server.candidate /usr/local/bin/.404-probe-server.previous \
+      /usr/local/sbin/404-probe-install.candidate
+    remove_owned_tree "${SERVER_UPGRADE_DIRECTORY}"
+    remove_owned_tree "${SERVER_UPGRADE_LOCK_DIRECTORY}"
   fi
-  printf 'Preserved systemd journal history, service user, and this installer helper.\n'
+  rmdir --ignore-fail-on-non-empty "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" 2>/dev/null || true
+  systemctl daemon-reload
+  if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" && ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" \
+    && ! -d "${AGENT_UPDATER_STATE}" && ! -d "${SECURITY_STATE_DIRECTORY}" ]]; then
+    if id "${SERVICE_USER}" >/dev/null 2>&1; then
+      userdel "${SERVICE_USER}" || die "managed files were removed but the service account could not be removed"
+    fi
+    getent group "${SERVICE_USER}" >/dev/null 2>&1 && groupdel "${SERVICE_USER}" || true
+  fi
+  rm -f -- /usr/local/sbin/404-probe-install
+  printf 'Uninstalled %s and removed its managed data. Re-running the official version-pinned uninstall is safe.\n' "${role}"
+  printf 'Preserved systemd journal history and any unrecognized files.\n'
 }
 setup_security() {
   [[ $# -eq 0 ]] || die "usage: 404-probe-install setup-security"
@@ -690,9 +787,31 @@ wait_for_server_readiness() {
   die "Server application readiness timed out (expected HTTP 401)"
 }
 
+server_residue_exists() {
+  local path
+  for path in "${SERVER_UNIT}" "${SERVER_BINARY}" "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
+    "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
+    "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"; do
+    [[ ! -e "${path}" && ! -L "${path}" ]] || return 0
+  done
+  return 1
+}
+
+agent_residue_exists() {
+  local path
+  for path in "${AGENT_UNIT}" "${AGENT_BINARY}" "${CONFIG_DIRECTORY}/agent.env" "${STATE_DIRECTORY}/agent.epoch" \
+    "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${SELECTOR_ORDER_FILE}" \
+    "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_STATE}" "${AGENT_UPDATER_SOCKET}" "${SECURITY_SERVICE_UNIT}" \
+    "${SECURITY_TIMER_UNIT}" "${SECURITY_STATE_DIRECTORY}" /usr/local/bin/.404-probe-agent.bootstrap \
+    /usr/local/bin/.404-probe-agent.candidate /usr/local/bin/.404-probe-agent.previous; do
+    [[ ! -e "${path}" && ! -L "${path}" ]] || return 0
+  done
+  return 1
+}
+
 install_server() {
-  [[ ! -e "${AGENT_UNIT}" && ! -e "${CONFIG_DIRECTORY}/agent.env" ]] \
-    || die "an Agent installation already exists; Server and Agent roles are kept on separate hosts"
+  ! agent_residue_exists \
+    || die "an Agent installation or stale Agent residue exists; run the current official uninstall agent command before switching roles"
   [[ ! -e "${SERVER_UNIT}" ]] || die "Server installation already exists; no files were changed"
   [[ ! -e "${CONFIG_DIRECTORY}/server.env" && ! -e "${CONFIG_DIRECTORY}/control.token" && ! -e "${CONFIG_DIRECTORY}/web-password.hash" ]] \
     || die "existing Server configuration was found; refusing to overwrite it"
@@ -1242,8 +1361,8 @@ bootstrap_existing_agent() (
 )
 
 install_agent() {
-  [[ ! -e "${SERVER_UNIT}" && ! -e "${CONFIG_DIRECTORY}/server.env" ]] \
-    || die "a Server installation already exists; Server and Agent roles are kept on separate hosts"
+  ! server_residue_exists \
+    || die "a Server installation or stale Server residue exists; run the current official uninstall server command before switching roles"
   if [[ -e "${AGENT_UNIT}" || -e "${CONFIG_DIRECTORY}/agent.env" || -e "${AGENT_BINARY}" ]]; then
     [[ -e "${AGENT_UNIT}" && -e "${CONFIG_DIRECTORY}/agent.env" && -e "${AGENT_BINARY}" ]] \
       || die "conflicting partial Agent installation found; no files were changed"
@@ -1386,13 +1505,34 @@ enroll_agent() {
   unset enrollment
 }
 
+confirm_uninstall() {
+  local role="$1" confirmation="${2:-}" typed
+  [[ -z "${confirmation}" || "${confirmation}" == "--confirm-delete-data" ]] \
+    || die "unknown uninstall confirmation option: ${confirmation}"
+  if [[ "${confirmation}" == "--confirm-delete-data" ]]; then return; fi
+  [[ -r /dev/tty && -w /dev/tty ]] \
+    || die "uninstall deletes all ${role} data; rerun with --confirm-delete-data for non-interactive use"
+  printf 'This permanently deletes all 404-probe %s data. Type DELETE 404-probe %s: ' "${role}" "${role}" >/dev/tty
+  IFS= read -r typed </dev/tty
+  [[ "${typed}" == "DELETE 404-probe ${role}" ]] || die "uninstall confirmation did not match; nothing was removed"
+}
+
+remove_owned_tree() {
+  local path="$1"
+  [[ ! -L "${path}" ]] || die "refusing to remove symlinked managed directory: ${path}"
+  [[ ! -e "${path}" || -d "${path}" ]] || die "managed directory path is not a directory: ${path}"
+  [[ ! -d "${path}" ]] || rm -rf -- "${path}"
+}
+
 uninstall_role() {
   require_root_linux_systemd
-  [[ $# -eq 1 && ( "$1" == "server" || "$1" == "agent" ) ]] \
-    || die "usage: 404-probe-install uninstall <server|agent>"
+  [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
+    || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
   local role="$1"
   local unit="404-probe-${role}.service"
   local unit_path binary_path
+  confirm_uninstall "${role}" "${2:-}"
+  id "${SERVICE_USER}" >/dev/null 2>&1 && validate_service_user
   if [[ "${role}" == "server" ]]; then
     unit_path="${SERVER_UNIT}"
     binary_path="${SERVER_BINARY}"
@@ -1424,17 +1564,31 @@ uninstall_role() {
       "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
       "/usr/local/bin/.404-probe-agent.bootstrap" "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
-    rm -rf -- "${AGENT_UPDATER_STATE}"
-    rm -rf -- "${SECURITY_STATE_DIRECTORY}"
-  fi
-  systemctl daemon-reload
-  note "Uninstalled ${role}. Re-running this command is safe."
-  if [[ "${role}" == "agent" ]]; then
-    printf 'Removed the Agent unit, binary, private environment, and epoch/state files.\n'
+    remove_owned_tree "${AGENT_UPDATER_STATE}"
+    remove_owned_tree "${SECURITY_STATE_DIRECTORY}"
+    remove_owned_tree /run/404-probe
+    rm -f -- "${SELECTOR_ORDER_FILE}"
   else
-    printf 'Preserved Server configuration, credentials, and database.\n'
+    rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
+      "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
+      "${SERVER_UPGRADE_CANDIDATE}" /usr/local/bin/.404-probe-server.previous \
+      "${SERVER_UPGRADE_HELPER_CANDIDATE}"
+    remove_owned_tree "${SERVER_UPGRADE_DIRECTORY}"
+    remove_owned_tree "${SERVER_UPGRADE_LOCK_DIRECTORY}"
   fi
-  printf 'Preserved systemd journal history, service user, and installer helper.\n'
+  rmdir --ignore-fail-on-non-empty "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" 2>/dev/null || true
+  systemctl daemon-reload
+  if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" && ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" \
+    && ! -d "${AGENT_UPDATER_STATE}" && ! -d "${SECURITY_STATE_DIRECTORY}" ]]; then
+    if id "${SERVICE_USER}" >/dev/null 2>&1; then
+      validate_service_user
+      userdel "${SERVICE_USER}" || die "managed files were removed but the service account could not be removed"
+    fi
+    getent group "${SERVICE_USER}" >/dev/null 2>&1 && groupdel "${SERVICE_USER}" || true
+  fi
+  rm -f -- "${INSTALL_HELPER}"
+  note "Uninstalled ${role} and removed its managed data. Re-running the official version-pinned uninstall is safe."
+  printf 'Preserved systemd journal history and any unrecognized files.\n'
 }
 
 json_string_field() {
@@ -1455,10 +1609,9 @@ compare_versions() {
 }
 
 download_server_upgrade_candidate() (
-  local target="$1" architecture asset release_base temporary_directory checksum_line version_json candidate_version candidate_commit release_json release_commit
+  local target="$1" architecture asset temporary_directory checksum_line version_json candidate_version candidate_commit release_json release_commit
   architecture="$(detect_architecture)"
   asset="404-probe-server-linux-${architecture}"
-  release_base="https://github.com/${REPOSITORY}/releases/download/${target}"
   temporary_directory="$(mktemp -d)"
   trap 'rm -rf -- "${temporary_directory}"' EXIT
   if [[ -n "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" ]]; then
@@ -1469,8 +1622,8 @@ download_server_upgrade_candidate() (
     done
   else
     for name in "${asset}" SHA256SUMS RELEASE-METADATA.json; do
-      curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-        --output "${temporary_directory}/${name}" "${release_base}/${name}"
+      download_release_asset "${target}" "${name}" "${temporary_directory}/${name}" \
+        || die "could not download ${name} (${target}) from official entries"
     done
   fi
   checksum_line="$(grep -E "^[[:xdigit:]]{64}  ${asset}$" "${temporary_directory}/SHA256SUMS" || true)"
@@ -1926,11 +2079,11 @@ EOF
 
 install_or_upgrade() {
   require_root_linux_systemd
-  if [[ -e "${SERVER_UNIT}" || -e "${SERVER_BINARY}" || -e "${SERVER_DATABASE}" || -e "${CONFIG_DIRECTORY}/server.env" ]]; then
+  if server_residue_exists; then
     upgrade_existing_server
     return
   fi
-  if [[ -e "${AGENT_UNIT}" || -e "${AGENT_BINARY}" || -e "${CONFIG_DIRECTORY}/agent.env" ]]; then
+  if agent_residue_exists; then
     [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" \
       && -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
       || die "existing Agent installation is incomplete or unsupported; no files were changed"
