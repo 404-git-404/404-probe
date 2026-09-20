@@ -26,6 +26,8 @@ func TestMigratesV4DatabaseWithAgentsEnabledByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`DROP TABLE agent_traffic_reset_requests`,
+		`DELETE FROM schema_migrations WHERE version=16`,
 		`DROP TABLE agent_traffic_baselines`,
 		`DELETE FROM schema_migrations WHERE version=15`,
 		`ALTER TABLE agent_state DROP COLUMN country_code`,

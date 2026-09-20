@@ -205,8 +205,7 @@ func (r *Runner) runJobWorker(ctx context.Context) {
 	}
 
 	client := jobHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: r.client}
-	ticker := time.NewTicker(r.config.JobInterval)
-	defer ticker.Stop()
+	emptyCycles := 0
 	for {
 		cycleCapabilities := append([]protocol.ProbeType(nil), baseCapabilities...)
 		if r.clashIntegrationEnabled() && r.clashControlReady.Load() && !r.interactiveControlSupported.Load() {
@@ -215,35 +214,58 @@ func (r *Runner) runJobWorker(ctx context.Context) {
 		if r.googleStatusAvailable && r.googleStatusSupported.Load() {
 			cycleCapabilities = append(cycleCapabilities, protocol.ProbeTypeGoogleStatus)
 		}
+		claimed := false
 		if len(cycleCapabilities) != 0 {
-			r.runJobCycle(ctx, client, protocol.ClaimRequest{ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, SupportedProbeTypes: cycleCapabilities})
+			claimed = r.runJobCycle(ctx, client, protocol.ClaimRequest{ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, SupportedProbeTypes: cycleCapabilities})
 		}
+		delay := r.config.JobInterval
+		if claimed {
+			emptyCycles = 0
+		} else {
+			delay = idlePollDelay(r.config.JobInterval, emptyCycles)
+			emptyCycles++
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			stopTimer(timer)
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
 
-func (r *Runner) runJobCycle(ctx context.Context, client jobHTTPClient, request protocol.ClaimRequest) {
+func (r *Runner) runJobCycle(ctx context.Context, client jobHTTPClient, request protocol.ClaimRequest) bool {
 	job, err := client.claim(ctx, request)
 	if err != nil {
 		if ctx.Err() == nil {
 			r.logger.Warn("claim job failed; will retry", "error", err)
 		}
-		return
+		return false
 	}
 	if job == nil {
-		return
+		return false
 	}
 	if job.ProbeType == protocol.ProbeTypeSelectorSwitch {
 		r.runSelectorJob(ctx, client, *job)
-		return
+		return true
 	}
 
 	result := r.executeJob(ctx, *job)
 	r.submitJobResult(ctx, client, job.JobID, result)
+	return true
+}
+
+func idlePollDelay(interval time.Duration, emptyCycles int) time.Duration {
+	if emptyCycles <= 0 {
+		return interval
+	}
+	delay := interval * time.Duration(emptyCycles+1)
+	maximum := 3 * interval
+	if delay > maximum {
+		return maximum
+	}
+	return delay
 }
 
 // runSelectorJob covers the legacy-to-interactive lane transition. The Server

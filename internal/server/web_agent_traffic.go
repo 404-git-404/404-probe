@@ -43,21 +43,12 @@ func (a *App) handleResetWebAgentTraffic(w http.ResponseWriter, r *http.Request)
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid traffic reset request")
 		return
 	}
-	record, err := a.store.GetAgentSnapshot(r.Context(), agentID, a.now(), a.offlineTimeout)
+	totals, err := a.store.ResetTrafficTotals(r.Context(), agentID, request.RequestID, a.now(), a.offlineTimeout)
 	if err != nil {
-		if errors.Is(err, storage.ErrAgentNotFound) {
-			writeJobError(w, http.StatusNotFound, "agent_not_found", "agent not found")
+		if errors.Is(err, storage.ErrTrafficSampleUnavailable) {
+			writeJobError(w, http.StatusConflict, "fresh_sample_required", "agent must be online with a fresh traffic sample")
 			return
 		}
-		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not reset traffic totals")
-		return
-	}
-	if !record.Online || record.State == nil || record.StateStale {
-		writeJobError(w, http.StatusConflict, "fresh_sample_required", "agent must be online with a fresh traffic sample")
-		return
-	}
-	totals, err := a.store.ResetTrafficTotals(r.Context(), agentID, request.RequestID, a.now())
-	if err != nil {
 		a.logger.Error("reset traffic totals", "agent_id", agentID, "error", err)
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not reset traffic totals")
 		return

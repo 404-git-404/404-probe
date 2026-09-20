@@ -15,6 +15,8 @@ import (
 	"404-probe/internal/protocol"
 )
 
+const outboundHeartbeatInterval = 5 * time.Minute
+
 func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 	local := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath}
 	var lastStatus protocol.OutboundStatus
@@ -48,12 +50,13 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 			snapshot.Status = status
 		}
 		var publishErr error
-		if lastPublished == nil || !reflect.DeepEqual(*lastPublished, snapshot) || time.Since(lastPublishedAt) >= 5*time.Minute {
+		now := time.Now()
+		if lastPublished == nil || !reflect.DeepEqual(*lastPublished, snapshot) || now.Sub(lastPublishedAt) >= outboundHeartbeatInterval {
 			publishErr = r.postOutboundSnapshot(ctx, snapshot)
 			if publishErr == nil {
 				copy := snapshot
 				lastPublished = &copy
-				lastPublishedAt = time.Now()
+				lastPublishedAt = now
 			}
 		}
 		r.outboundMu.Unlock()
@@ -78,6 +81,7 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 		} else {
 			consecutiveFailures = 0
 		}
+		delay = capOutboundDelayAtHeartbeat(now, lastPublishedAt, delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -89,6 +93,20 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+func capOutboundDelayAtHeartbeat(now, lastPublishedAt time.Time, delay time.Duration) time.Duration {
+	if lastPublishedAt.IsZero() {
+		return delay
+	}
+	remaining := lastPublishedAt.Add(outboundHeartbeatInterval).Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	if delay > remaining {
+		return remaining
+	}
+	return delay
 }
 
 func jitterOutboundDelay(delay time.Duration) time.Duration {

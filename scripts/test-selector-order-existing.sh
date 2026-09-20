@@ -7,6 +7,9 @@ set -Eeuo pipefail
 
 source_installer="$1"
 source_agent="$2"
+source_version="$("${source_agent}" version)"
+[[ "${source_version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+  || { printf 'Agent returned a non-canonical version: %s\n' "${source_version}" >&2; exit 1; }
 fixture="$(mktemp -d /tmp/404-probe-selector-existing.XXXXXX)"
 trap 'rm -rf -- "${fixture}"' EXIT
 chmod 0755 "${fixture}"
@@ -39,12 +42,17 @@ printf '%s\n' \
   "ExecStart=${agent} run --config ${config_directory}/agent.env" >"${unit}"
 chmod 0644 "${unit}"
 install -o root -g 404-probe -m 0640 /dev/null "${config_directory}/agent.env"
-printf '%s\n' '{"outbounds":[{"type":"selector","tag":"alpha"},{"type":"direct","tag":"ignored"},{"type":"selector","tag":"beta"}]}' >"${sing_box_config}"
+unit_before="$(sha256sum "${unit}" | awk '{print $1}')"
+environment_before="$(sha256sum "${config_directory}/agent.env" | awk '{print $1}')"
+! grep -Fq PROBE_404_SELECTOR_ORDER "${config_directory}/agent.env"
+printf '%s\n' '{"outbounds":[{"type":"selector","tag":"Spotify"},{"type":"selector","tag":"Bahamut"},{"type":"selector","tag":"YouTube"},{"type":"selector","tag":"Apple"},{"type":"selector","tag":"Microsoft"},{"type":"selector","tag":"Google"},{"type":"direct","tag":"ignored"},{"type":"selector","tag":"漏网"}]}' >"${sing_box_config}"
 chmod 0600 "${sing_box_config}"
 
-PROBE_404_INSTALLER_BOOTSTRAPPED=1 PROBE_404_VERSION=v0.9.2 "${installer}" selector-order "${sing_box_config}"
-[[ "$(<"${metadata}")" == '{"selectors":["alpha","beta"]}' ]]
+PROBE_404_INSTALLER_BOOTSTRAPPED=1 PROBE_404_VERSION="${source_version}" "${installer}" selector-order "${sing_box_config}"
+[[ "$(<"${metadata}")" == '{"selectors":["Spotify","Bahamut","YouTube","Apple","Microsoft","Google","漏网"]}' ]]
 [[ "$(stat -c '%U:%G:%a' "${metadata}")" == 'root:404-probe:640' ]]
+[[ "$(sha256sum "${unit}" | awk '{print $1}')" == "${unit_before}" ]]
+[[ "$(sha256sum "${config_directory}/agent.env" | awk '{print $1}')" == "${environment_before}" ]]
 runuser -u 404-probe -- test -r "${metadata}"
 ! runuser -u 404-probe -- test -w "${metadata}"
 ! runuser -u 404-probe -- test -w "${config_directory}"
@@ -61,7 +69,7 @@ install -d -m 0755 "${fixture}/fail-bin"
 printf '%s\n' '#!/bin/sh' 'exit 99' >"${fixture}/fail-bin/bash"
 chmod 0755 "${fixture}/fail-bin/bash"
 
-if PATH="${fixture}/fail-bin:${PATH}" PROBE_404_INSTALLER_BOOTSTRAPPED=1 PROBE_404_VERSION=v0.9.2 /bin/bash "${installer}" selector-order "${sing_box_config}" >/dev/null 2>&1; then
+if PATH="${fixture}/fail-bin:${PATH}" PROBE_404_INSTALLER_BOOTSTRAPPED=1 PROBE_404_VERSION="${source_version}" /bin/bash "${installer}" selector-order "${sing_box_config}" >/dev/null 2>&1; then
   printf 'failure fixture unexpectedly succeeded\n' >&2
   exit 1
 fi

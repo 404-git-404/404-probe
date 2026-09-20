@@ -66,30 +66,58 @@ curl_with_retry() {
 # file before use. Alternate URLs are fixed official entry points for the same
 # versioned asset; they never weaken the release identity checks.
 download_to_file() (
-  local destination="$1" url partial
+  local destination="$1" url partial deadline remaining
+  local -a extra_args=()
   shift
   partial="${destination}.partial"
+	deadline="${DOWNLOAD_DEADLINE_SECONDS:-$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))}"
+	[[ -z "${DOWNLOAD_ACCEPT_HEADER:-}" ]] || extra_args+=(--header "Accept: ${DOWNLOAD_ACCEPT_HEADER}")
   [[ ! -e "${partial}" || ( -f "${partial}" && ! -L "${partial}" ) ]] \
     || die "unsafe partial download path: ${partial}"
   for url in "$@"; do
-    if curl_with_retry --continue-at - --output "${partial}" "${url}"; then
+	remaining=$((deadline - SECONDS))
+	(( remaining > 0 )) || break
+    if curl_with_retry --retry-max-time "${remaining}" "${extra_args[@]}" --continue-at - --output "${partial}" "${url}"; then
       [[ -f "${partial}" && ! -L "${partial}" ]] || die "download did not create a regular file"
       mv -f -- "${partial}" "${destination}"
       return 0
     fi
     note "Download entry failed; trying the next official entry for the same asset."
   done
-  rm -f -- "${partial}"
+	[[ "${DOWNLOAD_PRESERVE_PARTIAL:-0}" == 1 ]] || rm -f -- "${partial}"
   return 1
 )
 
 download_release_asset() {
-  local version="$1" name="$2" destination="$3"
+  local version="$1" name="$2" destination="$3" api_document api_url tag deadline remaining
   canonical_version "${version}" || die "release asset version must use canonical vX.Y.Z form"
   [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "release asset name is invalid"
-  download_to_file "${destination}" \
-    "https://github.com/${REPOSITORY}/releases/download/${version}/${name}" \
-    "https://github.com/${REPOSITORY}/releases/download/${version}/${name}?download=1"
+	deadline=$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))
+	DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_PRESERVE_PARTIAL=1 download_to_file "${destination}" \
+	  "https://github.com/${REPOSITORY}/releases/download/${version}/${name}" && return 0
+	api_document="${destination}.release-api.json"
+	remaining=$((deadline - SECONDS))
+	(( remaining > 0 )) || { rm -f -- "${destination}.partial"; return 1; }
+	curl_with_retry --retry-max-time "${remaining}" --header 'Accept: application/vnd.github+json' \
+	  --output "${api_document}" "https://api.github.com/repos/${REPOSITORY}/releases/tags/${version}" \
+	  || { rm -f -- "${destination}.partial" "${api_document}"; return 1; }
+	tag="$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' "${api_document}")"
+	[[ "${tag}" == "${version}" ]] || { rm -f -- "${destination}.partial" "${api_document}"; return 1; }
+	api_url="$(awk -v wanted="${name}" '
+	  /^[[:space:]]*"url":[[:space:]]*"https:\/\/api\.github\.com\/repos\/404-git-404\/404-probe\/releases\/assets\/[0-9]+"/ {
+	    candidate=$0; sub(/^[^"]*"url":[[:space:]]*"/, "", candidate); sub(/".*/, "", candidate)
+	  }
+	  /^[[:space:]]*"name":[[:space:]]*"/ {
+	    asset=$0; sub(/^[^"]*"name":[[:space:]]*"/, "", asset); sub(/".*/, "", asset)
+	    if (asset == wanted && candidate != "") { count++; result=candidate }
+	  }
+	  END { if (count == 1) print result }
+	' "${api_document}")"
+	rm -f -- "${api_document}"
+	[[ "${api_url}" =~ ^https://api\.github\.com/repos/404-git-404/404-probe/releases/assets/[0-9]+$ ]] \
+	  || { rm -f -- "${destination}.partial"; return 1; }
+	DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_ACCEPT_HEADER='application/octet-stream' \
+	  download_to_file "${destination}" "${api_url}"
 }
 
 canonical_version() {
@@ -134,7 +162,8 @@ bootstrap_latest_installer() (
     die "latest release installer contains carriage returns"
   fi
   bash -n "${installer}" || die "latest release installer failed syntax validation"
-  PROBE_404_INSTALLER_BOOTSTRAPPED=1 PROBE_404_VERSION="${latest}" bash "${installer}" "$@"
+  PROBE_404_INSTALLER_BOOTSTRAPPED=1 PROBE_404_BOOTSTRAP_SHA256SUMS="${temporary_directory}/SHA256SUMS" \
+    PROBE_404_VERSION="${latest}" bash "${installer}" "$@"
   status=$?
   exit "${status}"
 )
@@ -330,8 +359,14 @@ download_binary() (
   else
     download_release_asset "${version}" "${asset}" "${temporary_directory}/${asset}" \
       || die "could not download ${asset} (${version}) from official entries"
-    download_release_asset "${version}" SHA256SUMS "${temporary_directory}/SHA256SUMS" \
-      || die "could not download SHA256SUMS (${version}) from official entries"
+		if [[ "${PROBE_404_INSTALLER_BOOTSTRAPPED:-}" == 1 && -n "${PROBE_404_BOOTSTRAP_SHA256SUMS:-}" ]]; then
+		  [[ -f "${PROBE_404_BOOTSTRAP_SHA256SUMS}" && ! -L "${PROBE_404_BOOTSTRAP_SHA256SUMS}" ]] \
+		    || die "verified bootstrap checksum manifest is unavailable"
+		  cp -- "${PROBE_404_BOOTSTRAP_SHA256SUMS}" "${temporary_directory}/SHA256SUMS"
+		else
+		  download_release_asset "${version}" SHA256SUMS "${temporary_directory}/SHA256SUMS" \
+		    || die "could not download SHA256SUMS (${version}) from official entries"
+		fi
   fi
 
   checksum_line="$(grep -E "^[[:xdigit:]]{64}  ${asset}$" "${temporary_directory}/SHA256SUMS" || true)"
@@ -558,9 +593,34 @@ confirm_uninstall() {
 }
 remove_owned_tree() {
   local path="$1"
-  [[ ! -L "${path}" ]] || die "refusing to remove symlinked managed directory: ${path}"
-  [[ ! -e "${path}" || -d "${path}" ]] || die "managed directory path is not a directory: ${path}"
+	validate_owned_tree "${path}"
   [[ ! -d "${path}" ]] || rm -rf -- "${path}"
+}
+validate_owned_tree() {
+  local path="$1" component="" part owner
+  local -a parts=()
+  [[ "${path}" == /* && "${path}" != "/" ]] || die "managed directory path is unsafe: ${path}"
+  IFS=/ read -r -a parts <<<"${path#/}"
+  for part in "${parts[@]}"; do
+    [[ -n "${part}" && "${part}" != "." && "${part}" != ".." ]] || die "managed directory path is unsafe: ${path}"
+    component="${component}/${part}"
+    [[ ! -L "${component}" ]] || die "refusing to traverse symlinked managed path: ${component}"
+  done
+  [[ ! -e "${path}" || -d "${path}" ]] || die "managed directory path is not a directory: ${path}"
+  if [[ -d "${path}" ]]; then
+    mountpoint -q -- "${path}" && die "refusing to remove mounted managed directory: ${path}"
+    owner="$(stat -c '%U' -- "${path}")"
+    [[ "${owner}" == root || "${owner}" == "${SERVICE_USER}" ]] || die "managed directory has unexpected owner: ${path}"
+  fi
+}
+preflight_uninstall_trees() {
+  local role="$1" path
+	for path in "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}"; do validate_owned_tree "${path}"; done
+  if [[ "${role}" == agent ]]; then
+    for path in "${AGENT_UPDATER_STATE}" "${SECURITY_STATE_DIRECTORY}" /run/404-probe; do validate_owned_tree "${path}"; done
+  else
+    for path in "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_LOCK_DIRECTORY}"; do validate_owned_tree "${path}"; done
+  fi
 }
 uninstall() {
   [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
@@ -568,6 +628,7 @@ uninstall() {
   local role="$1" unit="404-probe-$1.service" unit_path binary_path
   confirm_uninstall "${role}" "${2:-}"
   validate_removable_service_user
+	preflight_uninstall_trees "${role}"
   if [[ "${role}" == "server" ]]; then
     unit_path="${SERVER_UNIT}"; binary_path="${SERVER_BINARY}"
   else
@@ -594,7 +655,7 @@ uninstall() {
       "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${SELECTOR_ORDER_FILE}" \
 	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
-	  "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
+	  "/usr/local/bin/.404-probe-agent.bootstrap" "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
 	remove_owned_tree "${AGENT_UPDATER_STATE}"
 	remove_owned_tree "${SECURITY_STATE_DIRECTORY}"
 	remove_owned_tree /run/404-probe
@@ -615,7 +676,9 @@ uninstall() {
     fi
     getent group "${SERVICE_USER}" >/dev/null 2>&1 && groupdel "${SERVICE_USER}" || true
   fi
-  rm -f -- /usr/local/sbin/404-probe-install
+	if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]]; then
+	  rm -f -- /usr/local/sbin/404-probe-install
+	fi
   printf 'Uninstalled %s and removed its managed data. Re-running the official version-pinned uninstall is safe.\n' "${role}"
   printf 'Preserved systemd journal history and any unrecognized files.\n'
 }
@@ -1519,9 +1582,34 @@ confirm_uninstall() {
 
 remove_owned_tree() {
   local path="$1"
-  [[ ! -L "${path}" ]] || die "refusing to remove symlinked managed directory: ${path}"
-  [[ ! -e "${path}" || -d "${path}" ]] || die "managed directory path is not a directory: ${path}"
+  validate_owned_tree "${path}"
   [[ ! -d "${path}" ]] || rm -rf -- "${path}"
+}
+validate_owned_tree() {
+  local path="$1" component="" part owner
+  local -a parts=()
+  [[ "${path}" == /* && "${path}" != "/" ]] || die "managed directory path is unsafe: ${path}"
+  IFS=/ read -r -a parts <<<"${path#/}"
+  for part in "${parts[@]}"; do
+    [[ -n "${part}" && "${part}" != "." && "${part}" != ".." ]] || die "managed directory path is unsafe: ${path}"
+    component="${component}/${part}"
+    [[ ! -L "${component}" ]] || die "refusing to traverse symlinked managed path: ${component}"
+  done
+  [[ ! -e "${path}" || -d "${path}" ]] || die "managed directory path is not a directory: ${path}"
+  if [[ -d "${path}" ]]; then
+    mountpoint -q -- "${path}" && die "refusing to remove mounted managed directory: ${path}"
+    owner="$(stat -c '%U' -- "${path}")"
+    [[ "${owner}" == root || "${owner}" == "${SERVICE_USER}" ]] || die "managed directory has unexpected owner: ${path}"
+  fi
+}
+preflight_uninstall_trees() {
+  local role="$1" path
+	for path in "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}"; do validate_owned_tree "${path}"; done
+  if [[ "${role}" == agent ]]; then
+    for path in "${AGENT_UPDATER_STATE}" "${SECURITY_STATE_DIRECTORY}" /run/404-probe; do validate_owned_tree "${path}"; done
+  else
+    for path in "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_LOCK_DIRECTORY}"; do validate_owned_tree "${path}"; done
+  fi
 }
 
 uninstall_role() {
@@ -1533,6 +1621,7 @@ uninstall_role() {
   local unit_path binary_path
   confirm_uninstall "${role}" "${2:-}"
   id "${SERVICE_USER}" >/dev/null 2>&1 && validate_service_user
+  preflight_uninstall_trees "${role}"
   if [[ "${role}" == "server" ]]; then
     unit_path="${SERVER_UNIT}"
     binary_path="${SERVER_BINARY}"
@@ -1586,7 +1675,9 @@ uninstall_role() {
     fi
     getent group "${SERVICE_USER}" >/dev/null 2>&1 && groupdel "${SERVICE_USER}" || true
   fi
-  rm -f -- "${INSTALL_HELPER}"
+	if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]]; then
+	  rm -f -- "${INSTALL_HELPER}"
+	fi
   note "Uninstalled ${role} and removed its managed data. Re-running the official version-pinned uninstall is safe."
   printf 'Preserved systemd journal history and any unrecognized files.\n'
 }

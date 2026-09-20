@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +26,7 @@ import (
 // officialReleaseBase is fixed in production builds. A controlled E2E build may
 // replace it with -ldflags -X; the running updater exposes no URL override.
 var officialReleaseBase = "https://github.com/404-git-404/404-probe/releases/download/"
+var officialReleaseAPIBase = "https://api.github.com/repos/404-git-404/404-probe/releases/"
 
 type CandidateBuildInfo struct {
 	Path   string
@@ -328,22 +331,35 @@ func (e *Engine) setReleaseCommit(commit string) error {
 }
 
 func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
-	urls := []string{url}
-	if strings.HasPrefix(url, officialReleaseBase) && !strings.Contains(url, "?") {
-		urls = append(urls, url+"?download=1")
+	type endpoint struct {
+		url    string
+		accept string
 	}
+	endpoints := []endpoint{{url: url}}
+	official := strings.HasPrefix(url, officialReleaseBase) && !strings.Contains(url, "?")
+	apiResolved := false
+	endpointIndex := 0
 	var data []byte
 	var lastErr error
+	var expectedTotal int64 = -1
+	var entityTag string
 	for attempt := 0; attempt < e.config.DownloadAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, urls[attempt%len(urls)], nil)
+		selected := endpoints[endpointIndex]
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, selected.url, nil)
 		if err != nil {
 			return nil, err
 		}
+		if selected.accept != "" {
+			request.Header.Set("Accept", selected.accept)
+		}
 		if len(data) > 0 {
 			request.Header.Set("Range", fmt.Sprintf("bytes=%d-", len(data)))
+			if entityTag != "" {
+				request.Header.Set("If-Range", entityTag)
+			}
 		}
 		response, err := e.config.HTTPClient.Do(request)
 		if err != nil {
@@ -351,10 +367,29 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 		} else {
 			status := response.StatusCode
 			if status == http.StatusOK || status == http.StatusPartialContent {
+				expectedChunk := int64(-1)
 				if status == http.StatusOK && len(data) > 0 {
 					// The endpoint ignored Range. Restart this attempt rather than
 					// appending a second complete object to the partial bytes.
 					data = data[:0]
+					expectedTotal = -1
+					entityTag = ""
+				}
+				if status == http.StatusPartialContent {
+					start, end, total, rangeErr := parseContentRange(response.Header.Get("Content-Range"))
+					if rangeErr != nil || start != int64(len(data)) || (expectedTotal >= 0 && total != expectedTotal) {
+						_ = response.Body.Close()
+						data = nil
+						expectedTotal = -1
+						entityTag = ""
+						lastErr = errors.New("invalid resume response")
+						goto retry
+					}
+					expectedTotal = total
+					expectedChunk = end - start + 1
+				}
+				if tag := response.Header.Get("ETag"); tag != "" {
+					entityTag = tag
 				}
 				chunk, readErr := io.ReadAll(io.LimitReader(response.Body, limit-int64(len(data))+1))
 				closeErr := response.Body.Close()
@@ -365,16 +400,38 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 				if readErr == nil {
 					readErr = closeErr
 				}
+				if readErr == nil && expectedChunk >= 0 && int64(len(chunk)) != expectedChunk {
+					readErr = io.ErrUnexpectedEOF
+				}
+				if readErr == nil && expectedTotal >= 0 && int64(len(data)) != expectedTotal {
+					readErr = io.ErrUnexpectedEOF
+				}
 				if readErr == nil {
 					return data, nil
 				}
 				lastErr = readErr
+			} else if status == http.StatusRequestedRangeNotSatisfiable && len(data) > 0 {
+				_ = response.Body.Close()
+				data = nil
+				expectedTotal = -1
+				entityTag = ""
+				lastErr = errors.New("server rejected resume range")
 			} else {
 				_ = response.Body.Close()
 				lastErr = fmt.Errorf("HTTP %d", status)
-				if !retryableHTTPStatus(status) {
+				if !retryableHTTPStatus(status) && !official {
 					return nil, lastErr
 				}
+			}
+		}
+	retry:
+		if official && !apiResolved {
+			apiResolved = true
+			if apiURL, resolveErr := e.resolveOfficialAPIAsset(ctx, url); resolveErr == nil {
+				endpoints = append(endpoints, endpoint{url: apiURL, accept: "application/octet-stream"})
+				endpointIndex = len(endpoints) - 1
+			} else if lastErr == nil {
+				lastErr = resolveErr
 			}
 		}
 		if attempt+1 == e.config.DownloadAttempts {
@@ -393,6 +450,87 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 		lastErr = errors.New("download failed")
 	}
 	return nil, lastErr
+}
+
+func parseContentRange(value string) (start, end, total int64, err error) {
+	if !strings.HasPrefix(value, "bytes ") {
+		return 0, 0, 0, errors.New("missing byte content range")
+	}
+	parts := strings.Split(strings.TrimPrefix(value, "bytes "), "/")
+	if len(parts) != 2 || parts[1] == "*" {
+		return 0, 0, 0, errors.New("invalid content range")
+	}
+	bounds := strings.Split(parts[0], "-")
+	if len(bounds) != 2 {
+		return 0, 0, 0, errors.New("invalid content range")
+	}
+	start, err = strconv.ParseInt(bounds[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, errors.New("invalid content range")
+	}
+	end, err = strconv.ParseInt(bounds[1], 10, 64)
+	if err != nil {
+		return 0, 0, 0, errors.New("invalid content range")
+	}
+	total, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || start < 0 || end < start || total <= end {
+		return 0, 0, 0, errors.New("invalid content range")
+	}
+	return start, end, total, nil
+}
+
+func (e *Engine) resolveOfficialAPIAsset(ctx context.Context, directURL string) (string, error) {
+	remainder := strings.TrimPrefix(directURL, officialReleaseBase)
+	parts := strings.Split(remainder, "/")
+	if len(parts) != 2 || !buildinfo.IsCanonicalVersion(parts[0]) || parts[1] == "" || strings.ContainsAny(parts[1], "?#") {
+		return "", errors.New("official release asset URL is invalid")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, officialReleaseAPIBase+"tags/"+url.PathEscape(parts[0]), nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	response, err := e.config.HTTPClient.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("release API returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	if err != nil || len(body) > 1<<20 {
+		return "", errors.New("release API response is invalid")
+	}
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"assets"`
+	}
+	if json.Unmarshal(body, &release) != nil || release.TagName != parts[0] {
+		return "", errors.New("release API identity mismatch")
+	}
+	prefix := strings.TrimRight(officialReleaseAPIBase, "/") + "/assets/"
+	match := ""
+	for _, asset := range release.Assets {
+		if asset.Name != parts[1] {
+			continue
+		}
+		id := strings.TrimPrefix(asset.URL, prefix)
+		if !strings.HasPrefix(asset.URL, prefix) || id == "" {
+			return "", errors.New("release API asset URL is invalid")
+		}
+		if _, err := strconv.ParseUint(id, 10, 64); err != nil || match != "" {
+			return "", errors.New("release API asset identity is ambiguous")
+		}
+		match = asset.URL
+	}
+	if match == "" {
+		return "", errors.New("release API asset was not found")
+	}
+	return match, nil
 }
 
 func retryableHTTPStatus(status int) bool {

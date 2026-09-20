@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -94,12 +95,185 @@ func TestFetchResumesPartialResponse(t *testing.T) {
 		if got := request.Header.Get("Range"); got != "bytes=7-" {
 			t.Fatalf("resume Range=%q", got)
 		}
-		return &http.Response{StatusCode: http.StatusPartialContent, Body: io.NopCloser(bytes.NewBufferString(payload[7:])), Header: make(http.Header), Request: request}, nil
+		header := make(http.Header)
+		header.Set("Content-Range", fmt.Sprintf("bytes 7-%d/%d", len(payload)-1, len(payload)))
+		return &http.Response{StatusCode: http.StatusPartialContent, Body: io.NopCloser(bytes.NewBufferString(payload[7:])), Header: header, Request: request}, nil
 	})}
 	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 3, RetryBaseDelay: time.Millisecond}}
 	data, err := engine.fetch(context.Background(), "https://example.test/asset", 64)
 	if err != nil || string(data) != payload || requests != 2 {
 		t.Fatalf("data=%q requests=%d err=%v", data, requests, err)
+	}
+}
+
+func TestFetchRejectsWrongResumeRangeAndRestarts(t *testing.T) {
+	const payload = "partial-download"
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&partialErrorReader{data: []byte(payload[:7])}), Header: make(http.Header), Request: request}, nil
+		case 2:
+			header := make(http.Header)
+			header.Set("Content-Range", fmt.Sprintf("bytes 6-%d/%d", len(payload)-1, len(payload)))
+			return &http.Response{StatusCode: http.StatusPartialContent, Body: io.NopCloser(bytes.NewBufferString(payload[7:])), Header: header, Request: request}, nil
+		default:
+			if request.Header.Get("Range") != "" {
+				t.Fatalf("restart unexpectedly used Range %q", request.Header.Get("Range"))
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(payload)), Header: make(http.Header), Request: request}, nil
+		}
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 3, RetryBaseDelay: time.Millisecond}}
+	data, err := engine.fetch(context.Background(), "https://example.test/asset", 64)
+	if err != nil || string(data) != payload || requests != 3 {
+		t.Fatalf("data=%q requests=%d err=%v", data, requests, err)
+	}
+}
+
+func TestFetchRestartsAfterRangeNotSatisfiable(t *testing.T) {
+	const payload = "partial-download"
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&partialErrorReader{data: []byte(payload[:7])}), Header: make(http.Header), Request: request}, nil
+		case 2:
+			return &http.Response{StatusCode: http.StatusRequestedRangeNotSatisfiable, Body: http.NoBody, Header: make(http.Header), Request: request}, nil
+		default:
+			if request.Header.Get("Range") != "" {
+				t.Fatalf("restart unexpectedly used Range %q", request.Header.Get("Range"))
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(payload)), Header: make(http.Header), Request: request}, nil
+		}
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 3, RetryBaseDelay: time.Millisecond}}
+	data, err := engine.fetch(context.Background(), "https://example.test/asset", 64)
+	if err != nil || string(data) != payload || requests != 3 {
+		t.Fatalf("data=%q requests=%d err=%v", data, requests, err)
+	}
+}
+
+func TestFetchRestartsWhenServerIgnoresRange(t *testing.T) {
+	const payload = "partial-download"
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&partialErrorReader{data: []byte(payload[:7])}), Header: make(http.Header), Request: request}, nil
+		}
+		if request.Header.Get("Range") != "bytes=7-" {
+			t.Fatalf("Range=%q", request.Header.Get("Range"))
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewBufferString(payload)), Header: make(http.Header), Request: request}, nil
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 2, RetryBaseDelay: time.Millisecond}}
+	data, err := engine.fetch(context.Background(), "https://example.test/asset", 64)
+	if err != nil || string(data) != payload || requests != 2 {
+		t.Fatalf("data=%q requests=%d err=%v", data, requests, err)
+	}
+}
+
+func TestFetchUsesIfRangeAndRestartsChangedObject(t *testing.T) {
+	const oldPayload = "old-object-data"
+	const newPayload = "replacement-object"
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			header := make(http.Header)
+			header.Set("ETag", `"old"`)
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&partialErrorReader{data: []byte(oldPayload[:5])}), Header: header, Request: request}, nil
+		}
+		if request.Header.Get("Range") != "bytes=5-" || request.Header.Get("If-Range") != `"old"` {
+			t.Fatalf("Range=%q If-Range=%q", request.Header.Get("Range"), request.Header.Get("If-Range"))
+		}
+		header := make(http.Header)
+		header.Set("ETag", `"new"`)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(newPayload)), Header: header, Request: request}, nil
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 2, RetryBaseDelay: time.Millisecond}}
+	data, err := engine.fetch(context.Background(), "https://example.test/asset", 64)
+	if err != nil || string(data) != newPayload || requests != 2 {
+		t.Fatalf("data=%q requests=%d err=%v", data, requests, err)
+	}
+}
+
+func TestFetchRejectsTruncatedResumeChunk(t *testing.T) {
+	const payload = "partial-download"
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(&partialErrorReader{data: []byte(payload[:7])}), Header: make(http.Header), Request: request}, nil
+		}
+		header := make(http.Header)
+		header.Set("Content-Range", fmt.Sprintf("bytes 7-%d/%d", len(payload)-1, len(payload)))
+		return &http.Response{StatusCode: http.StatusPartialContent, Body: io.NopCloser(strings.NewReader(payload[7:10])), Header: header, Request: request}, nil
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 2, RetryBaseDelay: time.Millisecond}}
+	if data, err := engine.fetch(context.Background(), "https://example.test/asset", 64); err == nil || string(data) == payload {
+		t.Fatalf("data=%q err=%v", data, err)
+	}
+}
+
+func TestFetchUsesVersionBoundOfficialAPIAssetFallback(t *testing.T) {
+	oldReleaseBase, oldAPIBase := officialReleaseBase, officialReleaseAPIBase
+	officialReleaseBase = "https://download.example/releases/download/"
+	officialReleaseAPIBase = "https://api.example/repos/project/releases/"
+	t.Cleanup(func() { officialReleaseBase, officialReleaseAPIBase = oldReleaseBase, oldAPIBase })
+	requests := make([]string, 0, 3)
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request.URL.String())
+		switch request.URL.String() {
+		case "https://download.example/releases/download/v1.2.3/asset":
+			return &http.Response{StatusCode: http.StatusBadGateway, Body: http.NoBody, Header: make(http.Header), Request: request}, nil
+		case "https://api.example/repos/project/releases/tags/v1.2.3":
+			body := `{"tag_name":"v1.2.3","assets":[{"name":"asset","url":"https://api.example/repos/project/releases/assets/42"}]}`
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: request}, nil
+		case "https://api.example/repos/project/releases/assets/42":
+			if request.Header.Get("Accept") != "application/octet-stream" {
+				t.Fatalf("Accept=%q", request.Header.Get("Accept"))
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("verified")), Header: make(http.Header), Request: request}, nil
+		default:
+			return nil, fmt.Errorf("unexpected URL %s", request.URL)
+		}
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 3, RetryBaseDelay: time.Millisecond}}
+	data, err := engine.fetch(context.Background(), officialReleaseBase+"v1.2.3/asset", 64)
+	if err != nil || string(data) != "verified" || len(requests) != 3 {
+		t.Fatalf("data=%q requests=%v err=%v", data, requests, err)
+	}
+}
+
+func TestFetchHonorsCancellationDuringRetry(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, errors.New("network unavailable")
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 5, RetryBaseDelay: time.Hour}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := engine.fetch(ctx, "https://example.test/asset", 64); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestFetchHonorsTotalDeadlineDuringRetry(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return nil, errors.New("network unavailable")
+	})}
+	engine := &Engine{config: EngineConfig{HTTPClient: client, DownloadAttempts: 5, RetryBaseDelay: time.Hour}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, err := engine.fetch(ctx, "https://example.test/asset", 64); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err=%v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("deadline took %s", elapsed)
 	}
 }
 

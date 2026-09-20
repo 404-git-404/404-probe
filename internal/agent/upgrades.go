@@ -83,28 +83,36 @@ func (c upgradeHTTPClient) post(ctx context.Context, path string, value any) (in
 func (r *Runner) runUpgradeWorker(ctx context.Context) {
 	server := upgradeHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: r.client}
 	local := updater.Client{Socket: r.config.UpdaterSocket, Timeout: 5 * time.Second}
-	ticker := time.NewTicker(r.config.JobInterval)
-	defer ticker.Stop()
+	emptyCycles := 0
 	for {
-		r.runUpgradeCycle(ctx, server, local)
+		active := r.runUpgradeCycle(ctx, server, local)
+		delay := r.config.JobInterval
+		if active {
+			emptyCycles = 0
+		} else {
+			delay = idlePollDelay(r.config.JobInterval, emptyCycles)
+			emptyCycles++
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			stopTimer(timer)
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
 
-func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, local updater.Client) {
+func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, local updater.Client) bool {
 	if !r.upgradeAPISupported.Load() {
-		return
+		return false
 	}
 	operation, err := server.claim(ctx)
 	if err != nil || operation == nil {
 		if err != nil && ctx.Err() == nil {
 			r.logger.Warn("claim upgrade failed; will retry", "error", err)
 		}
-		return
+		return false
 	}
 	request := updater.Request{ProtocolVersion: updater.ProtocolVersion, OperationID: operation.OperationID, TargetVersion: operation.TargetVersion}
 	comparison, comparable := buildinfo.CompareVersions(r.config.AgentVersion, operation.TargetVersion)
@@ -112,13 +120,13 @@ func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, 
 		request.Action = updater.ActionStart
 		if _, err := local.Call(ctx, request); err != nil {
 			_ = server.update(ctx, operation.OperationID, "failed", "install_failed", "restricted local updater is unavailable")
-			return
+			return true
 		}
 	}
 	request.Action = updater.ActionStatus
 	response, err := local.Call(ctx, request)
 	if err != nil || !response.Accepted {
-		return
+		return true
 	}
 	if response.State.Status == "health_check" && r.config.AgentVersion == operation.TargetVersion && r.versionReportAccepted.Load() {
 		request.Action = updater.ActionHealthy
@@ -131,6 +139,7 @@ func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, 
 			r.logger.Warn("publish upgrade status failed; will retry", "operation_id", operation.OperationID, "error", err)
 		}
 	}
+	return true
 }
 
 func syncUpgradeStatus(ctx context.Context, client upgradeHTTPClient, operation protocol.UpgradeOperation, local updater.State) error {

@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 15
+const currentSchemaVersion = 16
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -625,6 +625,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		} {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migration 15: %w", err)
+			}
+		}
+	}
+	if version < 16 {
+		for _, statement := range []string{
+			`CREATE TABLE agent_traffic_reset_requests (
+				request_id TEXT PRIMARY KEY CHECK(length(request_id)=32 AND request_id NOT GLOB '*[^0-9a-f]*'),
+				agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+				rx_total INTEGER NOT NULL CHECK(rx_total >= 0),
+				tx_total INTEGER NOT NULL CHECK(tx_total >= 0),
+				started_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO agent_traffic_reset_requests(request_id,agent_id,rx_total,tx_total,started_at)
+				SELECT request_id,agent_id,0,0,started_at FROM agent_traffic_baselines`,
+			`CREATE INDEX idx_agent_traffic_reset_requests_agent ON agent_traffic_reset_requests(agent_id,started_at)`,
+			`INSERT INTO schema_migrations(version, applied_at) VALUES(16, unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 16: %w", err)
 			}
 		}
 	}
