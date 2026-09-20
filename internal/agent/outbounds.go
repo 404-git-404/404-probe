@@ -51,7 +51,7 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 		}
 		var publishErr error
 		now := time.Now()
-		if lastPublished == nil || !reflect.DeepEqual(*lastPublished, snapshot) || now.Sub(lastPublishedAt) >= outboundHeartbeatInterval {
+		if lastPublished == nil || !reflect.DeepEqual(*lastPublished, snapshot) || now.Sub(lastPublishedAt) >= r.outboundHeartbeatInterval {
 			publishErr = r.postOutboundSnapshot(ctx, snapshot)
 			if publishErr == nil {
 				copy := snapshot
@@ -71,17 +71,16 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 		}
 		delay := r.config.OutboundInterval
 		if !available || publishErr != nil {
-			steps := []time.Duration{10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute}
 			index := consecutiveFailures
-			if index >= len(steps) {
-				index = len(steps) - 1
+			if index >= len(r.outboundRetrySteps) {
+				index = len(r.outboundRetrySteps) - 1
 			}
-			delay = jitterOutboundDelay(steps[index])
+			delay = r.outboundJitter(r.outboundRetrySteps[index])
 			consecutiveFailures++
 		} else {
 			consecutiveFailures = 0
+			delay = capOutboundDelayAtHeartbeat(now, lastPublishedAt, delay, r.outboundHeartbeatInterval)
 		}
-		delay = capOutboundDelayAtHeartbeat(now, lastPublishedAt, delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -95,11 +94,11 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 	}
 }
 
-func capOutboundDelayAtHeartbeat(now, lastPublishedAt time.Time, delay time.Duration) time.Duration {
+func capOutboundDelayAtHeartbeat(now, lastPublishedAt time.Time, delay, heartbeatInterval time.Duration) time.Duration {
 	if lastPublishedAt.IsZero() {
 		return delay
 	}
-	remaining := lastPublishedAt.Add(outboundHeartbeatInterval).Sub(now)
+	remaining := lastPublishedAt.Add(heartbeatInterval).Sub(now)
 	if remaining <= 0 {
 		return 0
 	}

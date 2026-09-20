@@ -128,6 +128,9 @@ type Runner struct {
 	interactiveControlOnce      sync.Once
 	securityReady               chan struct{}
 	securityOnce                sync.Once
+	outboundHeartbeatInterval   time.Duration
+	outboundRetrySteps          []time.Duration
+	outboundJitter              func(time.Duration) time.Duration
 }
 
 type reportCollector interface {
@@ -181,6 +184,9 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: &collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
 		executor:  executor, interactiveControlReady: make(chan struct{}), securityReady: make(chan struct{}),
+		outboundHeartbeatInterval: outboundHeartbeatInterval,
+		outboundRetrySteps:        []time.Duration{10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute},
+		outboundJitter:            jitterOutboundDelay,
 		googleStatusAvailable: func() bool {
 			capable, ok := executor.(googleStatusCapability)
 			return ok && capable.SupportsGoogleStatus()
