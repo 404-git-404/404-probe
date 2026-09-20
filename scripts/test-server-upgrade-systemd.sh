@@ -35,8 +35,9 @@ readonly test_agent_updater_unit="/etc/systemd/system/404-probe-agent-updater-re
 readonly test_security_service_unit="/etc/systemd/system/404-probe-security-collect-rehearsal.service"
 readonly test_security_timer_unit="/etc/systemd/system/404-probe-security-collect-rehearsal.timer"
 readonly test_port="${PROBE_404_REHEARSAL_PORT:-33444}"
-readonly transformed="/tmp/404-probe-upgrade-rehearsal.install.sh"
-readonly crash_transformed="/tmp/404-probe-upgrade-rehearsal.crash.sh"
+rehearsal_workspace=""
+transformed=""
+crash_transformed=""
 test_user_created=0
 
 [[ "${candidate_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
@@ -64,7 +65,7 @@ cleanup() {
   systemctl stop "${test_service}" >/dev/null 2>&1 || true
   systemctl disable "${test_service}" >/dev/null 2>&1 || true
   rm -f -- "${test_unit}" "${test_agent_unit}" "${test_agent_updater_unit}" \
-    "${test_security_service_unit}" "${test_security_timer_unit}" "${transformed}" "${crash_transformed}"
+    "${test_security_service_unit}" "${test_security_timer_unit}"
   safe_remove_tree "${test_root}" || true
   safe_remove_tree "${test_config}" || true
   safe_remove_tree "${test_binary_directory}" || true
@@ -73,6 +74,7 @@ cleanup() {
   safe_remove_tree "${test_agent_updater_state}" || true
   safe_remove_tree "${test_security_state}" || true
   safe_remove_tree "${test_runtime}" || true
+  [[ -z "${rehearsal_workspace}" ]] || safe_remove_tree "${rehearsal_workspace}" || true
   systemctl daemon-reload >/dev/null 2>&1 || true
   if (( test_user_created != 0 )); then
     userdel "${test_user}" >/dev/null 2>&1 || true
@@ -86,9 +88,20 @@ for path in "${test_root}" "${test_config}" "${test_binary_directory}" "${test_u
 done
 id "${test_user}" >/dev/null 2>&1 && { printf 'isolated rehearsal user already exists: %s\n' "${test_user}" >&2; exit 1; }
 getent group "${test_user}" >/dev/null 2>&1 && { printf 'isolated rehearsal group already exists: %s\n' "${test_user}" >&2; exit 1; }
-ss -H -ltn "sport = :${test_port}" | grep -q . \
-  && { printf 'isolated rehearsal port is already in use: %s\n' "${test_port}" >&2; exit 1; }
+[[ -z "$(ss -H -ltn "sport = :${test_port}")" ]] \
+  || { printf 'isolated rehearsal port is already in use: %s\n' "${test_port}" >&2; exit 1; }
 trap cleanup EXIT HUP INT TERM
+rehearsal_workspace="$(mktemp -d /tmp/404-probe-upgrade-rehearsal.XXXXXX)"
+chmod 0700 "${rehearsal_workspace}"
+transformed="${rehearsal_workspace}/install.sh"
+crash_transformed="${rehearsal_workspace}/crash.sh"
+
+for forbidden_fixture in 'chown root:404-probe ' 'runuser -u 404-probe ' 'install -d -m 0700 -o 404-probe '; do
+  fixture_matches="$(grep -F -- "${forbidden_fixture}" "${BASH_SOURCE[0]}" | grep -Fv 'for forbidden_fixture in' || true)"
+  [[ -z "${fixture_matches}" ]] \
+    || { printf 'rehearsal fixture retained production account operation: %s\n' "${forbidden_fixture}" >&2; exit 1; }
+done
+unset fixture_matches forbidden_fixture
 
 transform_installer() {
   sed \
@@ -161,7 +174,7 @@ setup_old_server() {
   chmod 0755 "${test_binary_directory}/install-helper"
   old_helper_sha="$(sha256sum "${test_binary_directory}/install-helper" | awk '{print $1}')"
   printf 'PROBE_404_WEB_PUBLIC_ORIGIN=https://legacy.navolyn.com\n' >"${test_config}/server.env"
-  chown root:404-probe "${test_config}/server.env"
+  chown "root:${test_user}" "${test_config}/server.env"
   chmod 0640 "${test_config}/server.env"
   if [[ -n "${source_database}" ]]; then
     python3 - "${source_database}" "${test_root}/404-probe.db" <<'PY'
@@ -224,6 +237,13 @@ database.close()
 PY
 }
 
+assert_command_contains() {
+  local expected="$1" output
+  shift
+  output="$("$@")"
+  grep -Fq -- "${expected}" <<<"${output}"
+}
+
 run_upgrade() {
   printf 'y\n' | script -qec "env PROBE_404_VERSION=${candidate_version} PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} bash ${transformed}" /dev/null
 }
@@ -231,32 +251,32 @@ run_upgrade() {
 assert_upgraded() {
   systemctl is-active --quiet "${test_service}"
   systemctl is-enabled --quiet "${test_service}"
-  "${test_binary}" version --json | grep -Fq "\"version\":\"${candidate_version}\""
-  runuser -u "${test_user}" -- "${test_binary}" database verify --db "${test_root}/404-probe.db" | grep -Fq '"integrity":"ok"'
+  assert_command_contains "\"version\":\"${candidate_version}\"" "${test_binary}" version --json
+  assert_command_contains '"integrity":"ok"' runuser -u "${test_user}" -- "${test_binary}" database verify --db "${test_root}/404-probe.db"
   [[ "$(database_schema)" == "${expected_schema}" ]]
   [[ "$(runuser -u "${test_user}" -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
-  "${test_binary_directory}/install-helper" --help | grep -Fq 'domains [list|add|remove|disable]'
-  "${test_binary_directory}/install-helper" domains list | grep -Fq 'Mode: exact'
+  assert_command_contains 'domains [list|add|remove|disable]' "${test_binary_directory}/install-helper" --help
+  assert_command_contains 'Mode: exact' "${test_binary_directory}/install-helper" domains list
 }
 
 test_domain_menu() {
   local output
   output="$(printf '2\na.navolyn.com\n2\nnavolyn.com\n3\nnavolyn.com\ny\n2\nexample.com\n1\n3\nexample.com\ny\n4\ny\n5\n' | \
     script -qec "${test_binary_directory}/install-helper domains" /dev/null)"
-  printf '%s\n' "${output}" | grep -Fq '404-probe login domain management'
-  printf '%s\n' "${output}" | grep -Fq 'domain suffix must be a registrable domain, not a public suffix or subdomain'
-  printf '%s\n' "${output}" | grep -Fq 'cannot remove the last Web domain suffix'
-  [[ "$(printf '%s\n' "${output}" | grep -Fc 'Domain policy was not changed; choose another action or exit.')" -ge 2 ]]
-  printf '%s\n' "${output}" | grep -Fq 'navolyn.com'
-  printf '%s\n' "${output}" | grep -Fq 'example.com'
-  "${test_binary_directory}/install-helper" domains list | grep -Fq 'Mode: exact'
-  "${test_binary_directory}/install-helper" domains add navolyn.com | grep -Fq 'suffix mode is active'
+  grep -Fq '404-probe login domain management' <<<"${output}"
+  grep -Fq 'domain suffix must be a registrable domain, not a public suffix or subdomain' <<<"${output}"
+  grep -Fq 'cannot remove the last Web domain suffix' <<<"${output}"
+  [[ "$(grep -Fc 'Domain policy was not changed; choose another action or exit.' <<<"${output}")" -ge 2 ]]
+  grep -Fq 'navolyn.com' <<<"${output}"
+  grep -Fq 'example.com' <<<"${output}"
+  assert_command_contains 'Mode: exact' "${test_binary_directory}/install-helper" domains list
+  assert_command_contains 'suffix mode is active' "${test_binary_directory}/install-helper" domains add navolyn.com
   if "${test_binary_directory}/install-helper" domains remove navolyn.com >/dev/null 2>&1; then
     printf 'helper removed the final suffix\n' >&2
     exit 1
   fi
   printf 'y\n' | script -qec "${test_binary_directory}/install-helper domains disable" /dev/null >/dev/null
-  "${test_binary_directory}/install-helper" domains list | grep -Fq 'Mode: exact'
+  assert_command_contains 'Mode: exact' "${test_binary_directory}/install-helper" domains list
 }
 
 transform_installer
@@ -278,8 +298,8 @@ systemctl disable --now "${test_service}" >/dev/null
 run_upgrade
 [[ "$(systemctl is-active "${test_service}" 2>/dev/null || true)" == inactive ]]
 [[ "$(systemctl is-enabled "${test_service}" 2>/dev/null || true)" == disabled ]]
-"${test_binary}" version --json | grep -Fq "\"version\":\"${candidate_version}\""
-runuser -u "${test_user}" -- "${test_binary}" database verify --db "${test_root}/404-probe.db" | grep -Fq '"integrity":"ok"'
+assert_command_contains "\"version\":\"${candidate_version}\"" "${test_binary}" version --json
+assert_command_contains '"integrity":"ok"' runuser -u "${test_user}" -- "${test_binary}" database verify --db "${test_root}/404-probe.db"
 [[ "$(database_schema)" == "${expected_schema}" ]]
 [[ "$(runuser -u "${test_user}" -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
 printf 'isolated inactive+disabled upgrade passed migrated_schema=%s\n' "$(database_schema)"
