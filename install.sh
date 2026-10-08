@@ -3014,16 +3014,17 @@ EOF
   note "404-probe Server upgraded from ${current} to ${target}. The protected backup remains at ${SERVER_UPGRADE_BACKUP}."
 )
 
+print_install_banner() {
+  local version label=""
+  version="$(target_version)" || return
+  [[ "${version}" != *-beta.* ]] || label=" (Pre-release)"
+  printf 'Install 404-probe %s%s\n\n  1) Server\n  2) Agent\n\n' "${version}" "${label}"
+}
+
 interactive_install() {
   require_root_linux_systemd
   local choice
-  cat >/dev/tty <<'EOF'
-Install 404-probe v1.0.0
-
-  1) Server
-  2) Agent
-
-EOF
+  print_install_banner >/dev/tty
   printf 'Select a role [1-2]: ' >/dev/tty
   IFS= read -r choice </dev/tty
   case "${choice}" in
