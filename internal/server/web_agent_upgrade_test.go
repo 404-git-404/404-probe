@@ -132,3 +132,23 @@ func postAgentUpgrade(t *testing.T, app *App, token, path string, value any) *ht
 	app.Handler().ServeHTTP(response, request)
 	return response
 }
+
+func TestBetaServerDoesNotCreateStableAgentRemoteUpgrade(t *testing.T) {
+	app, store, id := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	app.buildInfo = buildinfo.Info{Version: "v1.0.1-beta.1", Commit: strings.Repeat("a", 40)}
+	report := reportFor(id, 1)
+	report.AgentVersion = "v1.0.0"
+	report.AgentUpgradeCapable = true
+	if _, accepted, _, err := store.ProcessReport(context.Background(), id, report, app.now()); err != nil || !accepted {
+		t.Fatalf("report: %v %t", err, accepted)
+	}
+	response := webUpgradeResponse(t, app, id, `{}`)
+	if response.Code != http.StatusConflict || jobErrorCode(t, response) != "server_build_ineligible" {
+		t.Fatalf("Beta remote upgrade status=%d body=%s", response.Code, response.Body.String())
+	}
+	op, err := store.GetLatestUpgrade(context.Background(), id)
+	if err != nil || op != nil {
+		t.Fatalf("unexpected upgrade: %+v %v", op, err)
+	}
+}

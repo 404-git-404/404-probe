@@ -19,8 +19,8 @@ command -v git >/dev/null 2>&1 || {
   printf 'git is required\n' >&2
   exit 1
 }
-[[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-  printf 'version must look like v0.7.0\n' >&2
+[[ "${VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?$ ]] || {
+  printf 'version must be canonical stable or explicit vX.Y.Z-beta.N\n' >&2
   exit 1
 }
 

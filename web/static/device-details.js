@@ -39,11 +39,12 @@
     function restoreNetwork(){if(!active('network')||!networkIdentity)return;
       if(network()?.openHistoryFor(current,networkIdentity.target,networkIdentity.family,networkIdentity.kind,origin?.node)===false)
         panes.network.replaceChildren(el('p','','原指定网络目标已不可用；请从卡片选择当前目标，不借用其他地址族数据。'));}
-    function updateTitle(){const agent=agents.get(current);machine.replaceChildren();const mark=identity(agent);if(mark)machine.append(mark);machine.append(el('span','',agent?.name||agent?.state?.hostname||'未命名设备'));}
+    let titleIdentity = null, securityIdentity = null;
+    function updateTitle(){const agent=agents.get(current), signature=JSON.stringify([current,agent?.country_code,agent?.country_source,agent?.name,agent?.state?.hostname]);if(signature===titleIdentity)return;titleIdentity=signature;machine.replaceChildren();const mark=identity(agent);if(mark)machine.append(mark);machine.append(el('span','',agent?.name||agent?.state?.hostname||'未命名设备'));}
     function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='management')renderManagement();if(tab==='security')renderSecurity();}
     function renderManagement(){const pane=panes.management,focused=pane.contains(doc.activeElement)?doc.activeElement?.dataset?.focusKey:null;
-      const node=management(agents.get(current));if(node){node.hidden=false;pane.replaceChildren(node);if(focused)pane.querySelector(`[data-focus-key="${focused}"]`)?.focus({preventScroll:true});}}
-    function renderSecurity(){const security=agents.get(current)?.security,pane=panes.security;pane.replaceChildren();
+      const node=management(agents.get(current));if(node){node.hidden=false;if(node.parentNode!==pane)pane.replaceChildren(node);if(focused)pane.querySelector(`[data-focus-key="${focused}"]`)?.focus({preventScroll:true});}}
+    function renderSecurity(){const security=agents.get(current)?.security,pane=panes.security,signature=JSON.stringify([current,security]);if(signature===securityIdentity)return;securityIdentity=signature;pane.replaceChildren();
       if(!security){pane.append(el('p','','安全资料尚未加载'),button('读取设备资料',()=>hydrate(current)));return;}
       if(!security.supported){pane.append(el('p','','当前 Agent 不支持安全观察（需要 v0.9 Agent）'));return;}
       const labels={unavailable:'需要配置',no_data:'等待首次本地审计',complete:'完整',partial:'部分结果',failed:'采集失败'};

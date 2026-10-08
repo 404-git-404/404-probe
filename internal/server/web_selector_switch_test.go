@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"404-probe/internal/agent"
+	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 )
@@ -296,8 +297,17 @@ func TestRevokePreventsRunningSelectorSwitchFromExecutingAgain(t *testing.T) {
 }
 
 func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
+	testSelectorRunnerCompatibility(t, false)
+}
+func TestBetaServerExistingV100AgentRunnerCompatibility(t *testing.T) {
+	testSelectorRunnerCompatibility(t, true)
+}
+func testSelectorRunnerCompatibility(t *testing.T, beta bool) {
 	app, store, agentID, agentToken := testApp(t)
 	defer store.Close()
+	if beta {
+		app.buildInfo = buildinfo.Info{Version: "v1.0.1-beta.1", Commit: strings.Repeat("a", 40)}
+	}
 	markSelectorAgentOnline(t, store, agentID, time.Now())
 
 	var clashMu sync.Mutex
@@ -344,9 +354,13 @@ func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
 	}
 	httpServer := httptest.NewServer(app.Handler())
 	defer httpServer.Close()
+	reportInterval := time.Hour
+	if beta {
+		reportInterval = 10 * time.Millisecond
+	}
 	runner, err := agent.NewWithReportCollector(agent.Config{
-		ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
-		Interval: time.Hour, JobInterval: 10 * time.Millisecond, Timeout: 2 * time.Second,
+		AgentVersion: "v1.0.0", ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
+		Interval: reportInterval, JobInterval: 10 * time.Millisecond, Timeout: 2 * time.Second,
 		AllowInsecureHTTP: true, StatePath: selectorRunnerStatePath(t, "agent.state"),
 		ClashAPIURL: clash.URL, OutboundInterval: time.Hour,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), selectorMetrics{})
@@ -439,6 +453,20 @@ func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
 		t.Fatalf("Web stale result status=%d body=%s", response.Code, response.Body.String())
 	}
 
+	if beta {
+		record, err := store.GetAgentSnapshot(context.Background(), agentID, time.Now(), time.Minute)
+		for ctx.Err() == nil && err == nil && (record.State == nil || record.State.AgentVersion != "v1.0.0") {
+			time.Sleep(10 * time.Millisecond)
+			record, err = store.GetAgentSnapshot(context.Background(), agentID, time.Now(), time.Minute)
+		}
+		if err != nil || record.State == nil || record.State.AgentVersion != "v1.0.0" {
+			t.Fatalf("existing Agent report: %+v %v", record, err)
+		}
+		if app.buildInfo.UpgradeEligible() {
+			t.Fatal("Beta offered Agent remote upgrade")
+		}
+		t.Log("real Runner + fixed collector + local Clash: report, selector execution/result and failures; Linux collector/systemd not validated")
+	}
 	cancel()
 	if err := <-runnerDone; err != nil {
 		t.Fatal(err)

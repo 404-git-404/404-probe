@@ -16,6 +16,8 @@ var (
 
 var canonicalVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
+var releaseVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.([1-9][0-9]*))?$`)
+
 type Info struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit,omitempty"`
@@ -114,6 +116,44 @@ func CompareVersions(left, right string) (int, bool) {
 		if lv > rv {
 			return 1, true
 		}
+	}
+	return 0, true
+}
+
+// IsReleaseVersion permits an explicitly selected release. Stable auto-upgrade
+// boundaries must continue using IsCanonicalVersion and UpgradeEligible.
+func IsReleaseVersion(value string) bool { return releaseVersion.MatchString(value) }
+
+// CompareReleaseVersions is for explicit installer/Server transitions only.
+// Agent remote upgrades keep the stable-only CompareVersions boundary.
+func CompareReleaseVersions(left, right string) (int, bool) {
+	if !IsReleaseVersion(left) || !IsReleaseVersion(right) {
+		return 0, false
+	}
+	l, lb, lp := strings.Cut(left, "-beta.")
+	r, rb, rp := strings.Cut(right, "-beta.")
+	if comparison, ok := CompareVersions(l, r); !ok || comparison != 0 {
+		return comparison, ok
+	}
+	if !lp && !rp {
+		return 0, true
+	}
+	if !lp {
+		return 1, true
+	}
+	if !rp {
+		return -1, true
+	}
+	lv, le := strconv.ParseUint(lb, 10, 64)
+	rv, re := strconv.ParseUint(rb, 10, 64)
+	if le != nil || re != nil {
+		return 0, false
+	}
+	if lv < rv {
+		return -1, true
+	}
+	if lv > rv {
+		return 1, true
 	}
 	return 0, true
 }

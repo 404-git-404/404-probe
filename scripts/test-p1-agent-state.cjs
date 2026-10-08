@@ -20,7 +20,11 @@ class Element {
   get value(){return this._value ?? '';}
   set value(value){this._value=String(value);}
   constructor() { this.listeners=new Map(); this.value=''; this.checked=false; this.disabled=false; this.dataset={}; this.open=false;
-    this.classList={add(){},remove(){},toggle(){}}; this.textContent=''; this.style={}; this.children=[]; }
+    this.classList={add(){},remove(){},toggle(){},contains:value=>(this.className||'').split(' ').includes(value)}; this.textContent=''; this.style={}; this.children=[]; }
+  get childNodes(){return this.children;}get attributes(){return Object.entries(this.attrs||{}).map(([name,value])=>({name,value}));}
+  get firstElementChild(){return this.children[0]||null;}get lastElementChild(){return this.children.at(-1)||null;}
+  get parentNode(){return this.parent||null;}get nextElementSibling(){const a=this.parent?.children||[];return a[a.indexOf(this)+1]||null;}
+  insertBefore(node,before){if(node===before)return node;if(node.parent)node.parent.children=node.parent.children.filter(n=>n!==node);node.parent=this;const i=before?this.children.indexOf(before):-1;if(i<0)this.children.push(node);else this.children.splice(i,0,node);return node;}
   getBoundingClientRect(){return{left:100,top:80,bottom:680,width:560,height:600};}
   contains(node){return this===node||(this.children||[]).some(child=>child.contains?.(node));}
   addEventListener(type, handler) { const all=this.listeners.get(type)||[]; all.push(handler); this.listeners.set(type,all); }
@@ -29,7 +33,7 @@ class Element {
   async emit(type) { for(const f of this.listeners.get(type)||[]) await f({preventDefault(){}}); }
   reset() {} focus() {} setCustomValidity(value) {this.validityMessage=value;} reportValidity() {}
   showModal() {this.open=true;} close() {this.open=false; for(const f of this.listeners.get('close')||[]) f();}
-  setAttribute() {} querySelector(){return new Element();} querySelectorAll(){return [];} replaceChildren(...children){this.children=children;} append(...children){this.children ||= [];this.children.push(...children);}
+  setAttribute(k,v){this.attrs ||= {};this.attrs[k]=String(v);}getAttribute(k){return this.attrs?.[k]??null;}hasAttribute(k){return Object.hasOwn(this.attrs||{},k);}removeAttribute(k){if(this.attrs)delete this.attrs[k];} querySelector(){return new Element();} querySelectorAll(){return [];} replaceChildren(...children){this.children=children;} append(...children){this.children ||= [];this.children.push(...children);}
 }
 function dashboard(file = 'app.js', readTimeout = 1000) {
   const nodes=new Map(), requests=[], sources=[], redirects=[], windowListeners=new Map();
@@ -38,7 +42,7 @@ function dashboard(file = 'app.js', readTimeout = 1000) {
   const sandbox={AgentState:{...State,fetchJSON:(url,options)=>State.fetchJSON(url,{...options,timeoutMs:readTimeout}),
     // Keep the production reconciler, but resolve the intentionally stubbed renderer
     // at call time rather than capture the original DOM renderer during startup.
-    reconcile:(store,read,changed,failed)=>State.reconcile(store,read,()=>vm.runInContext(file==='app.js'?'render()':'renderCurrentAgent()',sandbox),failed)},AbortController,TextEncoder,console,URLSearchParams,Intl,Date,Map,Set,Number,Object,JSON,
+    reconcile:(store,read,changed,failed)=>State.reconcile(store,read,()=>vm.runInContext(file==='app.js'?'render()':'renderCurrentAgent()',sandbox),failed)},AbortController,TextEncoder,Node:{TEXT_NODE:3},console,URLSearchParams,Intl,Date,Map,Set,Number,Object,JSON,
     location:{search:'?id='+A,assign:p=>redirects.push(p),reload:()=>redirects.push('reload')},navigator:{clipboard:{writeText:async()=>{}}},
     document:{querySelector:getNode,querySelectorAll:()=>[],activeElement:null,createElement:()=>new Element(),addEventListener(){},removeEventListener(){}},
     setInterval:()=>0,clearInterval(){},setTimeout,clearTimeout,queueMicrotask,addEventListener(type,f){windowListeners.set(type,f);},confirm:()=>true,

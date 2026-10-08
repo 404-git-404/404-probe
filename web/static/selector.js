@@ -259,37 +259,76 @@
         panel.addEventListener('toggle', event => { if (event.newState === 'closed' && activeID && !panel.matches(':popover-open')) hide(); });
       } else panel.hidden = true;
       document.body.append(panel);
+      panel.addEventListener('click', event => {
+        const node=event.target.closest('[data-selector-kind]');if(!node||!panel.contains(node))return;
+        const kind=node.dataset.selectorKind,name=node.dataset.selectorName;
+        if(kind==='close')hide();
+        else if(kind==='summary')controller.expand(activeID,name);
+        else if(kind==='submit')controller.submit(activeID,name,node.closest('[data-selector-group]').querySelector('select').value);
+      });
+      panel.addEventListener('change', event => {
+        if(event.target.dataset.selectorKind==='select')controller.draft(activeID,event.target.dataset.selectorName,event.target.value);
+      });
       addEventListener('keydown', event => { if (activeID && event.key === 'Escape') { event.preventDefault(); hide(); } });
       addEventListener('pointerdown', event => {
         if (!native && activeID && !panel.contains(event.target) && !triggers.get(activeID)?.contains(event.target)) hide();
       });
       addEventListener('resize', position); addEventListener('scroll', position, true);
     }
+    // Delegated events read the live controls. Keyed patching retains the native select,
+    // buttons and scroll state even when a new outbound snapshot arrives mid-gesture.
+    const nodeKey = node => node.nodeType===1 ? node.dataset.selectorGroup!=null ? `group/${node.dataset.selectorGroup}`
+      : node.dataset.selectorKind ? `${node.dataset.selectorKind}/${node.dataset.selectorName||''}` : null : null;
+    function patchChildren(current,next) {
+      const old=[...current.childNodes],used=new Set();let cursor=current.firstChild;
+      for(const desired of [...next.childNodes]) {
+        const key=nodeKey(desired);
+        let node=key ? old.find(n=>!used.has(n)&&nodeKey(n)===key) : old.find(n=>!used.has(n)&&!nodeKey(n)&&n.nodeName===desired.nodeName);
+        if(!node){node=desired;current.insertBefore(node,cursor);}
+        else {
+          if(node!==cursor){if(current.moveBefore)current.moveBefore(node,cursor);else current.insertBefore(node,cursor);}
+          if(node.nodeType===3){if(node.data!==desired.data)node.data=desired.data;}
+          else {
+            for(const a of [...node.attributes])if(!desired.hasAttribute(a.name))node.removeAttribute(a.name);
+            for(const a of desired.attributes)if(node.getAttribute(a.name)!==a.value)node.setAttribute(a.name,a.value);
+            const selected=desired.value;
+            patchChildren(node,desired);
+            if(node.tagName==='SELECT'&&node.value!==selected)node.value=selected;
+          }
+        }
+        used.add(node);cursor=node.nextSibling;
+      }
+      for(const node of old)if(!used.has(node))node.remove();
+    }
+    let renderedPanel = null;
     function refresh(id) {
       controller.sync(id);
       if (!panel || activeID !== id) return;
       const m = controller.model(id), agent = state.agents.get(id);
       if (!m.open || !agent || state.blocked(id)) { hide(); return; }
+      const signature = JSON.stringify([id, m.open, m.expanded, [...m.groups], Boolean(m.active), Boolean(m.inspection), m.recoveryIncomplete, m.recoveryMessage, agent.outbounds, reason(agent, csrf())]);
+      if (signature === renderedPanel) { position(); return; }
+      renderedPanel = signature;
       const focus = document.activeElement;
       const focusedName = focus?.dataset?.selectorName, focusedKind = focus?.dataset?.selectorKind;
-      panel.replaceChildren();
+      const content=el('div','');
       const heading = el('div', '', 'selector-popover-heading');
-      const closeButton = el('button', '关闭'); closeButton.type = 'button'; closeButton.addEventListener('click', hide);
+      const closeButton = el('button', '关闭'); closeButton.type = 'button';
       closeButton.dataset.selectorKind = 'close';
-      heading.append(el('strong', '出站选择'), closeButton); panel.append(heading);
+      heading.append(el('strong', '出站选择'), closeButton); content.append(heading);
       const out = agent.outbounds || {}, blocked = reason(agent, csrf());
-      panel.append(el('p', `${blocked || '已连接'} · ${out.order_source === 'config' ? '按配置顺序' : '名称回退顺序'}`, 'selector-popover-status'));
-      if (m.inspection || m.recoveryMessage) panel.append(el('p', m.inspection ? '正在核对待执行切换…' : m.recoveryMessage, 'selector-popover-status'));
-      const jobsLink = el('a', '完整操作记录见 Probe Jobs'); jobsLink.href = '/jobs.html'; jobsLink.dataset.selectorKind = 'jobs'; panel.append(jobsLink);
-      if (out.updated_at) panel.append(el('small', `最后快照 ${new Date(out.updated_at).toLocaleString()}`));
+      content.append(el('p', `${blocked || '已连接'} · ${out.order_source === 'config' ? '按配置顺序' : '名称回退顺序'}`, 'selector-popover-status'));
+      if (m.inspection || m.recoveryMessage) content.append(el('p', m.inspection ? '正在核对待执行切换…' : m.recoveryMessage, 'selector-popover-status'));
+      const jobsLink = el('a', '完整操作记录见 Probe Jobs'); jobsLink.href = '/jobs.html'; jobsLink.dataset.selectorKind = 'jobs'; content.append(jobsLink);
+      if (out.updated_at) content.append(el('small', `最后快照 ${new Date(out.updated_at).toLocaleString()}`));
       for (const selector of out.selectors || []) {
         const g = controller.group(id, selector.name), expanded = m.expanded === selector.name;
-        const section = el('div', '', 'selector-popover-group');
+        const section = el('div', '', 'selector-popover-group'); section.dataset.selectorGroup=selector.name;
         const summary = el('button', '', 'selector-popover-summary'); summary.type = 'button';
         summary.dataset.selectorName = selector.name; summary.dataset.selectorKind = 'summary';
         summary.setAttribute('aria-expanded', String(expanded));
         summary.append(el('strong', selector.name), el('span', `${selector.current || '—'} ${expanded ? '▴' : '▾'}`));
-        summary.addEventListener('click', () => controller.expand(id, selector.name)); section.append(summary);
+        section.append(summary);
         if (expanded) {
           const controls = el('div', '', 'selector-popover-controls'), select = el('select', '');
           select.dataset.selectorName = selector.name; select.dataset.selectorKind = 'select';
@@ -302,11 +341,9 @@
             const option = el('option', choice === selector.current ? `${choice}（当前）` : choice); option.value = choice; select.append(option);
           }
           select.value = selected; select.disabled = Boolean(blocked || m.active);
-          select.addEventListener('change', () => controller.draft(id, selector.name, select.value));
           const button = el('button', m.active ? '处理中…' : '切换'); button.type = 'button';
           button.dataset.selectorName = selector.name; button.dataset.selectorKind = 'submit';
           button.disabled = Boolean(blocked || m.active || m.inspection || m.recoveryIncomplete || g.remotePending || selected === selector.current || !selector.choices?.includes(selected));
-          button.addEventListener('click', () => controller.submit(id, selector.name, select.value));
           controls.append(select, button); section.append(controls);
         }
         const status = g.recovered || g.feedback;
@@ -314,23 +351,29 @@
           const feedback = el('p', status.message, status.error ? 'selector-popover-error' : 'selector-popover-feedback');
           feedback.setAttribute('aria-live', 'polite'); section.append(feedback);
         }
-        panel.append(section);
+        content.append(section);
       }
-      if (!out.selectors?.length) panel.append(el('p', '未发现 Selector'));
+      if (!out.selectors?.length) content.append(el('p', '未发现 Selector'));
+      patchChildren(panel,content);
       position();
-      if (focusedKind === 'close') closeButton.focus({preventScroll: true});
-      else if (focusedKind === 'jobs') jobsLink.focus({preventScroll: true});
+      if (focus?.isConnected && panel.contains(focus)) return;
+      const liveClose = panel.querySelector('[data-selector-kind="close"]');
+      const liveJobs = panel.querySelector('[data-selector-kind="jobs"]');
+      if (focusedKind === 'close') liveClose?.focus({preventScroll: true});
+      else if (focusedKind === 'jobs') liveJobs?.focus({preventScroll: true});
       else if (focusedName) {
         let restored = false, summary;
         for (const node of panel.querySelectorAll('[data-selector-kind]')) {
           if (node.dataset.selectorName === focusedName && node.dataset.selectorKind === 'summary') summary = node;
           if (node.dataset.selectorName === focusedName && node.dataset.selectorKind === focusedKind && !node.disabled) { node.focus({preventScroll: true}); restored = true; break; }
         }
-        if (!restored) (summary || closeButton).focus({preventScroll: true});
+        if (!restored) (summary || liveClose)?.focus({preventScroll: true});
       }
     }
     function trigger(agent) {
-      if (!agent.outbounds?.configured) return null;
+      if (!agent.outbounds?.configured) { triggers.delete(agent.agent_id); return null; }
+      const existing = triggers.get(agent.agent_id);
+      if (existing) { existing.setAttribute('aria-expanded', String(controller.model(agent.agent_id).open)); return existing; }
       const id = agent.agent_id, button = el('button', '出站选择 ▾', 'selector-trigger'); button.type = 'button';
       button.dataset.focusKey = 'selector'; button.dataset.agentId = id;
       button.setAttribute('aria-controls', 'selector-popover'); button.setAttribute('aria-expanded', String(controller.model(id).open));
@@ -345,7 +388,7 @@
       });
       return button;
     }
-    return {trigger, refresh, hide, refreshActive: () => { if (activeID) refresh(activeID); }};
+    return {trigger, refresh, hide, sync: ids => {const live=new Set(ids);for(const id of triggers.keys())if(!live.has(id)){triggers.delete(id);if(activeID===id)hide();}}, refreshActive: () => { if (activeID) refresh(activeID); }};
   }
   const api = {create, view, reason, errors};
   if (typeof module === 'object' && module.exports) module.exports = api;

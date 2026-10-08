@@ -30,7 +30,7 @@ func run(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if !buildinfo.IsCanonicalVersion(*version) || !releasemetadata.IsCommit(*commit) || *output == "" || len(flags.Args()) == 0 {
+	if !buildinfo.IsReleaseVersion(*version) || !releasemetadata.IsCommit(*commit) || *output == "" || len(flags.Args()) == 0 {
 		return errors.New("version, commit, output, and release asset paths are required")
 	}
 	document := releasemetadata.Document{SchemaVersion: releasemetadata.SchemaVersion, Version: *version, Commit: *commit}

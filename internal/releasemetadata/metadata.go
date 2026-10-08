@@ -111,7 +111,7 @@ func Validate(document Document) error {
 	if document.SchemaVersion != SchemaVersion {
 		return errors.New("unsupported release metadata schema")
 	}
-	if !buildinfo.IsCanonicalVersion(document.Version) {
+	if !buildinfo.IsReleaseVersion(document.Version) {
 		return errors.New("release metadata version is invalid")
 	}
 	if !IsCommit(document.Commit) {

@@ -212,7 +212,7 @@ func releaseCommand(args []string) error {
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || !buildinfo.IsCanonicalVersion(*target) || *metadataPath == "" || *checksumsPath == "" || *assetPath == "" {
+	if flags.NArg() != 0 || !buildinfo.IsReleaseVersion(*target) || *metadataPath == "" || *checksumsPath == "" || *assetPath == "" {
 		return errors.New("usage: 404-probe-server release verify --version vX.Y.Z --metadata path --checksums path --asset path")
 	}
 	result, err := verifyReleaseAsset(*target, *metadataPath, *checksumsPath, *assetPath, runtime.GOOS, runtime.GOARCH)

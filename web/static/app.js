@@ -42,7 +42,7 @@ let overviewReady = false;
 const overview = Overview.create({size:CardMetrics.size,deadline:planDeadline});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   network: () => networkQuality, identity: agent => countryMark(agent?.country_code,agent?.country_source),
-  management: agent => document.querySelector(`.agent-card[data-agent-id="${agent.agent_id}"] .card-detail-panel`),
+  management: agent => agentCards.get(agent.agent_id)?.detailPanel,
   hydrate: id => { if(agents.has(id)&&!agents.get(id).detail_loaded)reconciliation.notify(id); }});
 const revokedAgentIDs = agentState.revokedAgentIDs;
 const selectorController = Selector.create({
@@ -782,7 +782,7 @@ function planPanel(plan) {
 }
 
 function setReadableText(element, value, accessibleValue = value) {
-  element.textContent = value;
+  setCardText(element, value);
   element.title = value;
   element.setAttribute('aria-label', accessibleValue);
 }
@@ -979,6 +979,9 @@ function countryCodeLookupControls(agent) {
   const status = document.createElement('span');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
+  function update(next) {
+    agent = next;
+  let statusText = '';
   const operation = agent.country_code_lookup_operation;
   if (operation && uncertainCountryRequests.has(agent.agent_id)
     && operation.operation_id !== uncertainCountryRequests.get(agent.agent_id)) {
@@ -986,44 +989,91 @@ function countryCodeLookupControls(agent) {
   }
   const capable = Boolean(agent.management?.country_code_lookup);
   const pending = operation?.status === 'requested' || operation?.status === 'delivered';
-  button.textContent = !capable ? '升级 Agent 后可重新识别' : pending ? '识别中…' : uncertainCountryRequests.has(agent.agent_id) ? '核实前次识别请求' : '重新识别一次';
+  setCardText(button, !capable ? '升级 Agent 后可重新识别' : pending ? '识别中…' : uncertainCountryRequests.has(agent.agent_id) ? '核实前次识别请求' : '重新识别一次');
   button.disabled = !mutationCSRFToken || !capable || !agent.online || Boolean(agent.disabled_at) || agent.revoked || pending || countryWriteControllers.has(agent.agent_id) || agentState.busy(agent.agent_id, 'country') || agentState.blocked(agent.agent_id);
   button.title = !capable ? '当前 Agent 版本不支持主动重取，需要升级' : !agent.online ? 'Agent 离线时不能触发' : pending ? '本次请求只会触发一次，等待结果或状态超时' : '手动触发一次 HTTPS 国家/地区识别';
-  if (!capable) status.textContent = '需要升级 Agent 后才能主动重新识别。';
-  else if (agent.revoked || agentState.blocked(agent.agent_id)) status.textContent = '设备已撤销或正在删除，不能触发识别。';
-  else if (agent.disabled_at) status.textContent = '设备已暂停，不能触发识别。';
-  else if (!agent.online) status.textContent = '设备离线，不能触发识别。';
-  else if (operation?.status === 'requested') status.textContent = '已排队，等待 Agent 领取。';
-  else if (operation?.status === 'delivered') status.textContent = 'Agent 已领取，等待一次性查询结果。';
-  else if (operation?.status === 'unknown') status.textContent = '上次结果待核实；当前显示值未变。重新触发会创建新的单次请求。';
-  else if (operation?.status === 'failed') status.textContent = '上次识别失败，已保留此前国家/地区。';
-  else if (operation?.status === 'succeeded') status.textContent = `上次识别成功${operation.result_code ? `：${operation.result_code}` : ''}。`;
-  else status.textContent = '不会自动查询；只有手动触发时才发起一次识别。';
-  if (agent.plan?.country_code_override) status.textContent += ' 当前启用了手动覆盖，识别结果不会改变当前显示。';
-  if (agentActionErrors.has(`${agent.agent_id}/country`)) status.textContent = agentActionErrors.get(`${agent.agent_id}/country`);
-  if (uncertainCountryRequests.has(agent.agent_id)) status.textContent += ' 提交结果不确定，不会自动重试；请刷新状态核实，当前值保留。';
+  if (!capable) statusText = '需要升级 Agent 后才能主动重新识别。';
+  else if (agent.revoked || agentState.blocked(agent.agent_id)) statusText = '设备已撤销或正在删除，不能触发识别。';
+  else if (agent.disabled_at) statusText = '设备已暂停，不能触发识别。';
+  else if (!agent.online) statusText = '设备离线，不能触发识别。';
+  else if (operation?.status === 'requested') statusText = '已排队，等待 Agent 领取。';
+  else if (operation?.status === 'delivered') statusText = 'Agent 已领取，等待一次性查询结果。';
+  else if (operation?.status === 'unknown') statusText = '上次结果待核实；当前显示值未变。重新触发会创建新的单次请求。';
+  else if (operation?.status === 'failed') statusText = '上次识别失败，已保留此前国家/地区。';
+  else if (operation?.status === 'succeeded') statusText = `上次识别成功${operation.result_code ? `：${operation.result_code}` : ''}。`;
+  else statusText = '不会自动查询；只有手动触发时才发起一次识别。';
+  if (agent.plan?.country_code_override) statusText += ' 当前启用了手动覆盖，识别结果不会改变当前显示。';
+  if (agentActionErrors.has(`${agent.agent_id}/country`)) statusText = agentActionErrors.get(`${agent.agent_id}/country`);
+  if (uncertainCountryRequests.has(agent.agent_id)) statusText += ' 提交结果不确定，不会自动重试；请刷新状态核实，当前值保留。';
+    setCardText(status, statusText);
+  }
+  update(agent);
   button.addEventListener('click', () => uncertainCountryRequests.has(agent.agent_id)
     ? verifyCountryRequest(agent, button, status) : refreshCountryCodeLookup(agent, button, status));
   controls.append(button, status);
+  controls.update = update;
   return controls;
+}
+
+const agentCards = new Map();
+
+function updateDisplay(current, next) {
+  if (current.nodeType !== next.nodeType || current.nodeName !== next.nodeName) {
+    current.replaceWith(next); return next;
+  }
+  if (current.nodeType === Node.TEXT_NODE) {
+    if (current.data !== next.data) current.data = next.data;
+    return current;
+  }
+  for (const attribute of [...current.attributes]) {
+    if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+  }
+  for (const attribute of next.attributes) {
+    if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+  }
+  const children = [...current.childNodes], incoming = [...next.childNodes];
+  for (let i = 0; i < incoming.length; i++) {
+    if (children[i]) updateDisplay(children[i], incoming[i]);
+    else current.append(incoming[i]);
+  }
+  for (let i = incoming.length; i < children.length; i++) children[i].remove();
+  return current;
+}
+
+function setCardText(node, value) {
+  if (node.textContent !== value) node.textContent = value;
 }
 
 function render() {
   overview.update(agents,overviewReady);
-  const focusedControl = document.activeElement?.closest?.('[data-focus-key]');
-  const focusedAgentID = focusedControl?.closest?.('.agent-card')?.dataset.agentId || '';
-  const focusedKey = focusedControl?.dataset.focusKey || '';
-  const selection = focusedControl && typeof focusedControl.selectionStart === 'number'
-    ? [focusedControl.selectionStart, focusedControl.selectionEnd, focusedControl.selectionDirection] : null;
-  networkQuality.sync([...agents.keys()]);
-  trafficCharts.sync([...agents.keys()]);
-  cardObservations.sync([...agents.keys()]);
-  container.replaceChildren();
+  const ids = [...agents.keys()];
+  networkQuality.sync(ids); trafficCharts.sync(ids); cardObservations.sync(ids); selectorView.sync(ids);
+  for (const [id, view] of agentCards) {
+    if (!agents.has(id)) { view.card.remove(); view.detailPanel.remove(); agentCards.delete(id); }
+  }
   selectorView.refreshActive();
   const list = [...agents.values()].sort((left, right) =>
     (left.name || '').localeCompare(right.name || '') || left.agent_id.localeCompare(right.agent_id));
   empty.classList.toggle('hidden', list.length > 0);
+  let position = container.firstElementChild;
   for (const agent of list) {
+    let view = agentCards.get(agent.agent_id);
+    if (!view) { view = createAgentCard(agent); agentCards.set(agent.agent_id, view); }
+    else view.update(agent);
+    if (view.card !== position) {
+      // moveBefore retains focus/selection on supported browsers; insertBefore is the fallback.
+      if (view.card.parentNode === container && container.moveBefore) container.moveBefore(view.card, position);
+      else container.insertBefore(view.card, position);
+    }
+    position = view.card.nextElementSibling;
+    deviceDetails.update(agent);
+  }
+  deviceDetails.sync(); planEditor.sync(); planRenewal.sync();
+  for(const id of new Set([...trafficResetRequests.keys(),...trafficResetFeedback.keys(),...trafficResetControllers.keys()]))if(!agents.has(id)){trafficResetControllers.get(id)?.abort();trafficResetControllers.delete(id);trafficResetRequests.delete(id);trafficResetFeedback.delete(id);}
+}
+
+function createAgentCard(initialAgent) {
+    let agent = initialAgent;
     const state = agent.state || {};
     const hasState = Boolean(agent.state);
     const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
@@ -1051,8 +1101,10 @@ function render() {
     name.append(logo, systemText);
     const identityText = document.createElement('div');
     identityText.className = 'identity-text';
-    identityText.append(agentNameControl(agent, state), name);
-    titleLine.append(countryMark(agent.country_code, agent.country_source), identityText);
+    let nameControl = agentNameControl(agent, state);
+    identityText.append(nameControl, name);
+    const mark = countryMark(agent.country_code, agent.country_source);
+    titleLine.append(mark, identityText);
     const runtime = document.createElement('small');
     runtime.className = 'card-runtime';
     runtime.textContent = !hasState ? '— · 等待首次上报' : oldMetrics ? `运行 ${duration(state.uptime)} · 旧数据 · 最后上报 ${seen(state.collected_at)}` : `运行 ${duration(state.uptime)}`;
@@ -1107,12 +1159,13 @@ function render() {
     const googleTools = document.createElement('div');
     googleTools.className = 'google-selector-tools';
     googleTools.append(googleStatusPanel(agent));
-    const selectorTrigger = selectorView.trigger(agent);
+    let selectorTrigger = selectorView.trigger(agent);
     if (selectorTrigger) googleTools.append(selectorTrigger);
     card.append(googleTools);
     selectorView.refresh(agent.agent_id);
     card.append(networkQuality.mount(agent));
-    card.append(planPanel(agent.plan || {}));
+    const planSummary = planPanel(agent.plan || {});
+    card.append(planSummary);
 
     const deadline = planDeadline(agent.plan);
     const due = document.createElement('span');
@@ -1194,7 +1247,8 @@ function render() {
     const resetFeedback = document.createElement('span');resetFeedback.setAttribute('aria-live','polite');
     resetFeedback.textContent = trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量';
     detailActions.append(resetTraffic,resetFeedback);
-    detailPanel.append(detailActions, countryCodeLookupControls(agent), management);
+    const countryControls = countryCodeLookupControls(agent);
+    detailPanel.append(detailActions, countryControls, management);
     card.append(detailPanel);
 
     const detailToggle = document.createElement('button');
@@ -1224,22 +1278,92 @@ function render() {
     price.textContent = compactPrice(agent.plan);
     actions.append(price, due, renewPlan, editPlan, detailToggle);
     card.append(actions);
-    container.append(card);
-    deviceDetails.update(agent);
-  }
-  if (focusedAgentID && focusedKey) {
-    for (const card of container.querySelectorAll('.agent-card')) {
-      if (card.dataset.agentId === focusedAgentID) {
-        const control = card.querySelector(`[data-focus-key="${focusedKey}"]`);
-        control?.focus({preventScroll: true});
-        if (selection) control?.setSelectionRange?.(...selection);
+
+    return {card, detailPanel, update(next) {
+      agent = next;
+      const state = agent.state || {}, hasState = Boolean(agent.state);
+      const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
+      const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
+      const stateName = agent.revoked ? 'revoked' : agent.disabled_at ? 'paused' : agent.online ? 'online' : 'offline';
+      card.className = `card agent-card state-${stateName}`;
+      card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}`);
+      status.className = `status ${stateName}`; status.dataset.agentState = stateName;
+      setCardText(status, agent.revoked ? '● REVOKED' : agent.disabled_at ? '● PAUSED' : agent.online ? '● ONLINE' : '● OFFLINE');
+      const system = CardMetrics.os(state.os);
+      if (logo.getAttribute('src') !== `/vendor/card-icons/${system.icon}.svg`) logo.src = `/vendor/card-icons/${system.icon}.svg`;
+      setReadableText(systemText, system.text);
+      updateDisplay(mark, countryMark(agent.country_code, agent.country_source));
+      const editing = editingAgentNames.has(agent.agent_id);
+      if (editing !== nameControl.classList.contains('agent-name-editor')) {
+        const nextName = agentNameControl(agent, state); nameControl.replaceWith(nextName); nameControl = nextName;
       }
-    }
-  }
-  deviceDetails.sync();
-  planEditor.sync();
-  planRenewal.sync();
-  for(const id of new Set([...trafficResetRequests.keys(),...trafficResetFeedback.keys(),...trafficResetControllers.keys()]))if(!agents.has(id)){trafficResetControllers.get(id)?.abort();trafficResetControllers.delete(id);trafficResetRequests.delete(id);trafficResetFeedback.delete(id);}
+      if (editing) {
+        const input = nameControl.querySelector('input');
+        input.setCustomValidity(agentNameErrors.get(agent.agent_id) || '');
+        nameControl.querySelector('button').disabled = agentState.busy(agent.agent_id, 'name') || agentState.blocked(agent.agent_id);
+      } else {
+        setReadableText(nameControl.querySelector('h2'), agent.name || state.hostname || '未命名 VPS');
+        nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
+      }
+      setCardText(runtime, !hasState ? '— · 等待首次上报' : oldMetrics ? `运行 ${duration(state.uptime)} · 旧数据 · 最后上报 ${seen(state.collected_at)}` : `运行 ${duration(state.uptime)}`);
+      const metricTone = percent => oldMetrics ? 'unknown' : CardMetrics.tone(percent);
+      const tiles = [
+        CardMetrics.tile('cpu', 'CPU', hasState ? state.cpu_percent : null, state.cpu_cores ? `${state.cpu_cores} 核` : '核心数未知', observed.cpu, `steal ${CardMetrics.pct(state.cpu_steal_percent)}`, oldMetrics),
+        CardMetrics.tile('memory', '内存', hasState ? state.ram_percent : null, `${CardMetrics.size(state.ram_used,false,true)} / ${CardMetrics.size(state.ram_total,false,true)}`, metricTone(state.ram_percent), `Swap ${CardMetrics.size(state.swap_used,false,true)} / ${CardMetrics.size(state.swap_total,false,true)}`, oldMetrics),
+        CardMetrics.tile('disk', '磁盘', hasState ? state.disk_percent : null, `${CardMetrics.size(state.disk_used,false,true)} / ${CardMetrics.size(state.disk_total,false,true)}`, metricTone(state.disk_percent), '', oldMetrics),
+        CardMetrics.tile('disk-io', '磁盘 I/O', state.disk_busy_percent, `读 ${CardMetrics.size(state.disk_read_rate,true,true)}`, observed.io, `写 ${CardMetrics.size(state.disk_write_rate,true,true)}`, oldMetrics),
+      ];
+      tiles[3].title = ioTile.title;
+      tiles.forEach((tile, index) => updateDisplay(metrics.children[index], tile));
+      for (const [index, label, arrow, rate, total] of [[0, '下载', '↓', state.rx_rate, state.rx_total], [1, '上传', '↑', state.tx_rate, state.tx_total]]) {
+        const box = network.children[index];
+        box.className = `${index === 0 ? 'network-rx' : 'network-tx'} tone-${oldMetrics ? 'unknown' : bandwidthTone(rate, agent.plan)}`;
+        setCardText(box.querySelector('span'), `${arrow} ${label}${oldMetrics ? ' · 旧数据' : ''}`);
+        setReadableText(box.querySelector('strong'), oldMetrics ? '—' : CardMetrics.size(rate, true));
+        setReadableText(box.querySelector('small'), `${index === 0 ? '入站' : '出站'} ${hasState ? CardMetrics.size(total) : '—'}${oldMetrics && hasState ? ' · 旧值' : ''}`);
+      }
+      setCardText(bandwidth, `带宽 ${compactBandwidth(agent.plan)}`);
+      trafficCharts.mount(agent); networkQuality.mount(agent);
+      updateDisplay(googleTools.querySelector('.google-checks'), googleStatusPanel(agent));
+      const nextTrigger = selectorView.trigger(agent);
+      if (nextTrigger !== selectorTrigger) { selectorTrigger?.remove(); if (nextTrigger) googleTools.append(nextTrigger); selectorTrigger = nextTrigger; }
+      selectorView.refresh(agent.agent_id);
+      updateDisplay(planSummary, planPanel(agent.plan || {}));
+      const deadline = planDeadline(agent.plan); due.className = deadline.tone; setCardText(due, deadline.label);
+      setCardText(price, compactPrice(agent.plan));
+      const nextFacts = [
+        detailFact('主机名', state.hostname), detailFact('系统', [state.os, state.arch].filter(Boolean).join(' · ')),
+        detailFact('负载', hasState ? `${Number(state.load1 || 0).toFixed(2)} / ${Number(state.load5 || 0).toFixed(2)} / ${Number(state.load15 || 0).toFixed(2)}` : '—'),
+        detailFact('CPU steal', state.cpu_steal_percent == null || metricsStale ? '—' : `${pct(state.cpu_steal_percent)} · 等待宿主机 CPU`),
+        detailFact('Swap', hasState ? `${bytes(state.swap_used,false,true)} / ${bytes(state.swap_total,false,true)}` : '—'),
+        detailFact('磁盘 I/O', state.disk_busy_percent == null || metricsStale ? '—' : `最忙 ${pct(state.disk_busy_percent)} · 读 ${bytes(state.disk_read_rate,true,true)} · 写 ${bytes(state.disk_write_rate,true,true)}`),
+        detailFact('Agent 版本', agent.version), detailFact('运行时长', hasState ? duration(state.uptime) : '—'),
+        detailFact('最近上报', seen(agent.last_seen)), detailFact('检测时间', agent.google_status?.checked_at ? seen(agent.google_status.checked_at) : '尚未检测'),
+      ];
+      nextFacts.forEach((fact, index) => updateDisplay(facts.children[index], fact));
+      const currentParts = versionParts(agent.version), targetParts = versionParts(serverBuild.version);
+      const newer = currentParts && targetParts && targetParts.some((part, index) => part > currentParts[index] && targetParts.slice(0, index).every((value, prior) => value === currentParts[prior]));
+      remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
+      stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
+      setCardText(stateAction, agent.disabled_at ? '恢复' : '暂停');
+      stateAction.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'lifecycle') || agentState.blocked(agent.agent_id);
+      upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || !newer || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
+      upgrade.title = !agent.upgrade_capable ? '需要先在主机上完成 v0.8 bootstrap' : !agent.online ? 'Agent 离线时不能升级' : agent.disabled_at ? '请先恢复 Agent' : '升级到当前 Server 对应版本';
+      setCardText(recheck, agent.google_status?.pending ? '检测中…' : '重新检测');
+      recheck.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || agent.revoked || !agent.google_status?.supported || agent.google_status?.pending || agentState.busy(agent.agent_id, 'google') || agentState.blocked(agent.agent_id);
+      setCardText(checkFeedback, agentActionErrors.get(`${agent.agent_id}/google`) || '');
+      setCardText(resetTraffic, trafficResetRequests.has(agent.agent_id) ? '用原请求核实累计起点' : '重新开始累计统计');
+      resetTraffic.disabled = !canResetTraffic(agent);
+      setCardText(resetFeedback, trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量');
+      setCardText(editPlan, agent.plan ? '编辑套餐' : '添加套餐');
+      editPlan.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'plan') || agentState.blocked(agent.agent_id) || planRenewal.unconfirmed(agent.agent_id);
+      renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
+      for (const control of [upgrade, stateAction]) {
+        if (agent.revoked) control.remove();
+        else if (control.parentNode !== management) management.insertBefore(control, remove);
+      }
+      countryControls.update(agent);
+    }};
 }
 
 function canResetTraffic(agent) {

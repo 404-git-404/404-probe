@@ -76,3 +76,22 @@ func TestMetadataStrictJSONAndTargetMismatch(t *testing.T) {
 		t.Fatal("wrong target version accepted")
 	}
 }
+
+func TestExplicitBetaMetadataKeepsExactTargetBinding(t *testing.T) {
+	d := validDocument()
+	d.Version = "v1.0.1-beta.1"
+	raw, err := Encode(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Select(got, "v1.0.1", d.Assets[0].Name, "linux", "amd64"); err == nil {
+		t.Fatal("Beta asset selected as Stable")
+	}
+	if _, err = Select(got, d.Version, d.Assets[0].Name, "linux", "amd64"); err != nil {
+		t.Fatal(err)
+	}
+}

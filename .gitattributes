@@ -1,1 +1,4 @@
 *.sh text eol=lf
+web/static/vendor/uplot/uPlot.iife.min.js text eol=lf
+internal/storage/network_quality_schema22_objects_test.json text eol=lf
+web/static/vendor/uplot/LICENSE text eol=lf

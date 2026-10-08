@@ -95,9 +95,13 @@ download_to_file() (
   return 1
 )
 
+release_version() {
+  [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?$ ]]
+}
+
 download_release_asset() {
   local version="$1" name="$2" destination="$3" api_document api_url tag deadline remaining
-  canonical_version "${version}" || die "release asset version must use canonical vX.Y.Z form"
+  release_version "${version}" || die "release asset version must be stable or explicit beta.N"
   [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "release asset name is invalid"
 	deadline=$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))
 	DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_PRESERVE_PARTIAL=1 download_to_file "${destination}" \
@@ -133,7 +137,7 @@ canonical_version() {
 
 target_version() {
   local version="${PROBE_404_VERSION:-${DEFAULT_VERSION}}"
-  canonical_version "${version}" || die "target version must use canonical vX.Y.Z form"
+  release_version "${version}" || die "target version must be stable or explicit beta.N"
   printf '%s\n' "${version}"
 }
 
@@ -141,7 +145,7 @@ bootstrap_latest_installer() (
   local effective latest release_base temporary_directory installer checksum_line status
   if [[ -n "${PROBE_404_VERSION:-}" ]]; then
     latest="${PROBE_404_VERSION}"
-    canonical_version "${latest}" || die "explicit target version must use canonical vX.Y.Z form"
+    release_version "${latest}" || die "explicit target version must be stable or beta.N"
   else
     effective="$(curl_with_retry \
       --output /dev/null --write-out '%{url_effective}' "https://github.com/${REPOSITORY}/releases/latest")" \
@@ -2540,15 +2544,22 @@ json_string_field() {
 }
 
 compare_versions() {
-  local left="$1" right="$2" lmajor lminor lpatch rmajor rminor rpatch
-  canonical_version "${left}" && canonical_version "${right}" || return 2
-  IFS=. read -r lmajor lminor lpatch <<<"${left#v}"
-  IFS=. read -r rmajor rminor rpatch <<<"${right#v}"
+  local left="$1" right="$2" lmajor lminor lpatch rmajor rminor rpatch lbeta rbeta lbase rbase
+  release_version "${left}" && release_version "${right}" || return 2
+  lbase="${left%%-beta.*}"; rbase="${right%%-beta.*}"
+  IFS=. read -r lmajor lminor lpatch <<<"${lbase#v}"
+  IFS=. read -r rmajor rminor rpatch <<<"${rbase#v}"
   for pair in "${lmajor}:${rmajor}" "${lminor}:${rminor}" "${lpatch}:${rpatch}"; do
     if (( 10#${pair%%:*} < 10#${pair#*:} )); then printf '%s\n' -1; return; fi
     if (( 10#${pair%%:*} > 10#${pair#*:} )); then printf '%s\n' 1; return; fi
   done
-  printf '%s\n' 0
+  [[ "${left}" == *-beta.* || "${right}" == *-beta.* ]] || { printf '%s\n' 0; return; }
+  [[ "${left}" == *-beta.* ]] || { printf '%s\n' 1; return; }
+  [[ "${right}" == *-beta.* ]] || { printf '%s\n' -1; return; }
+  lbeta="${left##*-beta.}"; rbeta="${right##*-beta.}"
+  if (( 10#${lbeta} < 10#${rbeta} )); then printf '%s\n' -1
+  elif (( 10#${lbeta} > 10#${rbeta} )); then printf '%s\n' 1
+  else printf '%s\n' 0; fi
 }
 
 download_server_upgrade_candidate() (
@@ -2591,7 +2602,7 @@ identify_installed_server_version() {
   local version_json version inspected commit
   if version_json="$("${SERVER_BINARY}" version --json 2>/dev/null)"; then
     version="$(json_string_field "${version_json}" version)"
-    canonical_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
+    release_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
       || die "installed Server returned an untrusted build identity; no files were changed"
     printf '%s\n' "${version}"
     return
@@ -2767,7 +2778,7 @@ restore_server_upgrade() {
   enabled="$(server_upgrade_state_value original_enabled)" || return 1
   target="$(server_upgrade_state_value target)" || return 1
   [[ "${active}" =~ ^[01]$ && "${enabled}" =~ ^[01]$ ]] || return 1
-  canonical_version "${target}" || return 1
+  release_version "${target}" || return 1
   systemctl stop 404-probe-server.service >/dev/null 2>&1 || true
   if systemctl is-active --quiet 404-probe-server.service; then
     printf '404-probe installer: recovery stopped because the Server could not be stopped\n' >&2
