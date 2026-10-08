@@ -22,26 +22,33 @@ import (
 )
 
 type App struct {
-	store               *storage.Store
-	offlineTimeout      time.Duration
-	logger              *slog.Logger
-	now                 func() time.Time
-	controlTokenHash    []byte
-	shutdown            context.Context
-	cancel              context.CancelFunc
-	mu                  sync.RWMutex
-	states              map[string]storage.State
-	hub                 *hub
-	controlMu           sync.Mutex
-	controlWaiters      map[string]map[chan struct{}]struct{}
-	controlPollDuration time.Duration
-	webAuth             *webAuthenticator
-	buildInfo           buildinfo.Info
-	handler             http.Handler
+	store                         *storage.Store
+	offlineTimeout                time.Duration
+	logger                        *slog.Logger
+	now                           func() time.Time
+	controlTokenHash              []byte
+	shutdown                      context.Context
+	cancel                        context.CancelFunc
+	mu                            sync.RWMutex
+	states                        map[string]storage.State
+	hub                           *hub
+	traffic                       *trafficCache
+	controlMu                     sync.Mutex
+	controlWaiters                map[string]map[chan struct{}]struct{}
+	controlPollDuration           time.Duration
+	removalReceiptCleanupInterval time.Duration
+	walHealthInterval             time.Duration
+	walHealthAlertMu              sync.Mutex
+	walHealthAlert                sqliteWALAlertState
+	webAuth                       *webAuthenticator
+	buildInfo                     buildinfo.Info
+	handler                       http.Handler
+	staticAssets                  *staticAssets
 }
 
 const (
 	maxSSESubscribers        = 64
+	sseFrameWriteTimeout     = 5 * time.Second
 	maxClaimBodyBytes        = 8 << 10
 	maxResultBodyBytes       = 16 << 10
 	jobResultSubmissionGrace = 30 * time.Second
@@ -62,7 +69,13 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 		return nil, err
 	}
 	shutdown, cancel := context.WithCancel(context.Background())
-	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, buildInfo: buildinfo.Current()}
+	traffic, err := newTrafficCache()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, removalReceiptCleanupInterval: 5 * time.Minute, walHealthInterval: sqliteWALHealthInterval, buildInfo: buildinfo.Current()}
+	a.traffic = traffic
 	for _, option := range options {
 		if option == nil {
 			cancel()
@@ -76,6 +89,14 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 	for _, state := range states {
 		a.states[state.AgentID] = state
 	}
+	static, err := fs.Sub(web.Files, "static")
+	if err == nil {
+		a.staticAssets, err = newStaticAssets(static)
+	}
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("initialize static assets: %w", err)
+	}
 	a.handler = a.routes()
 	return a, nil
 }
@@ -84,6 +105,7 @@ func (a *App) Handler() http.Handler { return a.handler }
 
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
+	a.qualityRoutes(mux)
 	mux.HandleFunc("POST /api/v1/report", a.handleReport)
 	mux.HandleFunc("POST /api/v1/agent/outbounds", a.handleAgentOutbounds)
 	mux.HandleFunc("/api/v1/agent/outbounds", requirePost)
@@ -93,6 +115,11 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/control/claim", a.handleClaimControl)
 	mux.HandleFunc("/api/v1/agent/control/claim", requirePost)
+	mux.HandleFunc("POST /api/v1/agent/removals/claim", a.handleClaimAgentRemoval)
+	mux.HandleFunc("POST /api/v1/agent/removals/{operation_id}/status", a.handleAgentRemovalStatus)
+	mux.HandleFunc("POST /api/v1/agent/removals/{operation_id}/receipt", a.handleAgentRemovalReceipt)
+	mux.HandleFunc("POST /api/v1/agent/country-code-lookups/claim", a.handleClaimAgentCountryCodeLookup)
+	mux.HandleFunc("POST /api/v1/agent/country-code-lookups/{operation_id}/result", a.handleAgentCountryCodeLookupResult)
 	mux.HandleFunc("POST /api/v1/agent/jobs/{job_id}/result", a.handleJobResult)
 	mux.HandleFunc("/api/v1/agent/jobs/{job_id}/result", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/upgrades/claim", a.handleClaimUpgrade)
@@ -115,11 +142,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/control/agents", a.handleGetControlAgents)
 	mux.HandleFunc("/api/v1/control/agents", a.handleControlAgentCollectionMethodNotAllowed)
 	mux.HandleFunc("/api/v1/control/agents/", a.handleControlInvalidPath)
-	static, err := fs.Sub(web.Files, "static")
-	if err != nil {
-		panic(err)
-	}
-	a.webRoutes(mux, http.FileServer(http.FS(static)))
+	a.webRoutes(mux, a.staticAssets)
 	return securityHeaders(a.rejectAmbiguousJobPaths(mux))
 }
 
@@ -217,7 +240,14 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	state, accepted, reason, err := a.store.ProcessReport(r.Context(), authenticatedID, report, a.now())
+	received := a.now()
+	owner := a.traffic.capture(authenticatedID, received)
+	// Retired slots can be evicted; pending removal is authoritative even then.
+	// Optional cache lookup errors only skip chart retention, never report ACKs.
+	if _, removing, lookupErr := a.store.GetAgentRemovalOperation(r.Context(), authenticatedID); removing || lookupErr != nil {
+		owner = trafficOwner{}
+	}
+	state, accepted, reason, err := a.store.ProcessReport(r.Context(), authenticatedID, report, received)
 	if err != nil {
 		if errors.Is(err, storage.ErrAgentRevoked) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
@@ -236,9 +266,11 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if accepted {
-		a.publishState(state)
+		a.publishReportedState(state, owner, received)
 	}
-	writeJSON(w, http.StatusOK, protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true}})
+	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
+	response.Capabilities.NetworkQuality = true
+	writeJSON(w, http.StatusOK, a.qualityReportResponse(r, response, authenticatedID, report))
 }
 
 func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {
@@ -390,6 +422,10 @@ func (a *App) authenticateJobRequest(w http.ResponseWriter, r *http.Request, ope
 
 func (a *App) writeClaimError(w http.ResponseWriter, agentID string, err error) {
 	switch {
+	case errors.Is(err, storage.ErrAgentRevoked):
+		writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
+	case errors.Is(err, storage.ErrAgentDisabled):
+		writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
 	case errors.Is(err, storage.ErrUnauthorized):
 		writeJobError(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
 	case errors.Is(err, storage.ErrAttemptExhausted):
@@ -402,6 +438,10 @@ func (a *App) writeClaimError(w http.ResponseWriter, agentID string, err error) 
 
 func (a *App) writeResultError(w http.ResponseWriter, agentID string, err error) {
 	switch {
+	case errors.Is(err, storage.ErrAgentRevoked):
+		writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
+	case errors.Is(err, storage.ErrAgentDisabled):
+		writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
 	case errors.Is(err, storage.ErrUnauthorized):
 		writeJobError(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
 	case errors.Is(err, storage.ErrJobNotFound):
@@ -459,6 +499,10 @@ func validPathJobID(value string) bool {
 }
 
 func (a *App) publishState(state storage.State) bool {
+	return a.publishReportedState(state, trafficOwner{}, time.Time{})
+}
+
+func (a *App) publishReportedState(state storage.State, owner trafficOwner, received time.Time) bool {
 	a.mu.Lock()
 	current, exists := a.states[state.AgentID]
 	if exists && !stateAfter(state, current) {
@@ -466,6 +510,9 @@ func (a *App) publishState(state storage.State) bool {
 		return false
 	}
 	a.states[state.AgentID] = state
+	if a.traffic != nil {
+		a.traffic.append(owner, state, received, a.now())
+	}
 	payload, _ := json.Marshal(newWebAgentEventView(state))
 	a.hub.publish(payload)
 	a.mu.Unlock()
@@ -485,11 +532,7 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := webSessionFromContext(r.Context())
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
+	controller := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	setWebNoStore(w)
 	w.Header().Set("Connection", "keep-alive")
@@ -499,8 +542,9 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer a.hub.unsubscribe(ch)
-	_, _ = fmt.Fprint(w, "retry: 3000\n\n")
-	flusher.Flush()
+	if err := writeSSEFrame(w, controller, []byte("retry: 3000\n\n"), a.now(), sseFrameWriteTimeout); err != nil {
+		return
+	}
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
 	var sessionTimer *time.Timer
@@ -538,17 +582,40 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 				a.webAuth.revokeSession(session)
 				return
 			}
-			_, _ = fmt.Fprintf(w, "event: agent\ndata: %s\n\n", message)
-			flusher.Flush()
+			frame := fmt.Appendf(nil, "event: agent\ndata: %s\n\n", message)
+			if err := writeSSEFrame(w, controller, frame, a.now(), sseFrameWriteTimeout); err != nil {
+				return
+			}
 		case <-keepalive.C:
 			if session != nil && !a.webAuth.sessionOriginAllowed(r.Context(), session) {
 				a.webAuth.revokeSession(session)
 				return
 			}
-			_, _ = fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
+			if err := writeSSEFrame(w, controller, []byte(": keepalive\n\n"), a.now(), sseFrameWriteTimeout); err != nil {
+				return
+			}
 		}
 	}
+}
+
+func writeSSEFrame(w http.ResponseWriter, controller *http.ResponseController, frame []byte, now time.Time, timeout time.Duration) error {
+	if err := controller.SetWriteDeadline(now.Add(timeout)); err != nil {
+		return fmt.Errorf("set SSE write deadline: %w", err)
+	}
+	written, err := w.Write(frame)
+	if err != nil {
+		return fmt.Errorf("write SSE frame: %w", err)
+	}
+	if written != len(frame) {
+		return io.ErrShortWrite
+	}
+	if err := controller.Flush(); err != nil {
+		return fmt.Errorf("flush SSE frame: %w", err)
+	}
+	if err := controller.SetWriteDeadline(time.Time{}); err != nil {
+		return fmt.Errorf("clear SSE write deadline: %w", err)
+	}
+	return nil
 }
 
 func sessionDone(session *webSession) <-chan struct{} {
@@ -566,20 +633,48 @@ func (a *App) Shutdown() {
 }
 
 func (a *App) CleanupLoop() {
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
+	if a.removalReceiptCleanupInterval <= 0 {
+		a.removalReceiptCleanupInterval = 5 * time.Minute
+	}
+	if a.walHealthInterval <= 0 {
+		a.walHealthInterval = sqliteWALHealthInterval
+	}
+	cleanupTicker := time.NewTicker(a.removalReceiptCleanupInterval)
+	historyTicker := time.NewTicker(time.Hour)
+	walHealthTicker := time.NewTicker(a.walHealthInterval)
+	qualityTicker := time.NewTicker(5 * time.Minute)
+	defer qualityTicker.Stop()
+	defer cleanupTicker.Stop()
+	defer historyTicker.Stop()
+	defer walHealthTicker.Stop()
+	a.cleanupExpiredRemovalReceipts()
+	a.cleanupPlanRenewalRequests()
 	for {
 		select {
 		case <-a.shutdown.Done():
 			return
-		case <-ticker.C:
+		case <-cleanupTicker.C:
+			a.cleanupExpiredRemovalReceipts()
+			a.cleanupPlanRenewalRequests()
+		case <-historyTicker.C:
+			a.cleanupScheduledProbeJobs()
 			if err := a.store.CleanupHistory(a.shutdown, a.now().Add(-30*24*time.Hour)); err != nil && a.shutdown.Err() == nil {
 				a.logger.Error("clean history", "error", err)
 			}
 			if err := a.store.CleanupSecurityHistory(a.shutdown, a.now().Add(-storage.SecurityRetention)); err != nil && a.shutdown.Err() == nil {
 				a.logger.Error("clean security history", "error", err)
 			}
+		case <-walHealthTicker.C:
+			a.checkWALHealth()
+		case <-qualityTicker.C:
+			a.cleanupQuality()
 		}
+	}
+}
+
+func (a *App) cleanupExpiredRemovalReceipts() {
+	if _, err := a.store.PruneExpiredAgentRemovalReceipts(a.shutdown, a.now()); err != nil && a.shutdown.Err() == nil {
+		a.logger.Error("clean expired Agent removal receipts", "error", err)
 	}
 }
 

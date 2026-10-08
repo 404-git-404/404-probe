@@ -15,6 +15,19 @@ func validSecuritySubmission(now time.Time) SecuritySubmission {
 			Sources: []SecuritySource{{IP: "192.0.2.1", Count: 5, FirstSeen: start, LastSeen: end, DurationMS: end - start, Classifications: []SecurityClassification{SecurityRepeated}}}}}
 }
 
+func TestPlatformUnsupportedSecurityReason(t *testing.T) {
+	for _, reason := range []string{"platform_unsupported", "setup_required", "journalctl_unavailable"} {
+		s := SecuritySubmission{ProtocolVersion: SecurityProtocolVersion, AgentEpoch: 1, SessionID: "session", Status: SecurityStatusUnavailable, Reason: reason}
+		if err := s.Validate(); err != nil {
+			t.Fatalf("reason %s: %v", reason, err)
+		}
+	}
+	s := SecuritySubmission{ProtocolVersion: SecurityProtocolVersion, AgentEpoch: 1, SessionID: "session", Status: SecurityStatusUnavailable, Reason: "unknown_platform_reason"}
+	if s.Validate() == nil {
+		t.Fatal("unknown reason accepted")
+	}
+}
+
 func TestSecuritySubmissionStrictDecodeAndBounds(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	valid := validSecuritySubmission(now)

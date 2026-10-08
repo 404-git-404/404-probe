@@ -354,10 +354,26 @@ func serve(args []string) error {
 		return err
 	case <-ctx.Done():
 		app.Shutdown()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return httpServer.Shutdown(shutdownCtx)
+		return shutdownHTTPServer(httpServer, 10*time.Second)
 	}
+}
+
+type httpShutdownController interface {
+	Shutdown(context.Context) error
+	Close() error
+}
+
+func shutdownHTTPServer(server httpShutdownController, timeout time.Duration) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		shutdownErr := fmt.Errorf("graceful HTTP shutdown failed: %w", err)
+		if closeErr := server.Close(); closeErr != nil {
+			return errors.Join(shutdownErr, fmt.Errorf("force-closing HTTP connections failed: %w", closeErr))
+		}
+		return fmt.Errorf("graceful HTTP shutdown failed; active connections were force-closed: %w", err)
+	}
+	return nil
 }
 
 func agentCommand(args []string) error {

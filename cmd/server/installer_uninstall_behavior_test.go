@@ -61,6 +61,12 @@ SELECTOR_ORDER_FILE="${CONFIG_DIRECTORY}/selector-order.json"
 AGENT_UPDATER_UNIT="${task_root}/units/agent-updater.service"
 AGENT_UPDATER_SOCKET="${task_root}/run/agent-updater.sock"
 AGENT_UPDATER_STATE="${task_root}/var/lib/updater"
+AGENT_REMOVAL_WORKER_UNIT="${task_root}/units/agent-removal.service"
+AGENT_REMOVAL_FINALIZER_UNIT="${task_root}/units/agent-removal-finalize.service"
+AGENT_REMOVAL_STATE_DIRECTORY="${AGENT_UPDATER_STATE}/removal"
+AGENT_REMOVAL_REQUEST_FILE="${AGENT_REMOVAL_STATE_DIRECTORY}/request.json"
+AGENT_REMOVAL_FINISHED_MARKER="${AGENT_REMOVAL_STATE_DIRECTORY}/agent-uninstalled"
+AGENT_REMOVAL_WORKER_BINARY="${task_root}/bin/agent-removal-worker"
 SECURITY_STATE_DIRECTORY="${task_root}/var/lib/security"
 SECURITY_SERVICE_UNIT="${task_root}/units/security.service"
 SECURITY_TIMER_UNIT="${task_root}/units/security.timer"
@@ -73,10 +79,12 @@ TEST_AGENT_BOOTSTRAP="${task_root}/bin/agent.bootstrap"
 TEST_AGENT_CANDIDATE="${task_root}/bin/agent.candidate"
 TEST_AGENT_PREVIOUS="${task_root}/bin/agent.previous"
 mkdir -p "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" "${task_root}/units" "${task_root}/bin" "${task_root}/sbin" "${AGENT_UPDATER_STATE}" "${SECURITY_STATE_DIRECTORY}" "${task_root}/run"
-touch "${SERVER_UNIT}" "${AGENT_UNIT}" "${SERVER_BINARY}" "${AGENT_BINARY}" "${INSTALL_HELPER}" "${CONFIG_DIRECTORY}/agent.env" "${STATE_DIRECTORY}/agent.epoch" "${AGENT_UPDATER_UNIT}" "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" "${TEST_AGENT_BOOTSTRAP}" "${TEST_AGENT_CANDIDATE}" "${TEST_AGENT_PREVIOUS}"
+touch "${SERVER_UNIT}" "${AGENT_UNIT}" "${SERVER_BINARY}" "${AGENT_BINARY}" "${INSTALL_HELPER}" "${CONFIG_DIRECTORY}/agent.env" "${STATE_DIRECTORY}/agent.epoch" "${AGENT_UPDATER_UNIT}" "${AGENT_REMOVAL_FINALIZER_UNIT}" "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" "${TEST_AGENT_BOOTSTRAP}" "${TEST_AGENT_CANDIDATE}" "${TEST_AGENT_PREVIOUS}"
 printf active >"${task_root}/agent.state"
 require_root_linux_systemd() { :; }
 validate_service_user() { :; }
+server_residue_exists() { [[ -e "${SERVER_UNIT}" || -e "${SERVER_BINARY}" ]]; }
+remove_service_account_for_uninstall() { printf account-cleanup >>"${task_root}/unexpected"; return 1; }
 die() { printf '%s\n' "$*" >&2; return 1; }
 note() { :; }
 mountpoint() { return 1; }
@@ -102,7 +110,7 @@ uninstall_role agent --confirm-delete-data
 uninstall_role agent --confirm-delete-data
 [[ -e "${SERVER_UNIT}" && -e "${SERVER_BINARY}" && -e "${INSTALL_HELPER}" ]]
 [[ ! -e "${AGENT_UNIT}" && ! -e "${AGENT_BINARY}" && ! -e "${TEST_AGENT_BOOTSTRAP}" && ! -e "${TEST_AGENT_CANDIDATE}" && ! -e "${TEST_AGENT_PREVIOUS}" ]]
-[[ ! -e "${AGENT_UPDATER_STATE}" && ! -e "${SECURITY_STATE_DIRECTORY}" ]]
+[[ ! -e "${AGENT_UPDATER_STATE}" && ! -e "${SECURITY_STATE_DIRECTORY}" && ! -e "${AGENT_REMOVAL_FINALIZER_UNIT}" ]]
 [[ ! -e "${task_root}/unexpected" ]]
 `
 	harnessPath := filepath.Join(rootNative, "uninstall.sh")

@@ -1308,7 +1308,7 @@ func TestMigratesV2ToV4WithoutChangingV01Data(t *testing.T) {
 	for _, name := range []string{
 		"idx_probe_schedules_due", "idx_probe_jobs_schedule_slot", "idx_probe_jobs_claim",
 		"idx_probe_jobs_lease_expiry", "idx_probe_jobs_one_active_probe_lease", "idx_probe_jobs_one_active_selector_lease", "idx_probe_jobs_expiry", "idx_probe_jobs_agent_finished",
-		"idx_probe_jobs_schedule_finished",
+		"idx_probe_jobs_schedule_finished", "idx_probe_jobs_scheduled_finished_retention", "idx_probe_jobs_scheduled_expired_retention",
 	} {
 		var count int
 		if err := store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?`, name).Scan(&count); err != nil || count != 1 {

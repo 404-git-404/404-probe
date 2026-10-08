@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -20,15 +21,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	appbuildinfo "404-probe/internal/buildinfo"
-)
-
-const (
-	updaterStateDirectory = "/var/lib/404-probe-updater"
-	liveAgentBinary       = "/usr/local/bin/404-probe-agent"
-	stagedAgentBinary     = "/usr/local/bin/.404-probe-agent.candidate"
-	previousAgentBinary   = "/usr/local/bin/.404-probe-agent.previous"
-	agentServiceName      = "404-probe-agent.service"
-	serviceUserName       = "404-probe"
 )
 
 func platformServe(ctx context.Context) error {
@@ -55,9 +47,14 @@ func platformServe(ctx context.Context) error {
 	}
 	committed := make(chan struct{})
 	var commitOnce sync.Once
+	removalLauncher := newFixedAgentRemovalLauncher()
+	if err := removalLauncher.Prepare(); err != nil {
+		slog.Warn("remote Agent removal capability is unavailable", "error", err)
+	}
 	engine, err := NewEngine(EngineConfig{CurrentVersion: appbuildinfo.Current().Version, StateDirectory: updaterStateDirectory,
 		LiveBinary: liveAgentBinary, StagedBinary: stagedAgentBinary, PreviousBinary: previousAgentBinary,
 		Inspect: inspectCandidateBuild, ServiceCommand: controlAgentService, HealthTimeout: 2 * time.Minute,
+		AgentRemoval: removalLauncher,
 		OnCommitted: func() {
 			commitOnce.Do(func() { close(committed) })
 		}})
@@ -143,6 +140,11 @@ func handleConnection(connection net.Conn, engine *Engine, allowedUID uint32) {
 		state, err = engine.Status(request)
 	case ActionHealthy:
 		state, err = engine.Healthy(request)
+	case ActionCapabilities:
+		_ = json.NewEncoder(connection).Encode(Response{Accepted: true, Capabilities: UpdaterCapabilities{RemoteRemoval: engine.SupportsRemoteRemoval()}})
+		return
+	case ActionRemove:
+		err = engine.StartAgentRemoval(request)
 	}
 	response := Response{Accepted: err == nil, State: state}
 	if err != nil {

@@ -111,6 +111,12 @@ func (r GoogleStatusResult) HasUnknown() bool {
 		r.SignIn.Status == GoogleSignInUnknown || r.Gemini.Status == GeminiUnknown
 }
 
+// HasRetainedUnknown is the current YouTube-only Server policy. HasUnknown retains
+// its legacy four-service meaning for old callers and wire compatibility.
+func (r GoogleStatusResult) HasRetainedUnknown() bool {
+	return r.YouTube.Status == YouTubeUnknown
+}
+
 func validUpperRegion(value string, size int) bool {
 	if len(value) != size {
 		return false

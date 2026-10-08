@@ -43,6 +43,15 @@ func (r *Runner) runSecurityWorker(ctx context.Context) {
 }
 
 func (r *Runner) uploadSecurity(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	if r.deferredUnsupported {
+		if err := r.postSecurity(ctx, protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, Status: protocol.SecurityStatusUnavailable, Reason: "platform_unsupported"}); err != nil && ctx.Err() == nil {
+			r.logger.Warn("publish platform security status failed", "error", err)
+		}
+		return
+	}
 	files, err := os.ReadDir(r.config.SecurityExportDir)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		r.postSecurity(ctx, protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, Status: protocol.SecurityStatusUnavailable, Reason: "setup_required"})
@@ -102,7 +111,9 @@ func (r *Runner) uploadSecurity(ctx context.Context) {
 			submission.Delivery = &protocol.SecurityDelivery{OutboxGap: true, PreviousCollectedAt: ackState.LastCollectedAt}
 		}
 		if err := r.postSecurity(ctx, submission); err != nil {
-			r.logger.Warn("security upload failed; durable export retained", "batch_id", batch.BatchID, "error", err)
+			if ctx.Err() == nil {
+				r.logger.Warn("security upload failed; durable export retained", "batch_id", batch.BatchID, "error", err)
+			}
 			return
 		}
 		acks[batch.BatchID] = true
@@ -153,7 +164,7 @@ func (r *Runner) postSecurity(ctx context.Context, submission protocol.SecurityS
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+r.config.Token)
-	response, err := r.client.Do(request)
+	response, err := doAgentServerRequest(r.client, request)
 	if err != nil {
 		return err
 	}

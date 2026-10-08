@@ -20,6 +20,13 @@ import (
 	"404-probe/internal/storage"
 )
 
+type selectorMetrics struct{}
+
+func (selectorMetrics) Collect(context.Context) (protocol.Report, error) {
+	return protocol.Report{Hostname: "selector-fixture", OS: "linux", Arch: "amd64",
+		BootID: "selector-fixture-boot", Uptime: 1, RAMTotal: 1, DiskTotal: 1}, nil
+}
+
 func webSelectorSwitchResponse(t *testing.T, app *App, agentID, body string, configure func(*http.Request, *webSession)) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, webAgentPathPrefix+agentID+"/outbounds/switch", strings.NewReader(body))
@@ -198,16 +205,17 @@ func TestPauseExpiresQueuedSelectorSwitch(t *testing.T) {
 	defer clash.Close()
 	httpServer := httptest.NewServer(app.Handler())
 	defer httpServer.Close()
-	runner, err := agent.New(agent.Config{
+	runner, err := agent.NewWithReportCollector(agent.Config{
 		ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
 		Interval: time.Hour, JobInterval: 10 * time.Millisecond, Timeout: time.Second,
 		AllowInsecureHTTP: true, StatePath: selectorRunnerStatePath(t, "pause-resume.state"),
 		ClashAPIURL: clash.URL, OutboundInterval: time.Hour,
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), selectorMetrics{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	runnerDone := make(chan error, 1)
 	go func() { runnerDone <- runner.Run(ctx) }()
 	result := waitForSelectorSwitchResult(t, ctx, store, "dededededededededededededededede")
@@ -336,12 +344,12 @@ func TestWebSelectorSwitchEndToEndAndStaleLocalChoice(t *testing.T) {
 	}
 	httpServer := httptest.NewServer(app.Handler())
 	defer httpServer.Close()
-	runner, err := agent.New(agent.Config{
+	runner, err := agent.NewWithReportCollector(agent.Config{
 		ServerURL: httpServer.URL, AgentID: agentID, Token: agentToken,
 		Interval: time.Hour, JobInterval: 10 * time.Millisecond, Timeout: 2 * time.Second,
 		AllowInsecureHTTP: true, StatePath: selectorRunnerStatePath(t, "agent.state"),
 		ClashAPIURL: clash.URL, OutboundInterval: time.Hour,
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), selectorMetrics{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"404-probe/internal/collector"
+	"404-probe/internal/geoip"
+	"404-probe/internal/platformsupport"
 	"404-probe/internal/protocol"
 )
 
@@ -46,6 +48,7 @@ type Config struct {
 	SecurityAckPath             string
 	SecurityInterval            time.Duration
 	CountryCode                 string
+	EnableRemoteRemoval         bool
 }
 
 var (
@@ -54,9 +57,8 @@ var (
 )
 
 const (
-	DefaultDisabledInterval  = time.Minute
-	DefaultClashAPIURL       = "http://127.0.0.1:9090"
-	DefaultSelectorOrderPath = "/etc/404-probe/selector-order.json"
+	DefaultDisabledInterval = time.Minute
+	DefaultClashAPIURL      = "http://127.0.0.1:9090"
 )
 
 func (c Config) Validate() error {
@@ -101,36 +103,43 @@ func (c Config) Validate() error {
 }
 
 type Runner struct {
-	config                      Config
-	client                      *http.Client
-	collector                   reportCollector
-	logger                      *slog.Logger
-	epoch                       uint64
-	sessionID                   string
-	executor                    Executor
-	reportAgentVersion          bool
-	reportLinuxMetrics          bool
-	reportCountryCode           bool
-	versionReportAccepted       atomic.Bool
-	upgradeAPISupported         atomic.Bool
-	interactiveControlSupported atomic.Bool
-	googleStatusSupported       atomic.Bool
-	securitySupported           atomic.Bool
-	googleStatusAvailable       bool
-	clashControlReady           atomic.Bool
-	outboundMu                  sync.Mutex
-	selectorJobMu               sync.Mutex
-	selectorJobKey              string
-	selectorJobResult           protocol.JobResult
-	selectorJobResultReady      bool
-	selectorJobSubmitted        bool
-	interactiveControlReady     chan struct{}
-	interactiveControlOnce      sync.Once
-	securityReady               chan struct{}
-	securityOnce                sync.Once
-	outboundHeartbeatInterval   time.Duration
-	outboundRetrySteps          []time.Duration
-	outboundJitter              func(time.Duration) time.Duration
+	deferredUnsupported          bool
+	config                       Config
+	client                       *http.Client
+	collector                    reportCollector
+	logger                       *slog.Logger
+	epoch                        uint64
+	sessionID                    string
+	executor                     Executor
+	reportAgentVersion           bool
+	reportLinuxMetrics           bool
+	reportCountryCode            bool
+	reportManagementCapabilities bool
+	reportNetworkCounters        bool
+	versionReportAccepted        atomic.Bool
+	upgradeAPISupported          atomic.Bool
+	interactiveControlSupported  atomic.Bool
+	googleStatusSupported        atomic.Bool
+	securitySupported            atomic.Bool
+	managementAPISupported       atomic.Bool
+	qualitySupported             atomic.Bool
+	quality                      *qualityControl
+	googleStatusAvailable        bool
+	clashControlReady            atomic.Bool
+	outboundMu                   sync.Mutex
+	selectorJobMu                sync.Mutex
+	selectorJobKey               string
+	selectorJobResult            protocol.JobResult
+	selectorJobResultReady       bool
+	selectorJobSubmitted         bool
+	interactiveControlReady      chan struct{}
+	interactiveControlOnce       sync.Once
+	securityReady                chan struct{}
+	securityOnce                 sync.Once
+	outboundHeartbeatInterval    time.Duration
+	outboundRetrySteps           []time.Duration
+	outboundJitter               func(time.Duration) time.Duration
+	countryCodeLookup            func(context.Context) (string, error)
 }
 
 type reportCollector interface {
@@ -141,10 +150,32 @@ func New(config Config, logger *slog.Logger) (*Runner, error) {
 	return NewWithExecutor(config, logger, NewProbeExecutor())
 }
 
+// NewWithReportCollector constructs a runner with an instance-local metrics
+// dependency. Control integration fixtures can supply legal measurements while
+// retaining the real report/session/capability and job protocols. New and
+// NewWithExecutor always keep the production Linux collector by default.
+func NewWithReportCollector(config Config, logger *slog.Logger, measurements interface {
+	Collect(context.Context) (protocol.Report, error)
+}) (*Runner, error) {
+	if measurements == nil {
+		return nil, errors.New("report collector is required")
+	}
+	runner, err := New(config, logger)
+	if err != nil {
+		return nil, err
+	}
+	runner.collector = measurements
+	return runner, nil
+}
+
 // NewWithExecutor constructs a runner with an explicitly supplied job
 // executor. New uses the production HTTP, TCP, and conditionally available
 // ICMP executor.
 func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Runner, error) {
+	return newWithPlatform(config, logger, executor, platformsupport.Host())
+}
+
+func newWithPlatform(config Config, logger *slog.Logger, executor Executor, platform platformsupport.Policy) (*Runner, error) {
 	if config.JobInterval == 0 {
 		config.JobInterval = DefaultJobInterval
 	}
@@ -155,10 +186,10 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 		config.OutboundInterval = time.Minute
 	}
 	if config.SecurityExportDir == "" {
-		config.SecurityExportDir = "/var/lib/404-probe-security/export"
+		config.SecurityExportDir = DefaultSecurityExportDir
 	}
 	if config.SecurityAckPath == "" {
-		config.SecurityAckPath = "/var/lib/404-probe/agent.security-acks.json"
+		config.SecurityAckPath = DefaultSecurityAckPath
 	}
 	if config.SecurityInterval == 0 {
 		config.SecurityInterval = 5 * time.Minute
@@ -181,12 +212,17 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 		logger = slog.Default()
 	}
 	return &Runner{
-		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
+		deferredUnsupported: platform.DeferredUnsupported,
+		config:              config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: &collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
 		executor:  executor, interactiveControlReady: make(chan struct{}), securityReady: make(chan struct{}),
 		outboundHeartbeatInterval: outboundHeartbeatInterval,
 		outboundRetrySteps:        []time.Duration{10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute},
 		outboundJitter:            jitterOutboundDelay,
+		countryCodeLookup: func(ctx context.Context) (string, error) {
+			return geoip.LookupCountryCode(ctx, geoip.Client(geoip.DefaultTimeout), geoip.Endpoint)
+		},
+		quality: newQualityControl(),
 		googleStatusAvailable: func() bool {
 			capable, ok := executor.(googleStatusCapability)
 			return ok && capable.SupportsGoogleStatus()
@@ -195,11 +231,19 @@ func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Ru
 }
 
 func (r *Runner) Run(ctx context.Context) error {
+	parent := ctx
+	ctx, cancelAuthentication := withAgentAuthentication(parent)
+	defer cancelAuthentication(nil)
 	var sequence uint64
 	immediate := true
 	for {
 		workerContext, stopWorker := context.WithCancel(ctx)
 		var workers sync.WaitGroup
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			r.runQualityWorker(workerContext)
+		}()
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -210,11 +254,21 @@ func (r *Runner) Run(ctx context.Context) error {
 			defer workers.Done()
 			r.runSecurityWorker(workerContext)
 		}()
-		if r.config.UpdaterSocket != "" {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			r.runCountryCodeLookupWorker(workerContext)
+		}()
+		if !r.deferredUnsupported && r.config.UpdaterSocket != "" {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
 				r.runUpgradeWorker(workerContext)
+			}()
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				r.runRemovalWorker(workerContext)
 			}()
 		}
 		if r.clashIntegrationEnabled() {
@@ -235,6 +289,12 @@ func (r *Runner) Run(ctx context.Context) error {
 		err := r.runReportLoop(workerContext, &sequence, immediate)
 		stopWorker()
 		workers.Wait()
+		if cause := authenticationFailure(ctx); cause != nil {
+			err = cause
+		}
+		if errors.Is(err, ErrAgentAuthInvalid) {
+			return r.waitForAuthConfigurationRestart(parent)
+		}
 		if errors.Is(err, ErrAgentRevoked) {
 			r.logger.Info("agent credential has been revoked; stopping")
 			return nil
@@ -245,6 +305,12 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		r.logger.Info("agent has been disabled; pausing reports, jobs, and outbound discovery")
 		err = r.waitWhileDisabled(ctx, &sequence)
+		if cause := authenticationFailure(ctx); cause != nil {
+			err = cause
+		}
+		if errors.Is(err, ErrAgentAuthInvalid) {
+			return r.waitForAuthConfigurationRestart(parent)
+		}
 		if errors.Is(err, ErrAgentRevoked) {
 			r.logger.Info("agent credential has been revoked; stopping")
 			return nil
@@ -309,8 +375,14 @@ func (r *Runner) waitWhileDisabled(ctx context.Context, sequence *uint64) error 
 }
 
 func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error) {
+	if ctx.Err() != nil {
+		return false, authenticationFailure(ctx)
+	}
 	measurement, err := r.collector.Collect(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return false, authenticationFailure(ctx)
+		}
 		r.logger.Error("collect metrics", "error", err)
 		return false, nil
 	}
@@ -318,6 +390,15 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	measurement.AgentID = r.config.AgentID
 	if r.config.CountryCode != "" {
 		measurement.CountryCode = r.config.CountryCode
+	}
+	if r.reportManagementCapabilities {
+		measurement.Management = &protocol.AgentManagementCapabilities{
+			RemoteRemoval:     r.remoteRemovalCapability(ctx),
+			CountryCodeLookup: true,
+		}
+	}
+	if !r.reportNetworkCounters {
+		measurement.NetworkCounters = nil
 	}
 	if !r.reportLinuxMetrics {
 		measurement.CPUCores = 0
@@ -334,18 +415,29 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		measurement.AgentUpgradeCapable = r.updaterAvailable()
 	}
 	measurement.Epoch = r.epoch
+	measurement.NetworkQuality = r.qualitySupported.Load()
 	measurement.SessionID = r.sessionID
 	measurement.Sequence = *sequence
 	measurement.CollectedAt = time.Now().UnixMilli()
 	response, err := r.post(ctx, measurement)
 	if err != nil {
+		if errors.Is(err, ErrAgentAuthInvalid) || authenticationFailure(ctx) != nil {
+			return false, authenticationFailure(ctx)
+		}
+		if ctx.Err() != nil {
+			return false, nil
+		}
 		if errors.Is(err, ErrAgentRevoked) || errors.Is(err, ErrAgentDisabled) {
+			r.stopQuality("resource_authorization")
 			return false, err
 		}
 		r.logger.Warn("report failed; will retry with a fresh sample", "error", err)
 		return false, nil
 	}
 	if !response.Accepted {
+		if strings.Contains(response.Reason, "session") || strings.Contains(response.Reason, "epoch") {
+			r.stopQuality("report_session_rejected")
+		}
 		r.logger.Warn("report rejected", "reason", response.Reason, "epoch", r.epoch, "sequence", *sequence)
 		return false, nil
 	}
@@ -361,7 +453,12 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	if response.Capabilities.CountryCodeReport {
 		r.reportCountryCode = true
 	}
-	if response.Capabilities.AgentUpgrade {
+	r.reportManagementCapabilities = response.Capabilities.ManagementReport
+	r.qualitySupported.Store(response.Capabilities.NetworkQuality)
+	r.observeQualityReport(measurement.NetworkQuality, response)
+	r.reportNetworkCounters = response.Capabilities.NetworkCountersReport
+	r.managementAPISupported.Store(response.Capabilities.ManagementReport)
+	if !r.deferredUnsupported && response.Capabilities.AgentUpgrade {
 		r.upgradeAPISupported.Store(true)
 	}
 	r.interactiveControlSupported.Store(response.Capabilities.InteractiveControl)
@@ -382,7 +479,7 @@ func (r *Runner) clashIntegrationEnabled() bool {
 }
 
 func (r *Runner) updaterAvailable() bool {
-	if r.config.UpdaterSocket == "" {
+	if r.deferredUnsupported || r.config.UpdaterSocket == "" {
 		return false
 	}
 	info, err := os.Stat(r.config.UpdaterSocket)
@@ -401,7 +498,7 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
-	resp, err := r.client.Do(req)
+	resp, err := doAgentServerRequest(r.client, req)
 	if err != nil {
 		return protocol.ReportResponse{}, err
 	}
@@ -430,9 +527,10 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 		return protocol.ReportResponse{}, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(limited)))
 	}
 	var wire struct {
-		Accepted     *bool                       `json:"accepted"`
-		Reason       string                      `json:"reason"`
-		Capabilities protocol.ReportCapabilities `json:"capabilities"`
+		Accepted       *bool                       `json:"accepted"`
+		Reason         string                      `json:"reason"`
+		Capabilities   protocol.ReportCapabilities `json:"capabilities"`
+		NetworkQuality json.RawMessage             `json:"network_quality"`
 	}
 	if err := json.Unmarshal(limited, &wire); err != nil {
 		return protocol.ReportResponse{}, fmt.Errorf("decode server response: %w", err)
@@ -440,7 +538,14 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	if wire.Accepted == nil {
 		return protocol.ReportResponse{}, errors.New("decode server response: accepted field is required")
 	}
-	return protocol.ReportResponse{Accepted: *wire.Accepted, Reason: wire.Reason, Capabilities: wire.Capabilities}, nil
+	response := protocol.ReportResponse{Accepted: *wire.Accepted, Reason: wire.Reason, Capabilities: wire.Capabilities}
+	if len(wire.NetworkQuality) > 0 {
+		var quality protocol.QualityConfig
+		if json.Unmarshal(wire.NetworkQuality, &quality) == nil {
+			response.NetworkQuality = &quality
+		}
+	}
+	return response, nil
 }
 
 func randomID(bytes int) (string, error) {

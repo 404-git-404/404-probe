@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -46,15 +47,22 @@ func TestOpenInitializesPragmasOnReplacementConnections(t *testing.T) {
 
 	store.db.SetMaxIdleConns(0)
 	for attempt := 0; attempt < 3; attempt++ {
-		var foreignKeys, busyTimeout int
+		var foreignKeys, busyTimeout, autoCheckpointPages int
+		var journalSizeLimit int64
 		if err := store.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.db.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
 			t.Fatal(err)
 		}
-		if foreignKeys != 1 || busyTimeout != 5000 {
-			t.Fatalf("replacement connection %d pragmas foreign_keys=%d busy_timeout=%d", attempt+1, foreignKeys, busyTimeout)
+		if err := store.db.QueryRowContext(ctx, "PRAGMA wal_autocheckpoint").Scan(&autoCheckpointPages); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.db.QueryRowContext(ctx, "PRAGMA journal_size_limit").Scan(&journalSizeLimit); err != nil {
+			t.Fatal(err)
+		}
+		if foreignKeys != 1 || busyTimeout != 5000 || autoCheckpointPages != sqliteWALAutoCheckpointPages || journalSizeLimit != sqliteJournalSizeLimitBytes {
+			t.Fatalf("replacement connection %d pragmas foreign_keys=%d busy_timeout=%d wal_autocheckpoint=%d journal_size_limit=%d", attempt+1, foreignKeys, busyTimeout, autoCheckpointPages, journalSizeLimit)
 		}
 	}
 }
@@ -241,7 +249,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	}
 	for _, statement := range []string{
 		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
-		`INSERT INTO schema_migrations(version,applied_at) VALUES(17,5000)`,
+		fmt.Sprintf(`INSERT INTO schema_migrations(version,applied_at) VALUES(%d,5000)`, currentSchemaVersion+1),
 		`CREATE TABLE future_fixture (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`,
 		`INSERT INTO future_fixture(id,value) VALUES(1,'future-data')`,
 	} {
@@ -264,7 +272,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 		store.Close()
 		t.Fatal("future schema was opened")
 	}
-	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), "version 17") {
+	if !errors.Is(err, ErrUnsupportedSchemaVersion) || !strings.Contains(err.Error(), fmt.Sprintf("version %d", currentSchemaVersion+1)) {
 		t.Fatalf("future schema error=%v", err)
 	}
 
@@ -275,7 +283,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 	defer db.Close()
 	var version int
 	var appliedAt int64
-	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != 17 || appliedAt != 5000 {
+	if err := db.QueryRow(`SELECT version,applied_at FROM schema_migrations`).Scan(&version, &appliedAt); err != nil || version != currentSchemaVersion+1 || appliedAt != 5000 {
 		t.Fatalf("migration metadata changed: version=%d applied_at=%d err=%v", version, appliedAt, err)
 	}
 	var fixtureValue string
@@ -408,14 +416,14 @@ func TestEpochSequenceAndTraffic(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if state.RXTotal != 700 || state.TXTotal != 580 || state.RXRate != 0 || state.TXRate != 0 {
+	if state.RXTotal != 600 || state.TXTotal != 500 || state.RXRate != 0 || state.TXRate != 0 || !state.ContinuityPartial {
 		t.Fatalf("counter rollback state=%+v", state)
 	}
 	state, ok, _, err = s.ProcessReport(ctx, id, validReport(id, 8, "session-b", "boot-a", 3, 0, 0), at.Add(35*time.Second))
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if state.RXTotal != 700 || state.TXTotal != 580 || state.RXRate != 0 || state.TXRate != 0 {
+	if state.RXTotal != 600 || state.TXTotal != 500 || state.RXRate != 0 || state.TXRate != 0 || !state.ContinuityPartial {
 		t.Fatalf("counter reset to zero state=%+v", state)
 	}
 
@@ -423,7 +431,7 @@ func TestEpochSequenceAndTraffic(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if state.RXTotal != 1000 || state.TXTotal != 980 || state.RXRate != 0 || state.TXRate != 0 || state.BootID != "boot-b" {
+	if state.RXTotal != 600 || state.TXTotal != 500 || state.RXRate != 0 || state.TXRate != 0 || state.BootID != "boot-b" || !state.ContinuityPartial {
 		t.Fatalf("boot change state=%+v", state)
 	}
 }
@@ -473,7 +481,7 @@ func TestTrafficAndEpochSurviveServerRestart(t *testing.T) {
 		t.Fatalf("persisted epoch lost: accepted=%t reason=%q state=%+v err=%v", ok, reason, stale, err)
 	}
 	state, ok, _, err = s.ProcessReport(ctx, id, validReport(id, 22, "s3", "b2", 1, 300, 200), at.Add(30*time.Second))
-	if err != nil || !ok || state.RXTotal != 700 || state.TXTotal != 700 {
+	if err != nil || !ok || state.RXTotal != 400 || state.TXTotal != 500 || !state.ContinuityPartial {
 		t.Fatalf("new boot after restart state=%+v accepted=%t err=%v", state, ok, err)
 	}
 }
@@ -484,21 +492,24 @@ func TestPermanentTrafficSQLiteBoundaryIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	at := time.Unix(1000, 0)
 	max := uint64(math.MaxInt64)
-	if _, ok, _, err := s.ProcessReport(ctx, id, validReport(id, 1, "s1", "b1", 1, max, max), at); err != nil || !ok {
+	if _, ok, _, err := s.ProcessReport(ctx, id, validReport(id, 1, "s1", "b1", 1, 0, 0), at); err != nil || !ok {
 		t.Fatalf("baseline accepted=%t err=%v", ok, err)
 	}
-	state, ok, _, err := s.ProcessReport(ctx, id, validReport(id, 2, "s2", "b2", 1, max, max), at.Add(time.Second))
+	state, ok, _, err := s.ProcessReport(ctx, id, validReport(id, 1, "s1", "b1", 2, max, max), at.Add(time.Second))
 	if err != nil || !ok || state.RXTotal != max || state.TXTotal != max {
 		t.Fatalf("max boundary state=%+v accepted=%t err=%v", state, ok, err)
 	}
-	if _, ok, _, err := s.ProcessReport(ctx, id, validReport(id, 3, "s3", "b3", 1, 1, 1), at.Add(2*time.Second)); err == nil || ok {
-		t.Fatalf("MaxInt64+1 accepted=%t err=%v", ok, err)
+	if _, ok, _, err := s.ProcessReport(ctx, id, validReport(id, 2, "s2", "b2", 1, 0, 0), at.Add(2*time.Second)); err != nil || !ok {
+		t.Fatalf("boot baseline accepted=%t err=%v", ok, err)
+	}
+	if _, ok, _, err := s.ProcessReport(ctx, id, validReport(id, 2, "s2", "b2", 2, 1, 1), at.Add(3*time.Second)); err == nil || ok {
+		t.Fatalf("permanent MaxInt64+1 accepted=%t err=%v", ok, err)
 	}
 	states, err := s.ListStates(ctx)
 	if err != nil || len(states) != 1 {
 		t.Fatalf("states=%v err=%v", states, err)
 	}
-	if states[0].Epoch != 2 || states[0].RXTotal != max || states[0].TXTotal != max {
+	if states[0].Epoch != 2 || states[0].RXTotal != max || states[0].TXTotal != max || states[0].RXBytes != 0 || states[0].Sequence != 1 {
 		t.Fatalf("overflow changed persisted state: %+v", states[0])
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -552,6 +563,9 @@ func TestMigratesV1StateToV4(t *testing.T) {
 	state := states[0]
 	if state.Epoch != 0 || state.SessionID != "old-session" || state.Sequence != 5 || state.RXBytes != 100 || state.TXBytes != 200 || state.RXTotal != 10 || state.TXTotal != 20 {
 		t.Fatalf("v1 state not preserved: %+v", state)
+	}
+	if state.NetworkCountersVersion != 0 || len(state.NetworkCounters) != 0 {
+		t.Fatalf("legacy state did not receive a v0 network-counter baseline: %+v", state)
 	}
 	var indexes int
 	if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_agents_active_token_hash'`).Scan(&indexes); err != nil || indexes != 1 {

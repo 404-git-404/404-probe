@@ -40,9 +40,6 @@ type googleTarget struct {
 
 var googleTargets = []googleTarget{
 	{googleYouTube, "https://www.youtube.com/premium", "CONSENT=YES+cb.20220301-11-p0.en+FX+700"},
-	{googleSearch, "https://www.google.com/search?q=curl&hl=en", ""},
-	{googleSignIn, "https://accounts.google.com/", ""},
-	{googleGemini, "https://gemini.google.com/", ""},
 }
 
 type googleHTTPResponse struct {
@@ -72,7 +69,12 @@ func (e *GoogleStatusExecutor) Execute(ctx context.Context, job protocol.Job) (E
 	if job.ProbeType != protocol.ProbeTypeGoogleStatus || job.Config.GoogleStatus == nil {
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	}
-	result := protocol.GoogleStatusResult{}
+	// Keep legal legacy wire/DB slots without executing the removed checks.
+	result := protocol.GoogleStatusResult{
+		Search: protocol.GoogleSearchResult{Status: protocol.GoogleSearchUnknown},
+		SignIn: protocol.GoogleSignInResult{Status: protocol.GoogleSignInUnknown},
+		Gemini: protocol.GeminiResult{Status: protocol.GeminiUnknown},
+	}
 	for _, target := range googleTargets {
 		response, category := e.fetcher.fetch(ctx, target)
 		switch target.service {
@@ -80,21 +82,6 @@ func (e *GoogleStatusExecutor) Execute(ctx context.Context, job protocol.Job) (E
 			result.YouTube = parseYouTube(response)
 			if result.YouTube.Status == protocol.YouTubeUnknown {
 				result.YouTube.Error.Category = firstCategory(category, "unrecognized_response")
-			}
-		case googleSearch:
-			result.Search = parseGoogleSearch(response)
-			if result.Search.Status == protocol.GoogleSearchUnknown {
-				result.Search.Error.Category = firstCategory(category, "unrecognized_response")
-			}
-		case googleSignIn:
-			result.SignIn = parseGoogleSignIn(response)
-			if result.SignIn.Status == protocol.GoogleSignInUnknown {
-				result.SignIn.Error.Category = firstCategory(category, "unrecognized_response")
-			}
-		case googleGemini:
-			result.Gemini = parseGemini(response)
-			if result.Gemini.Status == protocol.GeminiUnknown {
-				result.Gemini.Error.Category = firstCategory(category, "unrecognized_response")
 			}
 		}
 	}
@@ -388,6 +375,7 @@ func parseGoogleSignIn(response googleHTTPResponse) protocol.GoogleSignInResult 
 	return unknown
 }
 
+// Legacy parser retained for compatibility fixtures; the current executor never calls it.
 func parseGemini(response googleHTTPResponse) protocol.GeminiResult {
 	unknown := protocol.GeminiResult{Status: protocol.GeminiUnknown}
 	if !validHTML(response) || !(response.finalURL == "https://gemini.google.com" || strings.HasPrefix(response.finalURL, "https://gemini.google.com/")) {

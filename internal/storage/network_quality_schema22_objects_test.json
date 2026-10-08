@@ -1,0 +1,338 @@
+[
+  [
+    "index",
+    "idx_agent_removal_one_active",
+    "agent_removal_operations",
+    "CREATE UNIQUE INDEX idx_agent_removal_one_active ON agent_removal_operations(agent_id)"
+  ],
+  [
+    "index",
+    "idx_agent_removal_receipts_replay_expiry",
+    "agent_removal_receipts",
+    "CREATE INDEX idx_agent_removal_receipts_replay_expiry ON agent_removal_receipts(replay_expires_at)"
+  ],
+  [
+    "index",
+    "idx_agent_security_history",
+    "agent_security_batches",
+    "CREATE INDEX idx_agent_security_history ON agent_security_batches(agent_id,collected_at DESC,batch_id DESC)"
+  ],
+  [
+    "index",
+    "idx_agent_security_retention",
+    "agent_security_batches",
+    "CREATE INDEX idx_agent_security_retention ON agent_security_batches(received_at)"
+  ],
+  [
+    "index",
+    "idx_agent_traffic_reset_requests_agent",
+    "agent_traffic_reset_requests",
+    "CREATE INDEX idx_agent_traffic_reset_requests_agent ON agent_traffic_reset_requests(agent_id,started_at)"
+  ],
+  [
+    "index",
+    "idx_agent_upgrade_agent_created",
+    "agent_upgrade_operations",
+    "CREATE INDEX idx_agent_upgrade_agent_created ON agent_upgrade_operations(agent_id,created_at DESC)"
+  ],
+  [
+    "index",
+    "idx_agent_upgrade_one_active",
+    "agent_upgrade_operations",
+    "CREATE UNIQUE INDEX idx_agent_upgrade_one_active ON agent_upgrade_operations(agent_id) WHERE status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check')"
+  ],
+  [
+    "index",
+    "idx_agents_active_token_hash",
+    "agents",
+    "CREATE INDEX idx_agents_active_token_hash ON agents(token_hash) WHERE revoked=0"
+  ],
+  [
+    "index",
+    "idx_agents_created_id",
+    "agents",
+    "CREATE INDEX idx_agents_created_id ON agents(created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_agents_disabled_created_id",
+    "agents",
+    "CREATE INDEX idx_agents_disabled_created_id ON agents(disabled_at,created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_agents_revoked_created_id",
+    "agents",
+    "CREATE INDEX idx_agents_revoked_created_id ON agents(revoked,created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_minute_metrics_bucket",
+    "minute_metrics",
+    "CREATE INDEX idx_minute_metrics_bucket ON minute_metrics(bucket)"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_agent_created_id",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_agent_created_id ON probe_jobs(agent_id,created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_agent_finished",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_agent_finished ON probe_jobs(agent_id,finished_at DESC) WHERE status='finished'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_claim",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_claim ON probe_jobs(agent_id,not_before,created_at) WHERE status='queued'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_created_id",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_created_id ON probe_jobs(created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_expiry",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_expiry ON probe_jobs(expires_at) WHERE status IN ('queued','leased')"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_lease_expiry",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_lease_expiry ON probe_jobs(agent_id,lease_until) WHERE status='leased'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_one_active_probe_lease",
+    "probe_jobs",
+    "CREATE UNIQUE INDEX idx_probe_jobs_one_active_probe_lease ON probe_jobs(agent_id) WHERE status='leased' AND probe_type\u003c\u003e'singbox_selector_switch'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_one_active_selector_lease",
+    "probe_jobs",
+    "CREATE UNIQUE INDEX idx_probe_jobs_one_active_selector_lease ON probe_jobs(agent_id) WHERE status='leased' AND probe_type='singbox_selector_switch'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_one_pending_google_status",
+    "probe_jobs",
+    "CREATE UNIQUE INDEX idx_probe_jobs_one_pending_google_status ON probe_jobs(agent_id)\n\t\t\t\tWHERE probe_type='google_status' AND status IN ('queued','leased')"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_schedule_created_id",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_schedule_created_id ON probe_jobs(schedule_id,created_at DESC,id DESC) WHERE schedule_id IS NOT NULL"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_schedule_finished",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_schedule_finished ON probe_jobs(schedule_id,finished_at DESC) WHERE status='finished'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_schedule_slot",
+    "probe_jobs",
+    "CREATE UNIQUE INDEX idx_probe_jobs_schedule_slot ON probe_jobs(schedule_id,scheduled_for) WHERE schedule_id IS NOT NULL"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_scheduled_expired_retention",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_scheduled_expired_retention ON probe_jobs(expires_at,id)\n\t\t\t\tWHERE origin='scheduled' AND status='expired'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_scheduled_finished_retention",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_scheduled_finished_retention ON probe_jobs(finished_at,id)\n\t\t\t\tWHERE origin='scheduled' AND status='finished'"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_status_created_id",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_status_created_id ON probe_jobs(status,created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_probe_jobs_type_created_id",
+    "probe_jobs",
+    "CREATE INDEX idx_probe_jobs_type_created_id ON probe_jobs(probe_type,created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_probe_schedules_agent_created_id",
+    "probe_schedules",
+    "CREATE INDEX idx_probe_schedules_agent_created_id ON probe_schedules(agent_id,created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_probe_schedules_created_id",
+    "probe_schedules",
+    "CREATE INDEX idx_probe_schedules_created_id ON probe_schedules(created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_probe_schedules_due",
+    "probe_schedules",
+    "CREATE INDEX idx_probe_schedules_due ON probe_schedules(next_run_at) WHERE enabled=1"
+  ],
+  [
+    "index",
+    "idx_probe_schedules_enabled_created_id",
+    "probe_schedules",
+    "CREATE INDEX idx_probe_schedules_enabled_created_id ON probe_schedules(enabled,created_at DESC,id DESC)"
+  ],
+  [
+    "index",
+    "idx_probe_schedules_type_created_id",
+    "probe_schedules",
+    "CREATE INDEX idx_probe_schedules_type_created_id ON probe_schedules(probe_type,created_at DESC,id DESC)"
+  ],
+  [
+    "table",
+    "agent_country_code_lookups",
+    "agent_country_code_lookups",
+    "CREATE TABLE agent_country_code_lookups (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\toperation_id TEXT NOT NULL UNIQUE CHECK(length(operation_id)=32 AND operation_id NOT GLOB '*[^0-9a-f]*'),\n\t\t\t\tstatus TEXT NOT NULL CHECK(status IN ('requested','delivered','succeeded','failed')),\n\t\t\t\trequested_epoch INTEGER NOT NULL CHECK(requested_epoch \u003e 0),\n\t\t\t\trequested_session_id TEXT NOT NULL,\n\t\t\t\tactive_epoch INTEGER NOT NULL CHECK(active_epoch \u003e 0),\n\t\t\t\tactive_session_id TEXT NOT NULL,\n\t\t\t\tresult_code TEXT CHECK(result_code IS NULL OR (length(result_code)=2 AND result_code=upper(result_code) AND result_code NOT GLOB '*[^A-Z]*')),\n\t\t\t\terror_code TEXT CHECK(error_code IS NULL OR error_code='lookup_failed'),\n\t\t\t\tlast_country_code TEXT CHECK(last_country_code IS NULL OR (length(last_country_code)=2 AND last_country_code=upper(last_country_code) AND last_country_code NOT GLOB '*[^A-Z]*')),\n\t\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\t\tCHECK((status='succeeded' AND result_code IS NOT NULL AND error_code IS NULL) OR\n\t\t\t\t\t(status='failed' AND result_code IS NULL AND error_code='lookup_failed') OR\n\t\t\t\t\t(status IN ('requested','delivered') AND result_code IS NULL AND error_code IS NULL))\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_google_status",
+    "agent_google_status",
+    "CREATE TABLE agent_google_status (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tyoutube_status TEXT NOT NULL CHECK(youtube_status IN ('unknown','cn','not_cn')),\n\t\t\t\tyoutube_region TEXT,\n\t\t\t\tsent_to_china INTEGER CHECK(sent_to_china IN (0,1)),\n\t\t\t\tyoutube_error TEXT,\n\t\t\t\tsearch_status TEXT NOT NULL CHECK(search_status IN ('unknown','ok','challenge','blocked')),\n\t\t\t\tsearch_error TEXT,\n\t\t\t\tsignin_status TEXT NOT NULL CHECK(signin_status IN ('unknown','reachable','challenge','blocked')),\n\t\t\t\tsignin_error TEXT,\n\t\t\t\tgemini_status TEXT NOT NULL CHECK(gemini_status IN ('unknown','available','blocked')),\n\t\t\t\tgemini_region TEXT,\n\t\t\t\tgemini_error TEXT,\n\t\t\t\tchecked_at INTEGER NOT NULL,\n\t\t\t\tunknown_streak INTEGER NOT NULL,\n\t\t\t\tnext_due_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_google_status_capabilities",
+    "agent_google_status_capabilities",
+    "CREATE TABLE agent_google_status_capabilities (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tsupported INTEGER NOT NULL CHECK(supported IN (0,1)),\n\t\t\t\tupdated_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_management_capabilities",
+    "agent_management_capabilities",
+    "CREATE TABLE agent_management_capabilities (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tremote_removal INTEGER NOT NULL CHECK(remote_removal IN (0,1)),\n\t\t\t\tcountry_code_lookup INTEGER NOT NULL CHECK(country_code_lookup IN (0,1)),\n\t\t\t\tepoch INTEGER NOT NULL CHECK(epoch \u003e 0),\n\t\t\t\tsession_id TEXT NOT NULL,\n\t\t\t\tupdated_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_outbound_snapshots",
+    "agent_outbound_snapshots",
+    "CREATE TABLE agent_outbound_snapshots (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tavailable INTEGER NOT NULL CHECK(available IN (0,1)),\n\t\t\t\tpayload_json TEXT NOT NULL,\n\t\t\t\tchecked_at INTEGER NOT NULL,\n\t\t\t\tupdated_at INTEGER\n\t\t\t, status TEXT NOT NULL DEFAULT 'unavailable' CHECK(status IN ('connected','not_detected','auth_required','unavailable')))"
+  ],
+  [
+    "table",
+    "agent_plans",
+    "agent_plans",
+    "CREATE TABLE agent_plans (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\ttraffic_mode TEXT CHECK(traffic_mode IN ('rx','tx','sum')),\n\t\t\t\tquota_value TEXT, quota_unit TEXT CHECK(quota_unit IN ('GB','TB','GiB','TiB')), quota_bytes INTEGER CHECK(quota_bytes \u003e= 0),\n\t\t\t\tcycle_kind TEXT CHECK(cycle_kind IN ('monthly','yearly','days','none')),\n\t\t\t\tcycle_count INTEGER CHECK(cycle_count \u003e 0), cycle_anchor TEXT, timezone TEXT,\n\t\t\t\tusage_bytes INTEGER NOT NULL DEFAULT 0 CHECK(usage_bytes \u003e= 0),\n\t\t\t\tusage_status TEXT NOT NULL DEFAULT 'partial' CHECK(usage_status IN ('partial','calibrated')),\n\t\t\t\tcycle_start INTEGER, cycle_end INTEGER,\n\t\t\t\tbandwidth_value TEXT, bandwidth_unit TEXT CHECK(bandwidth_unit IN ('Mbps','Gbps')), bandwidth_bps INTEGER CHECK(bandwidth_bps \u003e= 0),\n\t\t\t\tcurrency TEXT, purchase_price TEXT, purchase_price_period TEXT,\n\t\t\t\trenewal_price TEXT, renewal_price_period TEXT,\n\t\t\t\tpurchase_date TEXT, renewal_date TEXT, expiry_date TEXT,\n\t\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\t\tobserve_after INTEGER NOT NULL DEFAULT 0\n\t\t\t, country_code_override TEXT CHECK(country_code_override IS NULL OR (length(country_code_override)=2 AND country_code_override=upper(country_code_override) AND country_code_override NOT GLOB '*[^A-Z]*')))"
+  ],
+  [
+    "table",
+    "agent_removal_operations",
+    "agent_removal_operations",
+    "CREATE TABLE agent_removal_operations (\n\t\t\t\toperation_id TEXT PRIMARY KEY CHECK(length(operation_id)=32 AND operation_id NOT GLOB '*[^0-9a-f]*'),\n\t\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tstatus TEXT NOT NULL CHECK(status IN ('requested','delivered','uninstalling')),\n\t\t\t\trequested_epoch INTEGER NOT NULL CHECK(requested_epoch \u003e 0),\n\t\t\t\trequested_session_id TEXT NOT NULL,\n\t\t\t\tactive_epoch INTEGER NOT NULL CHECK(active_epoch \u003e 0),\n\t\t\t\tactive_session_id TEXT NOT NULL,\n\t\t\t\treceipt_token_hash BLOB CHECK(receipt_token_hash IS NULL OR length(receipt_token_hash)=32),\n\t\t\t\treceipt_expires_at INTEGER,\n\t\t\t\tdelivery_count INTEGER NOT NULL DEFAULT 0 CHECK(delivery_count \u003e= 0),\n\t\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\t\tupdated_at INTEGER NOT NULL,\n\t\t\t\tCHECK((receipt_token_hash IS NULL AND receipt_expires_at IS NULL) OR (receipt_token_hash IS NOT NULL AND receipt_expires_at IS NOT NULL))\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_removal_receipts",
+    "agent_removal_receipts",
+    "CREATE TABLE agent_removal_receipts (\n\t\t\t\toperation_id TEXT PRIMARY KEY CHECK(length(operation_id)=32 AND operation_id NOT GLOB '*[^0-9a-f]*'),\n\t\t\t\treceipt_token_hash BLOB NOT NULL CHECK(length(receipt_token_hash)=32),\n\t\t\t\treceipt_expires_at INTEGER NOT NULL,\n\t\t\t\treceipt_kind TEXT NOT NULL CHECK(receipt_kind='agent_uninstalled'),\n\t\t\t\tcompleted_at INTEGER NOT NULL\n\t\t\t, replay_expires_at INTEGER NOT NULL DEFAULT 0 CHECK(replay_expires_at \u003e= 0))"
+  ],
+  [
+    "table",
+    "agent_security_batches",
+    "agent_security_batches",
+    "CREATE TABLE agent_security_batches (\n\t\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tbatch_id TEXT NOT NULL,\n\t\t\t\tcontent_hash BLOB NOT NULL,\n\t\t\t\tepoch INTEGER NOT NULL,\n\t\t\t\tsession_id TEXT NOT NULL,\n\t\t\t\twindow_start INTEGER NOT NULL,\n\t\t\t\twindow_end INTEGER NOT NULL,\n\t\t\t\tcollected_at INTEGER NOT NULL,\n\t\t\t\tstatus TEXT NOT NULL CHECK(status IN ('complete','partial','failed')),\n\t\t\t\treason TEXT,\n\t\t\t\ttotal_events INTEGER NOT NULL,\n\t\t\t\tsource_count INTEGER NOT NULL,\n\t\t\t\tpayload_json TEXT NOT NULL,\n\t\t\t\treceived_at INTEGER NOT NULL,\n\t\t\t\tdelivery_gap INTEGER NOT NULL DEFAULT 0 CHECK(delivery_gap IN (0,1)),\n\t\t\t\tprevious_collected_at INTEGER NOT NULL DEFAULT 0 CHECK(previous_collected_at \u003e= 0),\n\t\t\t\tPRIMARY KEY(agent_id,batch_id)\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_security_capabilities",
+    "agent_security_capabilities",
+    "CREATE TABLE agent_security_capabilities (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tsupported INTEGER NOT NULL CHECK(supported IN (0,1)),\n\t\t\t\tstatus TEXT NOT NULL CHECK(status IN ('unavailable','no_data','complete','partial','failed')),\n\t\t\t\treason TEXT,\n\t\t\t\tepoch INTEGER NOT NULL,\n\t\t\t\tsession_id TEXT NOT NULL,\n\t\t\t\tcurrent_batch_id TEXT,\n\t\t\t\tcurrent_collected_at INTEGER NOT NULL DEFAULT 0,\n\t\t\t\tupdated_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_sessions",
+    "agent_sessions",
+    "CREATE TABLE agent_sessions (\n\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\tsession_id TEXT NOT NULL, started_at INTEGER NOT NULL, active INTEGER NOT NULL, first_seen INTEGER NOT NULL, epoch INTEGER NOT NULL DEFAULT 0,\n\t\t\tPRIMARY KEY(agent_id, session_id)\n\t\t)"
+  ],
+  [
+    "table",
+    "agent_state",
+    "agent_state",
+    "CREATE TABLE agent_state (\n\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\tsession_id TEXT NOT NULL, session_started_at INTEGER NOT NULL, sequence INTEGER NOT NULL, boot_id TEXT NOT NULL,\n\t\t\thostname TEXT NOT NULL, os TEXT NOT NULL, arch TEXT NOT NULL, uptime INTEGER NOT NULL,\n\t\t\tcpu REAL NOT NULL, load1 REAL NOT NULL, load5 REAL NOT NULL, load15 REAL NOT NULL,\n\t\t\tram_used INTEGER NOT NULL, ram_total INTEGER NOT NULL, ram_percent REAL NOT NULL,\n\t\t\tswap_used INTEGER NOT NULL, swap_total INTEGER NOT NULL, swap_percent REAL NOT NULL,\n\t\t\tdisk_used INTEGER NOT NULL, disk_total INTEGER NOT NULL, disk_percent REAL NOT NULL,\n\t\t\traw_rx INTEGER NOT NULL, raw_tx INTEGER NOT NULL, rx_rate REAL NOT NULL, tx_rate REAL NOT NULL,\n\t\t\trx_total INTEGER NOT NULL, tx_total INTEGER NOT NULL,\n\t\t\tcollected_at INTEGER NOT NULL, last_seen INTEGER NOT NULL\n\t\t, epoch INTEGER NOT NULL DEFAULT 0, agent_version TEXT NOT NULL DEFAULT 'unknown', agent_upgrade_capable INTEGER NOT NULL DEFAULT 0 CHECK(agent_upgrade_capable IN (0,1)), cpu_cores INTEGER NOT NULL DEFAULT 0 CHECK(cpu_cores BETWEEN 0 AND 4096), cpu_steal REAL CHECK(cpu_steal BETWEEN 0 AND 100.01), disk_read_rate REAL CHECK(disk_read_rate \u003e= 0), disk_write_rate REAL CHECK(disk_write_rate \u003e= 0), disk_busy REAL CHECK(disk_busy BETWEEN 0 AND 100.01), country_code TEXT CHECK(country_code IS NULL OR (length(country_code)=2 AND country_code=upper(country_code) AND country_code NOT GLOB '*[^A-Z]*')), network_counters_version INTEGER NOT NULL DEFAULT 0 CHECK(network_counters_version IN (0,1)), network_counters_json TEXT NOT NULL DEFAULT '')"
+  ],
+  [
+    "table",
+    "agent_traffic_baselines",
+    "agent_traffic_baselines",
+    "CREATE TABLE agent_traffic_baselines (\n\t\t\t\tagent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\trx_total INTEGER NOT NULL CHECK(rx_total \u003e= 0),\n\t\t\t\ttx_total INTEGER NOT NULL CHECK(tx_total \u003e= 0),\n\t\t\t\tstarted_at INTEGER NOT NULL,\n\t\t\t\trequest_id TEXT NOT NULL UNIQUE CHECK(length(request_id)=32 AND request_id NOT GLOB '*[^0-9a-f]*')\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_traffic_reset_requests",
+    "agent_traffic_reset_requests",
+    "CREATE TABLE agent_traffic_reset_requests (\n\t\t\t\trequest_id TEXT PRIMARY KEY CHECK(length(request_id)=32 AND request_id NOT GLOB '*[^0-9a-f]*'),\n\t\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\trx_total INTEGER NOT NULL CHECK(rx_total \u003e= 0),\n\t\t\t\ttx_total INTEGER NOT NULL CHECK(tx_total \u003e= 0),\n\t\t\t\tstarted_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agent_upgrade_operations",
+    "agent_upgrade_operations",
+    "CREATE TABLE agent_upgrade_operations (\n\t\t\t\toperation_id TEXT PRIMARY KEY,\n\t\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tfrom_version TEXT NOT NULL,\n\t\t\t\ttarget_version TEXT NOT NULL,\n\t\t\t\tstatus TEXT NOT NULL CHECK(status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check','succeeded','failed','rolled_back')),\n\t\t\t\tfailure_code TEXT,\n\t\t\t\tfailure_message TEXT,\n\t\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\t\tstarted_at INTEGER,\n\t\t\t\tfinished_at INTEGER,\n\t\t\t\tupdated_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "agents",
+    "agents",
+    "CREATE TABLE agents (\n\t\t\tid TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash BLOB NOT NULL UNIQUE,\n\t\t\trevoked INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL\n\t\t, disabled_at INTEGER)"
+  ],
+  [
+    "table",
+    "minute_metrics",
+    "minute_metrics",
+    "CREATE TABLE minute_metrics (\n\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE, bucket INTEGER NOT NULL,\n\t\t\tsamples INTEGER NOT NULL, cpu_sum REAL NOT NULL, ram_sum REAL NOT NULL, swap_sum REAL NOT NULL,\n\t\t\tdisk_sum REAL NOT NULL, load1_sum REAL NOT NULL, load5_sum REAL NOT NULL, load15_sum REAL NOT NULL,\n\t\t\trx_rate_sum REAL NOT NULL, tx_rate_sum REAL NOT NULL, rx_total INTEGER NOT NULL, tx_total INTEGER NOT NULL,\n\t\t\tPRIMARY KEY(agent_id, bucket)\n\t\t)"
+  ],
+  [
+    "table",
+    "probe_jobs",
+    "probe_jobs",
+    "CREATE TABLE probe_jobs (\n\t\t\t\tid TEXT PRIMARY KEY,\n\t\t\t\tschedule_id TEXT REFERENCES probe_schedules(id) ON DELETE SET NULL,\n\t\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tprobe_type TEXT NOT NULL,\n\t\t\t\tconfig_json TEXT NOT NULL,\n\t\t\t\ttimeout_ms INTEGER NOT NULL CHECK(timeout_ms BETWEEN 100 AND 30000),\n\t\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\t\tscheduled_for INTEGER NOT NULL,\n\t\t\t\tnot_before INTEGER NOT NULL,\n\t\t\t\texpires_at INTEGER NOT NULL,\n\t\t\t\tstatus TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','leased','finished','expired')),\n\t\t\t\tattempt INTEGER NOT NULL DEFAULT 0 CHECK(typeof(attempt) = 'integer' AND attempt \u003e= 0),\n\t\t\t\tlease_token TEXT,\n\t\t\t\tlease_epoch INTEGER,\n\t\t\t\tlease_session_id TEXT,\n\t\t\t\tleased_at INTEGER,\n\t\t\t\tlease_until INTEGER,\n\t\t\t\tfinished_at INTEGER, origin TEXT NOT NULL DEFAULT 'manual' CHECK(origin IN ('manual','scheduled')),\n\t\t\t\tCHECK(expires_at \u003e not_before)\n\t\t\t)"
+  ],
+  [
+    "table",
+    "probe_results",
+    "probe_results",
+    "CREATE TABLE probe_results (\n\t\t\t\tjob_id TEXT PRIMARY KEY REFERENCES probe_jobs(id) ON DELETE CASCADE,\n\t\t\t\tattempt INTEGER NOT NULL CHECK(typeof(attempt) = 'integer' AND attempt \u003e 0),\n\t\t\t\treceived_at INTEGER NOT NULL,\n\t\t\t\tagent_epoch INTEGER NOT NULL CHECK(agent_epoch \u003e= 0),\n\t\t\t\tsession_id TEXT NOT NULL,\n\t\t\t\tagent_started_at INTEGER NOT NULL,\n\t\t\t\tagent_finished_at INTEGER NOT NULL,\n\t\t\t\tduration_ms REAL NOT NULL CHECK(duration_ms \u003e= 0),\n\t\t\t\tsuccess INTEGER NOT NULL CHECK(success IN (0,1)),\n\t\t\t\tresolved_ip TEXT,\n\t\t\t\terror_category TEXT,\n\t\t\t\terror_message TEXT,\n\t\t\t\tpayload_json TEXT NOT NULL,\n\t\t\t\tresult_hash BLOB NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "probe_schedules",
+    "probe_schedules",
+    "CREATE TABLE probe_schedules (\n\t\t\t\tid TEXT PRIMARY KEY,\n\t\t\t\tagent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,\n\t\t\t\tname TEXT NOT NULL,\n\t\t\t\tprobe_type TEXT NOT NULL,\n\t\t\t\tconfig_json TEXT NOT NULL,\n\t\t\t\ttimeout_ms INTEGER NOT NULL CHECK(timeout_ms BETWEEN 100 AND 30000),\n\t\t\t\tinterval_seconds INTEGER NOT NULL CHECK(interval_seconds BETWEEN 30 AND 604800),\n\t\t\t\tenabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),\n\t\t\t\tnext_run_at INTEGER NOT NULL,\n\t\t\t\tcreated_at INTEGER NOT NULL,\n\t\t\t\tupdated_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "schema_migrations",
+    "schema_migrations",
+    "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
+  ],
+  [
+    "table",
+    "web_domain_policy",
+    "web_domain_policy",
+    "CREATE TABLE web_domain_policy (\n\t\t\t\tid INTEGER PRIMARY KEY CHECK(id=1),\n\t\t\t\tmode TEXT NOT NULL CHECK(mode IN ('exact','suffix')),\n\t\t\t\trevision INTEGER NOT NULL CHECK(revision\u003e=0),\n\t\t\t\tupdated_at INTEGER NOT NULL\n\t\t\t)"
+  ],
+  [
+    "table",
+    "web_domain_suffixes",
+    "web_domain_suffixes",
+    "CREATE TABLE web_domain_suffixes (\n\t\t\t\tsuffix TEXT PRIMARY KEY,\n\t\t\t\tcreated_at INTEGER NOT NULL\n\t\t\t)"
+  ]
+]

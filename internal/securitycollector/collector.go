@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	StateRoot        = "/var/lib/404-probe-security"
 	journalctlPath   = "/usr/bin/journalctl"
 	journalUnit      = "sing-box.service"
 	maxLines         = 100000
@@ -518,6 +517,10 @@ func stageAndCommit(root string, pending pendingTransaction) error {
 }
 
 func commitPending(root string, pending pendingTransaction) error {
+	return commitPendingWithRemove(root, pending, os.Remove)
+}
+
+func commitPendingWithRemove(root string, pending pendingTransaction, removeFile func(string) error) error {
 	batchData, err := json.Marshal(pending.Batch)
 	if err != nil {
 		return err
@@ -538,10 +541,10 @@ func commitPending(root string, pending pendingTransaction) error {
 	if err := atomicWrite(filepath.Join(exportDir, "current.json"), batchData, 0640); err != nil {
 		return err
 	}
-	if err := pruneBatches(outboxDir, exportDir); err != nil {
+	if err := pruneBatchesWithRemove(outboxDir, exportDir, removeFile); err != nil {
 		return err
 	}
-	return os.Remove(filepath.Join(root, "private", "pending.json"))
+	return removeFile(filepath.Join(root, "private", "pending.json"))
 }
 
 func readPending(path string, now time.Time) (pendingTransaction, bool, error) {
@@ -605,24 +608,116 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 }
 
 func pruneBatches(outboxDir, exportDir string) error {
+	return pruneBatchesWithRemove(outboxDir, exportDir, os.Remove)
+}
+
+func pruneBatchesWithRemove(outboxDir, exportDir string, removeFile func(string) error) error {
 	entries, err := os.ReadDir(outboxDir)
 	if err != nil {
 		return err
 	}
 	files := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+		if !isBatchFilename(entry.Name()) {
+			continue
+		}
+		regular, err := isRegularFile(entry)
+		if err != nil {
+			return fmt.Errorf("inspect security outbox entry %s: %w", entry.Name(), err)
+		}
+		if regular {
 			files = append(files, entry.Name())
 		}
 	}
 	sort.Strings(files)
-	for len(files) > maxOutboxBatches {
-		name := files[0]
-		if err := os.Remove(filepath.Join(outboxDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+	retained := make(map[string]struct{}, maxOutboxBatches)
+	firstRetained := len(files) - maxOutboxBatches
+	if firstRetained < 0 {
+		firstRetained = 0
+	}
+	for _, name := range files[firstRetained:] {
+		retained[name] = struct{}{}
+	}
+	for _, name := range files[:firstRetained] {
+		if err := removeBatchFile(filepath.Join(exportDir, name), removeFile); err != nil {
+			return fmt.Errorf("remove pruned security export mirror %s: %w", name, err)
 		}
-		_ = os.Remove(filepath.Join(exportDir, name))
-		files = files[1:]
+		if err := removeBatchFile(filepath.Join(outboxDir, name), removeFile); err != nil {
+			return fmt.Errorf("remove pruned security outbox batch %s: %w", name, err)
+		}
+	}
+	exportEntries, err := os.ReadDir(exportDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range exportEntries {
+		name := entry.Name()
+		if name == "current.json" || !isBatchFilename(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect security export entry %s: %w", name, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		if _, ok := retained[name]; ok {
+			continue
+		}
+		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf("refusing to remove non-file security export entry %s", name)
+		}
+		if err := removeBatchFile(filepath.Join(exportDir, name), removeFile); err != nil {
+			return fmt.Errorf("remove orphan security export mirror %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func isRegularFile(entry os.DirEntry) (bool, error) {
+	if entry.Type()&(os.ModeDir|os.ModeSymlink) != 0 {
+		return false, nil
+	}
+	info, err := entry.Info()
+	if err != nil {
+		return false, err
+	}
+	return info.Mode().IsRegular(), nil
+}
+
+func isBatchFilename(name string) bool {
+	if len(name) != 51 || name[13] != '-' || name[46:] != ".json" {
+		return false
+	}
+	for index := 0; index < 13; index++ {
+		if name[index] < '0' || name[index] > '9' {
+			return false
+		}
+	}
+	for index := 14; index < 46; index++ {
+		value := name[index]
+		if !((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func removeBatchFile(path string, removeFile func(string) error) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// os.Remove unlinks a symbolic-link entry without following its target.
+	if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("refusing to remove non-file batch entry %s", path)
+	}
+	if err := removeFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }

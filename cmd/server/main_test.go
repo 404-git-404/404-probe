@@ -86,6 +86,46 @@ func TestLoadControlTokenHash(t *testing.T) {
 	}
 }
 
+type fakeHTTPShutdownController struct {
+	shutdownErr   error
+	closeErr      error
+	shutdownCalls int
+	closeCalls    int
+	deadline      time.Time
+}
+
+func (f *fakeHTTPShutdownController) Shutdown(ctx context.Context) error {
+	f.shutdownCalls++
+	f.deadline, _ = ctx.Deadline()
+	return f.shutdownErr
+}
+
+func (f *fakeHTTPShutdownController) Close() error {
+	f.closeCalls++
+	return f.closeErr
+}
+
+func TestShutdownHTTPServerForceClosesAfterGracefulShutdownError(t *testing.T) {
+	graceful := &fakeHTTPShutdownController{}
+	if err := shutdownHTTPServer(graceful, 10*time.Second); err != nil {
+		t.Fatalf("graceful shutdown error=%v", err)
+	}
+	if graceful.shutdownCalls != 1 || graceful.closeCalls != 0 || graceful.deadline.IsZero() || time.Until(graceful.deadline) <= 0 {
+		t.Fatalf("graceful shutdown calls=%d close calls=%d deadline=%v", graceful.shutdownCalls, graceful.closeCalls, graceful.deadline)
+	}
+
+	shutdownErr := context.DeadlineExceeded
+	closeErr := errors.New("forced close failed")
+	forced := &fakeHTTPShutdownController{shutdownErr: shutdownErr, closeErr: closeErr}
+	err := shutdownHTTPServer(forced, 10*time.Second)
+	if !errors.Is(err, shutdownErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("shutdown error=%v, want both graceful and forced-close errors", err)
+	}
+	if forced.shutdownCalls != 1 || forced.closeCalls != 1 {
+		t.Fatalf("failed shutdown calls=%d close calls=%d", forced.shutdownCalls, forced.closeCalls)
+	}
+}
+
 func TestWebDomainCommandLifecycle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "domains.db")
 	if err := webDomainCommand([]string{"list", "--db", path, "--json"}); err != nil {

@@ -85,6 +85,9 @@ func (s *Store) PutProbeSchedule(ctx context.Context, params PutScheduleParams) 
 			if err := scheduleActiveAgentTx(ctx, tx, params.AgentID); err != nil {
 				return ProbeScheduleRecord{}, false, err
 			}
+			if err := requireNoAgentRemovalTx(ctx, tx, params.AgentID); err != nil {
+				return ProbeScheduleRecord{}, false, err
+			}
 		}
 		nextRunAt := existing.NextRunAt
 		operationalChange := existing.ProbeType != params.ProbeType ||
@@ -118,6 +121,11 @@ func (s *Store) PutProbeSchedule(ctx context.Context, params PutScheduleParams) 
 
 	if err := scheduleActiveAgentTx(ctx, tx, params.AgentID); err != nil {
 		return ProbeScheduleRecord{}, false, err
+	}
+	if params.Enabled {
+		if err := requireNoAgentRemovalTx(ctx, tx, params.AgentID); err != nil {
+			return ProbeScheduleRecord{}, false, err
+		}
 	}
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM probe_schedules WHERE agent_id=?`, params.AgentID).Scan(&count); err != nil {

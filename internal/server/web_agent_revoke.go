@@ -67,6 +67,7 @@ func (a *App) handleRevokeWebAgent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	a.traffic.retire(agentID, a.now(), true)
 	record, err = a.store.GetAgentSnapshot(r.Context(), agentID, a.now(), a.offlineTimeout)
 	if err != nil {
 		a.logger.Error("read revoked Web Agent", "agent_id", agentID, "error", err)

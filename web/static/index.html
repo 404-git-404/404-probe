@@ -5,10 +5,27 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>404-probe</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/vendor/uplot/uPlot.min.css">
+  <link rel="stylesheet" href="/network-quality.css">
+  <link rel="stylesheet" href="/card-layout.css">
+  <link rel="stylesheet" href="/traffic-chart.css">
+  <link rel="stylesheet" href="/device-details.css">
+  <link rel="stylesheet" href="/plan-editor.css">
+  <link rel="stylesheet" href="/plan-renewal.css">
+  <link rel="stylesheet" href="/overview.css">
 </head>
 <body>
   <header><div><h1>404-probe</h1><p>已认证 Agent 观测 · <span id="server-version">Server unknown</span></p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
-  <main><div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid agent-grid" aria-live="polite"></section><p class="status-legend"><span class="tone-dot healthy"></span>正常 <span class="tone-dot warning"></span>注意 / 接近阈值 <span class="tone-dot critical"></span>异常 / 已到期 <span class="tone-dot unknown"></span>未知 / 旧结果</p></main>
+  <main>
+    <details id="overview" class="overview" open><summary id="overview-summary"><span>总览</span><span id="overview-action">收起 ▴</span></summary>
+      <section class="overview-groups" aria-label="现有设备资料总览">
+        <section class="overview-group"><h2><span class="overview-icon" aria-hidden="true">◉</span>在线设备</h2><strong id="overview-online">等待读取</strong><small id="overview-online-note"></small></section>
+        <section class="overview-group"><h2><span class="overview-icon" aria-hidden="true">⇅</span>当前上下行速率</h2><strong id="overview-rates">等待读取</strong><small id="overview-rates-note"></small></section>
+        <section class="overview-group"><h2><span class="overview-icon" aria-hidden="true">▤</span>各设备当前周期用量</h2><strong id="overview-usage">等待读取</strong><small id="overview-usage-note"></small></section>
+        <section class="overview-group"><h2><span class="overview-icon" aria-hidden="true">◷</span>近期续费/到期</h2><strong id="overview-dates">等待读取</strong><small id="overview-dates-note"></small></section>
+      </section>
+    </details>
+    <div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid agent-grid" aria-live="polite"></section><p class="status-legend"><span class="tone-dot healthy"></span>正常 <span class="tone-dot warning"></span>注意 / 接近阈值 <span class="tone-dot critical"></span>异常 / 已到期 <span class="tone-dot unknown"></span>未知 / 旧结果</p></main>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <div id="add-agent-create">
       <h2 id="add-agent-title">添加 Agent</h2>
@@ -50,26 +67,64 @@
       <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">撤销并移除</button></div>
     </form>
   </dialog>
-  <dialog id="plan-dialog" class="plan-drawer" aria-labelledby="plan-title">
+  <dialog id="plan-dialog" class="plan-drawer plan-editor" aria-labelledby="plan-title">
     <form id="plan-form" autocomplete="off">
       <div class="drawer-head"><div><span class="eyebrow">套餐资料</span><h2 id="plan-title">编辑套餐</h2><p id="plan-agent-name"></p></div><button id="plan-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
-      <div class="plan-section">
+      <div class="plan-editor-body">
+      <details class="plan-section" open><summary>基本套餐 · 带宽与续费价格</summary><div class="form-grid three"><label>套餐带宽<input id="plan-bandwidth-value" inputmode="decimal" placeholder="1000"></label><label>单位<select id="plan-bandwidth-unit"><option>Mbps</option><option>Gbps</option></select></label><label>币种<input id="plan-currency" maxlength="3" placeholder="USD"></label></div><div class="form-grid two"><label>续费价格<input id="plan-renewal-price" inputmode="decimal" placeholder="可选"></label><label>价格续费周期（非流量周期）<select id="plan-renewal-period"><option value="">—</option><option value="monthly">每月</option><option value="yearly">每年</option><option value="once">一次性</option></select></label><label>下次续费<input id="plan-renewal-date" type="date"></label><label>到期日期<input id="plan-expiry-date" type="date"></label></div><label>时区<input id="plan-timezone" list="timezone-hints" placeholder="Asia/Shanghai"></label></details>
+      <details class="plan-section" open><summary>流量周期 · 独立于价格续费周期</summary>
         <label class="toggle-row"><span><strong>统计计费流量</strong><small>持续统计套餐用量，缺测会明确标记</small></span><input id="plan-traffic-enabled" type="checkbox"></label>
         <div id="plan-traffic-fields" class="progressive-fields hidden">
-          <div class="form-grid three"><label>计费方向<select id="plan-traffic-mode"><option value="sum">RX + TX</option><option value="tx">仅 TX</option><option value="rx">仅 RX</option></select></label><label>套餐流量<input id="plan-quota-value" inputmode="decimal" placeholder="5"></label><label>单位<select id="plan-quota-unit"><option>TB</option><option>GB</option><option>TiB</option><option>GiB</option></select></label></div>
+          <div class="form-grid three"><label>计费方向<select id="plan-traffic-mode"><option value="sum">RX + TX</option><option value="tx">仅 TX</option><option value="rx">仅 RX</option></select></label><label>套餐流量<input id="plan-quota-value" inputmode="decimal" placeholder="5"></label><label>单位<select id="plan-quota-unit"><option>TB</option><option>GB</option></select></label></div>
+          <p id="plan-quota-note" class="field-note"></p>
           <div class="form-grid three"><label>周期<select id="plan-cycle-kind"><option value="monthly">月</option><option value="yearly">年</option><option value="days">天</option></select></label><label>每<input id="plan-cycle-count" type="number" min="1" max="120" value="1"></label><label>周期起点<input id="plan-cycle-anchor" type="date"></label></div>
-          <div class="calibration-row"><label>当前周期已用量校准<input id="plan-calibration-value" inputmode="decimal" placeholder="可选，仅在对账时填写"></label><label>单位<select id="plan-calibration-unit"><option>GB</option><option>TB</option><option>GiB</option><option>TiB</option></select></label><small>校准不会声称补齐过去的采样，只从此值继续累计。</small></div>
         </div>
+      </details>
+      <details class="plan-section"><summary>高级 · 购买记录、用量校准与出口国家/地区</summary>
+      <div class="form-grid two"><label>购买价格<input id="plan-purchase-price" inputmode="decimal" placeholder="可选"></label><label>原始价格周期<select id="plan-purchase-period"><option value="">—</option><option value="once">一次性</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label><label>购买日期<input id="plan-purchase-date" type="date"></label></div>
+      <div class="calibration-row"><label>当前周期已用量校准<input id="plan-calibration-value" inputmode="decimal" placeholder="可选，仅在对账时填写"></label><label>单位<select id="plan-calibration-unit"><option>GB</option><option>TB</option></select></label><small>校准不会声称补齐过去的采样，只从此值继续累计；只有启用流量统计且明确填写时才提交。</small></div>
+      <div class="plan-section"><h3>出口国家/地区</h3><div class="form-grid two"><div><label>搜索国家/地区<input id="plan-country-search" type="search" placeholder="中文、英文或两字母代码"></label><label>手动覆盖<select id="plan-country-code"></select></label><span id="plan-country-preview"></span><button id="plan-country-auto" type="button">使用 Agent 识别值</button><p id="plan-country-status" class="field-note" role="status"></p></div><p class="field-note">使用 Agent 识别值时，采用安装时缓存或最近一次成功的主动重取。失败保留原值；手动覆盖优先。选择或清空只改变草稿，保存套餐后才生效。</p></div></div>
+      <button id="plan-clear" class="text-danger" type="button">清除套餐资料</button>
+      </details>
       </div>
-      <div class="plan-section"><h3>带宽与价格</h3><div class="form-grid three"><label>套餐带宽<input id="plan-bandwidth-value" inputmode="decimal" placeholder="1000"></label><label>单位<select id="plan-bandwidth-unit"><option>Mbps</option><option>Gbps</option></select></label><label>币种<input id="plan-currency" maxlength="3" placeholder="USD"></label></div><div class="form-grid two"><label>购买价格<input id="plan-purchase-price" inputmode="decimal" placeholder="可选"></label><label>原始价格周期<select id="plan-purchase-period"><option value="">—</option><option value="once">一次性</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label><label>续费价格<input id="plan-renewal-price" inputmode="decimal" placeholder="可选"></label><label>续费周期<select id="plan-renewal-period"><option value="">—</option><option value="monthly">每月</option><option value="yearly">每年</option><option value="once">一次性</option></select></label></div></div>
-      <div class="plan-section"><h3>日期与时区</h3><div class="form-grid four"><label>购买日期<input id="plan-purchase-date" type="date"></label><label>下次续费<input id="plan-renewal-date" type="date"></label><label>到期日期<input id="plan-expiry-date" type="date"></label><label>时区<input id="plan-timezone" list="timezone-hints" placeholder="Asia/Shanghai"></label></div></div>
-      <div class="plan-section"><h3>出口国家/地区</h3><div class="form-grid two"><label>手动覆盖（ISO 两字母）<input id="plan-country-code" maxlength="2" autocapitalize="characters" placeholder="留空则使用 Agent 安装时识别值"></label><p class="field-note">例如 US、JP、DE。清空后恢复安装时缓存；没有缓存时显示中性地球图标，不会重新联网查询。</p></div></div>
+      <section id="plan-confirmation" class="plan-confirmation" aria-label="套餐编辑确认" role="region" hidden><p id="plan-confirm-note" role="status"></p><div><button id="plan-continue" type="button">继续编辑</button><button id="plan-discard" type="button">放弃修改</button></div></section>
       <div id="plan-error" class="dialog-error hidden" role="alert"></div>
-      <div class="drawer-actions"><button id="plan-clear" class="text-danger" type="button">清除套餐资料</button><span></span><button id="plan-save" class="primary-action" type="submit">保存</button></div>
+      <div class="drawer-actions"><button id="plan-dismiss" type="button">取消</button><button id="plan-save" class="primary-action" type="submit">保存</button></div>
     </form>
   </dialog>
   <datalist id="timezone-hints"><option value="UTC"><option value="Asia/Shanghai"><option value="Asia/Hong_Kong"><option value="America/Los_Angeles"><option value="Europe/London"></datalist>
+  <dialog id="renewal-dialog" class="plan-renewal" aria-labelledby="renewal-title">
+    <div class="drawer-head"><div><span class="eyebrow">仅登记套餐日期 · 不执行付款</span><h2 id="renewal-title">已续费</h2><p id="renewal-name"></p></div><button id="renewal-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
+    <div class="renewal-body">
+      <label for="renewal-field">登记日期</label><select id="renewal-field"><option value="renewal_date">下次续费</option><option value="expiry_date">到期日期</option></select>
+      <p id="renewal-loading" role="status"></p>
+      <div id="renewal-dates" class="renewal-dates" hidden><span><small>当前</small><strong id="renewal-from"></strong></span><span aria-hidden="true">→</span><span><small>新日期</small><strong id="renewal-to"></strong></span></div>
+      <p id="renewal-detail"></p><p id="renewal-anchor" class="field-note"></p><p id="renewal-warning" class="renewal-warning" role="status"></p>
+      <p id="renewal-result" role="status" hidden></p>
+      <p id="renewal-undo-note" class="renewal-warning" hidden>确认仅撤销本页最近一次登记；是否可撤销及期限由服务器最终裁定，不恢复更早操作。</p>
+      <div class="renewal-tools"><button id="renewal-refresh" type="button">重新预览</button><button id="renewal-edit" type="button">编辑套餐</button><button id="renewal-undo" type="button" hidden>撤销本次登记</button></div>
+    </div>
+    <section id="renewal-recovery" class="renewal-recovery" aria-label="核实原操作" hidden><p>结果未确认。仅可用原 ID 和同一确认内容核实。刷新、离开或退出本页会丢失本地核实记录，请先复制 ID；不会自动重试。</p><code id="renewal-request-id"></code><div><button id="renewal-copy" type="button">复制请求 ID</button><button id="renewal-verify" type="button">核实原操作</button></div></section>
+    <div id="renewal-error" class="renewal-error" role="alert" hidden></div>
+    <div class="drawer-actions"><button id="renewal-dismiss" type="button">关闭</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认登记已续费</button></div>
+  </dialog>
   <footer>数据通过 Server 安全汇总</footer>
+  <dialog id="network-quality-history" class="nq-history" aria-labelledby="nq-history-title"></dialog>
+  <dialog id="device-details" class="device-details" aria-labelledby="device-details-title"></dialog>
+  <script src="/agent-state.js" defer></script>
+  <script src="/management.js" defer></script>
+  <script src="/selector.js" defer></script>
+  <script src="/vendor/uplot/uPlot.iife.min.js" defer></script>
+  <script src="/network-quality-core.js" defer></script>
+  <script src="/network-quality.js" defer></script>
+  <script src="/traffic-chart.js" defer></script>
+  <script src="/card-metrics.js" defer></script>
+  <script src="/resource-history.js" defer></script>
+  <script src="/device-details.js" defer></script>
+  <script src="/plan-editor.js" defer></script>
+  <script src="/plan-renewal.js" defer></script>
+  <script src="/overview.js" defer></script>
+  <script src="/plan-units.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/session.js" defer></script>
 </body>

@@ -32,14 +32,22 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
-	CountryCode   string                 `json:"country_code,omitempty"`
-	CountrySource string                 `json:"country_source,omitempty"`
-	State         *webAgentStateView     `json:"state"`
-	Traffic       *storage.TrafficTotals `json:"traffic,omitempty"`
-	Outbounds     webOutboundsView       `json:"outbounds"`
-	GoogleStatus  webGoogleStatusView    `json:"google_status"`
-	Security      webSecurityView        `json:"security"`
-	Plan          *storage.AgentPlan     `json:"plan,omitempty"`
+	CountryCode   string                         `json:"country_code,omitempty"`
+	CountrySource string                         `json:"country_source,omitempty"`
+	Management    webManagementView              `json:"management"`
+	CountryLookup *webAgentCountryCodeLookupView `json:"country_code_lookup_operation,omitempty"`
+	Removal       *webAgentRemovalOperationView  `json:"removal,omitempty"`
+	State         *webAgentStateView             `json:"state"`
+	Traffic       *storage.TrafficTotals         `json:"traffic,omitempty"`
+	Outbounds     webOutboundsView               `json:"outbounds"`
+	GoogleStatus  webGoogleStatusView            `json:"google_status"`
+	Security      webSecurityView                `json:"security"`
+	Plan          *storage.AgentPlan             `json:"plan,omitempty"`
+}
+
+type webManagementView struct {
+	RemoteRemoval     bool `json:"remote_removal"`
+	CountryCodeLookup bool `json:"country_code_lookup"`
 }
 
 type webSecurityView struct {
@@ -217,6 +225,27 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		return webAgentDetailView{}, err
 	}
 	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
+	management, err := a.store.GetAgentManagementCapabilities(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	view.Management = webManagementView{RemoteRemoval: management.RemoteRemoval, CountryCodeLookup: management.CountryCodeLookup}
+	countryLookup, countryLookupExists, err := a.store.GetAgentCountryCodeLookup(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	if countryLookupExists {
+		lookupView := newWebAgentCountryCodeLookupView(countryLookup, a.now())
+		view.CountryLookup = &lookupView
+	}
+	removal, removalPending, err := a.store.GetAgentRemovalOperation(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	if removalPending {
+		removalView := newWebAgentRemovalOperationView(removal)
+		view.Removal = &removalView
+	}
 	if record.State != nil {
 		view.State = newWebAgentStateView(*record.State, record.StateStale)
 		traffic, err := a.store.TrafficTotals(ctx, agentID)
@@ -238,6 +267,8 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	}
 	if plan.CountryCodeOverride != "" {
 		view.CountryCode, view.CountrySource = plan.CountryCodeOverride, "manual"
+	} else if countryLookupExists && countryLookup.LastCode != "" {
+		view.CountryCode, view.CountrySource = countryLookup.LastCode, "lookup"
 	} else if record.State != nil && record.State.CountryCode != "" {
 		view.CountryCode, view.CountrySource = record.State.CountryCode, "automatic"
 	}

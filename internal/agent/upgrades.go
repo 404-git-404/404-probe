@@ -65,7 +65,7 @@ func (c upgradeHTTPClient) post(ctx context.Context, path string, value any) (in
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+c.token)
-	response, err := c.client.Do(request)
+	response, err := doAgentServerRequest(c.client, request)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -81,10 +81,16 @@ func (c upgradeHTTPClient) post(ctx context.Context, path string, value any) (in
 }
 
 func (r *Runner) runUpgradeWorker(ctx context.Context) {
+	if r.deferredUnsupported {
+		return
+	}
 	server := upgradeHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: r.client}
 	local := updater.Client{Socket: r.config.UpdaterSocket, Timeout: 5 * time.Second}
 	emptyCycles := 0
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		active := r.runUpgradeCycle(ctx, server, local)
 		delay := r.config.JobInterval
 		if active {
@@ -104,7 +110,7 @@ func (r *Runner) runUpgradeWorker(ctx context.Context) {
 }
 
 func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, local updater.Client) bool {
-	if !r.upgradeAPISupported.Load() {
+	if r.deferredUnsupported || !r.upgradeAPISupported.Load() {
 		return false
 	}
 	operation, err := server.claim(ctx)

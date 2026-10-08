@@ -25,6 +25,9 @@ func (r *Runner) runOutboundDiscovery(ctx context.Context) {
 	consecutiveFailures := 0
 	capabilityReady := (<-chan struct{})(r.interactiveControlReady)
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		r.outboundMu.Lock()
 		selectors, orderSource, discoverErr := local.discoverOrdered(ctx)
 		if ctx.Err() != nil {
@@ -154,7 +157,7 @@ func (r *Runner) postOutboundSnapshot(ctx context.Context, snapshot protocol.Out
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
-	response, err := r.client.Do(req)
+	response, err := doAgentServerRequest(r.client, req)
 	if err != nil {
 		return err
 	}

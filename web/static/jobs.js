@@ -100,12 +100,8 @@ function measurementLines(job) {
   if (measurement.google_status) {
     const value = measurement.google_status;
     const youtube = value.youtube?.status === 'cn' ? 'CN' : value.youtube?.status === 'not_cn' ? value.youtube.region : 'UNKNOWN';
-    const gemini = `${(value.gemini?.status || 'unknown').toUpperCase()}${value.gemini?.region ? ` [${value.gemini.region}]` : ''}`;
     return [
       ['YouTube', youtube],
-      ['Google Search', (value.search?.status || 'unknown').toUpperCase()],
-      ['Google Sign-in', (value.signin?.status || 'unknown').toUpperCase()],
-      ['Gemini', gemini],
     ];
   }
   return [];

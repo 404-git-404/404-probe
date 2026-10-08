@@ -100,9 +100,12 @@ func (s *Store) CreateOneShotJob(ctx context.Context, params CreateOneShotJobPar
 	if err := requireActiveAgentTx(ctx, tx, params.AgentID); err != nil {
 		return err
 	}
+	if err := requireNoAgentRemovalTx(ctx, tx, params.AgentID); err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO probe_jobs(
-		id,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt
-	) VALUES(?,NULL,?,?,?,?,?,?,?,?, 'queued',0)`,
+		id,origin,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt
+	) VALUES(?,'manual',NULL,?,?,?,?,?,?,?,?, 'queued',0)`,
 		params.ID, params.AgentID, string(params.ProbeType), string(configJSON), params.TimeoutMS,
 		params.CreatedAt, params.CreatedAt, params.NotBefore, params.ExpiresAt)
 	if err != nil {
@@ -160,6 +163,9 @@ func (s *Store) CreateOneShotJobIdempotent(ctx context.Context, params CreateOne
 		}
 		return ProbeJobRecord{}, false, err
 	}
+	if err := requireNoAgentRemovalTx(ctx, tx, params.AgentID); err != nil {
+		return ProbeJobRecord{}, false, err
+	}
 	if err := cleanupExpiredJobsTx(ctx, tx, params.AgentID, params.CreatedAt); err != nil {
 		return ProbeJobRecord{}, false, err
 	}
@@ -177,8 +183,8 @@ func (s *Store) CreateOneShotJobIdempotent(ctx context.Context, params CreateOne
 		return ProbeJobRecord{}, false, ErrOutstandingJobsFull
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO probe_jobs(
-		id,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt
-	) VALUES(?,NULL,?,?,?,?,?,?,?,?, 'queued',0)`,
+		id,origin,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt
+	) VALUES(?,'manual',NULL,?,?,?,?,?,?,?,?, 'queued',0)`,
 		params.ID, params.AgentID, string(params.ProbeType), string(configJSON), params.TimeoutMS,
 		params.CreatedAt, params.CreatedAt, params.NotBefore, params.ExpiresAt); err != nil {
 		return ProbeJobRecord{}, false, err
@@ -296,6 +302,15 @@ func (s *Store) ClaimJob(ctx context.Context, agentID string, request protocol.C
 	}
 	defer tx.Rollback()
 	if err := requireActiveAgentTx(ctx, tx, agentID); err != nil {
+		return nil, err
+	}
+	if err := requireNoAgentRemovalTx(ctx, tx, agentID); err != nil {
+		if errors.Is(err, ErrAgentRemovalPending) {
+			if commitErr := tx.Commit(); commitErr != nil {
+				return nil, commitErr
+			}
+			return nil, nil
+		}
 		return nil, err
 	}
 	current, err := claimSessionIsCurrentTx(ctx, tx, agentID, request.AgentEpoch, request.SessionID)
@@ -849,10 +864,19 @@ func requireActiveAgentTx(ctx context.Context, tx *sql.Tx, agentID string) error
 	var revoked int
 	var disabledAt sql.NullInt64
 	err := tx.QueryRowContext(ctx, `SELECT revoked,disabled_at FROM agents WHERE id=?`, agentID).Scan(&revoked, &disabledAt)
-	if errors.Is(err, sql.ErrNoRows) || revoked != 0 || disabledAt.Valid {
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnauthorized
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if revoked != 0 {
+		return ErrAgentRevoked
+	}
+	if disabledAt.Valid {
+		return ErrAgentDisabled
+	}
+	return nil
 }
 
 func validateResultAgainstConfig(job ProbeJobRecord, result protocol.JobResult) error {

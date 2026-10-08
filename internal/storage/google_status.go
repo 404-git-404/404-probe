@@ -183,8 +183,8 @@ func (s *Store) createGoogleStatusJob(ctx context.Context, agentID string, now t
 	if expires <= nowMS || expires > math.MaxInt64 {
 		return false, errors.New("google status job timestamp overflow")
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO probe_jobs(id,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt)
-		VALUES(?,NULL,?,'google_status','{}',?,?,?,?,?,'queued',0)`, jobID, agentID, int(GoogleStatusJobTimeout/time.Millisecond), nowMS, nowMS, nowMS, expires)
+	_, err = tx.ExecContext(ctx, `INSERT INTO probe_jobs(id,origin,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt)
+		VALUES(?,'manual',NULL,?,'google_status','{}',?,?,?,?,?,'queued',0)`, jobID, agentID, int(GoogleStatusJobTimeout/time.Millisecond), nowMS, nowMS, nowMS, expires)
 	if err != nil {
 		return false, err
 	}
@@ -201,7 +201,7 @@ func saveGoogleStatusTx(ctx context.Context, tx *sql.Tx, agentID string, result 
 	}
 	streak := 0
 	next := checkedAt + GoogleStatusInterval.Milliseconds()
-	if result.HasUnknown() {
+	if result.HasRetainedUnknown() {
 		streak = prior + 1
 		retry := time.Hour
 		if streak == 1 {

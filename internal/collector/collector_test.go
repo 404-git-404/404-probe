@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shirou/gopsutil/v4/net"
 )
 
 func TestInterfaceFiltering(t *testing.T) {
@@ -26,6 +28,42 @@ func TestInterfaceFiltering(t *testing.T) {
 	c = Collector{Includes: []string{"wg*"}, Excludes: []string{"wg-test"}}
 	if c.includeInterface("wg-test") {
 		t.Error("explicit exclude should win")
+	}
+}
+
+func TestNetworkCounterAggregationFiltersAndSorts(t *testing.T) {
+	c := Collector{Includes: []string{"eth*", "wg*"}, Excludes: []string{"wg-test"}}
+	set, rx, tx, err := c.aggregateNetworkCounters([]net.IOCountersStat{
+		{Name: "wg-test", BytesRecv: 100, BytesSent: 200},
+		{Name: "eth1", BytesRecv: 30, BytesSent: 40},
+		{Name: "eth0", BytesRecv: 10, BytesSent: 20},
+		{Name: "lo", BytesRecv: 900, BytesSent: 800},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set == nil || set.Version != 1 || len(set.Interfaces) != 2 || set.Interfaces[0].Name != "eth0" || set.Interfaces[1].Name != "eth1" {
+		t.Fatalf("unexpected sorted counters: %+v", set)
+	}
+	if rx != 40 || tx != 60 {
+		t.Fatalf("unexpected aggregates rx=%d tx=%d", rx, tx)
+	}
+}
+
+func TestNetworkCounterAggregationIncludesEmptySetAndRejectsInvalidInput(t *testing.T) {
+	c := Collector{Includes: []string{"eth*"}}
+	set, rx, tx, err := c.aggregateNetworkCounters([]net.IOCountersStat{{Name: "lo", BytesRecv: 9}})
+	if err != nil || set == nil || set.Interfaces == nil || len(set.Interfaces) != 0 || rx != 0 || tx != 0 {
+		t.Fatalf("empty filtered set not represented explicitly: set=%+v rx=%d tx=%d err=%v", set, rx, tx, err)
+	}
+	for _, counters := range [][]net.IOCountersStat{
+		{{Name: "eth0", BytesRecv: uint64(^uint64(0))}},
+		{{Name: "eth0", BytesRecv: 1}, {Name: "eth0", BytesRecv: 2}},
+		{{Name: "eth0", BytesRecv: uint64(1 << 63)}},
+	} {
+		if _, _, _, err := c.aggregateNetworkCounters(counters); err == nil {
+			t.Fatalf("invalid network counters accepted: %+v", counters)
+		}
 	}
 }
 

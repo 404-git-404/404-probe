@@ -1,0 +1,13 @@
+/* P4b2: scoped main-card Server-memory traffic, no global layout changes. */
+.agent-card .traffic-chart{grid-column:1/-1;min-width:0;width:100%;border-top:1px solid #e7e1d7;padding-top:8px;color:#69727a}
+.agent-card .network .traffic-chart div{display:block;gap:0}
+.agent-card .network .traffic-chart .traffic-head{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:11px}
+.agent-card .network .traffic-chart .u-off{display:none}
+.agent-card .traffic-head .traffic-title{font-size:12px;color:#555d66;font-weight:600}
+.agent-card .traffic-plot{width:100%;min-width:0;min-height:180px;overflow:hidden}
+.agent-card .network .traffic-status,.agent-card .traffic-detail{display:block;font-size:10px;line-height:1.5;overflow-wrap:anywhere;white-space:normal;margin:3px 0;min-height:15px}
+.agent-card .traffic-detail:focus{outline:2px solid #168577;outline-offset:2px}
+.agent-card .traffic-plot .uplot{font-size:10px;color:#69727a}
+.agent-card .traffic-plot .u-cursor-pt{border:0}
+.agent-card .traffic-empty{font-size:12px;padding:50px 0;text-align:center;margin:0}
+@media(max-width:620px){.agent-card .traffic-plot{min-height:150px}.agent-card .traffic-head{font-size:10px}.agent-card .traffic-status,.agent-card .traffic-detail{font-size:10px}}

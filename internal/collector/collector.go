@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -77,12 +79,9 @@ func (c *Collector) Collect(ctx context.Context) (protocol.Report, error) {
 	if err != nil {
 		return protocol.Report{}, fmt.Errorf("network: %w", err)
 	}
-	var rx, tx uint64
-	for _, counter := range counters {
-		if c.includeInterface(counter.Name) {
-			rx += counter.BytesRecv
-			tx += counter.BytesSent
-		}
+	networkCounters, rx, tx, err := c.aggregateNetworkCounters(counters)
+	if err != nil {
+		return protocol.Report{}, fmt.Errorf("network counters: %w", err)
 	}
 	bootID, err := c.bootID()
 	if err != nil {
@@ -101,8 +100,39 @@ func (c *Collector) Collect(ctx context.Context) (protocol.Report, error) {
 		DiskUsed: root.Used, DiskTotal: root.Total, DiskPercent: root.UsedPercent,
 		CPUStealPercent: linux.cpuStealPercent, DiskReadRate: linux.diskReadRate,
 		DiskWriteRate: linux.diskWriteRate, DiskBusyPercent: linux.diskBusyPercent,
-		RXBytes: rx, TXBytes: tx,
+		RXBytes: rx, TXBytes: tx, NetworkCounters: networkCounters,
 	}, nil
+}
+
+func (c *Collector) aggregateNetworkCounters(counters []net.IOCountersStat) (*protocol.NetworkCounterSet, uint64, uint64, error) {
+	set := &protocol.NetworkCounterSet{Version: 1, Interfaces: make([]protocol.NetworkInterfaceCounter, 0, len(counters))}
+	const max = uint64(math.MaxInt64)
+	seen := make(map[string]struct{}, len(counters))
+	var rxTotal, txTotal uint64
+	for _, counter := range counters {
+		if !c.includeInterface(counter.Name) {
+			continue
+		}
+		name := counter.Name
+		if name == "" || len(name) > 128 || strings.TrimSpace(name) != name || strings.ContainsAny(name, "\x00\r\n") {
+			return nil, 0, 0, errors.New("included interface name is invalid")
+		}
+		if _, ok := seen[name]; ok {
+			return nil, 0, 0, fmt.Errorf("duplicate included interface %q", name)
+		}
+		seen[name] = struct{}{}
+		if counter.BytesRecv > max || counter.BytesSent > max || counter.BytesRecv > max-rxTotal || counter.BytesSent > max-txTotal {
+			return nil, 0, 0, errors.New("interface counter exceeds SQLite integer range")
+		}
+		rxTotal += counter.BytesRecv
+		txTotal += counter.BytesSent
+		set.Interfaces = append(set.Interfaces, protocol.NetworkInterfaceCounter{Name: name, RXBytes: counter.BytesRecv, TXBytes: counter.BytesSent})
+		if len(set.Interfaces) > 256 {
+			return nil, 0, 0, errors.New("too many included interfaces")
+		}
+	}
+	sort.Slice(set.Interfaces, func(i, j int) bool { return set.Interfaces[i].Name < set.Interfaces[j].Name })
+	return set, rxTotal, txTotal, nil
 }
 
 func (c *Collector) includeInterface(name string) bool {

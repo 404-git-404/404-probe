@@ -15,7 +15,7 @@
       <p id="traffic-reset-feedback" aria-live="polite"></p>
     </article>
     <article class="google-status-detail" aria-labelledby="google-status-title">
-      <div class="detail-heading"><h2 id="google-status-title">Google / YouTube 检测</h2><button id="google-status-rerun" type="button" disabled>重新检测</button></div>
+      <div class="detail-heading"><h2 id="google-status-title">YouTube 检测</h2><button id="google-status-rerun" type="button" disabled>重新检测</button></div>
       <p id="google-status-state">正在加载</p>
       <dl id="google-status-values"></dl>
       <p id="google-status-checked"></p>
@@ -38,6 +38,9 @@
     <article class="chart"><h2>TX / s</h2><canvas id="tx"></canvas></article>
     <div id="history-empty" class="empty">正在加载历史数据</div>
   </main>
+  <script src="/agent-state.js" defer></script>
+  <script src="/management.js" defer></script>
+  <script src="/selector.js" defer></script>
   <script src="/history.js" defer></script>
   <script src="/session.js" defer></script>
 </body>

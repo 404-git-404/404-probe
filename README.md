@@ -1,38 +1,66 @@
 # 404-probe
 
-> V0.9.3 refreshes the dashboard with compact frosted status cards, continuous
-> scrolling, stable live refresh state, plan and traffic context, local
-> country/region flags, selector config ordering, and expanded Linux CPU/disk
-> telemetry. A fresh Agent installation performs one bounded request to
-> `https://ipwho.is/?fields=success,country_code` and persists only the validated
-> country code. Failure remains unknown and does not block installation;
-> restarts and upgrades never repeat the lookup.
+> v1.0.0：设备监控、套餐与流量管理、网络质量历史、YouTube 检测，以及有界的 Agent 管理操作。
+> 支持 Debian 12/13 systemd；Alpine 3.24.x OpenRC 仅支持 Agent 基础功能。
+> 真实网络质量评分及 Alpine 自动升级/回滚、安全观察、远程永久删除延期至 v1.1。
+> 版本详情与限制见 [v1.0.0 发布说明](RELEASE_NOTES_v1.0.0.md)。
 
-## Quick Start
+## 快速开始：安装与 v0.9.3 → v1.0.0 升级
 
-On a fresh Linux VPS with systemd, run the unified installer and choose Server or Agent:
+在 Debian 12/13 systemd 主机运行以下固定版本命令，按提示选择 Server 或 Agent。已有受支持 Server 会进入升级确认流程；已有 Agent 不会被这个命令自动升级。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.0/install.sh | sudo PROBE_404_VERSION=v1.0.0 bash
 ```
 
-The same command detects an existing supported Server and offers one local, explicit upgrade confirmation. It resolves the latest canonical stable release from the fixed official repository, verifies the release installer, metadata, checksum manifest, candidate build identity, database, and available space before stopping the service, then preserves the existing configuration, credentials, database, listen/domain settings, and systemd state. A root-only persistent transaction and consistent pre-migration backup allow an interrupted or failed upgrade to restore the old binary and database before the old service is restarted. Existing Agents remain on the Server Web upgrade path.
+Server 新装需输入公开 HTTPS 地址与 Web 管理员密码；反向代理或 Cloudflare Tunnel 由你自行配置，安装器不管理 Tunnel。Agent 新装先在 Server 创建 Agent，复制显示一次的 enrollment 值，然后在 Agent 主机的隐藏提示中粘贴；不要把凭据放进命令、URL 或历史记录。
 
-V0.9.2 adds an explicit, persistent login-domain policy. Existing installations
-remain in exact-origin mode after migration and do not automatically trust a
-parent domain. A local administrator can enable suffix mode and manage multiple
-registrable root domains without editing configuration or restarting the Server:
+**现有 v0.9.3 Server 升级：**在 Server 主机运行上面的同一命令，确认目标 v1.0.0。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。数据库迁移到 schema 24；不要手动替换旧二进制降级。
+
+**现有 v0.9.3 Agent 升级：**先升级 Server，再登录 Web，打开设备管理中的升级操作，确认目标 v1.0.0。仅在线、未暂停/撤销、正式且具有 updater 能力的受支持 Agent 可执行；逐台操作并核对健康版本上报，失败由 updater 回滚。此路径只替换 Agent 二进制，不安装新的 root helper。Alpine 的自动升级不在 v1.0 范围内；不要在现有 Alpine Agent 上把新装命令当作升级命令。
+
+Alpine 3.24.x 新装仅选 Agent，并须预先具备完整 OpenRC 启动环境和 Bash、GNU coreutils/tar、util-linux、shadow、curl、CA；以 root 运行固定版本 installer。v1.0 不提供 Alpine Server，也不提供已装 Alpine Agent 的自动升级、安全观察或远程永久删除。
+
+在满足上述条件的 Alpine 新主机上，以 root 执行（替换 Server HTTPS 地址，凭据仍在隐藏提示输入）：
+
+```bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.0/install.sh | PROBE_404_VERSION=v1.0.0 bash -s -- agent --server 'https://probe.example.com'
+```
+
+### 域名后缀：本地入口与可复制命令
+
+在 Server 主机使用已安装的管理 helper。后缀策略默认不开启；迁移不会自动信任父域。必须配置 HTTPS public origin。先运行菜单、选 **2** 添加第一个你控制的可注册根域，即开启后缀策略（没有 `enable` 子命令）：
 
 ```bash
 sudo 404-probe-install domains
+```
+
+查看当前策略：
+
+```bash
 sudo 404-probe-install domains list
-sudo 404-probe-install domains add navolyn.com
-sudo 404-probe-install domains remove navolyn.com
+```
+
+添加另一个根域（将 `example.com` 换为你的域名）：
+
+```bash
+sudo 404-probe-install domains add example.com
+```
+
+仅在需要移除某个根域时执行，不能移除最后一个：
+
+```bash
+sudo 404-probe-install domains remove example.com
+```
+
+仅在需要关闭后缀策略时执行，需本地确认：
+
+```bash
 sudo 404-probe-install domains disable
 ```
 
-Registering `navolyn.com` permits that root and any dot-delimited subdomain, but
-not `evilnavolyn.com` or `navolyn.com.evil.example`. The request Origin must
+Registering `example.com` permits that root and any dot-delimited subdomain, but
+not `evilexample.com` or `example.com.evil.example`. The request Origin must
 still exactly match the current request's scheme, host, and effective port.
 Cookies remain host-only, so a new subdomain requires a new login. Suffix changes
 take effect immediately and persist in the Server database. Any actual add,
@@ -42,10 +70,10 @@ does not invalidate credentials. The last suffix cannot be removed; use
 `domains disable` with local confirmation to return to the configured exact
 origin.
 
-To repeatably target one official release instead of `latest`, pass the canonical version to the privileged shell:
+如需跟随官方最新稳定版而非固定版本，可使用：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo PROBE_404_VERSION=v0.9.1 bash
+curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo bash
 ```
 
 For a Server, enter its public Web URL (for example, `https://probe.example.com`) and set the Web administrator password. The installer exposes `http://127.0.0.1:8080` as cloudflared's local origin, but 404-probe does not provision or manage Cloudflare Tunnel; Tunnel configuration remains external. Create each Agent's shown-once enrollment value on the Server:
@@ -91,10 +119,10 @@ change to the selected device set rebuilds the affected baseline and reports
 that metric as unknown. CPU and disk baselines are independent, so an unavailable
 disk topology does not suppress CPU steal (and vice versa). Older Agents omit the
 fields and remain compatible. Opening an
-existing Server database migrates it to schema 14; back it up first and do not
+existing Server database migrates it to schema 24; back it up first and do not
 downgrade it afterward.
 
-## Upgrade to V0.9
+## 历史升级说明：V0.9（不是当前 v1.0.0 命令）
 
 V0.9 adds local sing-box REALITY security observability. A root-only, fixed-purpose daily systemd oneshot reads only `sing-box.service` journal JSON, stores its cursor and private outbox under `/var/lib/404-probe-security/private`, and exports bounded aggregate batches under `/var/lib/404-probe-security/export`. The normal locked `404-probe` Agent can read those aggregates but cannot read the private cursor/outbox, write the export, invoke arbitrary journal queries, or perform firewall/ban actions. It uploads only canonical source IP, counts, time bounds, and typed classifications; raw journal messages and ports never leave the host.
 
@@ -104,7 +132,13 @@ First upgrade an existing V0.8 Agent through the Web UI. Because remote upgrade 
 curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v0.9.0/install.sh | sudo bash -s -- setup-security
 ```
 
-`setup-security` is local-only, idempotent, and fails closed unless the existing binary, unit, private environment, service account, and exact verified V0.9.0 build pass validation. It preserves Agent identity, credential, Server URL, and epoch state; adds only the fixed Security paths and units; checks the generated aggregate is readable but not writable by the Agent; and restores changed files if setup fails. Fresh V0.9 Agent installs include this setup automatically. A dashboard status of `Setup required` means this local step is still needed.
+`setup-security` is local-only, idempotent, and fails closed unless the existing binary, unit, private environment, service account, and the exact verified target release build pass validation. The historical command above targets V0.9.0; after upgrading an Agent to v1.0.0, use the matching v1.0.0 entry point instead:
+
+```bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.0/install.sh | sudo PROBE_404_VERSION=v1.0.0 bash -s -- setup-security
+```
+
+This Debian/systemd-only step preserves Agent identity, credential, Server URL, and epoch state; adds only the fixed Security paths and units; checks the generated aggregate is readable but not writable by the Agent; and restores changed files if setup fails. Fresh supported Debian Agent installs include it automatically. It is not supported on Alpine v1.0. A dashboard status of `Setup required` means this local step is still needed.
 
 Stop the Server and back up its database before first opening it with V0.9. The migration advances schema V9 to V10 by adding negotiated Security capability and immutable, idempotent batch history. Security batches are retained for 30 days; existing telemetry retention behavior is unchanged. Do not downgrade a migrated database.
 
@@ -205,7 +239,7 @@ Uninstall is intentionally destructive in v1.0: it shows the exact role and requ
 The installed helper removes itself last. To retry after an interrupted or completed uninstall, use the official version-pinned entry point; the command is idempotent:
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v0.9.3/install.sh | sudo PROBE_404_VERSION=v0.9.3 bash -s -- uninstall agent --confirm-delete-data
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.0/install.sh | sudo PROBE_404_VERSION=v1.0.0 bash -s -- uninstall agent --confirm-delete-data
 ```
 
 Replace `agent` with `server` for the Server role. Local uninstall does not contact the Server or remove the Agent's Server-side telemetry; Web “permanent delete” is a separate tracked v1.0 operation.

@@ -65,12 +65,24 @@ func (s *Store) GetAgentPlan(ctx context.Context, agentID string) (AgentPlan, bo
 }
 
 func (s *Store) DeleteAgentPlan(ctx context.Context, agentID string) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM agent_plans WHERE agent_id=?`, agentID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM agent_plans WHERE agent_id=?`, agentID)
 	if err != nil {
 		return false, err
 	}
 	count, err := result.RowsAffected()
-	return count > 0, err
+	if err != nil {
+		return false, err
+	}
+	// A cleared plan retains its configuration fence until the agent is deleted.
+	if err := replacePlanConfigTx(ctx, tx, AgentPlan{AgentID: agentID}); err != nil {
+		return false, err
+	}
+	return count > 0, tx.Commit()
 }
 
 func assignNullablePlanValues(plan *AgentPlan, quotaBytes, bandwidthBPS, cycleStart, cycleEnd sql.NullInt64) {
@@ -138,11 +150,18 @@ func (s *Store) PutAgentPlan(ctx context.Context, plan AgentPlan, calibration *u
 	if usage > math.MaxInt64 {
 		return AgentPlan{}, errors.New("traffic calibration exceeds storage range")
 	}
-	plan.UsageBytes, plan.UsageStatus, plan.CycleStart, plan.CycleEnd, plan.UpdatedAt, plan.ObserveAfter = usage, status, start, end, now.UnixMilli(), observeAfter
+	updatedAt := maxPlanUpdatedAt(previous.UpdatedAt, now.UnixMilli())
+	if !previousExists {
+		updatedAt = now.UnixMilli()
+	}
+	plan.UsageBytes, plan.UsageStatus, plan.CycleStart, plan.CycleEnd, plan.UpdatedAt, plan.ObserveAfter = usage, status, start, end, updatedAt, observeAfter
 	_, err = tx.ExecContext(ctx, `INSERT INTO agent_plans(agent_id,traffic_mode,quota_value,quota_unit,quota_bytes,cycle_kind,cycle_count,cycle_anchor,timezone,usage_bytes,usage_status,cycle_start,cycle_end,bandwidth_value,bandwidth_unit,bandwidth_bps,currency,purchase_price,purchase_price_period,renewal_price,renewal_price_period,purchase_date,renewal_date,expiry_date,country_code_override,updated_at,observe_after)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET traffic_mode=excluded.traffic_mode,quota_value=excluded.quota_value,quota_unit=excluded.quota_unit,quota_bytes=excluded.quota_bytes,cycle_kind=excluded.cycle_kind,cycle_count=excluded.cycle_count,cycle_anchor=excluded.cycle_anchor,timezone=excluded.timezone,usage_bytes=excluded.usage_bytes,usage_status=excluded.usage_status,cycle_start=excluded.cycle_start,cycle_end=excluded.cycle_end,bandwidth_value=excluded.bandwidth_value,bandwidth_unit=excluded.bandwidth_unit,bandwidth_bps=excluded.bandwidth_bps,currency=excluded.currency,purchase_price=excluded.purchase_price,purchase_price_period=excluded.purchase_price_period,renewal_price=excluded.renewal_price,renewal_price_period=excluded.renewal_price_period,purchase_date=excluded.purchase_date,renewal_date=excluded.renewal_date,expiry_date=excluded.expiry_date,country_code_override=excluded.country_code_override,updated_at=excluded.updated_at,observe_after=excluded.observe_after`,
 		plan.AgentID, nullable(plan.TrafficMode), nullable(plan.QuotaValue), nullable(plan.QuotaUnit), nullableUint(plan.QuotaBytes), nullable(plan.CycleKind), nullableInt(plan.CycleCount), nullable(plan.CycleAnchor), nullable(plan.Timezone), int64(plan.UsageBytes), plan.UsageStatus, nullableInt64(plan.CycleStart), nullableInt64(plan.CycleEnd), nullable(plan.BandwidthValue), nullable(plan.BandwidthUnit), nullableUint(plan.BandwidthBPS), nullable(plan.Currency), nullable(plan.PurchasePrice), nullable(plan.PurchasePricePeriod), nullable(plan.RenewalPrice), nullable(plan.RenewalPricePeriod), nullable(plan.PurchaseDate), nullable(plan.RenewalDate), nullable(plan.ExpiryDate), nullable(plan.CountryCodeOverride), plan.UpdatedAt, plan.ObserveAfter)
 	if err != nil {
+		return AgentPlan{}, err
+	}
+	if err := replacePlanConfigTx(ctx, tx, plan); err != nil {
 		return AgentPlan{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -151,21 +170,23 @@ func (s *Store) PutAgentPlan(ctx context.Context, plan AgentPlan, calibration *u
 	return plan, nil
 }
 
-func accountPlanTrafficTx(ctx context.Context, tx *sql.Tx, old, current State, existed bool, now time.Time) error {
+func accountPlanTrafficTx(ctx context.Context, tx *sql.Tx, old, current State, existed, continuityPartial bool, now time.Time) error {
 	plan, found, err := getAgentPlanTx(ctx, tx, current.AgentID)
-	if err != nil || !found || plan.TrafficMode == "" || plan.CycleKind == "" || plan.CycleKind == "none" {
+	if err != nil || !found {
 		return err
 	}
-	start, end, active, err := PlanCycleBounds(plan, now)
-	if err != nil || !active {
+	resolved, phase, err := resolvePlanCycle(plan, now)
+	if err != nil || !planHasCycle(plan) || phase == planCycleInactive {
 		return err
 	}
+	plan = resolved
 	usage, status := plan.UsageBytes, plan.UsageStatus
-	if !sameInt64(plan.CycleStart, start) {
-		usage, status = 0, "partial"
+	if continuityPartial {
+		status = "partial"
 	}
 	spansAccountingBoundary := existed && plan.ObserveAfter > 0 && old.LastSeen < plan.ObserveAfter
-	if existed && old.LastSeen >= *start && !spansAccountingBoundary {
+	canAccountDelta := phase == planCycleCurrent || phase == planCycleRollback
+	if existed && canAccountDelta && !spansAccountingBoundary {
 		rxDelta, txDelta := current.RXTotal-old.RXTotal, current.TXTotal-old.TXTotal
 		var increment uint64
 		switch plan.TrafficMode {
@@ -179,13 +200,10 @@ func accountPlanTrafficTx(ctx context.Context, tx *sql.Tx, old, current State, e
 			}
 			increment = rxDelta + txDelta
 		}
-		if usage > math.MaxInt64-increment {
+		if increment > math.MaxInt64 || usage > math.MaxInt64-increment {
 			return errors.New("billing traffic counter exceeds storage range")
 		}
 		usage += increment
-		if old.BootID != current.BootID || current.RXBytes < old.RXBytes || current.TXBytes < old.TXBytes {
-			status = "partial"
-		}
 	}
 	if spansAccountingBoundary {
 		status = "partial"
@@ -194,7 +212,8 @@ func accountPlanTrafficTx(ctx context.Context, tx *sql.Tx, old, current State, e
 	if observeAfter > 0 && current.LastSeen >= observeAfter {
 		observeAfter = 0
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE agent_plans SET usage_bytes=?,usage_status=?,cycle_start=?,cycle_end=?,updated_at=?,observe_after=? WHERE agent_id=?`, int64(usage), status, *start, *end, now.UnixMilli(), observeAfter, current.AgentID)
+	updatedAt := maxPlanUpdatedAt(plan.UpdatedAt, now.UnixMilli())
+	_, err = tx.ExecContext(ctx, `UPDATE agent_plans SET usage_bytes=?,usage_status=?,cycle_start=?,cycle_end=?,updated_at=?,observe_after=? WHERE agent_id=?`, int64(usage), status, nullableInt64(plan.CycleStart), nullableInt64(plan.CycleEnd), updatedAt, observeAfter, current.AgentID)
 	return err
 }
 
@@ -245,21 +264,74 @@ func PlanCycleBounds(plan AgentPlan, now time.Time) (*int64, *int64, bool, error
 	return &startMillis, &endMillis, true, nil
 }
 
-func AgentPlanAt(plan AgentPlan, now time.Time) (AgentPlan, error) {
+type planCyclePhase uint8
+
+const (
+	planCycleInactive planCyclePhase = iota
+	planCycleInitialized
+	planCycleCurrent
+	planCycleAdvanced
+	planCycleRollback
+)
+
+func planHasCycle(plan AgentPlan) bool {
+	return plan.TrafficMode != "" && plan.CycleKind != "" && plan.CycleKind != "none"
+}
+
+// resolvePlanCycle makes the persisted cycle start a monotonic cursor shared by
+// report accounting and read-only plan projections.
+func resolvePlanCycle(plan AgentPlan, now time.Time) (AgentPlan, planCyclePhase, error) {
+	if (plan.CycleStart == nil) != (plan.CycleEnd == nil) {
+		return AgentPlan{}, planCycleInactive, errors.New("stored plan cycle bounds are incomplete")
+	}
+	if plan.CycleStart != nil && *plan.CycleEnd <= *plan.CycleStart {
+		return AgentPlan{}, planCycleInactive, errors.New("stored plan cycle bounds are invalid")
+	}
+	if !planHasCycle(plan) {
+		return plan, planCycleInactive, nil
+	}
 	start, end, active, err := PlanCycleBounds(plan, now)
 	if err != nil {
-		return AgentPlan{}, err
+		return AgentPlan{}, planCycleInactive, err
 	}
 	if !active {
-		plan.CycleStart, plan.CycleEnd = nil, nil
-		return plan, nil
+		if plan.CycleStart == nil {
+			return plan, planCycleInactive, nil
+		}
+		plan.UsageStatus = "partial"
+		return plan, planCycleRollback, nil
 	}
-	if !sameInt64(plan.CycleStart, start) {
+	if plan.CycleStart == nil {
+		plan.CycleStart, plan.CycleEnd = start, end
 		plan.UsageBytes = 0
 		plan.UsageStatus = "partial"
+		return plan, planCycleInitialized, nil
 	}
-	plan.CycleStart, plan.CycleEnd = start, end
-	return plan, nil
+	switch {
+	case *start > *plan.CycleStart:
+		plan.CycleStart, plan.CycleEnd = start, end
+		plan.UsageBytes = 0
+		plan.UsageStatus = "partial"
+		return plan, planCycleAdvanced, nil
+	case *start == *plan.CycleStart:
+		plan.CycleStart, plan.CycleEnd = start, end
+		return plan, planCycleCurrent, nil
+	default:
+		plan.UsageStatus = "partial"
+		return plan, planCycleRollback, nil
+	}
+}
+
+func AgentPlanAt(plan AgentPlan, now time.Time) (AgentPlan, error) {
+	resolved, _, err := resolvePlanCycle(plan, now)
+	return resolved, err
+}
+
+func maxPlanUpdatedAt(previous, current int64) int64 {
+	if previous > current {
+		return previous
+	}
+	return current
 }
 
 func anchoredMonth(anchor time.Time, offset int) time.Time {
@@ -275,7 +347,7 @@ func anchoredMonth(anchor time.Time, offset int) time.Time {
 func getAgentPlanTx(ctx context.Context, tx *sql.Tx, agentID string) (AgentPlan, bool, error) {
 	var plan AgentPlan
 	var start, end sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,observe_after FROM agent_plans WHERE agent_id=?`, agentID).Scan(&plan.AgentID, &plan.TrafficMode, &plan.CycleKind, &plan.CycleCount, &plan.CycleAnchor, &plan.Timezone, &plan.UsageBytes, &plan.UsageStatus, &start, &end, &plan.ObserveAfter)
+	err := tx.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,updated_at,observe_after FROM agent_plans WHERE agent_id=?`, agentID).Scan(&plan.AgentID, &plan.TrafficMode, &plan.CycleKind, &plan.CycleCount, &plan.CycleAnchor, &plan.Timezone, &plan.UsageBytes, &plan.UsageStatus, &start, &end, &plan.UpdatedAt, &plan.ObserveAfter)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentPlan{}, false, nil
 	}

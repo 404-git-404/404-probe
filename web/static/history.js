@@ -15,252 +15,49 @@ const securityWindow = document.querySelector('#security-window');
 const securitySources = document.querySelector('#security-sources');
 let mutationCSRFToken = '';
 let currentAgent = null;
-let switchingSelector = '';
-let selectorFeedback = null;
-const selectorOperations = new Map();
-const selectorDrafts = new Map();
-const expandedSelectors = new Set();
-const selectorDraftKey = selector => `${id}\u0000${selector}`;
-
-const selectorErrors = {
-  selector_not_found: '本地 Selector 已不存在，请刷新后重试',
-  choice_not_found: '本地选项已不存在，请刷新后重试',
-  clash_api_unavailable: 'Agent 无法连接本地 Clash API',
-  clash_api_not_detected: '未检测到 sing-box Clash API',
-  clash_api_auth_required: '检测到 Clash API 鉴权；请移除 secret，404-probe 不读取密钥',
-  switch_failed: 'Clash API 拒绝了切换',
-  switch_verification_failed: '切换后的回读结果与目标不一致',
-  selector_switch_pending: '该 Selector 已有等待或执行中的切换',
-  agent_disabled: 'Agent 已暂停，无法执行切换',
-  agent_revoked: 'Agent 已撤销，无法执行切换',
-  agent_offline: 'Agent 离线，无法执行切换',
-  outbounds_not_configured: 'Agent 未配置出站发现',
-  outbounds_unavailable: 'Clash API 当前不可用',
-  selector_choice_not_allowed: '目标已不在最新快照中，请刷新后重试',
-};
-
-function requestID() {
-  return crypto.randomUUID().replaceAll('-', '');
-}
-
+const agentState = AgentState.create();
+let loadController = null;
+let pendingTelemetry = null;
+let trafficRequest = null;
+let trafficWriteController = null;
+const selectorErrors = Selector.errors;
+function requestID() { return crypto.randomUUID().replaceAll('-', ''); }
 async function readError(response) {
-  try {
-    const body = await response.json();
-    return selectorErrors[body.error?.code] || body.error?.message || body.message || response.statusText;
-  } catch (error) {
-    return response.statusText;
-  }
+  try { const body = await response.json(); return selectorErrors[body.error?.code] || body.error?.message || response.statusText; }
+  catch (error) { return response.statusText; }
 }
-
-async function waitForSwitch(jobID) {
-  const deadline = Date.now() + 30000;
-  while (Date.now() < deadline) {
-    const job = await readJSON(`/api/v1/web/jobs/${encodeURIComponent(jobID)}`);
-    if (['success', 'failed', 'expired'].includes(job.operation_status)) return job;
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
-  throw new Error('切换仍在排队，可在 Probe Jobs 中查看结果');
-}
-
-function operationFeedback(operation) {
-  if (!operation) return null;
-  const choice = operation.config?.choice || '';
-  switch (operation.operation_status) {
-    case 'queued':
-      return {message: `等待切换至 ${choice}`, error: false, pending: true};
-    case 'running':
-      return {message: `正在切换至 ${choice}`, error: false, pending: true};
-    case 'expired':
-      return {message: '切换任务已过期（可能因暂停或超时）', error: true, pending: false};
-    case 'failed': {
-      const category = operation.result?.error_category || 'switch_failed';
-      return {message: selectorErrors[category] || operation.result?.error_message || category, error: true, pending: false};
-    }
-    case 'success': {
-      const result = operation.result?.measurement?.selector_switch;
-      if (!result) return {message: '切换成功', error: false, pending: false};
-      return {message: result.changed ? `已切换到 ${result.current}` : `已经是 ${result.current}`, error: false, pending: false};
-    }
-    default:
-      return null;
-  }
-}
-
-async function loadSelectorOperations(encodedID) {
-  try {
-    const page = await readJSON(`/api/v1/web/jobs?agent_id=${encodedID}&probe_type=singbox_selector_switch&limit=20`);
-    const details = await Promise.all((page.items || []).map(job => readJSON(`/api/v1/web/jobs/${encodeURIComponent(job.job_id)}`)));
-    selectorOperations.clear();
-    for (const operation of details) {
-      const selector = operation.config?.selector;
-      if (selector && !selectorOperations.has(selector)) selectorOperations.set(selector, operation);
-    }
-  } catch (error) {
-    selectorOperations.clear();
-  }
-}
-
-async function refreshAgentUntil(encodedID, selector, target) {
-  let latest = currentAgent;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    latest = await readJSON(`/api/v1/web/agents/${encodedID}`);
-    const value = latest.outbounds?.selectors?.find(item => item.name === selector);
-    if (value?.current === target) return {agent: latest, reflected: true};
-    if (attempt < 4) await new Promise(resolve => setTimeout(resolve, 300));
-  }
-  return {agent: latest, reflected: false};
-}
-
+const selectorController = Selector.create({
+  state: agentState, fetcher: (...args) => fetch(...args), csrf: () => mutationCSRFToken,
+  unauthorized: () => location.assign('/login'),
+  onchange: () => { currentAgent = agentState.agents.get(id); selectorView.refresh(id); },
+});
+const selectorView = Selector.view({
+  controller: selectorController, state: agentState, csrf: () => mutationCSRFToken,
+  onopen: agentID => { reconciliation.notify(agentID); selectorController.recover(agentID, readJSON); },
+});
 async function switchOutbound(selector, choice) {
-  switchingSelector = selector;
-  selectorFeedback = {selector, message: `正在切换至 ${choice}`, error: false};
-  renderOutbounds(currentAgent);
-  try {
-    const encodedID = encodeURIComponent(id);
-    const response = await fetch(`/api/v1/web/agents/${encodedID}/outbounds/switch`, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
-      body: JSON.stringify({request_id: requestID(), selector, choice}),
-    });
-    if (response.status === 401) {
-      location.assign('/login');
-      return;
-    }
-    if (!response.ok) throw new Error(await readError(response));
-    const operation = await response.json();
-    const job = await waitForSwitch(operation.job_id);
-    selectorOperations.set(selector, job);
-    if (job.operation_status === 'expired') {
-      throw new Error('切换任务已过期（可能因暂停或超时）');
-    }
-    if (job.operation_status !== 'success' || !job.result?.success) {
-      const category = job.result?.error_category || 'switch_failed';
-      throw new Error(selectorErrors[category] || job.result?.error_message || category);
-    }
-    const result = job.result.measurement?.selector_switch;
-    const target = result?.current || choice;
-    const refreshed = await refreshAgentUntil(encodedID, selector, target);
-    currentAgent = refreshed.agent;
-	selectorDrafts.delete(selectorDraftKey(selector));
-    switchingSelector = '';
-    selectorFeedback = {
-      selector,
-      message: refreshed.reflected
-        ? (result?.changed ? `已切换到 ${target}` : `已经是 ${target}`)
-        : `切换成功，状态快照尚未刷新（目标 ${target}）`,
-      error: false,
-    };
-    renderOutbounds(currentAgent);
-  } catch (error) {
-    switchingSelector = '';
-    selectorFeedback = {selector, message: error.message || '切换失败', error: true};
-    try {
-      currentAgent = await readJSON(`/api/v1/web/agents/${encodeURIComponent(id)}`);
-    } catch (refreshError) {
-      // Keep the last trusted snapshot; a later discovery or page refresh can recover it.
-    }
-    renderOutbounds(currentAgent);
-  }
+  const result = await selectorController.submit(id, selector, choice);
+  currentAgent = agentState.agents.get(id);
+  reconciliation.notify(id);
+  return result;
 }
-
 function renderOutbounds(agent) {
-  const focusedSelector = document.activeElement?.closest?.('details')?.querySelector('summary strong')?.textContent || '';
-  const outbounds = agent?.outbounds;
+  const restoreTriggerFocus = document.activeElement?.dataset?.focusKey === 'selector';
   outboundList.replaceChildren();
-  if (!outbounds || !outbounds.configured) {
-    outboundStatus.textContent = '未配置出站发现';
-    return;
-  }
-  const lastUpdated = outbounds.updated_at ? new Date(outbounds.updated_at).toLocaleString() : '尚无成功快照';
-  const lastChecked = outbounds.checked_at ? new Date(outbounds.checked_at).toLocaleString() : '未知';
-  if (agent.revoked) outboundStatus.textContent = `Agent 已撤销 · 最后更新：${lastUpdated}`;
-  else if (agent.disabled_at) outboundStatus.textContent = `Agent 已暂停 · 最后更新：${lastUpdated}`;
-  else if (outbounds.status === 'not_detected') outboundStatus.textContent = '未检测到 sing-box Clash API（默认 http://127.0.0.1:9090）';
-  else if (outbounds.status === 'auth_required') outboundStatus.textContent = '检测到 Clash API 鉴权；请移除 secret，404-probe 不读取或保存密钥';
-  else if (!outbounds.available) outboundStatus.textContent = `Clash API 不可用 · 上次成功：${lastUpdated}`;
-  else if (outbounds.stale) outboundStatus.textContent = `状态已过期 · 最后检查：${lastChecked}`;
-  else outboundStatus.textContent = switchingSelector ? `正在切换 ${switchingSelector}…` : `已连接 · 更新于 ${lastUpdated}`;
-  if (outbounds.available && !switchingSelector) {
-    outboundStatus.textContent += outbounds.order_source === 'config'
-      ? ' · 按 sing-box 配置顺序'
-      : ' · 名称回退排序（尚未加载配置顺序）';
-  }
-  for (const selector of outbounds.selectors || []) {
-    const details = document.createElement('details');
-    details.open = expandedSelectors.has(selector.name) || switchingSelector === selector.name || selectorFeedback?.selector === selector.name;
-    const summary = document.createElement('summary');
-    const name = document.createElement('strong');
-    name.textContent = selector.name;
-    const current = document.createElement('span');
-    current.textContent = selector.current;
-    summary.append(name, current);
-    const controls = document.createElement('div');
-    controls.className = 'selector-controls';
-    const choices = document.createElement('select');
-    choices.setAttribute('aria-label', `${selector.name} 目标出站`);
-	const draftKey = selectorDraftKey(selector.name);
-	const draft = selectorDrafts.get(draftKey);
-	const availableChoices = selector.choices || [];
-	if (draft && !availableChoices.includes(draft)) {
-	  selectorDrafts.delete(draftKey);
-	  selectorFeedback = {selector: selector.name, message: '先前选择已不在最新选项中，请重新选择', error: true};
-	}
-	const selectedChoice = draft && availableChoices.includes(draft) ? draft : selector.current;
-    for (const choice of availableChoices) {
-      const option = document.createElement('option');
-      option.value = choice;
-      option.textContent = choice === selector.current ? `${choice}（当前）` : choice;
-      option.selected = choice === selectedChoice;
-      choices.append(option);
-    }
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = '切换';
-    const operationStatus = document.createElement('span');
-    operationStatus.className = 'selector-operation-status';
-    const persistedFeedback = operationFeedback(selectorOperations.get(selector.name));
-    const feedback = selectorFeedback?.selector === selector.name ? selectorFeedback : persistedFeedback;
-    if (feedback) {
-      operationStatus.textContent = feedback.message;
-      operationStatus.classList.toggle('switch-error', feedback.error);
-    }
-    const blocked = !agent.online || !outbounds.available || outbounds.stale || agent.disabled_at || agent.revoked || !mutationCSRFToken || switchingSelector !== '' || persistedFeedback?.pending;
-    const updateButton = () => {
-      button.disabled = blocked || choices.value === selector.current;
-    };
-    choices.disabled = blocked;
-	choices.addEventListener('change', () => { selectorDrafts.set(draftKey, choices.value); updateButton(); });
-    button.addEventListener('click', () => switchOutbound(selector.name, choices.value));
-    updateButton();
-    controls.append(choices, button, operationStatus);
-    details.append(summary, controls);
-    details.addEventListener('toggle', () => {
-      if (details.open) expandedSelectors.add(selector.name);
-      else expandedSelectors.delete(selector.name);
-    });
-    outboundList.append(details);
-  }
-  if (!outboundList.children.length && outbounds.available) {
-    outboundStatus.textContent += ' · 未发现 Selector';
-  }
-  if (focusedSelector) {
-    queueMicrotask(() => {
-      for (const details of outboundList.querySelectorAll('details')) {
-        if (details.querySelector('summary strong')?.textContent === focusedSelector) {
-          details.querySelector('select')?.focus({preventScroll: true});
-          break;
-        }
-      }
-    });
-  }
+  const trigger = agent && selectorView.trigger(agent);
+  if (trigger) outboundList.append(trigger);
+  outboundStatus.textContent = agent?.outbounds?.configured
+    ? Selector.reason(agent, mutationCSRFToken) || '点击查看各组当前出站'
+    : '未配置出站发现';
+  selectorView.refresh(id);
+  if (restoreTriggerFocus && trigger) trigger.focus({preventScroll: true});
 }
-
-function detailBytes(value) {
+function detailBytes(value, binary = true) {
   let number = Number(value || 0);
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  const units = binary ? ['B', 'KiB', 'MiB', 'GiB', 'TiB'] : ['B', 'KB', 'MB', 'GB', 'TB'];
+  const base = binary ? 1024 : 1000;
   let index = 0;
-  while (number >= 1024 && index < units.length - 1) { number /= 1024; index++; }
+  while (number >= base && index < units.length - 1) { number /= base; index++; }
   return `${number.toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
@@ -276,7 +73,9 @@ function renderAgentRuntime(agent) {
   const state = agent?.state;
   const traffic = agent?.traffic;
   agentRuntimeValues.replaceChildren();
-  trafficReset.disabled = !mutationCSRFToken || !agent?.online || !state || Boolean(state.stale) || Boolean(agent?.disabled_at) || Boolean(agent?.revoked);
+  trafficReset.disabled = !mutationCSRFToken || !agent?.online || !state || !traffic || Boolean(state.stale) || Boolean(agent?.disabled_at) || Boolean(agent?.revoked) || agentState.busy(id, 'traffic') || agentState.blocked(id);
+  trafficReset.textContent = trafficRequest ? '用原请求核实累计起点' : '重新开始累计统计';
+  trafficReset.title = !agent?.online ? '设备离线，不能重新起算' : agent?.disabled_at ? '设备已暂停' : !state || state.stale || !traffic ? '需要在线有效流量样本' : '只改变累计显示，不改历史或套餐周期用量';
   const rows = [
     ['主机名', state?.hostname || '—'],
     ['系统', [state?.os, state?.arch].filter(Boolean).join(' · ') || '—'],
@@ -288,8 +87,8 @@ function renderAgentRuntime(agent) {
     ['Swap', state ? `${detailBytes(state.swap_used)} / ${detailBytes(state.swap_total)} · ${Number(state.swap_percent || 0).toFixed(1)}%` : '—'],
     ['磁盘', state ? `${detailBytes(state.disk_used)} / ${detailBytes(state.disk_total)} · ${Number(state.disk_percent || 0).toFixed(1)}%` : '—'],
     ['磁盘 I/O', state?.disk_busy_percent == null ? '—' : `最忙磁盘 ${Number(state.disk_busy_percent).toFixed(1)}% · 所选设备合计读 ${detailBytes(state.disk_read_rate)}/s · 写 ${detailBytes(state.disk_write_rate)}/s`],
-    ['累计入站', traffic ? detailBytes(traffic.rx_total) : '—'],
-    ['累计出站', traffic ? detailBytes(traffic.tx_total) : '—'],
+    ['累计入站', traffic ? detailBytes(traffic.rx_total,false) : '—'],
+    ['累计出站', traffic ? detailBytes(traffic.tx_total,false) : '—'],
     ['累计起点', traffic?.started_at ? new Date(traffic.started_at).toLocaleString() : '首次有效样本'],
     ['运行时长', state ? detailDuration(state.uptime) : '—'],
     ['最近上报', agent?.last_seen ? new Date(agent.last_seen).toLocaleString() : '从未上报'],
@@ -304,21 +103,38 @@ function renderAgentRuntime(agent) {
 
 trafficReset.addEventListener('click', async () => {
   if (trafficReset.disabled || !currentAgent) return;
-  if (!confirm('只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？')) return;
+  if (!confirm(trafficRequest ? `使用原请求 ${trafficRequest} 核实同一次累计重新起算，不创建新重置。继续？` : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？')) return;
+  const mutation = agentState.beginMutation(id, ['traffic']);
+  if (!mutation) return;
+  const verifying = Boolean(trafficRequest);
+  trafficRequest ||= requestID();
+  const operationID = trafficRequest;
+  const controller = new AbortController(); trafficWriteController = controller;
   trafficReset.disabled = true;
   trafficResetFeedback.textContent = '正在记录新的累计起点…';
   try {
-    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(id)}/traffic/reset`, {
-      method: 'POST', cache: 'no-store',
-      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
-      body: JSON.stringify({request_id: requestID()}),
+    const traffic = await Management.write(`/api/v1/web/agents/${encodeURIComponent(id)}/traffic/reset`, {
+      csrf: mutationCSRFToken, payload: {request_id: operationID}, signal: controller.signal,
+      unauthorized: () => location.assign('/login'),
     });
-    if (response.status === 401) { location.assign('/login'); return; }
-    if (!response.ok) throw new Error(await readError(response));
-    currentAgent = {...currentAgent, traffic: await response.json()};
-    trafficResetFeedback.textContent = '累计统计已从当前有效样本重新开始；套餐周期用量未改变。';
+    // A reused id returns the receipt of that old reset, not current totals.
+    if (!agentState.finishMutation(mutation, verifying ? {} : {traffic})) return;
+    trafficRequest = null;
+    currentAgent = agentState.agents.get(id);
+    trafficResetFeedback.textContent = verifying
+      ? '已确认原请求执行；正在核对当前累计，不使用旧回执覆盖新样本或后续起点。'
+      : '累计统计已从当前有效样本重新开始；套餐周期用量未改变。';
   } catch (error) {
-    trafficResetFeedback.textContent = error.message || '无法重新开始累计统计';
+    if (controller.signal.aborted || agentState.blocked(id) || !agentState.agents.has(id)) return;
+    const uncertain = !error.status || error.status >= 500;
+    if (!uncertain) trafficRequest = null;
+    trafficResetFeedback.textContent = uncertain
+      ? `响应不确定，保留原累计和请求 ${operationID}；不会自动重试，可用原请求核实。`
+      : error.message || '无法重新开始累计统计';
+  } finally {
+    if (trafficWriteController === controller) trafficWriteController = null;
+    agentState.finishMutation(mutation);
+    reconciliation.notify(id);
   }
   renderAgentRuntime(currentAgent);
 });
@@ -333,7 +149,7 @@ function renderGoogleStatus(agent) {
     googleChecked.textContent = '';
     return;
   }
-  const statuses = google.result ? [google.result.youtube?.status, google.result.search?.status, google.result.signin?.status, google.result.gemini?.status] : [];
+  const statuses = google.result ? [google.result.youtube?.status] : [];
   const unknown = statuses.filter(status => !status || status === 'unknown').length;
   googleState.textContent = google.pending ? '检测中…'
     : !google.result ? '尚未检测'
@@ -348,9 +164,6 @@ function renderGoogleStatus(agent) {
   }
   const rows = [
     ['YouTube', google.result.youtube?.status === 'cn' ? 'CN · 送中' : google.result.youtube?.status === 'not_cn' ? `${google.result.youtube.region || ''}${google.result.youtube.region ? ' · ' : ''}非 CN` : '未知'],
-    ['Google Search', ({ok: '正常', challenge: '需验证', blocked: '受限'})[google.result.search?.status] || '未知'],
-    ['Google Sign-in', ({reachable: '可达', challenge: '需验证', blocked: '受限'})[google.result.signin?.status] || '未知'],
-    ['Gemini', google.result.gemini?.status === 'available' ? `可用${google.result.gemini.region ? ` · ${google.result.gemini.region}` : ''}` : google.result.gemini?.status === 'blocked' ? '受限' : '未知'],
   ];
   for (const [name, value] of rows) {
     const term = document.createElement('dt'); term.textContent = name;
@@ -362,6 +175,8 @@ function renderGoogleStatus(agent) {
 
 googleRerun.addEventListener('click', async () => {
   if (!currentAgent || !mutationCSRFToken || googleRerun.disabled) return;
+  const mutation = agentState.beginMutation(id, ['google']);
+  if (!mutation) return;
   googleRerun.disabled = true;
   googleFeedback.textContent = '';
   try {
@@ -375,11 +190,15 @@ googleRerun.addEventListener('click', async () => {
       try { message = (await response.json()).error?.message || message; } catch (error) { /* keep fallback */ }
       throw new Error(message);
     }
-    currentAgent = {...currentAgent, google_status: {...currentAgent.google_status, pending: true}};
+    agentState.finishMutation(mutation, {google_status: {...agentState.agents.get(id)?.google_status, pending: true}});
+    currentAgent = agentState.agents.get(id);
     renderGoogleStatus(currentAgent);
   } catch (error) {
     googleFeedback.textContent = error.message || '检测请求失败';
     renderGoogleStatus(currentAgent);
+  } finally {
+    agentState.finishMutation(mutation);
+    reconciliation.notify(id);
   }
 });
 
@@ -392,7 +211,8 @@ function renderSecurity(agent) {
 	  return;
 	}
 	const labels = {unavailable: 'Setup required', no_data: '等待首次本地审计', complete: '完整', partial: '部分结果', failed: '采集失败'};
-	securityState.textContent = `${labels[security.status] || security.status}${security.stale ? ' · stale' : ''}${security.reason ? ` · ${security.reason}` : ''}`;
+	const statusLabel = security.status === 'unavailable' && security.reason === 'platform_unsupported' ? '此平台暂不支持（v1.1）' : labels[security.status] || security.status;
+	securityState.textContent = `${statusLabel}${security.stale ? ' · stale' : ''}${security.reason ? ` · ${security.reason}` : ''}`;
 	const batch = security.current;
 	if (!batch) {
 	  securityWindow.textContent = '';
@@ -446,24 +266,18 @@ function draw(canvas, points, key, color, format) {
 }
 
 const rate = value => {
-  const units = ['B', 'K', 'M', 'G'];
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'];
   let number = value;
   let index = 0;
-  while (number >= 1024 && index < units.length - 1) {
-    number /= 1024;
+  while (number >= 1000 && index < units.length - 1) {
+    number /= 1000;
     index++;
   }
   return `${number.toFixed(0)}${units[index]}`;
 };
 
-async function readJSON(path) {
-  const response = await fetch(path, {cache: 'no-store'});
-  if (response.status === 401) {
-    location.assign('/login');
-    throw new Error('authentication required');
-  }
-  if (!response.ok) throw new Error(response.statusText);
-  return response.json();
+async function readJSON(path, signal) {
+  return AgentState.fetchJSON(path, {fetcher: fetch, signal, unauthorized: () => location.assign('/login')});
 }
 
 async function load() {
@@ -471,22 +285,23 @@ async function load() {
     empty.textContent = '无效的 Agent ID';
     return;
   }
+  loadController?.abort();
+  const controller = new AbortController();
+  loadController = controller;
+  const ticket = agentState.read(id);
   try {
     const encodedID = encodeURIComponent(id);
     const [agent, history, session] = await Promise.all([
-      readJSON(`/api/v1/web/agents/${encodedID}`),
-      readJSON(`/api/v1/web/agents/${encodedID}/history?hours=24`),
-      readJSON('/api/v1/web/session'),
-      loadSelectorOperations(encodedID),
+      readJSON(`/api/v1/web/agents/${encodedID}`, controller.signal),
+      readJSON(`/api/v1/web/agents/${encodedID}/history?hours=24`, controller.signal),
+      readJSON('/api/v1/web/session', controller.signal),
     ]);
     mutationCSRFToken = session.csrf_token || '';
-    currentAgent = agent;
-    const state = agent.state || {};
-    document.querySelector('#title').textContent = `${state.hostname || agent.name || 'Agent'} · 历史`;
-    renderAgentRuntime(agent);
-    renderOutbounds(agent);
-    renderGoogleStatus(agent);
-	renderSecurity(agent);
+    if (controller.signal.aborted) return;
+    agentState.commitDetail(ticket, agent);
+    currentAgent = agentState.agents.get(id);
+    if (pendingTelemetry && currentAgent) { agentState.event(pendingTelemetry); pendingTelemetry = null; currentAgent = agentState.agents.get(id); }
+    renderCurrentAgent();
     const points = history.points;
     empty.classList.toggle('hidden', points.length > 0);
     if (!points.length) {
@@ -502,6 +317,7 @@ async function load() {
     render();
     addEventListener('resize', render);
   } catch (error) {
+    if (controller.signal.aborted || error.name === 'AbortError') return;
     empty.textContent = '加载失败';
     outboundStatus.textContent = '出站状态加载失败';
     googleState.textContent = 'Google Status 加载失败';
@@ -509,15 +325,42 @@ async function load() {
   }
 }
 
-load();
-
-const events = new EventSource('/api/v1/web/events');
-events.addEventListener('agent', event => {
-  const update = JSON.parse(event.data);
-  if (!currentAgent || update.agent_id !== id) return;
-  currentAgent = {...currentAgent, ...update};
+function renderCurrentAgent() {
+  currentAgent = agentState.agents.get(id);
+  const state = currentAgent?.state || {};
+  document.querySelector('#title').textContent = `${state.hostname || currentAgent?.name || 'Agent'} · 历史`;
   renderAgentRuntime(currentAgent);
   renderOutbounds(currentAgent);
   renderGoogleStatus(currentAgent);
-	renderSecurity(currentAgent);
+  renderSecurity(currentAgent);
+}
+async function reconcileAgent(agentID, signal) {
+  const ticket = agentState.read(agentID);
+  try {
+    const detail = await readJSON(`/api/v1/web/agents/${encodeURIComponent(agentID)}`, signal);
+    return !signal.aborted && agentState.commitDetail(ticket, detail);
+  } catch (error) {
+    if (error.status === 404) { if (agentState.missing(ticket)) renderCurrentAgent(); return false; }
+    throw error;
+  }
+}
+const reconciliation = AgentState.reconcile(agentState, reconcileAgent, renderCurrentAgent, () => {
+  outboundStatus.textContent = '资料刷新失败，保留最后可信状态';
+});
+let suspended = false;
+setInterval(() => { if (!suspended) reconciliation.retry(); }, 15000);
+addEventListener('pagehide', () => { suspended = true; trafficWriteController?.abort(); selectorController.closeAll(); events.close(); loadController?.abort(); reconciliation.close(); });
+addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
+load();
+
+const events = new EventSource('/api/v1/web/events');
+events.onopen = () => {
+  if (!suspended && id && /^[0-9a-f]{32}$/.test(id)) reconciliation.notify(id);
+};
+events.addEventListener('agent', event => {
+  const update = JSON.parse(event.data);
+  if (update.agent_id !== id) return;
+  if (agentState.fullEvent(update)) reconciliation.notify(id);
+  else if (!currentAgent) pendingTelemetry = update;
+  else if (agentState.event(update)) renderCurrentAgent();
 });

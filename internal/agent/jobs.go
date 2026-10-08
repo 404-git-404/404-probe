@@ -147,7 +147,7 @@ func (c jobHTTPClient) postJSON(ctx context.Context, path string, value any) (in
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	response, err := c.client.Do(req)
+	response, err := doAgentServerRequest(c.client, req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -207,6 +207,9 @@ func (r *Runner) runJobWorker(ctx context.Context) {
 	client := jobHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: r.client}
 	emptyCycles := 0
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		cycleCapabilities := append([]protocol.ProbeType(nil), baseCapabilities...)
 		if r.clashIntegrationEnabled() && r.clashControlReady.Load() && !r.interactiveControlSupported.Load() {
 			cycleCapabilities = append(cycleCapabilities, protocol.ProbeTypeSelectorSwitch)
@@ -243,7 +246,7 @@ func (r *Runner) runJobCycle(ctx context.Context, client jobHTTPClient, request 
 		}
 		return false
 	}
-	if job == nil {
+	if job == nil || ctx.Err() != nil {
 		return false
 	}
 	if job.ProbeType == protocol.ProbeTypeSelectorSwitch {
@@ -275,6 +278,9 @@ func idlePollDelay(interval time.Duration, emptyCycles int) time.Duration {
 func (r *Runner) runSelectorJob(ctx context.Context, client jobHTTPClient, job protocol.Job) {
 	r.selectorJobMu.Lock()
 	defer r.selectorJobMu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
 	key := fmt.Sprintf("%s/%d", job.JobID, job.Attempt)
 	if r.selectorJobKey != key {
 		r.selectorJobKey = key

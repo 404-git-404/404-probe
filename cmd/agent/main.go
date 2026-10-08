@@ -17,11 +17,16 @@ import (
 	"404-probe/internal/agent"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/geoip"
+	"404-probe/internal/platformsupport"
 	"404-probe/internal/securitycollector"
 	"404-probe/internal/updater"
 )
 
 func main() {
+	if err := checkPlatformCommand(os.Args[1:], platformsupport.Host()); err != nil {
+		slog.Error("unsupported Agent command", "error", err)
+		os.Exit(1)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "country-code" {
 		if err := runCountryCodeLookup(os.Args[2:], os.Stdout); err != nil {
 			slog.Error("country lookup failed", "error", err)
@@ -51,6 +56,24 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "updater" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		if len(os.Args) == 3 && os.Args[2] == "removal-worker" {
+			if err := updater.ServeAgentRemovalWorker(ctx); err != nil {
+				slog.Error("Agent removal worker stopped", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if len(os.Args) == 3 && os.Args[2] == "removal-finalize" {
+			if err := updater.ServeAgentRemovalFinalizer(ctx); err != nil {
+				slog.Error("Agent removal finalizer stopped", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if len(os.Args) != 2 {
+			slog.Error("updater accepts no arguments except fixed removal modes")
+			os.Exit(2)
+		}
 		if err := updater.Serve(ctx); err != nil {
 			slog.Error("Agent updater stopped", "error", err)
 			os.Exit(1)
@@ -106,7 +129,18 @@ func runSelectorOrder(arguments []string) error {
 	return agent.ExtractSelectorOrder(*config, *output)
 }
 
+func checkPlatformCommand(args []string, policy platformsupport.Policy) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return policy.CheckCommand(args[0])
+}
+
 func run() error {
+	remoteRemovalEnabled, err := remoteRemovalOptInFromEnv()
+	if err != nil {
+		return err
+	}
 	server := flag.String("server", env("PROBE_404_SERVER", ""), "server base URL")
 	id := flag.String("agent-id", env("PROBE_404_AGENT_ID", ""), "agent ID created by the server")
 	token := flag.String("token", env("PROBE_404_TOKEN", ""), "per-agent token (prefer environment variable)")
@@ -118,16 +152,17 @@ func run() error {
 	state := flag.String("state", env("PROBE_404_STATE", "404-probe-agent.state"), "persistent agent epoch state file")
 	include := flag.String("network-include", "", "comma-separated interface glob patterns")
 	exclude := flag.String("network-exclude", "", "comma-separated additional interface glob patterns")
-	clashAPI := flag.String("sing-box-clash-api", env("PROBE_404_SING_BOX_CLASH_API", agent.DefaultClashAPIURL), "local sing-box Clash API loopback origin")
+	clashAPI := flag.String("sing-box-clash-api", clashAPIFromEnv(), "local sing-box Clash API loopback origin")
 	selectorOrder := flag.String("selector-order", env("PROBE_404_SELECTOR_ORDER", agent.DefaultSelectorOrderPath), "local secret-free selector order metadata")
 	outboundInterval := flag.Duration("outbound-interval", time.Minute, "sing-box outbound discovery interval")
-	updaterSocket := flag.String("updater-socket", env("PROBE_404_UPDATER_SOCKET", "/run/404-probe/agent-updater.sock"), "restricted Agent updater socket")
-	securityExport := flag.String("security-export", env("PROBE_404_SECURITY_EXPORT", "/var/lib/404-probe-security/export"), "read-only local security aggregate export")
-	securityAcks := flag.String("security-acks", env("PROBE_404_SECURITY_ACKS", "/var/lib/404-probe/agent.security-acks.json"), "security upload acknowledgement state")
+	updaterSocket := flag.String("updater-socket", env("PROBE_404_UPDATER_SOCKET", updater.DefaultSocket), "restricted Agent updater socket")
+	securityExport := flag.String("security-export", env("PROBE_404_SECURITY_EXPORT", agent.DefaultSecurityExportDir), "read-only local security aggregate export")
+	securityAcks := flag.String("security-acks", env("PROBE_404_SECURITY_ACKS", agent.DefaultSecurityAckPath), "security upload acknowledgement state")
 	countryCode := flag.String("country-code", env("PROBE_404_COUNTRY_CODE", ""), "persisted install-time Agent egress country code")
+	enableRemoteRemoval := flag.Bool("enable-remote-removal", remoteRemovalEnabled, "enable remote Agent removal only after isolated acceptance")
 	flag.Parse()
 	_, legacyClashSecret := os.LookupEnv("PROBE_404_SING_BOX_CLASH_SECRET")
-	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode}, slog.Default())
+	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode, EnableRemoteRemoval: *enableRemoteRemoval}, slog.Default())
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}
@@ -136,11 +171,37 @@ func run() error {
 	return runner.Run(ctx)
 }
 
+func remoteRemovalOptInFromEnv() (bool, error) {
+	value, ok := os.LookupEnv("PROBE_404_ENABLE_REMOTE_REMOVAL")
+	return parseRemoteRemovalOptIn(value, ok)
+}
+
+func parseRemoteRemovalOptIn(value string, present bool) (bool, error) {
+	if !present {
+		return false, nil
+	}
+	switch value {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, errors.New("PROBE_404_ENABLE_REMOTE_REMOVAL must be true or false")
+	}
+}
+
 func env(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {
 		return value
 	}
 	return fallback
+}
+
+func clashAPIFromEnv() string {
+	if value, present := os.LookupEnv("PROBE_404_SING_BOX_CLASH_API"); present {
+		return value
+	}
+	return agent.DefaultClashAPIURL
 }
 func split(value string) []string {
 	if strings.TrimSpace(value) == "" {

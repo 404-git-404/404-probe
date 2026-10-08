@@ -3,6 +3,8 @@ package securitycollector
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -172,6 +174,267 @@ func TestPendingRecoveryKeepsStableBatchAndCheckpoint(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "private", "pending.json")); !os.IsNotExist(err) {
 		t.Fatalf("pending remains: %v", err)
 	}
+}
+
+func TestPruneBatchesRetainsThirtyAndRemovesOnlyLegalOrphanMirrors(t *testing.T) {
+	root := t.TempDir()
+	if err := ensureDirectories(root); err != nil {
+		t.Fatal(err)
+	}
+	outboxDir := filepath.Join(root, "private", "outbox")
+	exportDir := filepath.Join(root, "export")
+	names := make([]string, 34)
+	for index := range names {
+		name := testBatchFilename(int64(index+1), index+1)
+		names[index] = name
+		writeTestFile(t, filepath.Join(outboxDir, name), []byte(name))
+		writeTestFile(t, filepath.Join(exportDir, name), []byte(name))
+	}
+
+	legalOrphan := testBatchFilename(8_000_000_000_000, 800)
+	writeTestFile(t, filepath.Join(exportDir, legalOrphan), []byte("orphan"))
+	current := []byte("current mirror stays untouched")
+	writeTestFile(t, filepath.Join(exportDir, "current.json"), current)
+	unknown := filepath.Join(exportDir, "not-a-batch.json")
+	writeTestFile(t, unknown, []byte("unknown"))
+	invalidHex := filepath.Join(exportDir, fmt.Sprintf("%013d-%s.json", 8_000_000_000_001, strings.Repeat("A", 32)))
+	writeTestFile(t, invalidHex, []byte("uppercase ID"))
+	temporary := filepath.Join(exportDir, testBatchFilename(8_000_000_000_002, 802)+".tmp")
+	writeTestFile(t, temporary, []byte("temporary"))
+	directoryName := testBatchFilename(8_000_000_000_003, 803)
+	directory := filepath.Join(exportDir, directoryName)
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(directory, "keep"), []byte("directory entry"))
+	outboxNoise := filepath.Join(outboxDir, "outbox-not-a-batch.json")
+	writeTestFile(t, outboxNoise, []byte("unknown outbox data"))
+
+	if err := pruneBatches(outboxDir, exportDir); err != nil {
+		t.Fatal(err)
+	}
+	gotBatches := regularBatchNames(t, outboxDir)
+	if len(gotBatches) != maxOutboxBatches {
+		t.Fatalf("retained outbox batches=%d want %d (%v)", len(gotBatches), maxOutboxBatches, gotBatches)
+	}
+	for _, name := range names[:4] {
+		assertMissingPath(t, filepath.Join(outboxDir, name))
+		assertMissingPath(t, filepath.Join(exportDir, name))
+	}
+	for _, name := range names[4:] {
+		assertRegularPath(t, filepath.Join(outboxDir, name))
+		assertRegularPath(t, filepath.Join(exportDir, name))
+	}
+	assertMissingPath(t, filepath.Join(exportDir, legalOrphan))
+	for _, path := range []string{unknown, invalidHex, temporary, outboxNoise} {
+		assertRegularPath(t, path)
+	}
+	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
+		t.Fatalf("legal-looking directory was not preserved: info=%v err=%v", info, err)
+	}
+	assertRegularPath(t, filepath.Join(directory, "keep"))
+	gotCurrent, err := os.ReadFile(filepath.Join(exportDir, "current.json"))
+	if err != nil || !bytes.Equal(gotCurrent, current) {
+		t.Fatalf("current mirror=%q err=%v", gotCurrent, err)
+	}
+}
+
+func TestPruneExportFailurePreservesPendingAndOutboxThenRecovers(t *testing.T) {
+	root, pending, names := setupPendingPruneFixture(t)
+	outboxDir := filepath.Join(root, "private", "outbox")
+	exportDir := filepath.Join(root, "export")
+	blockedMirror := filepath.Join(exportDir, names[0])
+	if err := os.Remove(blockedMirror); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(blockedMirror, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(blockedMirror, "obstruction"), []byte("keep"))
+
+	if err := commitPending(root, pending); err == nil {
+		t.Fatal("non-regular matching export entry did not stop pruning")
+	}
+	assertRegularPath(t, filepath.Join(outboxDir, names[0]))
+	assertRegularPath(t, filepath.Join(root, "private", "pending.json"))
+	if info, err := os.Stat(blockedMirror); err != nil || !info.IsDir() {
+		t.Fatalf("blocking export entry changed: info=%v err=%v", info, err)
+	}
+
+	if err := os.Remove(filepath.Join(blockedMirror, "obstruction")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(blockedMirror); err != nil {
+		t.Fatal(err)
+	}
+	recovered, exists, err := readPending(filepath.Join(root, "private", "pending.json"), time.Now())
+	if err != nil || !exists {
+		t.Fatalf("pending exists=%v err=%v", exists, err)
+	}
+	if err := commitPending(root, recovered); err != nil {
+		t.Fatalf("retry commitPending: %v", err)
+	}
+	assertMissingPath(t, filepath.Join(outboxDir, names[0]))
+	assertMissingPath(t, blockedMirror)
+	assertMissingPath(t, filepath.Join(root, "private", "pending.json"))
+	if got := regularBatchNames(t, outboxDir); len(got) != maxOutboxBatches {
+		t.Fatalf("retry retained %d outbox batches want %d", len(got), maxOutboxBatches)
+	}
+}
+
+func TestPruneOutboxDeleteFailureLeavesPendingAndRetryConverges(t *testing.T) {
+	root, pending, names := setupPendingPruneFixture(t)
+	outboxDir := filepath.Join(root, "private", "outbox")
+	exportDir := filepath.Join(root, "export")
+	failedRemoval := filepath.Join(outboxDir, names[0])
+	injectedErr := errors.New("injected outbox removal failure")
+	injected := false
+	remove := func(path string) error {
+		if path == failedRemoval {
+			injected = true
+			return injectedErr
+		}
+		return os.Remove(path)
+	}
+	if err := commitPendingWithRemove(root, pending, remove); !errors.Is(err, injectedErr) {
+		t.Fatalf("commit error=%v want injected outbox removal failure", err)
+	}
+	if !injected {
+		t.Fatal("outbox failure injection was not reached")
+	}
+	assertMissingPath(t, filepath.Join(exportDir, names[0]))
+	assertRegularPath(t, failedRemoval)
+	assertRegularPath(t, filepath.Join(root, "private", "pending.json"))
+
+	recovered, exists, err := readPending(filepath.Join(root, "private", "pending.json"), time.Now())
+	if err != nil || !exists {
+		t.Fatalf("pending exists=%v err=%v", exists, err)
+	}
+	if err := commitPending(root, recovered); err != nil {
+		t.Fatalf("retry commitPending: %v", err)
+	}
+	assertMissingPath(t, failedRemoval)
+	assertMissingPath(t, filepath.Join(root, "private", "pending.json"))
+	assertRegularPath(t, filepath.Join(exportDir, "current.json"))
+	if got := regularBatchNames(t, outboxDir); len(got) != maxOutboxBatches {
+		t.Fatalf("retry retained %d outbox batches want %d", len(got), maxOutboxBatches)
+	}
+}
+
+func TestPruneOrphanExportFailureLeavesPendingForRetry(t *testing.T) {
+	root, pending, _ := setupPendingPruneFixture(t)
+	exportDir := filepath.Join(root, "export")
+	orphan := testBatchFilename(9_000_000_000_000, 900)
+	orphanPath := filepath.Join(exportDir, orphan)
+	writeTestFile(t, orphanPath, []byte("orphan"))
+	injectedErr := errors.New("injected orphan removal failure")
+	injected := false
+	remove := func(path string) error {
+		if path == orphanPath {
+			injected = true
+			return injectedErr
+		}
+		return os.Remove(path)
+	}
+	if err := commitPendingWithRemove(root, pending, remove); !errors.Is(err, injectedErr) {
+		t.Fatalf("commit error=%v want injected orphan removal failure", err)
+	}
+	if !injected {
+		t.Fatal("orphan failure injection was not reached")
+	}
+	assertRegularPath(t, orphanPath)
+	assertRegularPath(t, filepath.Join(root, "private", "pending.json"))
+
+	recovered, exists, err := readPending(filepath.Join(root, "private", "pending.json"), time.Now())
+	if err != nil || !exists {
+		t.Fatalf("pending exists=%v err=%v", exists, err)
+	}
+	if err := commitPending(root, recovered); err != nil {
+		t.Fatalf("retry commitPending: %v", err)
+	}
+	assertMissingPath(t, orphanPath)
+	assertMissingPath(t, filepath.Join(root, "private", "pending.json"))
+	if got := regularBatchNames(t, filepath.Join(root, "private", "outbox")); len(got) != maxOutboxBatches {
+		t.Fatalf("retry retained %d outbox batches want %d", len(got), maxOutboxBatches)
+	}
+}
+
+func setupPendingPruneFixture(t *testing.T) (string, pendingTransaction, []string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := ensureDirectories(root); err != nil {
+		t.Fatal(err)
+	}
+	collectedAt := time.Now().UnixMilli()
+	outboxDir := filepath.Join(root, "private", "outbox")
+	exportDir := filepath.Join(root, "export")
+	names := make([]string, 0, maxOutboxBatches+1)
+	for index := 0; index < maxOutboxBatches; index++ {
+		name := testBatchFilename(collectedAt-int64(maxOutboxBatches-index), index+1)
+		names = append(names, name)
+		writeTestFile(t, filepath.Join(outboxDir, name), []byte(name))
+		writeTestFile(t, filepath.Join(exportDir, name), []byte(name))
+	}
+	batch := emptyBatch(collectedAt-int64(time.Hour/time.Millisecond), collectedAt, collectedAt, protocol.SecurityStatusComplete, "")
+	pending := pendingTransaction{Batch: batch, Next: checkpoint{Cursor: "cursor-next", LastWindowEnd: collectedAt}}
+	name := fmt.Sprintf("%013d-%s.json", pending.Batch.CollectedAt, pending.Batch.BatchID)
+	names = append(names, name)
+	data, err := json.Marshal(pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(filepath.Join(root, "private", "pending.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return root, pending, names
+}
+
+func testBatchFilename(collectedAt int64, id int) string {
+	return fmt.Sprintf("%013d-%032x.json", collectedAt, id)
+}
+
+func writeTestFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertMissingPath(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("path %s exists or could not be inspected: %v", path, err)
+	}
+}
+
+func assertRegularPath(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("path %s is not a regular file: info=%v err=%v", path, info, err)
+	}
+}
+
+func regularBatchNames(t *testing.T, directory string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0)
+	for _, entry := range entries {
+		if !isBatchFilename(entry.Name()) {
+			continue
+		}
+		regular, err := isRegularFile(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if regular {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
 }
 
 func TestConvertedOverlappingExportFixture(t *testing.T) {

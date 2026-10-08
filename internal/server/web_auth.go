@@ -135,7 +135,7 @@ func webLoopbackHost(host string) bool {
 	return webdomain.LoopbackHost(host)
 }
 
-func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
+func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	mux.Handle("GET /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLoginPage)))
 	mux.Handle("POST /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLogin)))
 	mux.Handle("GET /favicon.ico", a.requireWebTarget(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -149,10 +149,19 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	mux.Handle("GET /api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgents), true))
 	mux.Handle("/api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleWebAgentCollectionMethodNotAllowed), true))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgentHistory), true))
+	mux.Handle("GET /api/v1/web/agents/{agent_id}/resources/history", a.requireWebSession(http.HandlerFunc(a.handleResourceHistory), true))
+	mux.Handle("/api/v1/web/agents/{agent_id}/resources/history", a.requireWebSession(http.HandlerFunc(a.handleResourceHistoryMethod), true))
+	mux.Handle("GET /api/v1/web/agents/{agent_id}/traffic/recent", a.requireWebSession(http.HandlerFunc(a.handleTrafficRecent), true))
+	mux.Handle("/api/v1/web/agents/{agent_id}/traffic/recent", a.requireWebSession(http.HandlerFunc(a.handleTrafficRecentMethod), true))
 	mux.Handle("/api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleWebAgentHistoryMethodNotAllowed), true))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/plan", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgentPlan), true))
 	mux.Handle("PUT /api/v1/web/agents/{agent_id}/plan", a.requireWebMutation(http.HandlerFunc(a.handlePutWebAgentPlan)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/plan", a.requireWebSession(http.HandlerFunc(a.handleWebAgentPlanMethodNotAllowed), true))
+	for _, action := range []string{"preview", "apply", "undo"} {
+		path := "/api/v1/web/agents/{agent_id}/plan/renewal/" + action
+		mux.Handle("POST "+path, a.requireWebMutation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleWebPlanRenewal(w, r, action) })))
+		mux.Handle(path, a.requireWebSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleWebPlanRenewalMethod(w, r, action) }), true))
+	}
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/traffic/reset", a.requireWebMutation(http.HandlerFunc(a.handleResetWebAgentTraffic)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/traffic/reset", a.requireWebSession(http.HandlerFunc(a.handleWebAgentTrafficMethodNotAllowed), true))
 	mux.Handle("PUT /api/v1/web/agents/{agent_id}/name", a.requireWebMutation(http.HandlerFunc(a.handlePutWebAgentName)))
@@ -165,6 +174,10 @@ func (a *App) webRoutes(mux *http.ServeMux, static http.Handler) {
 	mux.Handle("/api/v1/web/agents/{agent_id}/google-status", a.requireWebSession(http.HandlerFunc(a.handleWebGoogleStatusMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/revoke", a.requireWebMutation(http.HandlerFunc(a.handleRevokeWebAgent)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/revoke", a.requireWebSession(http.HandlerFunc(a.handleWebAgentRevokeMethodNotAllowed), true))
+	mux.Handle("POST /api/v1/web/agents/{agent_id}/remove", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebAgentRemoval)))
+	mux.Handle("/api/v1/web/agents/{agent_id}/remove", a.requireWebSession(http.HandlerFunc(a.handleWebAgentRemovalMethodNotAllowed), true))
+	mux.Handle("POST /api/v1/web/agents/{agent_id}/country-code/refresh", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebAgentCountryCodeLookup)))
+	mux.Handle("/api/v1/web/agents/{agent_id}/country-code/refresh", a.requireWebSession(http.HandlerFunc(a.handleWebAgentCountryCodeLookupMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/disable", a.requireWebMutation(http.HandlerFunc(a.handleDisableWebAgent)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/disable", a.requireWebSession(http.HandlerFunc(a.handleWebAgentStateMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/enable", a.requireWebMutation(http.HandlerFunc(a.handleEnableWebAgent)))

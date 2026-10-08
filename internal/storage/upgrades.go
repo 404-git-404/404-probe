@@ -46,12 +46,27 @@ func (s *Store) CreateUpgrade(ctx context.Context, operation UpgradeOperation) (
 	if now <= 0 {
 		return UpgradeOperation{}, errors.New("invalid upgrade creation time")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_upgrade_operations(operation_id,agent_id,from_version,target_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UpgradeOperation{}, err
+	}
+	defer tx.Rollback()
+	if err := requireActiveAgentTx(ctx, tx, operation.AgentID); err != nil {
+		return UpgradeOperation{}, err
+	}
+	if err := requireNoAgentRemovalTx(ctx, tx, operation.AgentID); err != nil {
+		return UpgradeOperation{}, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO agent_upgrade_operations(operation_id,agent_id,from_version,target_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,
 		operation.OperationID, operation.AgentID, operation.FromVersion, operation.TargetVersion, UpgradeRequested, now, now)
 	if err != nil {
+		_ = tx.Rollback()
 		if existing, readErr := s.GetActiveUpgrade(ctx, operation.AgentID); readErr == nil && existing != nil {
 			return *existing, ErrUpgradeConflict
 		}
+		return UpgradeOperation{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return UpgradeOperation{}, err
 	}
 	operation.Status = UpgradeRequested
@@ -84,6 +99,15 @@ func (s *Store) ClaimUpgrade(ctx context.Context, agentID string, now time.Time)
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := requireNoAgentRemovalTx(ctx, tx, agentID); err != nil {
+		if errors.Is(err, ErrAgentRemovalPending) {
+			if commitErr := tx.Commit(); commitErr != nil {
+				return nil, commitErr
+			}
+			return nil, nil
+		}
+		return nil, err
+	}
 	operation, err := readUpgrade(tx.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at FROM agent_upgrade_operations WHERE agent_id=? AND status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check') ORDER BY created_at LIMIT 1`, agentID))
 	if err != nil || operation == nil {
 		return operation, err

@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestAgentStateModuleIsEmbeddedBeforePageConsumers(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.ReadFile(static, "agent-state.js"); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range []struct{ html, script string }{{"index.html", "app.js"}, {"history.html", "history.js"}} {
+		content, err := fs.ReadFile(static, page.html)
+		if err != nil {
+			t.Fatal(err)
+		}
+		html := string(content)
+		stateIndex := strings.Index(html, `<script src="/agent-state.js" defer>`)
+		consumerIndex := strings.Index(html, `<script src="/`+page.script+`" defer>`)
+		if stateIndex < 0 || consumerIndex < stateIndex {
+			t.Fatalf("%s must load shared state before %s", page.html, page.script)
+		}
+	}
+}
+
 func TestAgentEnrollmentUIUsesShownOnceDOMFlow(t *testing.T) {
 	static, err := fs.Sub(Files, "static")
 	if err != nil {
@@ -72,7 +94,7 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 	}
 	for _, required := range []string{
 		`/revoke`, `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`, `body: '{}'`,
-		`revokedAgentIDs.add(agentID)`, `agents.delete(agentID)`,
+		`agentState.beginDelete(agentID)`, `agentState.finishDelete(barrier, true)`,
 		`if (revokedAgentIDs.has(update.agent_id)) return`,
 	} {
 		if !strings.Contains(javascript, required) {
@@ -143,8 +165,8 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 		`stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable'`,
 		`stateAction.textContent = agent.disabled_at ? '恢复' : '暂停'`,
 		`const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale)`,
-		`metricTile('cpu', '◉', 'CPU'`,
-		`['下载', '↓', state.rx_rate, state.rx_total]`, `metricsStale ? '—' : bytes(rate, true)`,
+		`CardMetrics.tile('cpu', 'CPU'`,
+		`['下载', '↓', state.rx_rate, state.rx_total]`, `oldMetrics ? '—' : CardMetrics.size(rate, true)`,
 		"/${action}`", `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`,
 		`if (!agent.revoked) management.append(upgrade, stateAction)`,
 	} {
@@ -182,13 +204,17 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	if !strings.Contains(html, `id="agents" class="grid agent-grid"`) {
 		t.Fatal("dashboard Agent collection is missing its responsive grid hook")
 	}
+	cardCSS, err := fs.ReadFile(static, "card-layout.css")
+	if err != nil || !strings.Contains(string(cardCSS), `.agent-card .google-checks{display:grid;grid-template-columns:minmax(0,1fr)`) || strings.Index(html, `href="/card-layout.css"`) <= strings.Index(html, `href="/style.css"`) {
+		t.Fatal("current card service row needs its loaded single-column override")
+	}
 	for _, required := range []string{
 		`card.className = 'card agent-card'`, `title.className = 'card-identity'`,
 		`card.dataset.agentId = agent.agent_id`, `status.dataset.agentState = stateName`,
 		`remove.dataset.agentId = agent.agent_id`,
-		`metricTile('cpu'`, `metricTile('memory'`, `metricTile('disk'`, `metricTile('disk-io'`,
+		`CardMetrics.tile('cpu'`, `CardMetrics.tile('memory'`, `CardMetrics.tile('disk'`, `CardMetrics.tile('disk-io'`,
 		`note.title = detail`, `usedPercent >= 100 ? 'critical' : usedPercent >= 80 ? 'warning' : 'healthy'`,
-		`cpuStealRow(state, metricsStale)`, `for (const agent of list)`,
+		`cardObservations.observe(agent)`, `for (const agent of list)`,
 		`setReadableText(heading, agent.name || state.hostname || '未命名 VPS')`,
 		`googleStatusPanel(agent)`, `detailPanel.className = 'card-detail-panel'`,
 		`detailToggle.textContent = '详情'`, `editPlan.textContent = agent.plan ? '编辑套餐' : '添加套餐'`,
@@ -199,7 +225,6 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		`@media(min-width:821px){.agent-grid{grid-template-columns:repeat(4,minmax(0,1fr))`,
 		`header,main,footer{width:min(1760px,calc(100% - 24px))`,
 		`.agent-card{min-width:0;overflow:hidden;display:flex;flex-direction:column`,
 		`.google-checks{display:grid;grid-template-columns:1fr 1fr`,
@@ -242,6 +267,7 @@ func TestDashboardContinuousListAndTelemetryStatusContracts(t *testing.T) {
 		`utilizationTone(percent, 2, 10)`, `utilizationTone(percent, 60, 85)`,
 		`state.cpu_steal_percent`, `state.disk_read_rate`, `state.disk_write_rate`, `state.disk_busy_percent`,
 		`countryMark(agent.country_code, agent.country_source)`, `country_code_override: '#plan-country-code'`,
+		`country-code/refresh`, `country_code_lookup_operation`, `升级 Agent 后可重新识别`,
 		`/vendor/flag-icons/4x3/${normalized.toLowerCase()}.svg`,
 		`.focus({preventScroll: true})`,
 	} {
@@ -274,13 +300,18 @@ func TestGoogleStatusUIShowsAllCanonicalStates(t *testing.T) {
 	historyBytes, _ := fs.ReadFile(static, "history.js")
 	jobsBytes, _ := fs.ReadFile(static, "jobs.js")
 	app, historyHTML, history := string(appBytes), string(htmlBytes), string(historyBytes)
-	for _, marker := range []string{"CN · 送中", "非 CN", "正常", "需验证", "受限", "可达", "可用", "未知", "尚未检测", "检测中", "旧结果", "重新检测", "/google-status"} {
+	for _, marker := range []string{"CN · 送中", "非 CN", "未知", "尚未检测", "检测中", "旧结果", "重新检测", "/google-status"} {
 		if !strings.Contains(app, marker) {
 			t.Errorf("app.js missing %q", marker)
 		}
 	}
-	if !strings.Contains(historyHTML, "Google / YouTube 检测") || !strings.Contains(history, "检测时间：") || !strings.Contains(history, "CN · 送中") || strings.Contains(app+history+string(jobsBytes), "SENT TO CHINA") {
+	if !strings.Contains(historyHTML, "YouTube 检测") || !strings.Contains(history, "检测时间：") || !strings.Contains(history, "CN · 送中") || strings.Contains(app+history+string(jobsBytes), "SENT TO CHINA") {
 		t.Fatal("history detail is missing complete Google Status rendering")
+	}
+	for _, removed := range []string{"Gemini", "gemini", "result.search", "result.signin", "value.search", "value.signin", "Google Search", "Google Sign-in", "['Search'", "['登录'"} {
+		if strings.Contains(app+history+historyHTML+string(jobsBytes), removed) {
+			t.Fatalf("current Google Status UI still renders removed service %q", removed)
+		}
 	}
 	for _, marker := range []string{"Agent 详情", "Load 1 / 5 / 15", "Swap", "Agent 版本", "运行时长", "最近上报", "样本时间"} {
 		if !strings.Contains(historyHTML+history, marker) {
@@ -295,13 +326,12 @@ func TestSelectorDraftsSurviveRefreshAndSecurityUIIsPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	historyBytes, _ := fs.ReadFile(static, "history.js")
+	selectorBytes, _ := fs.ReadFile(static, "selector.js")
 	historyHTMLBytes, _ := fs.ReadFile(static, "history.html")
-	history, historyHTML := string(historyBytes), string(historyHTMLBytes)
+	history, historyHTML := string(historyBytes)+string(selectorBytes), string(historyHTMLBytes)
 	for _, required := range []string{
-		`const selectorDrafts = new Map()`,
-		"const selectorDraftKey = selector => `${id}\\u0000${selector}`",
-		`selectorDrafts.set(draftKey, choices.value)`,
-		`selectorDrafts.delete(selectorDraftKey(selector))`,
+		`groups: new Map()`, `g.draft = value; g.generation++`,
+		`g.generation === operation.generation`, `g.draft = null`,
 		`先前选择已不在最新选项中，请重新选择`,
 		`renderSecurity(currentAgent)`,
 		`security.delivery_gap`,
@@ -325,17 +355,20 @@ func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T)
 	htmlBytes, _ := fs.ReadFile(static, "history.html")
 	jsBytes, _ := fs.ReadFile(static, "history.js")
 	jobsBytes, _ := fs.ReadFile(static, "jobs.js")
-	combined := string(htmlBytes) + string(jsBytes) + string(jobsBytes)
+	selectorBytes, _ := fs.ReadFile(static, "selector.js")
+	combined := string(htmlBytes) + string(jsBytes) + string(jobsBytes) + string(selectorBytes)
 	for _, required := range []string{
 		`id="outbounds-status"`, `id="outbounds-list"`, `未配置出站发现`, `当前不可用`, `未发现 Selector`,
-		`document.createElement('details')`, `document.createElement('select')`, `button.textContent = '切换'`,
-		`/outbounds/switch`, `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`,
-		`body: JSON.stringify({request_id: requestID(), selector, choice})`,
-		`choices.value === selector.current`, `agent.disabled_at`, `agent.revoked`, `switchingSelector !== ''`,
-		`job.result?.error_category`, `currentAgent = await readJSON`,
+		`el('select', '')`, `m.active ? '处理中…' : '切换'`, `panel.setAttribute('popover', 'auto')`,
+		`/outbounds/switch`, `method: 'POST'`, `'X-CSRF-Token': csrf()`,
+		`body: JSON.stringify({request_id: operation.requestID, selector: name, choice})`,
+		`choice === selector.current`, `agent.disabled_at`, `agent.revoked`, `m.active`,
+		`job.result?.error_category`, `state.beginMutation(id, ['outbounds'])`,
+		`state.finishMutation(mutation, {outbounds: latest.outbounds})`,
 		`case 'singbox_selector_switch'`, `measurement.selector_switch`,
-		`operation.operation_status`, `selectorOperations`, `refreshAgentUntil`, `attempt < 5`,
-		`outbounds.stale`, `状态已过期`, `切换任务已过期`, `selector_switch_pending`,
+		`job.operation_status`, `m.intent === operation.intent`, `g.generation === operation.generation`, `attempt < 5`,
+		`out.stale`, `状态已过期`, `切换任务已过期`, `selector_switch_pending`,
+		`controller.signal`, `Promise.race`, `closeAll()`,
 		`未检测到 sing-box Clash API`, `请移除 secret`, `new EventSource('/api/v1/web/events')`,
 	} {
 		if !strings.Contains(combined, required) {
@@ -345,6 +378,38 @@ func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T)
 	for _, forbidden := range []string{"PUT /proxies", "method: 'PUT'", "/api/v1/control/", "clash_api_url", "secret-input", "clash-secret"} {
 		if strings.Contains(strings.ToLower(combined), strings.ToLower(forbidden)) {
 			t.Fatalf("outbound UI contains mutation behavior %q", forbidden)
+		}
+	}
+}
+
+func TestSharedSelectorLoadsBeforeBothPagesWithLocalTheme(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range []struct{ html, script string }{{"index.html", "app.js"}, {"history.html", "history.js"}} {
+		content, _ := fs.ReadFile(static, page.html)
+		js, _ := fs.ReadFile(static, page.script)
+		html := string(content)
+		state := strings.Index(html, `<script src="/agent-state.js" defer>`)
+		selector := strings.Index(html, `<script src="/selector.js" defer>`)
+		consumer := strings.Index(html, `<script src="/`+page.script+`" defer>`)
+		if state < 0 || selector < state || consumer < selector {
+			t.Fatalf("%s must load state, selector, then page", page.html)
+		}
+		for _, marker := range []string{"Selector.create(", "Selector.view(", "selectorView.trigger(agent)", "selectorController.recover(agentID, readJSON)", "selectorController.closeAll()"} {
+			if !strings.Contains(string(js), marker) {
+				t.Fatalf("%s missing shared Selector hook %q", page.script, marker)
+			}
+		}
+		if strings.Contains(string(js), "/outbounds/switch") {
+			t.Fatalf("%s duplicates the shared mutation algorithm", page.script)
+		}
+	}
+	css, _ := fs.ReadFile(static, "style.css")
+	for _, marker := range []string{".selector-popover{", "color-scheme:light", ".selector-popover option", ".selector-popover button:disabled"} {
+		if !strings.Contains(string(css), marker) {
+			t.Fatalf("missing local Selector style %q", marker)
 		}
 	}
 }

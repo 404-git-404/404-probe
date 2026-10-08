@@ -19,7 +19,7 @@ func TestInstallerSecureAgentEntryContract(t *testing.T) {
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
-		`readonly DEFAULT_VERSION="v0.9.3"`,
+		`readonly DEFAULT_VERSION="v1.0.0"`,
 		`404-probe-install agent --server <origin>`,
 		`[[ $# -eq 2 && "$1" == "--server" ]]`,
 		`IFS= read -r -s enrollment </dev/tty`,
@@ -280,7 +280,12 @@ func TestInstallerUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 		`uninstall deletes all ${role} data`,
 		`systemctl is-active --quiet "${unit}"`,
 		`systemctl disable "${unit}" >/dev/null 2>&1 || true`,
-		`rm -f -- "${unit_path}" "${binary_path}"`,
+		`rm -f -- "${unit_path}"`,
+		`rm -f -- "${binary_path}"`,
+		`AGENT_REMOVAL_WORKER_UNIT`,
+		`AGENT_REMOVAL_FINALIZER_UNIT`,
+		`AGENT_REMOVAL_WORKER_BINARY`,
+		`AGENT_REMOVAL_FINISHED_MARKER`,
 		`"${CONFIG_DIRECTORY}/agent.env"`,
 		`"${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"`,
 		`"${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash"`,
@@ -438,6 +443,78 @@ func TestInstallerSecuritySetupRollbackPreservesPriorServiceState(t *testing.T) 
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("setup-security rollback missing prior-state contract %q", required)
+		}
+	}
+}
+
+func TestAgentRemovalReceiptWorkerAndLocalFinalizerHaveSeparateAuthority(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate installer contract test")
+	}
+	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	workerStart := strings.Index(script, "Description=404-probe Agent removal receipt worker")
+	if workerStart < 0 {
+		t.Fatal("installer removal receipt worker unit is missing")
+	}
+	workerEnd := strings.Index(script[workerStart:], "\nUNIT")
+	if workerEnd < 0 {
+		t.Fatal("installer removal receipt worker unit is unterminated")
+	}
+	worker := script[workerStart : workerStart+workerEnd]
+	for _, required := range []string{
+		`StartLimitIntervalSec=30min`,
+		`StartLimitBurst=10`,
+		`RestartSec=30s`,
+		`TimeoutStartSec=5min`,
+		`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`,
+		`ReadWritePaths=/var/lib/404-probe-updater /etc/systemd/system`,
+	} {
+		if !strings.Contains(worker, required) {
+			t.Fatalf("receipt worker is missing contract %q", required)
+		}
+	}
+	if strings.Contains(worker, "PrivateNetwork=true") || strings.Contains(worker, "ReadWritePaths=/etc ") {
+		t.Fatal("network receipt worker can perform local account cleanup")
+	}
+
+	finalizerStart := strings.Index(script, "Description=404-probe fixed local Agent removal finalizer")
+	if finalizerStart < 0 {
+		t.Fatal("installer local removal finalizer unit is missing")
+	}
+	finalizerEnd := strings.Index(script[finalizerStart:], "\nUNIT")
+	if finalizerEnd < 0 {
+		t.Fatal("installer local removal finalizer unit is unterminated")
+	}
+	finalizer := script[finalizerStart : finalizerStart+finalizerEnd]
+	for _, required := range []string{
+		`StartLimitIntervalSec=10min`,
+		`StartLimitBurst=5`,
+		`RestartSec=30s`,
+		`TimeoutStartSec=10min`,
+		`PrivateNetwork=true`,
+		`RestrictAddressFamilies=AF_UNIX`,
+		`ReadWritePaths=/etc /var/lib /run /usr/local/bin /usr/local/sbin`,
+	} {
+		if !strings.Contains(finalizer, required) {
+			t.Fatalf("local removal finalizer is missing contract %q", required)
+		}
+	}
+	if strings.Contains(finalizer, "AF_INET") {
+		t.Fatal("local account cleanup finalizer permits network address families")
+	}
+	for _, required := range []string{
+		`finalize-agent-removal-account <recorded-uid> <recorded-gid>`,
+		`userdel "${SERVICE_USER}" || die "service account removal failed; no success receipt will be sent"`,
+		`groupdel "${SERVICE_USER}" || die "service group removal failed; no success receipt will be sent"`,
+		`if ! server_residue_exists && [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]]`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("local finalizer/account contract is missing %q", required)
 		}
 	}
 }

@@ -72,6 +72,7 @@ func TestGoogleStatusUnknownBackoff(t *testing.T) {
 	ctx := context.Background()
 	at := time.Unix(20_000, 0)
 	negotiateGoogleStatus(t, store, agentID, at)
+	var lastUnknownJobID string
 	for attempt, delay := range []time.Duration{10 * time.Minute, 30 * time.Minute, time.Hour, time.Hour} {
 		if created, err := store.EnsureGoogleStatusJob(ctx, agentID, at); err != nil || !created {
 			t.Fatalf("attempt %d create=%t err=%v", attempt, created, err)
@@ -81,8 +82,9 @@ func TestGoogleStatusUnknownBackoff(t *testing.T) {
 			t.Fatalf("attempt %d claim=%+v err=%v", attempt, job, err)
 		}
 		result := resultFor(job, true)
-		result.Result.GoogleStatus.Search.Status = protocol.GoogleSearchUnknown
-		result.Result.GoogleStatus.Search.Error.Category = "timeout"
+		lastUnknownJobID = job.JobID
+		result.Result.GoogleStatus.Gemini = protocol.GeminiResult{Status: protocol.GeminiUnknown, Error: protocol.GoogleServiceError{Category: "timeout"}}
+		result.Result.GoogleStatus.YouTube = protocol.YouTubeResult{Status: protocol.YouTubeUnknown, Error: protocol.GoogleServiceError{Category: "timeout"}}
 		checked := at.Add(time.Second)
 		if _, err := store.SubmitJobResult(ctx, agentID, job.JobID, result, checked); err != nil {
 			t.Fatal(err)
@@ -92,6 +94,88 @@ func TestGoogleStatusUnknownBackoff(t *testing.T) {
 			t.Fatalf("attempt %d snapshot=%+v err=%v", attempt, snapshot, err)
 		}
 		at = checked.Add(delay)
+	}
+	if created, err := store.EnsureGoogleStatusJob(ctx, agentID, at); err != nil || !created {
+		t.Fatalf("recovery create=%t err=%v", created, err)
+	}
+	job, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session-1", protocol.ProbeTypeGoogleStatus), at, time.Minute)
+	if err != nil || job == nil {
+		t.Fatalf("recovery claim=%+v err=%v", job, err)
+	}
+	result := resultFor(job, true)
+	result.Result.GoogleStatus.Search = protocol.GoogleSearchResult{Status: protocol.GoogleSearchUnknown}
+	result.Result.GoogleStatus.SignIn = protocol.GoogleSignInResult{Status: protocol.GoogleSignInUnknown}
+	checked := at.Add(time.Second)
+	if _, err := store.SubmitJobResult(ctx, agentID, job.JobID, result, checked); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := store.GetGoogleStatus(ctx, agentID)
+	if err != nil || snapshot.UnknownStreak != 0 || snapshot.NextDueAt != checked.Add(GoogleStatusInterval).UnixMilli() {
+		t.Fatalf("recovery snapshot=%+v err=%v", snapshot, err)
+	}
+	_, old, err := store.GetProbeJobSnapshot(ctx, lastUnknownJobID, checked)
+	if err != nil || old == nil || old.Result.Result.GoogleStatus.Gemini.Status != protocol.GeminiUnknown {
+		t.Fatalf("older history lost: result=%+v err=%v", old, err)
+	}
+}
+
+func TestGoogleStatusRetainedSchedulingAndLegacyHistory(t *testing.T) {
+	for _, mode := range []string{"new_compat_unknown", "legacy", "removed_unknown", "gemini_unknown", "gemini_blocked", "youtube_unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			store, id, _ := testStore(t, ":memory:")
+			defer store.Close()
+			ctx := context.Background()
+			at := time.Unix(25_000, 0)
+			negotiateGoogleStatus(t, store, id, at)
+			if created, err := store.EnsureGoogleStatusJob(ctx, id, at); err != nil || !created {
+				t.Fatalf("create=%t err=%v", created, err)
+			}
+			job, err := store.ClaimJob(ctx, id, claimRequest(1, "session-1", protocol.ProbeTypeGoogleStatus), at, time.Minute)
+			if err != nil || job == nil {
+				t.Fatalf("claim=%+v err=%v", job, err)
+			}
+			result := resultFor(job, true)
+			if mode == "new_compat_unknown" || mode == "gemini_unknown" {
+				result.Result.GoogleStatus.Gemini = protocol.GeminiResult{Status: protocol.GeminiUnknown, Error: protocol.GoogleServiceError{Category: "timeout"}}
+			}
+			if mode == "gemini_blocked" {
+				result.Result.GoogleStatus.Gemini = protocol.GeminiResult{Status: protocol.GeminiBlocked, Error: protocol.GoogleServiceError{Category: "unrecognized_response"}}
+			}
+			if mode == "new_compat_unknown" || mode == "removed_unknown" {
+				result.Result.GoogleStatus.Search = protocol.GoogleSearchResult{Status: protocol.GoogleSearchUnknown}
+				result.Result.GoogleStatus.SignIn = protocol.GoogleSignInResult{Status: protocol.GoogleSignInUnknown}
+			}
+			if mode == "removed_unknown" {
+				result.Result.GoogleStatus.Search.Error.Category = "timeout"
+				result.Result.GoogleStatus.SignIn.Status = protocol.GoogleSignInBlocked
+			}
+			if mode == "youtube_unknown" {
+				result.Result.GoogleStatus.YouTube = protocol.YouTubeResult{Status: protocol.YouTubeUnknown, Error: protocol.GoogleServiceError{Category: "timeout"}}
+			}
+			checked := at.Add(time.Second)
+			if _, err := store.SubmitJobResult(ctx, id, job.JobID, result, checked); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, exists, err := store.GetGoogleStatus(ctx, id)
+			if err != nil || !exists || snapshot.Result.Validate() != nil {
+				t.Fatalf("snapshot=%+v exists=%t err=%v", snapshot, exists, err)
+			}
+			wantDelay, wantStreak := GoogleStatusInterval, 0
+			if mode == "youtube_unknown" {
+				wantDelay, wantStreak = 10*time.Minute, 1
+			}
+			if snapshot.NextDueAt != checked.Add(wantDelay).UnixMilli() || snapshot.UnknownStreak != wantStreak {
+				t.Fatalf("snapshot=%+v", snapshot)
+			}
+			if snapshot.Result.Search != result.Result.GoogleStatus.Search || snapshot.Result.SignIn != result.Result.GoogleStatus.SignIn || snapshot.Result.Gemini != result.Result.GoogleStatus.Gemini {
+				t.Fatalf("legacy fields altered: %+v", snapshot)
+			}
+			// Persisted per-job history remains readable, including original legacy slots.
+			_, stored, err := store.GetProbeJobSnapshot(ctx, job.JobID, checked)
+			if err != nil || stored == nil || stored.Result.Result.GoogleStatus.Search != result.Result.GoogleStatus.Search || stored.Result.Result.GoogleStatus.SignIn != result.Result.GoogleStatus.SignIn || stored.Result.Result.GoogleStatus.Gemini != result.Result.GoogleStatus.Gemini {
+				t.Fatalf("history=%+v err=%v", stored, err)
+			}
+		})
 	}
 }
 

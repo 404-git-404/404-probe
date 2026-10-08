@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/collector"
 	"404-probe/internal/protocol"
 	appserver "404-probe/internal/server"
 	"404-probe/internal/storage"
@@ -30,6 +31,40 @@ func (f reportCollectorFunc) Collect(ctx context.Context) (protocol.Report, erro
 
 func staticReportCollector(context.Context) (protocol.Report, error) {
 	return protocol.Report{}, nil
+}
+
+func TestReportCollectorConstructorIsInstanceLocal(t *testing.T) {
+	config := Config{ServerURL: "https://example.test", AgentID: "id", Token: "token",
+		Interval: time.Hour, Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch")}
+	if _, err := NewWithReportCollector(config, nil, nil); err == nil {
+		t.Fatal("nil collector accepted")
+	}
+	custom := reportCollectorFunc(func(context.Context) (protocol.Report, error) {
+		return protocol.Report{Hostname: "injected"}, nil
+	})
+	injected, err := NewWithReportCollector(config, nil, custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	measurement, err := injected.collector.Collect(context.Background())
+	if err != nil || measurement.Hostname != "injected" || injected.epoch == 0 || injected.sessionID == "" {
+		t.Fatalf("injected collector/session not retained: %+v %v", measurement, err)
+	}
+	for _, constructor := range []func() (*Runner, error){
+		func() (*Runner, error) { return New(config, nil) },
+		func() (*Runner, error) { return NewWithExecutor(config, nil, NewProbeExecutor()) },
+	} {
+		ordinary, err := constructor()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := ordinary.collector.(*collector.Collector); !ok {
+			t.Fatal("default constructor no longer uses production collector")
+		}
+		if ordinary.sessionID == injected.sessionID || ordinary.epoch <= injected.epoch {
+			t.Fatal("constructor bypassed real session/epoch creation")
+		}
+	}
 }
 
 func TestConfigRequiresHTTPSUnlessExplicitlyAllowed(t *testing.T) {
@@ -668,6 +703,96 @@ func TestInteractiveCapabilityCanDowngradeToLegacyLane(t *testing.T) {
 	}
 	if accepted, err := runner.sendReport(context.Background(), &sequence); err != nil || !accepted || runner.interactiveControlSupported.Load() {
 		t.Fatalf("second accepted=%t capability=%t err=%v", accepted, runner.interactiveControlSupported.Load(), err)
+	}
+}
+
+func TestManagementCapabilitiesAreSentOnlyAfterServerNegotiation(t *testing.T) {
+	type observedCapabilities struct {
+		present           bool
+		remoteRemoval     bool
+		countryCodeLookup bool
+	}
+	var reports []observedCapabilities
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var report protocol.Report
+		if err := json.NewDecoder(request.Body).Decode(&report); err != nil {
+			t.Errorf("decode report: %v", err)
+		}
+		observed := observedCapabilities{}
+		if report.Management != nil {
+			observed = observedCapabilities{present: true, remoteRemoval: report.Management.RemoteRemoval, countryCodeLookup: report.Management.CountryCodeLookup}
+		}
+		reports = append(reports, observed)
+		negotiated := len(reports) == 1
+		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{ManagementReport: negotiated}})
+	}))
+	defer server.Close()
+	runner, err := NewWithExecutor(Config{
+		ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second,
+		Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"),
+	}, nil, UnsupportedExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(context.Context) (protocol.Report, error) {
+		return protocol.Report{Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 1, RAMTotal: 1, DiskTotal: 1}, nil
+	})
+	var sequence uint64
+	for attempt := 0; attempt < 3; attempt++ {
+		if accepted, err := runner.sendReport(context.Background(), &sequence); err != nil || !accepted {
+			t.Fatalf("attempt %d accepted=%t err=%v", attempt+1, accepted, err)
+		}
+	}
+	if len(reports) != 3 || reports[0].present || !reports[1].present || reports[1].remoteRemoval || !reports[1].countryCodeLookup || reports[2].present {
+		t.Fatalf("management report negotiation sequence=%v", reports)
+	}
+}
+
+func TestNetworkCountersAreSentOnlyAfterNegotiationAndStopOnDowngrade(t *testing.T) {
+	var seen []bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var report protocol.Report
+		if err := json.NewDecoder(request.Body).Decode(&report); err != nil {
+			t.Errorf("decode report: %v", err)
+		}
+		seen = append(seen, report.NetworkCounters != nil)
+		negotiated := len(seen) == 1
+		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{NetworkCountersReport: negotiated}})
+	}))
+	defer server.Close()
+	runner, err := NewWithExecutor(Config{
+		ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second,
+		Timeout: time.Second, AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"),
+	}, nil, UnsupportedExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.collector = reportCollectorFunc(func(context.Context) (protocol.Report, error) {
+		return protocol.Report{Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 1, RAMTotal: 1, DiskTotal: 1,
+			NetworkCounters: &protocol.NetworkCounterSet{Version: 1, Interfaces: []protocol.NetworkInterfaceCounter{{Name: "eth0", RXBytes: 10, TXBytes: 20}}}, RXBytes: 10, TXBytes: 20}, nil
+	})
+	var sequence uint64
+	for attempt := 0; attempt < 3; attempt++ {
+		if accepted, err := runner.sendReport(context.Background(), &sequence); err != nil || !accepted {
+			t.Fatalf("attempt %d accepted=%t err=%v", attempt+1, accepted, err)
+		}
+	}
+	if len(seen) != 3 || seen[0] || !seen[1] || seen[2] {
+		t.Fatalf("network-counter negotiation sequence=%v", seen)
+	}
+}
+
+func TestRemoteRemovalCapabilityRequiresExplicitOptIn(t *testing.T) {
+	runner, err := NewWithExecutor(Config{
+		ServerURL: "https://example.invalid", AgentID: "agent", Token: "token",
+		Interval: time.Second, Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"),
+		UpdaterSocket: filepath.Join(t.TempDir(), "updater.sock"), EnableRemoteRemoval: false,
+	}, nil, UnsupportedExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.remoteRemovalCapability(context.Background()) {
+		t.Fatal("remote removal capability enabled without explicit opt-in")
 	}
 }
 

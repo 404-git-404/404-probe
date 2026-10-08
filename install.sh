@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v0.9.3"
+readonly DEFAULT_VERSION="v1.0.0"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -16,6 +16,12 @@ readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
 readonly AGENT_UPDATER_UNIT="/etc/systemd/system/404-probe-agent-updater.service"
 readonly AGENT_UPDATER_STATE="/var/lib/404-probe-updater"
 readonly AGENT_UPDATER_SOCKET="/run/404-probe/agent-updater.sock"
+readonly AGENT_REMOVAL_WORKER_UNIT="/etc/systemd/system/404-probe-agent-removal.service"
+readonly AGENT_REMOVAL_FINALIZER_UNIT="/etc/systemd/system/404-probe-agent-removal-finalize.service"
+readonly AGENT_REMOVAL_STATE_DIRECTORY="${AGENT_UPDATER_STATE}/removal"
+readonly AGENT_REMOVAL_REQUEST_FILE="${AGENT_REMOVAL_STATE_DIRECTORY}/request.json"
+readonly AGENT_REMOVAL_FINISHED_MARKER="${AGENT_REMOVAL_STATE_DIRECTORY}/agent-uninstalled"
+readonly AGENT_REMOVAL_WORKER_BINARY="/usr/local/bin/.404-probe-agent-removal-worker"
 readonly SECURITY_STATE_DIRECTORY="/var/lib/404-probe-security"
 readonly SECURITY_EXPORT_DIRECTORY="${SECURITY_STATE_DIRECTORY}/export"
 readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.service"
@@ -42,6 +48,7 @@ INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=0
 INSTALL_TRANSACTION_USER_CREATED=0
 INSTALL_TRANSACTION_UPDATER_STATE_CREATED=0
 INSTALL_TRANSACTION_SECURITY_STATE_CREATED=0
+INSTALL_TRANSACTION_AGENT_SBIN_CREATED=0
 INSTALL_TRANSACTION_PATHS=()
 
 die() {
@@ -184,9 +191,436 @@ Systemd journal history and unrecognized files are preserved.
 EOF
 }
 
+# OpenRC template structure: Komari Agent (MIT), fixed commit
+# 828afafe7fb5b1b58c1232094e1e46320719016e. Standard supervision:
+# OpenRC aec5dedb1ce30f8188b8ef1042e518651cc0fe33 (BSD-2-Clause).
+# Full notices: docs/os1b-openrc-third-party-notices-20261004.md.
+detect_install_platform() {
+  [[ "${EUID}" -eq 0 && "$(uname -s)" == Linux ]] || die "root on Linux is required"
+  local id version runlevel pid1
+  [[ -f /etc/os-release && "$(stat -Lc '%U' /etc/os-release)" == root ]] || die "a root-managed OS identity file is required"
+  case "$(readlink -f /etc/os-release)" in /etc/os-release|/usr/lib/os-release) ;; *) die "unexpected OS identity link target" ;; esac
+  id="$(awk -F= '$1 == "ID" { gsub(/["\047]/,"",$2); print $2 }' /etc/os-release)"
+  case "${id}" in
+    alpine)
+      [[ -f /etc/alpine-release && ! -L /etc/alpine-release ]] || die "Alpine identity is unavailable"
+      version="$(</etc/alpine-release)"
+      [[ "${version}" =~ ^3\.24\.[0-9]+$ ]] || die "Alpine v1.0 requires stable 3.24.x"
+      for command_name in rc-service rc-update rc-status openrc-run supervise-daemon; do
+        command -v "${command_name}" >/dev/null || die "OpenRC runtime is required: ${command_name}"
+      done
+      [[ -d /run/openrc && ! -L /run/openrc && -r /run/openrc/softlevel ]] || die "OpenRC has not booted"
+      runlevel="$(rc-status --runlevel)" || die "cannot query the running OpenRC runlevel"
+      [[ "${runlevel}" =~ ^[a-zA-Z0-9_-]+$ && "$(</run/openrc/softlevel)" == "${runlevel}" ]] || die "OpenRC runlevel is inconsistent"
+      pid1="$(</proc/1/comm)"
+      [[ "${pid1}" == init || "${pid1}" == openrc-init ]] || die "a complete OpenRC boot environment is required, not a process-only container"
+      rc-status sysinit >/dev/null || die "OpenRC sysinit state is unavailable"
+      INSTALL_INIT=openrc
+      ;;
+    debian)
+      version="$(awk -F= '$1 == "VERSION_ID" { gsub(/["\047]/,"",$2); print $2 }' /etc/os-release)"
+      [[ "${version}" == 12 || "${version}" == 13 ]] || die "supported Debian versions are 12 and 13"
+      [[ ! -e /etc/alpine-release ]] || die "contradictory platform identity"
+      INSTALL_INIT=systemd
+      ;;
+    *) die "supported platforms are Debian 12/13 and Alpine 3.24.x" ;;
+  esac
+}
+
+require_openrc_tools() {
+  local command_name
+  (( BASH_VERSINFO[0] >= 4 )) || die "Bash 4 or newer is required"
+  for command_name in bash awk base64 basename cmp cp curl df dirname find flock getent grep head id install mktemp mountpoint readlink rm rmdir runuser sed sha256sum sort stat sync tar tr useradd userdel groupdel; do
+    command -v "${command_name}" >/dev/null || die "missing ${command_name}; install bash, coreutils, util-linux, shadow, curl, ca-certificates and GNU tar in the isolated Alpine guest first"
+  done
+  for command_name in cp stat sync sha256sum install readlink; do
+    "${command_name}" --version 2>/dev/null | grep 'GNU coreutils' >/dev/null || die "GNU coreutils ${command_name} is required; BusyBox aliases are not sufficient"
+  done
+  sha256sum --help | grep -- '--strict' >/dev/null || die "strict checksum verification is required"
+  cp --help | grep -- '--preserve' >/dev/null || die "metadata-preserving copy is required"
+  sync --help | grep -- '--file-system' >/dev/null || die "filesystem sync support is required"
+  tar --version | grep 'GNU tar' >/dev/null || die "GNU tar is required"
+  runuser --version | grep 'util-linux' >/dev/null || die "util-linux runuser is required"
+  flock --version | grep 'util-linux' >/dev/null || die "util-linux flock is required"
+  [[ -r /etc/ssl/certs/ca-certificates.crt ]] || die "CA certificates are required"
+}
+
+reject_openrc_deferred() {
+  [[ "${INSTALL_INIT:-systemd}" != openrc ]] || die "$1 is unsupported on Alpine v1.0 (deferred to v1.1); no managed files were changed"
+}
+reject_deferred_command_on_host() {
+  case "$1" in setup-security|finalize-agent-removal-account|recover-agent-removal)
+    local id
+    id="$(awk -F= '$1 == "ID" { gsub(/["\047]/,"",$2); print $2 }' /etc/os-release 2>/dev/null || true)"
+    [[ "${id}" != alpine ]] || die "$1 is unsupported on Alpine v1.0 (deferred to v1.1); no managed files were changed"
+    ;;
+  esac
+}
+
+openrc_unit() { printf '/etc/init.d/404-probe-%s\n' "$1"; }
+business_unit() {
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_unit "$1"
+  elif [[ "$1" == server ]]; then printf '%s\n' "${SERVER_UNIT}"
+  else printf '%s\n' "${AGENT_UNIT}"; fi
+}
+openrc_wrapper() { printf '/usr/local/sbin/404-probe-%s-openrc\n' "$1"; }
+openrc_role_residue() {
+  local path
+  for path in "$(openrc_unit "$1")" "$(openrc_wrapper "$1")" "/run/404-probe-$1-openrc" "/var/log/404-probe/$1.log" "/var/log/404-probe/$1.log.1" "/var/log/404-probe/$1.log.lock"; do
+    [[ ! -e "${path}" && ! -L "${path}" ]] || return 0
+  done
+  return 1
+}
+openrc_regular_or_absent() {
+  local path="$1" owner="${2:-root}" permissions="${3:-755}"
+  [[ -e "${path}" || -L "${path}" ]] || return 0
+  [[ -f "${path}" && ! -L "${path}" && "$(stat -c '%U:%a' -- "${path}")" == "${owner}:${permissions}" ]] || die "unsafe managed regular file; no deletion was performed"
+}
+openrc_safe_parents() {
+  local path="${1%/*}" permissions
+  while [[ "${path}" != / ]]; do
+    [[ -d "${path}" && ! -L "${path}" && "$(stat -c '%U' -- "${path}")" == root ]] || die "unsafe managed path parent"
+    permissions="$(stat -c '%a' -- "${path}")"
+    [[ "${permissions}" =~ ^[0-7]{3,4}$ ]] && (( (8#${permissions} & 022) == 0 )) || die "writable managed path parent"
+    path="${path%/*}"; [[ -n "${path}" ]] || path=/
+  done
+}
+openrc_origin_valid() {
+  local origin="$1" port
+  [[ "${origin}" =~ ^https?://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$ ]] || return 1
+  port="${BASH_REMATCH[2]#:}"
+  if [[ -n "${port}" ]]; then (( 10#${port} > 0 && 10#${port} <= 65535 )) || return 1; fi
+  [[ "${origin}" != http://* || "${origin}" =~ ^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?$ ]]
+}
+load_openrc_env() {
+  local role="$1" file="${CONFIG_DIRECTORY}/$1.env" line key value count=0 name carriage_return
+  printf -v carriage_return '\r'
+  local -A seen=()
+  [[ "${role}" == server || "${role}" == agent ]] || die "invalid wrapper role"
+  [[ -f "${file}" && ! -L "${file}" && "$(stat -c '%U:%G:%a' -- "${file}")" == "root:${SERVICE_USER}:640" ]] || die "unsafe service environment"
+  [[ "$(stat -c '%s' -- "${file}")" -le 16384 ]] || die "service environment is oversized"
+  cmp -s "${file}" <(LC_ALL=C tr -d '\000' <"${file}") || die "invalid service environment bytes"
+  for name in $(compgen -A variable PROBE_404_); do unset "${name}"; done
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    count=$((count+1)); (( count <= 32 && ${#line} <= 1024 )) || die "service environment exceeds limits"
+    [[ "${line}" == *=* && "${line}" != *"${carriage_return}"* ]] || die "invalid service environment record"
+    key="${line%%=*}"; value="${line#*=}"
+    [[ "${key}" =~ ^PROBE_404_[A-Z_]+$ && -z "${seen[${key}]:-}" ]] || die "unknown or duplicate service environment key"
+    seen["${key}"]=1
+    case "${role}:${key}" in
+      server:PROBE_404_WEB_PUBLIC_ORIGIN|agent:PROBE_404_SERVER) openrc_origin_valid "${value}" || die "invalid service origin" ;;
+      agent:PROBE_404_AGENT_ID) [[ "${value}" =~ ^[0-9a-f]{32}$ ]] || die "invalid Agent identity" ;;
+      agent:PROBE_404_TOKEN) [[ "${value}" =~ ^[A-Za-z0-9_-]{43}$ ]] || die "invalid Agent credential" ;;
+      agent:PROBE_404_STATE) [[ "${value}" == "${STATE_DIRECTORY}/agent.epoch" ]] || die "invalid state path" ;;
+      agent:PROBE_404_COUNTRY_CODE) [[ -z "${value}" || "${value}" =~ ^[A-Z]{2}$ ]] || die "invalid country code" ;;
+      agent:PROBE_404_SELECTOR_ORDER) [[ "${value}" == "${SELECTOR_ORDER_FILE}" ]] || die "invalid selector path" ;;
+      agent:PROBE_404_SECURITY_EXPORT) [[ "${value}" == "${SECURITY_EXPORT_DIRECTORY}" ]] || die "invalid legacy export path" ;;
+      agent:PROBE_404_SECURITY_ACKS) [[ "${value}" == "${STATE_DIRECTORY}/agent.security-acks.json" ]] || die "invalid legacy ack path" ;;
+      agent:PROBE_404_SING_BOX_CLASH_API) [[ "${value}" =~ ^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?$ ]] && openrc_origin_valid "${value}" || die "Clash API must be valid loopback HTTP" ;;
+      *) die "unrecognized service environment key" ;;
+    esac
+    printf -v "${key}" '%s' "${value}"
+    export "${key}"
+  done <"${file}"
+  if [[ "${role}" == server ]]; then
+    [[ -n "${seen[PROBE_404_WEB_PUBLIC_ORIGIN]:-}" ]] || die "missing Server origin"
+  else
+    for key in PROBE_404_SERVER PROBE_404_AGENT_ID PROBE_404_TOKEN PROBE_404_STATE PROBE_404_COUNTRY_CODE PROBE_404_SELECTOR_ORDER; do
+      [[ -n "${seen[${key}]:-}" ]] || die "missing required Agent environment key"
+    done
+  fi
+}
+openrc_business_pids() {
+  local role="$1" binary uid process executable owner record start_before start_after readable
+  local -a fields=()
+  binary="/usr/local/bin/404-probe-${role}"; uid="$(id -u "${SERVICE_USER}" 2>/dev/null || true)"
+  for process in /proc/[0-9]*; do
+    [[ -d "${process}" ]] || continue
+    executable="$(readlink "${process}/exe" 2>/dev/null || true)"
+    if [[ "${role}" == agent && -z "${executable}" && -n "${uid}" ]]; then
+      owner="$(stat -c '%u' -- "${process}" 2>/dev/null || true)"
+      if [[ "${owner}" == "${uid}" ]]; then
+        if ! IFS= read -r record <"${process}/stat" 2>/dev/null; then
+          [[ ! -d "${process}" ]] && continue
+          die "cannot verify Agent process identity"
+        fi
+        read -r -a fields <<<"${record##*) }"; start_before="${fields[19]:-}"
+        [[ "${start_before}" =~ ^[0-9]+$ ]] || die "invalid Agent process identity"
+        readable=1
+        executable="$(runuser -u "${SERVICE_USER}" -- readlink "${process}/exe" 2>/dev/null)" || readable=0
+        owner="$(stat -c '%u' -- "${process}" 2>/dev/null || true)"
+        if ! IFS= read -r record <"${process}/stat" 2>/dev/null; then
+          [[ ! -d "${process}" ]] && continue
+          die "cannot recheck Agent process identity"
+        fi
+        read -r -a fields <<<"${record##*) }"; start_after="${fields[19]:-}"
+        [[ "${owner}" == "${uid}" && "${start_after}" == "${start_before}" ]] || die "Agent process identity changed during executable verification"
+        (( readable != 0 )) && [[ -n "${executable}" ]] || die "cannot verify live Agent executable"
+      fi
+    fi
+    if [[ "${executable}" == "${binary}" || "${executable}" == "${binary} (deleted)" ]]; then
+      [[ -n "${uid}" && "$(stat -c '%u' -- "${process}")" == "${uid}" ]] || die "business binary has an unexpected process owner"
+      printf '%s\n' "${process##*/}"
+    fi
+  done
+}
+openrc_wait() {
+  local role="$1" attempts=20 pids
+  while (( attempts > 0 )); do
+    if rc-service "404-probe-${role}" status >/dev/null 2>&1; then
+      pids="$(openrc_business_pids "${role}")" || die "cannot verify business process"
+      [[ -z "${pids}" ]] || return 0
+    fi
+    attempts=$((attempts-1)); (( attempts == 0 )) || sleep 0.5
+  done
+  die "OpenRC service did not establish a verified business process"
+}
+openrc_stop() {
+  local role="$1" service="404-probe-$1" pids attempts=20
+  if [[ -e "$(openrc_unit "${role}")" ]]; then
+    openrc_regular_or_absent "$(openrc_unit "${role}")"
+    rc-service "${service}" stop || die "could not stop OpenRC service; nothing was removed"
+    rc-service "${service}" status >/dev/null 2>&1 && die "service remains active; nothing was removed"
+  fi
+  if [[ -r "/run/404-probe-${role}-openrc/supervisor.pid" ]]; then
+    local supervisor_pid
+    [[ "$(stat -c '%s' "/run/404-probe-${role}-openrc/supervisor.pid")" -le 16 ]] || die "supervisor PID file exceeds limits"
+    IFS= read -r supervisor_pid <"/run/404-probe-${role}-openrc/supervisor.pid"
+    [[ "${supervisor_pid}" =~ ^[1-9][0-9]{0,9}$ ]] || die "invalid supervisor PID"
+    kill -0 "${supervisor_pid}" 2>/dev/null && die "supervisor remains; nothing was removed"
+  fi
+  while (( attempts > 0 )); do
+      pids="$(openrc_business_pids "${role}")" || die "cannot verify process exit"
+      [[ -n "${pids}" ]] || break
+      attempts=$((attempts-1)); (( attempts == 0 )) || sleep 0.5
+  done
+  [[ -z "${pids}" ]] || die "business process remains; nothing was removed"
+  if [[ -e "/etc/runlevels/default/${service}" || -L "/etc/runlevels/default/${service}" ]]; then
+    [[ -L "/etc/runlevels/default/${service}" && "$(readlink -f "/etc/runlevels/default/${service}")" == "$(openrc_unit "${role}")" ]] || die "unrecognized runlevel entry"
+    rc-update del "${service}" default || die "could not disable OpenRC service"
+  fi
+}
+openrc_append_log() {
+  local file="$1" line="$2" newline="$3"
+  flock -x 9 || die "log lock failed"
+  if (( $(stat -c '%s' -- "${file}") + ${#line} + newline > 1048576 )); then
+    cp -- "${file}" "${file}.1" || die "log rotation failed"
+    : >"${file}"
+  fi
+  printf '%s' "${line}" >>"${file}"
+  (( newline == 0 )) || printf '\n' >>"${file}"
+  flock -u 9
+}
+openrc_log() {
+  export LC_ALL=C
+  local role="$1" file="/var/log/404-probe/$1.log" line pending="" secret="${PROBE_404_TOKEN:-}" control="" cut eof
+  [[ "${EUID}" -eq "$(id -u "${SERVICE_USER}")" ]] || die "logger must use the service account"
+  if [[ "${role}" == server ]]; then
+    openrc_regular_or_absent "${CONFIG_DIRECTORY}/control.token" "${SERVICE_USER}" 400
+    [[ -f "${CONFIG_DIRECTORY}/control.token" && "$(stat -c '%s' "${CONFIG_DIRECTORY}/control.token")" -le 44 ]] || die "invalid control credential file"
+    IFS= read -r control <"${CONFIG_DIRECTORY}/control.token"
+    [[ "${control}" =~ ^[A-Za-z0-9_-]{43}$ ]] || die "invalid control credential"
+  fi
+  local path
+  for path in "${file}" "${file}.1" "${file}.lock"; do openrc_regular_or_absent "${path}" "${SERVICE_USER}" 600; [[ -f "${path}" ]] || die "log file missing"; done
+  exec 9>>"${file}.lock"
+  # Retain 42 bytes so a 43-byte credential spanning read boundaries cannot leak.
+  # -n returns promptly on newline. A newline is a safe credential boundary;
+  # only full chunks need a carried tail. Preserve newlines and final EOF bytes.
+  while true; do
+    line=""; eof=0
+    IFS= read -r -n 4096 line || eof=1
+    pending+="${line}"
+    [[ -z "${secret}" ]] || pending="${pending//"${secret}"/[REDACTED]}"
+    [[ -z "${control}" ]] || pending="${pending//"${control}"/[REDACTED]}"
+    if (( ${#line} < 4096 || eof != 0 )); then
+      if [[ -n "${pending}" ]] || (( eof == 0 )); then openrc_append_log "${file}" "${pending}" "$((1-eof))"; fi
+      pending=""
+    else
+      cut=$(( ${#pending} - 42 ))
+      if (( cut > 0 )); then
+        openrc_append_log "${file}" "${pending:0:cut}" 0
+        pending="${pending:cut}"
+      fi
+    fi
+    (( eof == 0 )) || break
+  done
+}
+render_openrc_wrapper() {
+  local role="$1" insecure="$2"
+  [[ "${role}" == server || "${role}" == agent ]] || die "invalid role"
+  [[ "${insecure}" == 0 || "${insecure}" == 1 ]] || die "invalid wrapper mode"
+  printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
+  printf 'readonly ROLE=%q INSECURE=%q\n' "${role}" "${insecure}"
+  printf 'readonly CONFIG_DIRECTORY=%q STATE_DIRECTORY=%q SELECTOR_ORDER_FILE=%q SECURITY_EXPORT_DIRECTORY=%q SERVICE_USER=%q\n' "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" "${SELECTOR_ORDER_FILE}" "${SECURITY_EXPORT_DIRECTORY}" "${SERVICE_USER}"
+  printf 'die() { printf "404-probe service: %%s\\n" "$*" >&2; exit 1; }\n'
+  declare -f load_openrc_env openrc_origin_valid openrc_regular_or_absent openrc_append_log openrc_log
+  cat <<'WRAPPER'
+[[ $# -le 1 && ( "${1:-run}" == run || "${1:-run}" == log || "${1:-run}" == log-user ) ]] || die "unsupported wrapper mode"
+if [[ "${1:-run}" == log && "${EUID}" == 0 ]]; then
+  exec runuser -u "${SERVICE_USER}" -- "/usr/local/sbin/404-probe-${ROLE}-openrc" log-user
+fi
+[[ "${EUID}" -eq "$(id -u "${SERVICE_USER}")" && "${EUID}" -ne 0 ]] || die "ordinary service must not run as root"
+load_openrc_env "${ROLE}"
+if [[ "${1:-run}" == log || "${1:-run}" == log-user ]]; then openrc_log "${ROLE}"; exit; fi
+umask 0077
+if [[ "${ROLE}" == agent ]]; then
+  args=(--interval 10s --job-interval 10s --timeout 8s)
+  (( INSECURE == 0 )) || args+=(--allow-insecure-http)
+  exec /usr/local/bin/404-probe-agent "${args[@]}"
+else
+  args=(serve --listen 127.0.0.1:8080 --db "${STATE_DIRECTORY}/404-probe.db" --offline-timeout 30s --control-token-file "${CONFIG_DIRECTORY}/control.token" --web-password-hash-file "${CONFIG_DIRECTORY}/web-password.hash" --web-public-origin "${PROBE_404_WEB_PUBLIC_ORIGIN}")
+  (( INSECURE == 0 )) || args+=(--web-allow-insecure-http)
+  exec /usr/local/bin/404-probe-server "${args[@]}"
+fi
+WRAPPER
+}
+render_openrc_service() {
+  local role="$1"
+  [[ "${role}" == server || "${role}" == agent ]] || die "invalid role"
+  cat <<EOF
+#!/sbin/openrc-run
+# Portions copyright (c) 2025 komari-monitor, MIT. See installer notices.
+description="404-probe ${role} (Alpine v1.0 basic support)"
+command="$(openrc_wrapper "${role}")"
+command_user="${SERVICE_USER}:${SERVICE_USER}"
+directory="${STATE_DIRECTORY}"
+pidfile="/run/404-probe-${role}-openrc/supervisor.pid"
+supervisor=supervise-daemon
+respawn_delay=5
+respawn_max=3
+# No resetting window: finite restarts across the supervisor lifetime.
+respawn_period=0
+retry="SIGTERM/15/SIGKILL/5"
+stopgroup=yes
+output_logger="$(openrc_wrapper "${role}") log"
+error_logger="$(openrc_wrapper "${role}") log"
+depend() { need net; after network; }
+start_pre() {
+  [ ! -L /run/404-probe-${role}-openrc ] || return 1
+  if [ -e /run/404-probe-${role}-openrc ]; then
+    [ "\$(stat -c '%U:%G:%a' /run/404-probe-${role}-openrc)" = root:root:755 ] || return 1
+  fi
+  checkpath --directory --mode 0755 --owner root:root /run/404-probe-${role}-openrc || return 1
+  [ "\$(stat -c '%U:%G:%a' /run/404-probe-${role}-openrc)" = root:root:755 ] || return 1
+  [ ! -L /usr/local/bin/404-probe-${role} ] && [ ! -L $(openrc_wrapper "${role}") ] || return 1
+  [ "\$(stat -c '%U:%G:%a' /usr/local/bin/404-probe-${role})" = root:root:755 ] || return 1
+  [ "\$(stat -c '%U:%G:%a' $(openrc_wrapper "${role}"))" = root:root:755 ] || return 1
+}
+EOF
+}
+install_openrc_business() {
+  local role="$1" insecure="$2" path unit wrapper
+  unit="$(openrc_unit "${role}")"; wrapper="$(openrc_wrapper "${role}")"
+  for path in "${unit}" "${wrapper}"; do
+    openrc_safe_parents "${path}"
+    [[ ! -e "${path}" && ! -L "${path}" ]] || die "OpenRC managed path already exists"
+    track_install_path "${path}"
+  done
+  [[ ! -e /var/log/404-probe || ( -d /var/log/404-probe && ! -L /var/log/404-probe && "$(stat -c '%U:%G:%a' /var/log/404-probe)" == "root:${SERVICE_USER}:750" ) ]] || die "unsafe log directory"
+  openrc_safe_parents /var/log/404-probe
+  openrc_safe_parents "/run/404-probe-${role}-openrc"
+  [[ ! -e "/run/404-probe-${role}-openrc" && ! -L "/run/404-probe-${role}-openrc" ]] || die "runtime residue already exists"
+  install -d -m 0750 -o root -g "${SERVICE_USER}" /var/log/404-probe
+  install -d -m 0755 -o root -g root "/run/404-probe-${role}-openrc"
+  for path in "/var/log/404-probe/${role}.log" "/var/log/404-probe/${role}.log.1" "/var/log/404-probe/${role}.log.lock"; do
+    [[ ! -e "${path}" && ! -L "${path}" ]] || die "log residue already exists"
+    track_install_path "${path}"; install -m 0600 -o "${SERVICE_USER}" -g "${SERVICE_USER}" /dev/null "${path}"
+  done
+  render_openrc_wrapper "${role}" "${insecure}" >"${wrapper}"
+  render_openrc_service "${role}" >"${unit}"
+  chown root:root "${wrapper}" "${unit}"; chmod 0755 "${wrapper}" "${unit}"
+  bash -n "${wrapper}" || die "wrapper syntax failed"
+  (load_openrc_env "${role}")
+  INSTALL_TRANSACTION_UNIT="404-probe-${role}"
+  rc-update add "404-probe-${role}" default || die "could not enable service"
+  rc-service "404-probe-${role}" start || die "could not start service"
+  openrc_wait "${role}"
+}
+
+openrc_uninstall() {
+  local role="$1" binary="/usr/local/bin/404-probe-$1" path owner permissions
+  confirm_uninstall "${role}" "${2:-}"
+  path="${AGENT_UNIT}"; [[ "${role}" != server ]] || path="${SERVER_UNIT}"
+  [[ ! -e "${path}" && ! -L "${path}" ]] || die "mixed systemd/OpenRC role residue; nothing was removed"
+  if id "${SERVICE_USER}" >/dev/null 2>&1; then
+    if declare -F validate_service_user >/dev/null; then validate_service_user; else validate_removable_service_user; fi
+  fi
+  preflight_uninstall_trees "${role}"
+  validate_owned_tree "/run/404-probe-${role}-openrc"
+  validate_owned_tree /var/log/404-probe
+  [[ ! -d "/run/404-probe-${role}-openrc" || "$(stat -c '%U:%G:%a' "/run/404-probe-${role}-openrc")" == root:root:755 ]] || die "unsafe runtime directory"
+  [[ ! -d /var/log/404-probe || "$(stat -c '%U:%G:%a' /var/log/404-probe)" == "root:${SERVICE_USER}:750" ]] || die "unsafe log directory"
+  # Delayed v1.1 resources are never adopted or silently wiped by basic support.
+  if [[ "${role}" == agent ]]; then
+    for path in "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_STATE}" "${AGENT_REMOVAL_WORKER_UNIT}" "${AGENT_REMOVAL_FINALIZER_UNIT}" "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" "${SECURITY_STATE_DIRECTORY}"; do
+      [[ ! -e "${path}" && ! -L "${path}" ]] || die "deferred resource residue requires manual review; nothing was removed"
+    done
+  else
+    [[ ! -e "${SERVER_UPGRADE_DIRECTORY}" && ! -L "${SERVER_UPGRADE_DIRECTORY}" ]] || die "deferred upgrade residue requires manual review"
+  fi
+  for path in "$(openrc_unit "${role}")" "$(openrc_wrapper "${role}")" "${binary}"; do
+    if [[ "${role}" == agent && "${path}" == "$(openrc_wrapper agent)" && ! -e /usr/local/sbin && ! -L /usr/local/sbin && ! -e "${INSTALL_HELPER:-/usr/local/sbin/404-probe-install}" && ! -L "${INSTALL_HELPER:-/usr/local/sbin/404-probe-install}" ]] \
+      && ! agent_residue_exists && ! server_residue_exists; then
+      openrc_safe_parents /usr/local/sbin
+    else
+      openrc_safe_parents "${path}"
+    fi
+    openrc_regular_or_absent "${path}"
+  done
+  for path in "${CONFIG_DIRECTORY}/${role}.env"; do openrc_regular_or_absent "${path}" root 640; done
+  if [[ "${role}" == server ]]; then
+    for path in "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash"; do openrc_regular_or_absent "${path}" "${SERVICE_USER}" 400; done
+    for path in "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"; do
+      [[ ! -e "${path}" && ! -L "${path}" ]] || [[ -f "${path}" && ! -L "${path}" && "$(stat -c '%U' -- "${path}")" == "${SERVICE_USER}" ]] || die "unsafe database residue"
+    done
+  else
+    for path in "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"; do
+      [[ ! -e "${path}" && ! -L "${path}" ]] || [[ -f "${path}" && ! -L "${path}" && "$(stat -c '%U' -- "${path}")" == "${SERVICE_USER}" ]] || die "unsafe epoch residue"
+    done
+    openrc_regular_or_absent "${SELECTOR_ORDER_FILE}" root 640
+  fi
+  for path in "/var/log/404-probe/${role}.log" "/var/log/404-probe/${role}.log.1" "/var/log/404-probe/${role}.log.lock"; do openrc_regular_or_absent "${path}" "${SERVICE_USER}" 600; done
+  path="/run/404-probe-${role}-openrc/supervisor.pid"
+  if [[ -e "${path}" || -L "${path}" ]]; then
+    [[ -f "${path}" && ! -L "${path}" && "$(stat -c '%U' "${path}")" == root ]] || die "unsafe supervisor PID file"
+    permissions="$(stat -c '%a' "${path}")"; (( (8#${permissions} & 022) == 0 )) || die "writable supervisor PID file"
+  fi
+  openrc_stop "${role}"
+  rm -f -- "$(openrc_unit "${role}")" "$(openrc_wrapper "${role}")" "${binary}" "${CONFIG_DIRECTORY}/${role}.env" "/run/404-probe-${role}-openrc/supervisor.pid" "/var/log/404-probe/${role}.log" "/var/log/404-probe/${role}.log.1" "/var/log/404-probe/${role}.log.lock"
+  if [[ "${role}" == server ]]; then
+    rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash"
+  else
+    rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${SELECTOR_ORDER_FILE}"
+  fi
+  rmdir --ignore-fail-on-non-empty "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" "/run/404-probe-${role}-openrc" /var/log/404-probe 2>/dev/null || true
+  if ! server_residue_exists && ! agent_residue_exists && [[ ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" && ! -d /var/log/404-probe ]]; then
+    remove_service_account_for_uninstall
+    if [[ -e "${INSTALL_HELPER:-/usr/local/sbin/404-probe-install}" ]]; then
+      openrc_regular_or_absent "${INSTALL_HELPER:-/usr/local/sbin/404-probe-install}"
+      rm -f -- "${INSTALL_HELPER:-/usr/local/sbin/404-probe-install}"
+    fi
+  fi
+  printf 'Uninstalled %s basic OpenRC resources; unknown files and other-role residue were preserved.\n' "${role}"
+}
+
+openrc_validate_agent_install() {
+  openrc_regular_or_absent "${AGENT_BINARY}"; [[ -f "${AGENT_BINARY}" ]] || die "Agent binary missing"
+  openrc_regular_or_absent "$(openrc_unit agent)"; [[ -f "$(openrc_unit agent)" ]] || die "Agent service missing"
+  openrc_regular_or_absent "$(openrc_wrapper agent)"; [[ -f "$(openrc_wrapper agent)" ]] || die "Agent wrapper missing"
+  cmp -s "$(openrc_unit agent)" <(render_openrc_service agent) || die "unrecognized OpenRC Agent service"
+  (load_openrc_env agent)
+}
+
+render_platform_functions() {
+  declare -f detect_install_platform require_openrc_tools reject_openrc_deferred reject_deferred_command_on_host openrc_unit business_unit openrc_wrapper openrc_role_residue openrc_regular_or_absent openrc_safe_parents openrc_origin_valid load_openrc_env openrc_business_pids openrc_wait openrc_stop openrc_uninstall openrc_validate_agent_install render_openrc_service agent_residue_exists
+}
+
 require_root_linux_systemd() {
   [[ "${EUID}" -eq 0 ]] || die "run this installer as root (for example, with sudo)"
   [[ "$(uname -s)" == "Linux" ]] || die "only Linux is supported"
+  detect_install_platform
+  if [[ "${INSTALL_INIT}" == openrc ]]; then require_openrc_tools; return; fi
   command -v systemctl >/dev/null 2>&1 || die "systemd is required"
   [[ -d /run/systemd/system ]] || die "systemd is not running"
   for command_name in awk base64 basename cmp curl df dirname flock getent install mktemp readlink runuser sha256sum sort stat sync tar; do
@@ -238,6 +672,32 @@ validate_service_user() {
     || die "existing ${SERVICE_USER} primary group is also used by: ${other_primary_users//$'\n'/, }"
 }
 
+remove_service_account_for_uninstall() {
+  local passwd_entry group_entry name _ uid gid group_name group_gid members other_primary_users
+  passwd_entry="$(getent passwd "${SERVICE_USER}" || true)"
+  if [[ -n "${passwd_entry}" ]]; then
+    validate_service_user
+    IFS=: read -r name _ uid gid _ _ _ <<<"${passwd_entry}"
+    userdel "${SERVICE_USER}" || die "managed files were removed but the service account could not be removed"
+    id "${SERVICE_USER}" >/dev/null 2>&1 && die "service account remains after userdel"
+  else
+    group_entry="$(getent group "${SERVICE_USER}" || true)"
+    [[ -z "${group_entry}" ]] || die "orphan or unrecognized service group remains; refusing to remove it"
+    return 0
+  fi
+  group_entry="$(getent group "${SERVICE_USER}" || true)"
+  if [[ -n "${group_entry}" ]]; then
+    IFS=: read -r group_name _ group_gid members <<<"${group_entry}"
+    [[ "${group_name}" == "${SERVICE_USER}" && "${group_gid}" == "${gid}" && -z "${members}" ]] \
+      || die "service group changed or is shared during account cleanup"
+    other_primary_users="$(getent passwd | awk -F: -v gid="${gid}" '$4 == gid { print $1 }')"
+    [[ -z "${other_primary_users}" ]] || die "service group remains in use by another account"
+    groupdel "${SERVICE_USER}" || die "service group could not be removed"
+  fi
+  ! id "${SERVICE_USER}" >/dev/null 2>&1 || die "service account remains after removal"
+  ! getent group "${SERVICE_USER}" >/dev/null 2>&1 || die "service group remains after removal"
+}
+
 create_service_user() {
   if id "${SERVICE_USER}" >/dev/null 2>&1; then
     validate_service_user
@@ -264,6 +724,7 @@ create_service_user() {
 
 begin_install_transaction() {
   INSTALL_TRANSACTION_ACTIVE=1
+  INSTALL_TRANSACTION_AGENT_SBIN_CREATED=0
   INSTALL_TRANSACTION_ROLE="$1"
   [[ -d "${CONFIG_DIRECTORY}" ]] || INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED=1
   [[ -d "${STATE_DIRECTORY}" ]] || INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=1
@@ -275,6 +736,35 @@ track_install_path() {
   INSTALL_TRANSACTION_PATHS+=("$1")
 }
 
+openrc_agent_sbin_unmounted() {
+  if awk -v directory=/usr/local/sbin '
+    NF < 10 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+:[0-9]+$/ || $4 !~ /^\// || $5 !~ /^\// { bad=1 }
+    { separator=0; for (i=7; i<=NF; i++) if ($i == "-") { separator=i; break }; if (!separator || separator+3>NF) bad=1 }
+    $5 == directory { mounted=1 }
+    END { if (NR == 0 || bad) exit 2; if (mounted) exit 10 }
+  ' /proc/self/mountinfo; then
+    return 0
+  else
+    local status="$?"
+    [[ "${status}" != 10 ]] || die "mounted Agent helper directory"
+    die "cannot verify Agent helper directory mounts"
+  fi
+}
+
+prepare_openrc_agent_sbin() {
+  [[ "${INSTALL_INIT:-systemd}" == openrc ]] || return 0
+  openrc_safe_parents /usr/local/sbin
+  openrc_agent_sbin_unmounted
+  if [[ -e /usr/local/sbin || -L /usr/local/sbin ]]; then
+    openrc_safe_parents "${INSTALL_HELPER}"
+    return 0
+  fi
+  install -d -m 0755 -o root -g root /usr/local/sbin
+  INSTALL_TRANSACTION_AGENT_SBIN_CREATED=1
+  [[ ! -L /usr/local/sbin && "$(stat -c '%U:%G:%a' /usr/local/sbin)" == root:root:755 ]] \
+    || die "unsafe newly created Agent helper directory"
+}
+
 rollback_install_transaction() {
   local status="$1"
   local index
@@ -283,6 +773,22 @@ rollback_install_transaction() {
     exit "${status}"
   fi
   printf '\n404-probe installer: installation failed; rolling back new artifacts...\n' >&2
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then
+    if [[ -n "${INSTALL_TRANSACTION_UNIT}" ]]; then openrc_stop "${INSTALL_TRANSACTION_ROLE}"; fi
+    for (( index=${#INSTALL_TRANSACTION_PATHS[@]}-1; index>=0; index-- )); do rm -f -- "${INSTALL_TRANSACTION_PATHS[index]}"; done
+    if [[ "${INSTALL_TRANSACTION_ROLE}" == server ]]; then rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
+    else rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"; fi
+    rm -f -- "/run/404-probe-${INSTALL_TRANSACTION_ROLE}-openrc/supervisor.pid"
+    rmdir --ignore-fail-on-non-empty "/run/404-probe-${INSTALL_TRANSACTION_ROLE}-openrc" /var/log/404-probe 2>/dev/null || true
+    (( INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED == 0 )) || rmdir -- "${CONFIG_DIRECTORY}" 2>/dev/null || true
+    (( INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED == 0 )) || rmdir -- "${STATE_DIRECTORY}" 2>/dev/null || true
+    if (( INSTALL_TRANSACTION_AGENT_SBIN_CREATED != 0 )) && [[ -d /usr/local/sbin && ! -L /usr/local/sbin && "$(stat -c '%U:%G:%a' /usr/local/sbin)" == root:root:755 ]] \
+      && (openrc_agent_sbin_unmounted) && (openrc_safe_parents /usr/local/sbin); then
+      rmdir -- /usr/local/sbin 2>/dev/null || true
+    fi
+    (( INSTALL_TRANSACTION_USER_CREATED == 0 )) || printf 'Preserved locked service account for a safe retry.\n' >&2
+    exit "${status}"
+  fi
   if [[ -n "${INSTALL_TRANSACTION_UNIT}" ]]; then
     systemctl stop "${INSTALL_TRANSACTION_UNIT}" >/dev/null 2>&1 || true
     if systemctl is-active --quiet "${INSTALL_TRANSACTION_UNIT}"; then
@@ -296,7 +802,7 @@ rollback_install_transaction() {
   elif [[ "${INSTALL_TRANSACTION_ROLE}" == "agent" ]]; then
 	 systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true
 	 systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
-    rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json"
+    rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${AGENT_REMOVAL_WORKER_BINARY}"
 	 systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service >/dev/null 2>&1 || true
 	 systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true
   fi
@@ -316,6 +822,7 @@ rollback_install_transaction() {
 
 commit_install_transaction() {
   INSTALL_TRANSACTION_ACTIVE=0
+  INSTALL_TRANSACTION_AGENT_SBIN_CREATED=0
   INSTALL_TRANSACTION_PATHS=()
   trap - EXIT HUP INT TERM
 }
@@ -377,6 +884,8 @@ download_binary() (
 )
 
 render_local_helper() {
+  printf '#!/usr/bin/env bash\n'
+  render_platform_functions
   cat <<'HELPER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -389,12 +898,22 @@ readonly AGENT_UNIT="/etc/systemd/system/404-probe-agent.service"
 readonly AGENT_UPDATER_UNIT="/etc/systemd/system/404-probe-agent-updater.service"
 readonly AGENT_UPDATER_STATE="/var/lib/404-probe-updater"
 readonly AGENT_UPDATER_SOCKET="/run/404-probe/agent-updater.sock"
+readonly AGENT_REMOVAL_WORKER_UNIT="/etc/systemd/system/404-probe-agent-removal.service"
+readonly AGENT_REMOVAL_FINALIZER_UNIT="/etc/systemd/system/404-probe-agent-removal-finalize.service"
+readonly AGENT_REMOVAL_STATE_DIRECTORY="${AGENT_UPDATER_STATE}/removal"
+readonly AGENT_REMOVAL_REQUEST_FILE="${AGENT_REMOVAL_STATE_DIRECTORY}/request.json"
+readonly AGENT_REMOVAL_FINISHED_MARKER="${AGENT_REMOVAL_STATE_DIRECTORY}/agent-uninstalled"
+readonly AGENT_REMOVAL_WORKER_BINARY="/usr/local/bin/.404-probe-agent-removal-worker"
 readonly SECURITY_STATE_DIRECTORY="/var/lib/404-probe-security"
 readonly SECURITY_EXPORT_DIRECTORY="${SECURITY_STATE_DIRECTORY}/export"
 readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.service"
 readonly SECURITY_TIMER_UNIT="/etc/systemd/system/404-probe-security-collect.timer"
 readonly SERVER_UPGRADE_DIRECTORY="/var/lib/404-probe-upgrade"
 readonly SERVER_UPGRADE_LOCK_DIRECTORY="/run/404-probe-upgrade"
+readonly SERVER_UPGRADE_CANDIDATE="/usr/local/bin/.404-probe-server.candidate"
+readonly SERVER_UPGRADE_PREVIOUS="/usr/local/bin/.404-probe-server.previous"
+readonly SERVER_UPGRADE_HELPER_CANDIDATE="/usr/local/sbin/404-probe-install.candidate"
+readonly SERVER_UPGRADE_LOCK="${SERVER_UPGRADE_LOCK_DIRECTORY}/server.lock"
 readonly CONFIG_DIRECTORY="/etc/404-probe"
 readonly STATE_DIRECTORY="/var/lib/404-probe"
 readonly SELECTOR_ORDER_FILE="${CONFIG_DIRECTORY}/selector-order.json"
@@ -402,23 +921,41 @@ readonly SERVICE_USER="404-probe"
 readonly ENROLLMENT_PREFIX="404p1_"
 
 die() { printf '404-probe helper: %s\n' "$*" >&2; exit 1; }
+server_residue_exists() {
+  openrc_role_residue server && return 0
+  local path
+  for path in "${SERVER_UNIT}" "${SERVER_BINARY}" "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
+    "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
+    "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_PREVIOUS}" \
+    "${SERVER_UPGRADE_HELPER_CANDIDATE}" "${SERVER_UPGRADE_LOCK_DIRECTORY}" "${SERVER_UPGRADE_LOCK}"; do
+    [[ ! -e "${path}" && ! -L "${path}" ]] || return 0
+  done
+  return 1
+}
 usage() {
-  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data]\n'
+  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data] | recover-agent-removal\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
+  detect_install_platform
+  if [[ "${INSTALL_INIT}" == openrc ]]; then require_openrc_tools; return; fi
   command -v systemctl >/dev/null 2>&1 || die "systemd is required"
 }
 validate_removable_service_user() {
-  local passwd_entry shadow_entry group_entry name _ uid gid home shell password group_name members other_primary_users
-  id "${SERVICE_USER}" >/dev/null 2>&1 || return
+  local passwd_entry shadow_entry group_entry name _ uid gid home shell password group_name members other_primary_users uid_min
+  id "${SERVICE_USER}" >/dev/null 2>&1 || return 0
   passwd_entry="$(getent passwd "${SERVICE_USER}" || true)"
   shadow_entry="$(getent shadow "${SERVICE_USER}" || true)"
   [[ -n "${passwd_entry}" && -n "${shadow_entry}" ]] || die "cannot safely verify the service account"
   IFS=: read -r name _ uid gid _ home shell <<<"${passwd_entry}"
   IFS=: read -r _ password _ <<<"${shadow_entry}"
-  [[ "${name}" == "${SERVICE_USER}" && "${home}" == "${STATE_DIRECTORY}" ]] \
+  [[ "${name}" == "${SERVICE_USER}" && "${uid}" =~ ^[0-9]+$ && "${gid}" =~ ^[0-9]+$ \
+    && "${home}" == "${STATE_DIRECTORY}" ]] \
     || die "service account identity is not owned by this installation"
+  uid_min="$(awk '$1 == "UID_MIN" { print $2; exit }' /etc/login.defs 2>/dev/null || true)"
+  [[ "${uid_min}" =~ ^[0-9]+$ ]] || uid_min=1000
+  (( uid > 0 && uid < uid_min && gid > 0 )) \
+    || die "service account UID/GID is outside the expected system-account range"
   case "${shell##*/}" in nologin|false) ;; *) die "service account has an interactive shell" ;; esac
   [[ "${password}" == '!'* || "${password}" == '*'* ]] || die "service account password is not locked"
   group_entry="$(getent group "${gid}" || true)"
@@ -427,12 +964,134 @@ validate_removable_service_user() {
   other_primary_users="$(getent passwd | awk -F: -v gid="${gid}" -v user="${SERVICE_USER}" '$4 == gid && $1 != user { print $1 }')"
   [[ -z "${other_primary_users}" ]] || die "service group is used by another account"
 }
+remove_service_account_for_uninstall() {
+  local passwd_entry group_entry name _ uid gid group_name group_gid members other_primary_users
+  passwd_entry="$(getent passwd "${SERVICE_USER}" || true)"
+  if [[ -n "${passwd_entry}" ]]; then
+    validate_removable_service_user
+    IFS=: read -r name _ uid gid _ _ _ <<<"${passwd_entry}"
+    userdel "${SERVICE_USER}" || die "managed files were removed but the service account could not be removed"
+    id "${SERVICE_USER}" >/dev/null 2>&1 && die "service account remains after userdel"
+  else
+    group_entry="$(getent group "${SERVICE_USER}" || true)"
+    [[ -z "${group_entry}" ]] || die "orphan or unrecognized service group remains; refusing to remove it"
+    return 0
+  fi
+  group_entry="$(getent group "${SERVICE_USER}" || true)"
+  if [[ -n "${group_entry}" ]]; then
+    IFS=: read -r group_name _ group_gid members <<<"${group_entry}"
+    [[ "${group_name}" == "${SERVICE_USER}" && "${group_gid}" == "${gid}" && -z "${members}" ]] \
+      || die "service group changed or is shared during account cleanup"
+    other_primary_users="$(getent passwd | awk -F: -v gid="${gid}" '$4 == gid { print $1 }')"
+    [[ -z "${other_primary_users}" ]] || die "service group remains in use by another account"
+    groupdel "${SERVICE_USER}" || die "service group could not be removed"
+  fi
+  ! id "${SERVICE_USER}" >/dev/null 2>&1 || die "service account remains after removal"
+  ! getent group "${SERVICE_USER}" >/dev/null 2>&1 || die "service group remains after removal"
+}
+finalize_agent_removal_account() {
+  [[ $# -eq 2 && "$1" =~ ^[1-9][0-9]{0,9}$ && "$2" =~ ^[1-9][0-9]{0,9}$ ]] \
+    || die "usage: finalize-agent-removal-account <recorded-uid> <recorded-gid>"
+  local expected_uid="$1" expected_gid="$2" passwd_entry group_entry name _ uid gid home shell members other_primary_users
+  if server_residue_exists; then
+    passwd_entry="$(getent passwd "${SERVICE_USER}" || true)"
+    group_entry="$(getent group "${SERVICE_USER}" || true)"
+    [[ -n "${passwd_entry}" && -n "${group_entry}" ]] \
+      || die "protected Server residue exists but its shared service account is missing"
+    IFS=: read -r name _ uid gid _ home shell <<<"${passwd_entry}"
+    [[ "${name}" == "${SERVICE_USER}" && "${uid}" == "${expected_uid}" && "${gid}" == "${expected_gid}" ]] \
+      || die "protected Server service account no longer matches the recorded UID/GID"
+    IFS=: read -r name _ gid members <<<"${group_entry}"
+    [[ "${name}" == "${SERVICE_USER}" && "${gid}" == "${expected_gid}" ]] \
+      || die "protected Server service group no longer matches the recorded GID"
+    return 0
+  fi
+
+  local path other_users other_groups
+  for path in "${AGENT_UNIT}" "${AGENT_BINARY}" "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
+    "${SECURITY_SERVICE_UNIT}" \
+    "${SECURITY_TIMER_UNIT}" "${CONFIG_DIRECTORY}/agent.env" "${STATE_DIRECTORY}/agent.epoch" \
+    "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" \
+    "${SELECTOR_ORDER_FILE}" "${SECURITY_STATE_DIRECTORY}"; do
+    [[ ! -e "${path}" && ! -L "${path}" ]] || die "Agent business resource remains before account cleanup: ${path}"
+  done
+
+  passwd_entry="$(getent passwd "${SERVICE_USER}" || true)"
+  if [[ -n "${passwd_entry}" ]]; then
+    validate_removable_service_user
+    IFS=: read -r name _ uid gid _ home shell <<<"${passwd_entry}"
+    [[ "${name}" == "${SERVICE_USER}" && "${uid}" == "${expected_uid}" && "${gid}" == "${expected_gid}" ]] \
+      || die "service account does not match the recorded UID/GID"
+    userdel "${SERVICE_USER}" || die "service account removal failed; no success receipt will be sent"
+  else
+    other_users="$(getent passwd | awk -F: -v uid="${expected_uid}" '$3 == uid { print $1 }')"
+    [[ -z "${other_users}" ]] || die "recorded service UID now belongs to another account"
+  fi
+  id "${SERVICE_USER}" >/dev/null 2>&1 && die "service account remains after userdel"
+
+  group_entry="$(getent group "${SERVICE_USER}" || true)"
+  if [[ -n "${group_entry}" ]]; then
+    IFS=: read -r name _ gid members <<<"${group_entry}"
+    [[ "${name}" == "${SERVICE_USER}" && "${gid}" == "${expected_gid}" && -z "${members}" ]] \
+      || die "service group is shared or no longer matches the recorded GID"
+    other_primary_users="$(getent passwd | awk -F: -v gid="${expected_gid}" '$4 == gid { print $1 }')"
+    [[ -z "${other_primary_users}" ]] || die "service group is still a primary group for another account"
+    groupdel "${SERVICE_USER}" || die "service group removal failed; no success receipt will be sent"
+  else
+    other_groups="$(getent group | awk -F: -v gid="${expected_gid}" '$3 == gid { print $1 }')"
+    [[ -z "${other_groups}" ]] || die "recorded service GID now belongs to another group"
+  fi
+  ! getent group "${SERVICE_USER}" >/dev/null 2>&1 || die "service group remains after groupdel"
+  other_groups="$(getent group | awk -F: -v gid="${expected_gid}" '$3 == gid { print $1 }')"
+  [[ -z "${other_groups}" ]] || die "recorded service GID remains in use after groupdel"
+}
+recover_agent_removal() {
+  [[ $# -eq 0 ]] || die "usage: 404-probe-install recover-agent-removal"
+  local path
+  [[ ! -L "${AGENT_UPDATER_STATE}" ]] || die "Agent updater recovery state is a symlink: ${AGENT_UPDATER_STATE}"
+  for path in "${AGENT_REMOVAL_REQUEST_FILE}" "${AGENT_REMOVAL_WORKER_BINARY}"; do
+    [[ ! -L "${path}" ]] || die "Agent removal recovery path is a symlink: ${path}"
+  done
+  if [[ -e "${AGENT_REMOVAL_REQUEST_FILE}" ]]; then
+    [[ -f "${AGENT_REMOVAL_REQUEST_FILE}" && "$(stat -c '%U:%G:%a' "${AGENT_REMOVAL_REQUEST_FILE}")" == root:root:600 ]] \
+      || die "Agent removal recovery state is unsafe"
+    if [[ -x "${AGENT_REMOVAL_WORKER_BINARY}" ]]; then
+      systemctl reset-failed "${AGENT_REMOVAL_WORKER_UNIT##*/}" "${AGENT_REMOVAL_FINALIZER_UNIT##*/}" >/dev/null 2>&1 || true
+      if [[ -f "${AGENT_REMOVAL_WORKER_UNIT}" ]]; then
+        systemctl start "${AGENT_REMOVAL_WORKER_UNIT##*/}" || die "fixed receipt worker could not resume; state was preserved"
+      else
+        systemctl enable "${AGENT_REMOVAL_FINALIZER_UNIT##*/}" >/dev/null 2>&1 || true
+        systemctl start "${AGENT_REMOVAL_FINALIZER_UNIT##*/}" || die "fixed finalizer could not resume; state was preserved"
+      fi
+      return 0
+    fi
+    die "fixed removal executor is missing; preserve state and reinstall the same official version before retrying"
+  fi
+  for path in "${AGENT_UNIT}" "${AGENT_UPDATER_UNIT}" "${AGENT_BINARY}" \
+    "${CONFIG_DIRECTORY}/agent.env" "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" \
+    "${STATE_DIRECTORY}/agent.security-acks.json" "${SECURITY_STATE_DIRECTORY}"; do
+    [[ ! -e "${path}" && ! -L "${path}" ]] || die "business or protocol state remains; fixed finalizer must run first: ${path}"
+  done
+  if [[ -e "${AGENT_UPDATER_STATE}" || -e "${AGENT_REMOVAL_WORKER_UNIT}" \
+    || -e "${AGENT_REMOVAL_FINALIZER_UNIT}" || -e "${AGENT_REMOVAL_WORKER_BINARY}" ]]; then
+    [[ -x "${AGENT_REMOVAL_WORKER_BINARY}" ]] || die "recovery units remain but their fixed executor is missing"
+    "${AGENT_REMOVAL_WORKER_BINARY}" updater removal-finalize \
+      || die "fixed local finalizer could not clear its own recovery tail"
+    return 0
+  fi
+  if ! server_residue_exists; then
+    ! id "${SERVICE_USER}" >/dev/null 2>&1 || die "service account remains after Agent removal"
+    ! getent group "${SERVICE_USER}" >/dev/null 2>&1 || die "service group remains after Agent removal"
+    rm -f -- "${INSTALL_HELPER}"
+  fi
+  printf 'Agent removal recovery found no unfinished managed cleanup.\n'
+}
 enroll() {
   [[ $# -eq 1 ]] || die "usage: 404-probe-install enroll <agent-name>"
   local name="$1" output agent_id agent_token payload
   [[ -n "${name//[[:space:]]/}" && "${name}" != -* && "${name}" != *$'\n'* && "${name}" != *$'\r'* ]] \
     || die "Agent name must be non-empty, contain no newline, and not begin with a hyphen"
-  [[ -x "${SERVER_BINARY}" && -f "${SERVER_DATABASE}" && -f "${SERVER_UNIT}" ]] \
+  [[ -x "${SERVER_BINARY}" && -f "${SERVER_DATABASE}" && -f "$(business_unit server)" ]] \
     || die "a local 404-probe Server installation was not found"
   output="$(runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" agent add "${name}" --db "${SERVER_DATABASE}")" \
     || die "could not create Agent"
@@ -562,8 +1221,9 @@ selector_order() {
   [[ "${owner}" == root && "${permissions}" =~ ^[0-7]{3,4}$ ]] \
     || die "sing-box config must be root-owned with ordinary file permissions"
   (( (8#${permissions} & 022) == 0 )) || die "sing-box config must not be group- or world-writable"
-  [[ -x "${AGENT_BINARY}" && -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" ]] \
+  [[ -x "${AGENT_BINARY}" && -f "$(business_unit agent)" && ! -L "$(business_unit agent)" ]] \
     || die "a safe local 404-probe Agent installation was not found"
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_validate_agent_install; fi
   "${AGENT_BINARY}" selector-order extract --config "${config}" --output "${SELECTOR_ORDER_FILE}" \
     || die "could not extract selector order; only standard JSON with a top-level outbounds array is supported"
   [[ -f "${SELECTOR_ORDER_FILE}" && ! -L "${SELECTOR_ORDER_FILE}" ]] \
@@ -617,7 +1277,7 @@ preflight_uninstall_trees() {
   local role="$1" path
 	for path in "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}"; do validate_owned_tree "${path}"; done
   if [[ "${role}" == agent ]]; then
-    for path in "${AGENT_UPDATER_STATE}" "${SECURITY_STATE_DIRECTORY}" /run/404-probe; do validate_owned_tree "${path}"; done
+    for path in "${AGENT_UPDATER_STATE}" "${AGENT_REMOVAL_STATE_DIRECTORY}" "${SECURITY_STATE_DIRECTORY}" /run/404-probe; do validate_owned_tree "${path}"; done
   else
     for path in "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_LOCK_DIRECTORY}"; do validate_owned_tree "${path}"; done
   fi
@@ -625,16 +1285,32 @@ preflight_uninstall_trees() {
 uninstall() {
   [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
     || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
-  local role="$1" unit="404-probe-$1.service" unit_path binary_path
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_uninstall "$@"; return; fi
+  local role="$1" unit="404-probe-$1.service" unit_path binary_path removal_pending=0
   confirm_uninstall "${role}" "${2:-}"
   validate_removable_service_user
 	preflight_uninstall_trees "${role}"
+  if [[ "${role}" == agent && ( -e "${AGENT_REMOVAL_REQUEST_FILE}" || -L "${AGENT_REMOVAL_REQUEST_FILE}" ) ]]; then
+    [[ -d "${AGENT_REMOVAL_STATE_DIRECTORY}" && ! -L "${AGENT_REMOVAL_STATE_DIRECTORY}" \
+      && "$(stat -c '%U:%G:%a' "${AGENT_REMOVAL_STATE_DIRECTORY}")" == "root:root:700" \
+      && -f "${AGENT_REMOVAL_REQUEST_FILE}" && ! -L "${AGENT_REMOVAL_REQUEST_FILE}" \
+      && "$(stat -c '%U:%G:%a' "${AGENT_REMOVAL_REQUEST_FILE}")" == "root:root:600" ]] \
+      || die "Agent removal receipt state is unsafe; nothing was removed"
+    removal_pending=1
+  fi
   if [[ "${role}" == "server" ]]; then
     unit_path="${SERVER_UNIT}"; binary_path="${SERVER_BINARY}"
   else
     unit_path="${AGENT_UNIT}"; binary_path="${AGENT_BINARY}"
   fi
 	if [[ "${role}" == "agent" ]]; then
+	  if (( removal_pending == 0 )); then
+	    if systemctl is-active --quiet "${AGENT_REMOVAL_WORKER_UNIT##*/}" \
+	      || systemctl is-active --quiet "${AGENT_REMOVAL_FINALIZER_UNIT##*/}"; then
+	      die "Agent removal executor is active without a receipt request; run recover-agent-removal first"
+	    fi
+	    systemctl disable "${AGENT_REMOVAL_WORKER_UNIT##*/}" "${AGENT_REMOVAL_FINALIZER_UNIT##*/}" >/dev/null 2>&1 || true
+	  fi
 	  systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service >/dev/null 2>&1 || true
 	  systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true
 	  if systemctl is-active --quiet 404-probe-agent-updater.service; then
@@ -649,14 +1325,19 @@ uninstall() {
   if systemctl is-active --quiet "${unit}"; then
     die "${unit} is still active; nothing was removed"
   fi
-  rm -f -- "${unit_path}" "${binary_path}"
+  rm -f -- "${unit_path}"
+  rm -f -- "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
       "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${SELECTOR_ORDER_FILE}" \
 	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
 	  "/usr/local/bin/.404-probe-agent.bootstrap" "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
-	remove_owned_tree "${AGENT_UPDATER_STATE}"
+	if (( removal_pending == 0 )); then
+	  systemctl disable "${AGENT_REMOVAL_WORKER_UNIT##*/}" "${AGENT_REMOVAL_FINALIZER_UNIT##*/}" >/dev/null 2>&1 || true
+	  rm -f -- "${AGENT_REMOVAL_WORKER_UNIT}" "${AGENT_REMOVAL_FINALIZER_UNIT}" "${AGENT_REMOVAL_WORKER_BINARY}"
+	  remove_owned_tree "${AGENT_UPDATER_STATE}"
+	fi
 	remove_owned_tree "${SECURITY_STATE_DIRECTORY}"
 	remove_owned_tree /run/404-probe
   else
@@ -669,14 +1350,11 @@ uninstall() {
   fi
   rmdir --ignore-fail-on-non-empty "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" 2>/dev/null || true
   systemctl daemon-reload
-  if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" && ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" \
-    && ! -d "${AGENT_UPDATER_STATE}" && ! -d "${SECURITY_STATE_DIRECTORY}" ]]; then
-    if id "${SERVICE_USER}" >/dev/null 2>&1; then
-      userdel "${SERVICE_USER}" || die "managed files were removed but the service account could not be removed"
-    fi
-    getent group "${SERVICE_USER}" >/dev/null 2>&1 && groupdel "${SERVICE_USER}" || true
+    if ! server_residue_exists && [[ ! -e "${AGENT_UNIT}" && ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" \
+      && ! -d "${AGENT_UPDATER_STATE}" && ! -d "${SECURITY_STATE_DIRECTORY}" ]]; then
+      remove_service_account_for_uninstall
   fi
-	if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]]; then
+	if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]] && (( removal_pending == 0 )); then
 	  rm -f -- /usr/local/sbin/404-probe-install
 	fi
   printf 'Uninstalled %s and removed its managed data. Re-running the official version-pinned uninstall is safe.\n' "${role}"
@@ -710,7 +1388,9 @@ setup_security() {
   printf '404-probe local security audit is enabled.\n'
 }
 
+reject_deferred_command_on_host "${1:-}"
 require_root
+case "${1:-}" in setup-security|finalize-agent-removal-account|recover-agent-removal) reject_openrc_deferred "${1}" ;; esac
 case "${1:-}" in
   -h|--help|help) usage ;;
   enroll) shift; enroll "$@" ;;
@@ -718,6 +1398,8 @@ case "${1:-}" in
   selector-order) shift; selector_order "$@" ;;
   setup-security) shift; setup_security "$@" ;;
   uninstall) shift; uninstall "$@" ;;
+  finalize-agent-removal-account) shift; finalize_agent_removal_account "$@" ;;
+  recover-agent-removal) shift; recover_agent_removal "$@" ;;
   *) usage >&2; exit 2 ;;
 esac
 HELPER
@@ -750,8 +1432,13 @@ write_private_file() (
   trap 'rm -f -- "${temporary_file}"' EXIT
   chmod 0600 "${temporary_file}"
   printf '%s\n' "${value}" >"${temporary_file}"
-  chown "${SERVICE_USER}:${SERVICE_USER}" "${temporary_file}"
-  chmod 0400 "${temporary_file}"
+  if [[ "${INSTALL_INIT:-systemd}" == openrc && "${path}" != "${CONFIG_DIRECTORY}/control.token" && "${path}" != "${CONFIG_DIRECTORY}/web-password.hash" ]]; then
+    chown "root:${SERVICE_USER}" "${temporary_file}"
+    chmod 0640 "${temporary_file}"
+  else
+    chown "${SERVICE_USER}:${SERVICE_USER}" "${temporary_file}"
+    chmod 0400 "${temporary_file}"
+  fi
   mv -f -- "${temporary_file}" "${path}"
 )
 
@@ -792,6 +1479,7 @@ show_service_diagnostics() {
 
 wait_for_service() {
   local unit="$1"
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_wait "${unit#404-probe-}"; return; fi
   local attempts=20
   local service_state
   while (( attempts > 0 )); do
@@ -820,6 +1508,16 @@ wait_for_server_readiness() {
   local origin="${2:-http://127.0.0.1:8080}"
   local attempts=20
   local service_state status_code
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then
+    openrc_wait server
+    while (( attempts > 0 )); do
+      [[ -n "$(openrc_business_pids server)" ]] || die "Server exited before HTTP readiness"
+      status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --connect-timeout 1 --max-time 1 --request POST "${origin}/api/v1/agent/jobs/claim" || true)"
+      case "${status_code}" in 401) return ;; ""|000) ;; *) die "Server HTTP verification failed (expected HTTP 401, received ${status_code})" ;; esac
+      attempts=$((attempts-1)); (( attempts == 0 )) || sleep 0.5
+    done
+    die "Server application readiness timed out"
+  fi
   while (( attempts > 0 )); do
     service_state="$(systemctl is-active "${unit}" 2>/dev/null || true)"
     case "${service_state}" in
@@ -851,20 +1549,25 @@ wait_for_server_readiness() {
 }
 
 server_residue_exists() {
+  openrc_role_residue server && return 0
   local path
   for path in "${SERVER_UNIT}" "${SERVER_BINARY}" "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
     "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
-    "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"; do
+    "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_CANDIDATE}" "/usr/local/bin/.404-probe-server.previous" \
+    "${SERVER_UPGRADE_HELPER_CANDIDATE}" "${SERVER_UPGRADE_LOCK_DIRECTORY}" "${SERVER_UPGRADE_LOCK}"; do
     [[ ! -e "${path}" && ! -L "${path}" ]] || return 0
   done
   return 1
 }
 
 agent_residue_exists() {
+  openrc_role_residue agent && return 0
   local path
   for path in "${AGENT_UNIT}" "${AGENT_BINARY}" "${CONFIG_DIRECTORY}/agent.env" "${STATE_DIRECTORY}/agent.epoch" \
     "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${SELECTOR_ORDER_FILE}" \
-    "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_STATE}" "${AGENT_UPDATER_SOCKET}" "${SECURITY_SERVICE_UNIT}" \
+    "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_STATE}" "${AGENT_UPDATER_SOCKET}" "${AGENT_REMOVAL_WORKER_UNIT}" \
+    "${AGENT_REMOVAL_FINALIZER_UNIT}" \
+    "${AGENT_REMOVAL_WORKER_BINARY}" "${SECURITY_SERVICE_UNIT}" \
     "${SECURITY_TIMER_UNIT}" "${SECURITY_STATE_DIRECTORY}" /usr/local/bin/.404-probe-agent.bootstrap \
     /usr/local/bin/.404-probe-agent.candidate /usr/local/bin/.404-probe-agent.previous; do
     [[ ! -e "${path}" && ! -L "${path}" ]] || return 0
@@ -876,6 +1579,7 @@ install_server() {
   ! agent_residue_exists \
     || die "an Agent installation or stale Agent residue exists; run the current official uninstall agent command before switching roles"
   [[ ! -e "${SERVER_UNIT}" ]] || die "Server installation already exists; no files were changed"
+  ! openrc_role_residue server || die "OpenRC Server residue exists; refusing to overwrite it"
   [[ ! -e "${CONFIG_DIRECTORY}/server.env" && ! -e "${CONFIG_DIRECTORY}/control.token" && ! -e "${CONFIG_DIRECTORY}/web-password.hash" ]] \
     || die "existing Server configuration was found; refusing to overwrite it"
   [[ ! -e "${SERVER_DATABASE}" ]] || die "existing Server database was found; refusing to alter it"
@@ -936,6 +1640,12 @@ install_server() {
   if [[ "${web_origin}" == "http://127.0.0.1:8080" ]]; then
     insecure_option=" --web-allow-insecure-http"
   fi
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then
+    local openrc_insecure=0
+    [[ -z "${insecure_option}" ]] || openrc_insecure=1
+    install_openrc_business server "${openrc_insecure}"
+    wait_for_server_readiness 404-probe-server
+  else
   track_install_path "${SERVER_UNIT}"
   INSTALL_TRANSACTION_UNIT="404-probe-server.service"
   cat >"${SERVER_UNIT}" <<EOF
@@ -973,10 +1683,12 @@ EOF
   systemctl daemon-reload
   systemctl enable --now 404-probe-server.service
   wait_for_server_readiness 404-probe-server.service
+  fi
   commit_install_transaction
 
   note "404-probe Server is installed and running."
-  systemctl --no-pager --full status 404-probe-server.service || true
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then rc-service 404-probe-server status || true
+  else systemctl --no-pager --full status 404-probe-server.service || true; fi
   printf '\nLocal listen URL:  http://127.0.0.1:8080\n'
   printf 'Web login URL:    %s\n' "${web_origin}"
   printf 'Tunnel origin:    http://127.0.0.1:8080\n'
@@ -1063,6 +1775,102 @@ ReadWritePaths=${AGENT_UPDATER_STATE} /usr/local/bin /run/404-probe
 WantedBy=multi-user.target
 EOF
   chmod 0644 "${AGENT_UPDATER_UNIT}"
+}
+
+install_agent_removal_worker_unit() {
+  local expected
+  expected="$(cat <<'UNIT'
+[Unit]
+Description=404-probe Agent removal receipt worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=30min
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/bin/.404-probe-agent-removal-worker updater removal-worker
+Restart=on-failure
+RestartSec=30s
+TimeoutStartSec=5min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/404-probe-updater /etc/systemd/system
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+)"
+  if [[ -e "${AGENT_REMOVAL_WORKER_UNIT}" || -L "${AGENT_REMOVAL_WORKER_UNIT}" ]]; then
+    [[ -f "${AGENT_REMOVAL_WORKER_UNIT}" && ! -L "${AGENT_REMOVAL_WORKER_UNIT}" \
+      && "$(stat -c '%U:%G:%a' "${AGENT_REMOVAL_WORKER_UNIT}")" == "root:root:644" \
+      && "$(<"${AGENT_REMOVAL_WORKER_UNIT}")" == "${expected}" ]] \
+      || die "existing Agent removal worker unit is not the fixed managed unit"
+    return
+  fi
+  printf '%s\n' "${expected}" >"${AGENT_REMOVAL_WORKER_UNIT}"
+  chmod 0644 "${AGENT_REMOVAL_WORKER_UNIT}"
+}
+
+install_agent_removal_finalizer_unit() {
+  local expected
+  expected="$(cat <<'UNIT'
+[Unit]
+Description=404-probe fixed local Agent removal finalizer
+After=local-fs.target
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/bin/.404-probe-agent-removal-worker updater removal-finalize
+Restart=on-failure
+RestartSec=30s
+TimeoutStartSec=10min
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateNetwork=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/etc /var/lib /run /usr/local/bin /usr/local/sbin
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+)"
+  if [[ -e "${AGENT_REMOVAL_FINALIZER_UNIT}" || -L "${AGENT_REMOVAL_FINALIZER_UNIT}" ]]; then
+    [[ -f "${AGENT_REMOVAL_FINALIZER_UNIT}" && ! -L "${AGENT_REMOVAL_FINALIZER_UNIT}" \
+      && "$(stat -c '%U:%G:%a' "${AGENT_REMOVAL_FINALIZER_UNIT}")" == "root:root:644" \
+      && "$(<"${AGENT_REMOVAL_FINALIZER_UNIT}")" == "${expected}" ]] \
+      || die "existing Agent removal finalizer unit is not the fixed managed unit"
+    return
+  fi
+  printf '%s\n' "${expected}" >"${AGENT_REMOVAL_FINALIZER_UNIT}"
+  chmod 0644 "${AGENT_REMOVAL_FINALIZER_UNIT}"
 }
 
 render_agent_unit() {
@@ -1154,6 +1962,8 @@ EOF
 }
 
 setup_security_existing() (
+  detect_install_platform
+  reject_openrc_deferred setup-security
   require_root_linux_systemd
   [[ $# -eq 0 ]] || die "usage: 404-probe-install setup-security"
   local backup_directory="" environment_candidate="" unit_candidate="" helper_candidate="" version_json expected_version item key count path expected
@@ -1284,19 +2094,24 @@ setup_selector_order_existing() (
   local config="$1" size owner permissions version_json expected_version backup_directory helper_candidate="" metadata_existed=0 helper_existed=0 committed=0
   [[ -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" && "$(stat -c '%U:%G:%a' "${AGENT_BINARY}")" == "root:root:755" ]] \
     || die "a safe existing Agent binary was not found"
-  [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && "$(stat -c '%U:%G:%a' "${AGENT_UNIT}")" == "root:root:644" ]] \
-    || die "a safe existing Agent unit was not found"
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_validate_agent_install
+  else
+    [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && "$(stat -c '%U:%G:%a' "${AGENT_UNIT}")" == "root:root:644" ]] \
+      || die "a safe existing Agent unit was not found"
+  fi
   [[ -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
     || die "a safe existing Agent environment was not found"
   validate_service_user
   [[ -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" \
     && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}")" == "root:${SERVICE_USER}:750" ]] \
     || die "selector metadata directory must be root:${SERVICE_USER} mode 0750"
+  if [[ "${INSTALL_INIT:-systemd}" != openrc ]]; then
   grep -Fxq "User=${SERVICE_USER}" "${AGENT_UNIT}" \
     && grep -Fxq "Group=${SERVICE_USER}" "${AGENT_UNIT}" \
     && grep -Fq "ExecStart=${AGENT_BINARY} " "${AGENT_UNIT}" \
     && grep -Fxq "EnvironmentFile=${CONFIG_DIRECTORY}/agent.env" "${AGENT_UNIT}" \
     || die "existing Agent unit is not a supported 404-probe installation"
+  fi
   expected_version="$(target_version)"
   version_json="$("${AGENT_BINARY}" version --json)" || die "could not verify the installed Agent build"
   grep -Fq "\"version\":\"${expected_version}\"" <<<"${version_json}" \
@@ -1360,6 +2175,7 @@ setup_selector_order_existing() (
 )
 
 bootstrap_existing_agent() (
+  reject_openrc_deferred bootstrap-agent-updater
   local candidate="/usr/local/bin/.404-probe-agent.bootstrap"
   local previous="/usr/local/bin/.404-probe-agent.previous"
   local backup_directory server_url agent_token insecure_option rollback_active=0 helper_existed=0
@@ -1379,6 +2195,9 @@ bootstrap_existing_agent() (
   fi
   [[ ! -e "${AGENT_UPDATER_UNIT}" && ! -e "${AGENT_UPDATER_SOCKET}" && ! -e "${AGENT_UPDATER_STATE}" ]] \
     || die "existing updater installation is partial or unmanaged; no files were changed"
+  [[ ! -e "${AGENT_REMOVAL_WORKER_UNIT}" && ! -e "${AGENT_REMOVAL_FINALIZER_UNIT}" \
+    && ! -e "${AGENT_REMOVAL_WORKER_BINARY}" ]] \
+    || die "existing Agent removal worker residue is partial or unmanaged; no files were changed"
   grep -Fxq "User=${SERVICE_USER}" "${AGENT_UNIT}" \
     && grep -Fq "ExecStart=${AGENT_BINARY} " "${AGENT_UNIT}" \
     && grep -Fxq "EnvironmentFile=${CONFIG_DIRECTORY}/agent.env" "${AGENT_UNIT}" \
@@ -1397,7 +2216,7 @@ bootstrap_existing_agent() (
   if (( helper_existed != 0 )); then
     cp --preserve=mode,ownership,timestamps -- "${INSTALL_HELPER}" "${backup_directory}/install-helper"
   fi
-  trap 'status=$?; if (( rollback_active != 0 )); then systemctl stop 404-probe-agent.service >/dev/null 2>&1 || true; systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true; systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true; rm -f -- "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}"; rm -rf -- "${AGENT_UPDATER_STATE}"; if [[ -f "${previous}" && ! -L "${previous}" ]]; then mv -f -- "${previous}" "${AGENT_BINARY}"; fi; cp --preserve=mode,ownership,timestamps -- "${backup_directory}/agent.service" "${AGENT_UNIT}"; if (( helper_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/install-helper" "${INSTALL_HELPER}"; else rm -f -- "${INSTALL_HELPER}"; fi; systemctl daemon-reload >/dev/null 2>&1 || true; systemctl restart 404-probe-agent.service >/dev/null 2>&1 || true; fi; rm -f -- "${candidate}"; rm -rf -- "${backup_directory}"; exit "${status}"' EXIT HUP INT TERM
+  trap 'status=$?; if (( rollback_active != 0 )); then systemctl stop 404-probe-agent.service >/dev/null 2>&1 || true; systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true; systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true; rm -f -- "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" "${AGENT_REMOVAL_WORKER_UNIT}" "${AGENT_REMOVAL_FINALIZER_UNIT}" "${AGENT_REMOVAL_WORKER_BINARY}"; rm -rf -- "${AGENT_UPDATER_STATE}"; if [[ -f "${previous}" && ! -L "${previous}" ]]; then mv -f -- "${previous}" "${AGENT_BINARY}"; fi; cp --preserve=mode,ownership,timestamps -- "${backup_directory}/agent.service" "${AGENT_UNIT}"; if (( helper_existed != 0 )); then cp --preserve=mode,ownership,timestamps -- "${backup_directory}/install-helper" "${INSTALL_HELPER}"; else rm -f -- "${INSTALL_HELPER}"; fi; systemctl daemon-reload >/dev/null 2>&1 || true; systemctl restart 404-probe-agent.service >/dev/null 2>&1 || true; fi; rm -f -- "${candidate}"; rm -rf -- "${backup_directory}"; exit "${status}"' EXIT HUP INT TERM
   systemctl stop 404-probe-agent.service || die "could not stop existing Agent"
   rollback_active=1
   ln -- "${AGENT_BINARY}" "${previous}"
@@ -1407,6 +2226,8 @@ bootstrap_existing_agent() (
   render_agent_unit "${insecure_option}" >"${AGENT_UNIT}"
   chmod 0644 "${AGENT_UNIT}"
   install_agent_updater_unit
+  install_agent_removal_worker_unit
+  install_agent_removal_finalizer_unit
   systemctl daemon-reload
   systemctl enable --now 404-probe-agent-updater.service
   wait_for_service 404-probe-agent-updater.service
@@ -1424,9 +2245,11 @@ bootstrap_existing_agent() (
 )
 
 install_agent() {
+  ! openrc_role_residue agent || die "OpenRC Agent already exists; Alpine automatic upgrade is deferred to v1.1"
   ! server_residue_exists \
     || die "a Server installation or stale Server residue exists; run the current official uninstall server command before switching roles"
-  if [[ -e "${AGENT_UNIT}" || -e "${CONFIG_DIRECTORY}/agent.env" || -e "${AGENT_BINARY}" ]]; then
+  if [[ -e "${AGENT_UNIT}" || -e "${CONFIG_DIRECTORY}/agent.env" || -e "${AGENT_BINARY}" \
+    || -e "${AGENT_REMOVAL_WORKER_UNIT}" || -e "${AGENT_REMOVAL_FINALIZER_UNIT}" || -e "${AGENT_REMOVAL_WORKER_BINARY}" ]]; then
     [[ -e "${AGENT_UNIT}" && -e "${CONFIG_DIRECTORY}/agent.env" && -e "${AGENT_BINARY}" ]] \
       || die "conflicting partial Agent installation found; no files were changed"
     bootstrap_existing_agent
@@ -1455,6 +2278,7 @@ install_agent() {
   verify_agent_authentication "${server_url}" "${agent_token}"
 
   begin_install_transaction agent
+  prepare_openrc_agent_sbin
   create_service_user
   prepare_directories
   if [[ ! -e "${INSTALL_HELPER}" ]]; then
@@ -1507,8 +2331,15 @@ PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"
   if [[ "${server_url}" == http://* ]]; then
     insecure_option=" --allow-insecure-http"
   fi
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then
+    local openrc_insecure=0
+    [[ -z "${insecure_option}" ]] || openrc_insecure=1
+    install_openrc_business agent "${openrc_insecure}"
+  else
   track_install_path "${AGENT_UNIT}"
   track_install_path "${AGENT_UPDATER_UNIT}"
+	track_install_path "${AGENT_REMOVAL_WORKER_UNIT}"
+	track_install_path "${AGENT_REMOVAL_FINALIZER_UNIT}"
 	track_install_path "${SECURITY_SERVICE_UNIT}"
 	track_install_path "${SECURITY_TIMER_UNIT}"
   [[ -d "${AGENT_UPDATER_STATE}" ]] || INSTALL_TRANSACTION_UPDATER_STATE_CREATED=1
@@ -1517,6 +2348,8 @@ PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"
   render_agent_unit "${insecure_option}" >"${AGENT_UNIT}"
   chmod 0644 "${AGENT_UNIT}"
   install_agent_updater_unit
+	install_agent_removal_worker_unit
+	install_agent_removal_finalizer_unit
 	install_security_collector
   systemctl daemon-reload
 	systemctl start 404-probe-security-collect.service
@@ -1525,13 +2358,15 @@ PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"
   wait_for_service 404-probe-agent-updater.service
   systemctl enable --now 404-probe-agent.service
   wait_for_service 404-probe-agent.service
+  fi
 
   verify_agent_authentication "${server_url}" "${agent_token}"
   unset agent_token
   commit_install_transaction
 
   note "404-probe Agent is installed, running, and authenticated to the Server."
-  systemctl --no-pager --full status 404-probe-agent.service || true
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then rc-service 404-probe-agent status || true
+  else systemctl --no-pager --full status 404-probe-agent.service || true; fi
 }
 
 install_agent_command() {
@@ -1548,7 +2383,7 @@ enroll_agent() {
   [[ -n "${agent_name//[[:space:]]/}" && "${agent_name}" != *$'\n'* && "${agent_name}" != *$'\r'* ]] \
     || die "Agent name must not be empty or contain a newline"
   [[ "${agent_name}" != -* ]] || die "Agent name must not begin with a hyphen"
-  [[ -x "${SERVER_BINARY}" && -f "${SERVER_DATABASE}" && -f "${SERVER_UNIT}" ]] \
+  [[ -x "${SERVER_BINARY}" && -f "${SERVER_DATABASE}" && -f "$(business_unit server)" ]] \
     || die "a local 404-probe Server installation was not found"
 
   local output agent_id agent_token payload enrollment
@@ -1606,7 +2441,7 @@ preflight_uninstall_trees() {
   local role="$1" path
 	for path in "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}"; do validate_owned_tree "${path}"; done
   if [[ "${role}" == agent ]]; then
-    for path in "${AGENT_UPDATER_STATE}" "${SECURITY_STATE_DIRECTORY}" /run/404-probe; do validate_owned_tree "${path}"; done
+    for path in "${AGENT_UPDATER_STATE}" "${AGENT_REMOVAL_STATE_DIRECTORY}" "${SECURITY_STATE_DIRECTORY}" /run/404-probe; do validate_owned_tree "${path}"; done
   else
     for path in "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_LOCK_DIRECTORY}"; do validate_owned_tree "${path}"; done
   fi
@@ -1616,12 +2451,21 @@ uninstall_role() {
   require_root_linux_systemd
   [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
     || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
+  if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_uninstall "$@"; return; fi
   local role="$1"
   local unit="404-probe-${role}.service"
-  local unit_path binary_path
+  local unit_path binary_path removal_pending=0
   confirm_uninstall "${role}" "${2:-}"
   id "${SERVICE_USER}" >/dev/null 2>&1 && validate_service_user
   preflight_uninstall_trees "${role}"
+  if [[ "${role}" == agent && ( -e "${AGENT_REMOVAL_REQUEST_FILE}" || -L "${AGENT_REMOVAL_REQUEST_FILE}" ) ]]; then
+    [[ -d "${AGENT_REMOVAL_STATE_DIRECTORY}" && ! -L "${AGENT_REMOVAL_STATE_DIRECTORY}" \
+      && "$(stat -c '%U:%G:%a' "${AGENT_REMOVAL_STATE_DIRECTORY}")" == "root:root:700" \
+      && -f "${AGENT_REMOVAL_REQUEST_FILE}" && ! -L "${AGENT_REMOVAL_REQUEST_FILE}" \
+      && "$(stat -c '%U:%G:%a' "${AGENT_REMOVAL_REQUEST_FILE}")" == "root:root:600" ]] \
+      || die "Agent removal receipt state is unsafe; nothing was removed"
+    removal_pending=1
+  fi
   if [[ "${role}" == "server" ]]; then
     unit_path="${SERVER_UNIT}"
     binary_path="${SERVER_BINARY}"
@@ -1630,6 +2474,13 @@ uninstall_role() {
     binary_path="${AGENT_BINARY}"
   fi
   if [[ "${role}" == "agent" ]]; then
+	if (( removal_pending == 0 )); then
+	  if systemctl is-active --quiet "${AGENT_REMOVAL_WORKER_UNIT##*/}" \
+	    || systemctl is-active --quiet "${AGENT_REMOVAL_FINALIZER_UNIT##*/}"; then
+	    die "Agent removal executor is active without a receipt request; run recover-agent-removal first"
+	  fi
+	  systemctl disable "${AGENT_REMOVAL_WORKER_UNIT##*/}" "${AGENT_REMOVAL_FINALIZER_UNIT##*/}" >/dev/null 2>&1 || true
+	fi
 	if systemctl is-active --quiet 404-probe-security-collect.timer || systemctl is-active --quiet 404-probe-security-collect.service; then
 	  systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service || die "could not stop security collector; nothing was removed"
 	fi
@@ -1646,14 +2497,19 @@ uninstall_role() {
   if systemctl is-active --quiet "${unit}"; then
     die "${unit} is still active; nothing was removed"
   fi
-  rm -f -- "${unit_path}" "${binary_path}"
+  rm -f -- "${unit_path}"
+  rm -f -- "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
       "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" \
       "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
       "/usr/local/bin/.404-probe-agent.bootstrap" "/usr/local/bin/.404-probe-agent.candidate" "/usr/local/bin/.404-probe-agent.previous"
-    remove_owned_tree "${AGENT_UPDATER_STATE}"
+	if (( removal_pending == 0 )); then
+	  systemctl disable "${AGENT_REMOVAL_WORKER_UNIT##*/}" "${AGENT_REMOVAL_FINALIZER_UNIT##*/}" >/dev/null 2>&1 || true
+	  rm -f -- "${AGENT_REMOVAL_WORKER_UNIT}" "${AGENT_REMOVAL_FINALIZER_UNIT}" "${AGENT_REMOVAL_WORKER_BINARY}"
+	  remove_owned_tree "${AGENT_UPDATER_STATE}"
+	fi
     remove_owned_tree "${SECURITY_STATE_DIRECTORY}"
     remove_owned_tree /run/404-probe
     rm -f -- "${SELECTOR_ORDER_FILE}"
@@ -1667,15 +2523,11 @@ uninstall_role() {
   fi
   rmdir --ignore-fail-on-non-empty "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" 2>/dev/null || true
   systemctl daemon-reload
-  if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" && ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" \
+  if ! server_residue_exists && [[ ! -e "${AGENT_UNIT}" && ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" \
     && ! -d "${AGENT_UPDATER_STATE}" && ! -d "${SECURITY_STATE_DIRECTORY}" ]]; then
-    if id "${SERVICE_USER}" >/dev/null 2>&1; then
-      validate_service_user
-      userdel "${SERVICE_USER}" || die "managed files were removed but the service account could not be removed"
-    fi
-    getent group "${SERVICE_USER}" >/dev/null 2>&1 && groupdel "${SERVICE_USER}" || true
+    remove_service_account_for_uninstall
   fi
-	if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]]; then
+	if ! server_residue_exists && [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]] && (( removal_pending == 0 )); then
 	  rm -f -- "${INSTALL_HELPER}"
 	fi
   note "Uninstalled ${role} and removed its managed data. Re-running the official version-pinned uninstall is safe."
@@ -1907,6 +2759,7 @@ verify_legacy_server_upgrade_backup() {
 }
 
 restore_server_upgrade() {
+  reject_openrc_deferred Server-upgrade-recovery
   local phase active enabled target restore_temporary helper_restore_temporary helper_state legacy_backup=0
   [[ -f "${SERVER_UPGRADE_STATE}" && ! -L "${SERVER_UPGRADE_STATE}" ]] || return 1
   phase="$(server_upgrade_state_value phase)" || return 1
@@ -1981,6 +2834,7 @@ server_upgrade_trap() {
 }
 
 upgrade_existing_server() (
+  reject_openrc_deferred Server-upgrade
   local target current comparison active=0 enabled=0 helper_existed=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
   if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
     [[ -d "${SERVER_UPGRADE_LOCK_DIRECTORY}" && ! -L "${SERVER_UPGRADE_LOCK_DIRECTORY}" \
@@ -2153,7 +3007,7 @@ interactive_install() {
   require_root_linux_systemd
   local choice
   cat >/dev/tty <<'EOF'
-Install 404-probe V0.9.2
+Install 404-probe v1.0.0
 
   1) Server
   2) Agent
@@ -2171,10 +3025,12 @@ EOF
 install_or_upgrade() {
   require_root_linux_systemd
   if server_residue_exists; then
+    reject_openrc_deferred Server-upgrade
     upgrade_existing_server
     return
   fi
   if agent_residue_exists; then
+    reject_openrc_deferred Agent-upgrade
     [[ -f "${AGENT_UNIT}" && ! -L "${AGENT_UNIT}" && -f "${AGENT_BINARY}" && ! -L "${AGENT_BINARY}" \
       && -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" ]] \
       || die "existing Agent installation is incomplete or unsupported; no files were changed"
@@ -2189,6 +3045,9 @@ install_or_upgrade() {
 
 main() {
   case "${1:-}" in -h|--help|help) usage; return ;; esac
+  reject_deferred_command_on_host "${1:-}"
+  require_root_linux_systemd
+  case "${1:-}" in setup-security) reject_openrc_deferred setup-security ;; esac
   if [[ -z "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" && -z "${PROBE_404_INSTALLER_BOOTSTRAPPED:-}" ]]; then
     bootstrap_latest_installer "$@"
     exit $?

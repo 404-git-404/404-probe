@@ -188,6 +188,16 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 			t.Fatalf("drop %s: %v", name, err)
 		}
 	}
+	for _, name := range []string{"idx_probe_jobs_scheduled_finished_retention", "idx_probe_jobs_scheduled_expired_retention"} {
+		if _, err := db.Exec(`DROP INDEX ` + name); err != nil {
+			db.Close()
+			t.Fatalf("drop %s: %v", name, err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE probe_jobs DROP COLUMN origin`); err != nil {
+		db.Close()
+		t.Fatalf("drop origin for v3 fixture: %v", err)
+	}
 	for _, name := range []string{"idx_probe_jobs_one_active_probe_lease", "idx_probe_jobs_one_active_selector_lease"} {
 		if _, err := db.Exec(`DROP INDEX ` + name); err != nil {
 			db.Close()
@@ -198,7 +208,7 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 		db.Close()
 		t.Fatal(err)
 	}
-	for _, table := range []string{"agent_google_status", "agent_google_status_capabilities"} {
+	for _, table := range []string{"agent_country_code_lookups", "agent_removal_receipts", "agent_removal_operations", "agent_management_capabilities", "agent_google_status", "agent_google_status_capabilities"} {
 		if _, err := db.Exec(`DROP TABLE ` + table); err != nil {
 			db.Close()
 			t.Fatal(err)
@@ -247,6 +257,15 @@ func prepareV3QueryFixture(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN country_code`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	dropQualityFixtureSchema(t, db)
+	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN network_counters_json`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN network_counters_version`); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}

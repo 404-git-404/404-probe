@@ -183,14 +183,86 @@ func (f fixtureGoogleFetcher) fetch(_ context.Context, target googleTarget) (goo
 func TestGoogleStatusServiceFailuresRemainIndependent(t *testing.T) {
 	executor := &GoogleStatusExecutor{fetcher: fixtureGoogleFetcher{
 		googleYouTube: {htmlResponse(200, "https://www.youtube.com/premium", `{"INNERTUBE_CONTEXT_GL":"JP"}`), ""},
-		googleSearch:  {googleHTTPResponse{}, "timeout"},
-		googleSignIn:  {htmlResponse(200, "https://accounts.google.com/signin/identifier", `<title>Sign in - Google Accounts</title><i id="identifierId" name="identifier">identifierNext`), ""},
-		googleGemini:  {htmlResponse(200, "https://gemini.google.com/", `<title>Google Gemini</title>45631641,null,true`), ""},
+		googleGemini:  {googleHTTPResponse{}, "timeout"},
 	}}
 	job := protocol.Job{ProbeType: protocol.ProbeTypeGoogleStatus, Config: protocol.ProbeConfig{GoogleStatus: &protocol.GoogleStatusConfig{}}}
 	execution, err := executor.Execute(context.Background(), job)
-	if err != nil || !execution.Success || execution.Result.GoogleStatus.Search.Status != protocol.GoogleSearchUnknown || execution.Result.GoogleStatus.Search.Error.Category != "timeout" || execution.Result.GoogleStatus.YouTube.Region != "JP" || execution.Result.GoogleStatus.SignIn.Status != protocol.GoogleSignInReachable || execution.Result.GoogleStatus.Gemini.Status != protocol.GeminiAvailable {
+	if err != nil || !execution.Success || execution.Result.GoogleStatus.Gemini.Status != protocol.GeminiUnknown || execution.Result.GoogleStatus.Gemini.Error.Category != "" || execution.Result.GoogleStatus.YouTube.Region != "JP" || execution.Result.GoogleStatus.Search.Status != protocol.GoogleSearchUnknown || execution.Result.GoogleStatus.SignIn.Status != protocol.GoogleSignInUnknown || execution.Result.GoogleStatus.Search.Error.Category != "" || execution.Result.GoogleStatus.SignIn.Error.Category != "" {
 		t.Fatalf("execution=%+v err=%v", execution, err)
+	}
+}
+
+type recordingGoogleFetcher struct {
+	calls    []googleTarget
+	category string
+}
+
+func (f *recordingGoogleFetcher) fetch(ctx context.Context, target googleTarget) (googleHTTPResponse, string) {
+	f.calls = append(f.calls, target)
+	if ctx.Err() != nil {
+		return googleHTTPResponse{}, "canceled"
+	}
+	if f.category != "" {
+		return googleHTTPResponse{}, f.category
+	}
+	if target.service == googleYouTube {
+		return htmlResponse(200, target.url, `{"INNERTUBE_CONTEXT_GL":"JP"}`), ""
+	}
+	return htmlResponse(200, target.url, `<title>Google Gemini</title>45631641,null,true`), ""
+}
+
+func TestGoogleStatusExecutorOnlyRetainedTargets(t *testing.T) {
+	for _, mode := range []string{"success", "failure", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			fetcher := &recordingGoogleFetcher{}
+			if mode == "failure" {
+				fetcher.category = "timeout"
+			}
+			if mode == "canceled" {
+				cancel()
+			}
+			executor := &GoogleStatusExecutor{fetcher: fetcher}
+			job := protocol.Job{ProbeType: protocol.ProbeTypeGoogleStatus, Config: protocol.ProbeConfig{GoogleStatus: &protocol.GoogleStatusConfig{}}}
+			execution, err := executor.Execute(ctx, job)
+			if err != nil || !execution.Success || execution.Result.GoogleStatus.Validate() != nil {
+				t.Fatalf("execution=%+v err=%v", execution, err)
+			}
+			if len(fetcher.calls) != 1 || fetcher.calls[0].service != googleYouTube {
+				t.Fatalf("targets=%+v", fetcher.calls)
+			}
+			if fetcher.calls[0].url != "https://www.youtube.com/premium" {
+				t.Fatalf("URLs=%+v", fetcher.calls)
+			}
+			result := execution.Result.GoogleStatus
+			if result.Search.Status != protocol.GoogleSearchUnknown || result.SignIn.Status != protocol.GoogleSignInUnknown || result.Gemini.Status != protocol.GeminiUnknown || result.Search.Error.Category != "" || result.SignIn.Error.Category != "" || result.Gemini.Error.Category != "" {
+				t.Fatalf("compatibility slots=%+v", result)
+			}
+		})
+	}
+}
+
+func TestGoogleStatusExecutorRetainedRedirectChainOnly(t *testing.T) {
+	var hosts []string
+	transport := googleRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		hosts = append(hosts, request.URL.Hostname())
+		if request.URL.Hostname() != "www.youtube.com" {
+			t.Fatalf("removed target requested: %s", request.URL)
+		}
+		if request.URL.Path == "/premium" {
+			return &http.Response{StatusCode: 302, Request: request, Header: http.Header{"Location": []string{"https://www.youtube.com/fixture"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		body := `{"INNERTUBE_CONTEXT_GL":"JP"}`
+		return &http.Response{StatusCode: 200, Request: request, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	executor := &GoogleStatusExecutor{fetcher: googleNetworkFetcher{transport: transport}}
+	execution, err := executor.Execute(context.Background(), protocol.Job{ProbeType: protocol.ProbeTypeGoogleStatus, Config: protocol.ProbeConfig{GoogleStatus: &protocol.GoogleStatusConfig{}}})
+	if err != nil || execution.Result.GoogleStatus.Validate() != nil || execution.Result.GoogleStatus.HasRetainedUnknown() {
+		t.Fatalf("execution=%+v err=%v", execution, err)
+	}
+	if strings.Join(hosts, "|") != "www.youtube.com|www.youtube.com" {
+		t.Fatalf("redirect targets=%v", hosts)
 	}
 }
 

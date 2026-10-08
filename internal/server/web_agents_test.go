@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 )
 
@@ -92,6 +93,45 @@ func TestWebAgentsPaginationFilteringAndCursorBinding(t *testing.T) {
 		"/api/v1/web/agents?status=online&cursor="+*first.NextCursor)
 	if response.Code != http.StatusBadRequest || jobErrorCode(t, response) != "invalid_cursor" {
 		t.Fatalf("filter-bound cursor status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWebAgentDetailShowsManagementCapabilitiesAndLegacyUpgradeGate(t *testing.T) {
+	app, store, now := newWebAgentTestApp(t)
+	defer store.Close()
+	processControlAgentReport(t, store, controlAgentA, now)
+
+	legacy := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/agents/"+controlAgentA)
+	if legacy.Code != http.StatusOK {
+		t.Fatalf("legacy detail status=%d body=%s", legacy.Code, legacy.Body.String())
+	}
+	var detail webAgentDetailView
+	if err := json.Unmarshal(legacy.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Management.RemoteRemoval || detail.Management.CountryCodeLookup {
+		t.Fatalf("legacy Agent must not advertise new management features: %+v", detail.Management)
+	}
+
+	report := protocol.Report{
+		AgentID: controlAgentA, Epoch: 1, SessionID: "session", Sequence: 2, CollectedAt: now.Add(time.Second).UnixMilli(),
+		Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 11,
+		CPUPercent: 5, Load1: 1, Load5: 2, Load15: 3, RAMUsed: 10, RAMTotal: 20, RAMPercent: 50,
+		SwapUsed: 1, SwapTotal: 2, SwapPercent: 50, DiskUsed: 30, DiskTotal: 60, DiskPercent: 50,
+		Management: &protocol.AgentManagementCapabilities{RemoteRemoval: true, CountryCodeLookup: true}, RXBytes: 110, TXBytes: 220,
+	}
+	if _, accepted, reason, err := store.ProcessReport(context.Background(), controlAgentA, report, now.Add(time.Second)); err != nil || !accepted {
+		t.Fatalf("capable report accepted=%t reason=%q err=%v", accepted, reason, err)
+	}
+	current := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/agents/"+controlAgentA)
+	if current.Code != http.StatusOK {
+		t.Fatalf("current detail status=%d body=%s", current.Code, current.Body.String())
+	}
+	if err := json.Unmarshal(current.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if !detail.Management.RemoteRemoval || !detail.Management.CountryCodeLookup {
+		t.Fatalf("negotiated capabilities missing from detail: %+v", detail.Management)
 	}
 }
 
@@ -189,7 +229,11 @@ func TestWebAgentLegacyRoutesAndDashboardUseOnlyWebReadSurface(t *testing.T) {
 
 	for _, path := range []string{"/", "/history.html", "/app.js", "/history.js", "/session.js"} {
 		response := webAgentResponse(t, app, http.MethodGet, path)
-		if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		cache := "no-store"
+		if strings.HasSuffix(path, ".js") {
+			cache = "private, no-cache"
+		}
+		if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != cache {
 			t.Fatalf("asset=%q status=%d cache=%q", path, response.Code, response.Header().Get("Cache-Control"))
 		}
 		body := response.Body.String()
@@ -200,7 +244,7 @@ func TestWebAgentLegacyRoutesAndDashboardUseOnlyWebReadSurface(t *testing.T) {
 		if path == "/app.js" && (!strings.Contains(body, "/api/v1/web/agents") || !strings.Contains(body, "/api/v1/web/events")) {
 			t.Fatalf("dashboard does not use Web Agent API: %s", body)
 		}
-		if (path == "/" || path == "/history.html") && (!strings.Contains(body, "/session.js") || !strings.Contains(body, "id=\"logout\"")) {
+		if (path == "/" || path == "/history.html") && (!strings.Contains(body, app.staticAssets.fingerprints["session.js"]) || !strings.Contains(body, "id=\"logout\"")) {
 			t.Fatalf("page=%q missing logout foundation: %s", path, body)
 		}
 	}

@@ -15,16 +15,17 @@ import (
 
 const (
 	ProtocolVersion = 1
-	DefaultSocket   = "/run/404-probe/agent-updater.sock"
 	maxIPCBytes     = 8 << 10
 )
 
 type Action string
 
 const (
-	ActionStart   Action = "start"
-	ActionStatus  Action = "status"
-	ActionHealthy Action = "healthy"
+	ActionStart        Action = "start"
+	ActionStatus       Action = "status"
+	ActionHealthy      Action = "healthy"
+	ActionCapabilities Action = "capabilities"
+	ActionRemove       Action = "remove"
 )
 
 type Request struct {
@@ -32,14 +33,28 @@ type Request struct {
 	Action          Action `json:"action"`
 	OperationID     string `json:"operation_id"`
 	TargetVersion   string `json:"target_version"`
+	ReceiptToken    string `json:"receipt_token,omitempty"`
 }
 
 func (r Request) Validate() error {
-	if r.ProtocolVersion != ProtocolVersion || !validOperationID(r.OperationID) || !buildinfo.IsCanonicalVersion(r.TargetVersion) {
+	if r.ProtocolVersion != ProtocolVersion {
 		return errors.New("invalid updater request")
 	}
 	switch r.Action {
+	case ActionCapabilities:
+		if r.OperationID != "" || r.TargetVersion != "" || r.ReceiptToken != "" {
+			return errors.New("invalid updater capability request")
+		}
+		return nil
+	case ActionRemove:
+		if !validOperationID(r.OperationID) || r.TargetVersion != "" || !validReceiptToken(r.ReceiptToken) {
+			return errors.New("invalid Agent removal request")
+		}
+		return nil
 	case ActionStart, ActionStatus, ActionHealthy:
+		if !validOperationID(r.OperationID) || !buildinfo.IsCanonicalVersion(r.TargetVersion) || r.ReceiptToken != "" {
+			return errors.New("invalid updater request")
+		}
 		return nil
 	default:
 		return errors.New("invalid updater action")
@@ -57,9 +72,14 @@ type State struct {
 }
 
 type Response struct {
-	Accepted bool   `json:"accepted"`
-	Error    string `json:"error,omitempty"`
-	State    State  `json:"state"`
+	Accepted     bool                `json:"accepted"`
+	Error        string              `json:"error,omitempty"`
+	State        State               `json:"state"`
+	Capabilities UpdaterCapabilities `json:"capabilities,omitempty"`
+}
+
+type UpdaterCapabilities struct {
+	RemoteRemoval bool `json:"remote_removal,omitempty"`
 }
 
 type Client struct {
@@ -125,6 +145,18 @@ func validOperationID(value string) bool {
 	}
 	for _, char := range value {
 		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validReceiptToken(value string) bool {
+	if len(value) != 43 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'A' || char > 'Z') && (char < 'a' || char > 'z') && char != '-' && char != '_' {
 			return false
 		}
 	}

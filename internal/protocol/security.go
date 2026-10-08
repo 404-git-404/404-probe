@@ -224,7 +224,7 @@ func validSecurityStatus(status SecurityStatus) bool {
 
 func validSecurityReason(reason string) bool {
 	switch reason {
-	case "", "setup_required", "awaiting_first_collection", "export_read_failed", "invalid_export",
+	case "", "setup_required", "platform_unsupported", "awaiting_first_collection", "export_read_failed", "invalid_export",
 		"cursor_invalid_recent_24h", "journal_timeout", "journal_read_failed", "journalctl_unavailable",
 		"input_limit", "line_size_limit", "malformed_or_untrusted_lines", "source_limit",
 		"source_output_limit", "missing_cursor", "outbox_gap", "no_journal_entries",

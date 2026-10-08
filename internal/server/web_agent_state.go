@@ -60,6 +60,7 @@ func (a *App) handleSetWebAgentDisabled(w http.ResponseWriter, r *http.Request, 
 		}
 		return
 	}
+	a.traffic.retire(agentID, a.now(), disabled)
 	record, err := a.store.GetAgentSnapshot(r.Context(), agentID, a.now(), a.offlineTimeout)
 	if err != nil {
 		a.logger.Error("read Web Agent after "+action, "agent_id", agentID, "error", err)

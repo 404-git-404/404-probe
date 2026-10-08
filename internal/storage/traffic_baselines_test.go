@@ -116,6 +116,67 @@ func TestTrafficResetMigrationPreservesLatestV15IdempotencyKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropQualityFixtureSchema(t, db)
+	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN network_counters_json`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE agent_state DROP COLUMN network_counters_version`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=22`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP INDEX idx_probe_jobs_scheduled_finished_retention`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP INDEX idx_probe_jobs_scheduled_expired_retention`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE probe_jobs DROP COLUMN origin`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=21`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE agent_country_code_lookups`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=20`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE agent_removal_receipts`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=19`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE agent_removal_operations`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=18`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE agent_management_capabilities`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=17`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`DROP TABLE agent_traffic_reset_requests`); err != nil {
 		db.Close()
 		t.Fatal(err)

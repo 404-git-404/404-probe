@@ -15,6 +15,21 @@ func TestRunCountryCodeLookupRejectsUnexpectedArgumentsWithoutNetwork(t *testing
 	}
 }
 
+func TestRemoteRemovalOptInDefaultsOffAndRequiresExplicitBoolean(t *testing.T) {
+	if enabled, err := parseRemoteRemovalOptIn("", false); err != nil || enabled {
+		t.Fatalf("absent opt-in enabled=%t err=%v", enabled, err)
+	}
+	if enabled, err := parseRemoteRemovalOptIn("false", true); err != nil || enabled {
+		t.Fatalf("false opt-in enabled=%t err=%v", enabled, err)
+	}
+	if enabled, err := parseRemoteRemovalOptIn("true", true); err != nil || !enabled {
+		t.Fatalf("true opt-in enabled=%t err=%v", enabled, err)
+	}
+	if enabled, err := parseRemoteRemovalOptIn("yes", true); err == nil || enabled {
+		t.Fatalf("invalid opt-in enabled=%t err=%v", enabled, err)
+	}
+}
+
 func TestRunSelectorOrderAcceptsInstalledHelperArgumentOrder(t *testing.T) {
 	directory := t.TempDir()
 	config := filepath.Join(directory, "config.json")

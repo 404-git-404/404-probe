@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -57,14 +58,16 @@ type EngineConfig struct {
 	DownloadAttempts int
 	Now              func() time.Time
 	OnCommitted      func()
+	AgentRemoval     AgentRemovalLauncher
 }
 
 type Engine struct {
-	config  EngineConfig
-	mu      sync.Mutex
-	state   State
-	running bool
-	health  chan struct{}
+	config        EngineConfig
+	mu            sync.Mutex
+	state         State
+	running       bool
+	health        chan struct{}
+	startStateOps rootFileOps
 }
 
 func NewEngine(config EngineConfig) (*Engine, error) {
@@ -98,7 +101,7 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 	if config.StateDirectory == "" || config.LiveBinary == "" || config.StagedBinary == "" || config.PreviousBinary == "" || config.Inspect == nil || config.ServiceCommand == nil {
 		return nil, errors.New("updater paths, inspector, and service controller are required")
 	}
-	engine := &Engine{config: config}
+	engine := &Engine{config: config, startStateOps: defaultRootFileOps()}
 	if state, err := readStateFile(filepath.Join(config.StateDirectory, "operation.json")); err == nil {
 		engine.state = state
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -147,16 +150,39 @@ func (e *Engine) Start(request Request) (State, error) {
 		}
 		return State{}, errors.New("an updater operation is already active")
 	}
-	e.state = State{OperationID: request.OperationID, TargetVersion: request.TargetVersion, Status: "claimed", UpdatedAt: e.config.Now().UnixMilli()}
-	e.health = make(chan struct{})
-	e.running = true
-	if err := e.persistLocked(); err != nil {
-		e.running = false
+	candidate := State{OperationID: request.OperationID, TargetVersion: request.TargetVersion, Status: "claimed", UpdatedAt: e.config.Now().UnixMilli()}
+	encoded, err := json.Marshal(candidate)
+	if err != nil {
 		return State{}, err
 	}
-	state := e.state
+	encoded = append(encoded, '\n')
+	committed, persistErr := writeRootFileCommitted(filepath.Join(e.config.StateDirectory, "operation.json"), encoded, 0600, e.startStateOps)
+	if persistErr != nil && !committed {
+		return State{}, fmt.Errorf("persist updater start state before commit: %w", persistErr)
+	}
+	if persistErr != nil {
+		persisted, readErr := os.ReadFile(filepath.Join(e.config.StateDirectory, "operation.json"))
+		if readErr != nil {
+			return State{}, errors.Join(
+				fmt.Errorf("updater start state was renamed but parent sync failed: %w", persistErr),
+				fmt.Errorf("confirm renamed updater start state: %w", readErr),
+			)
+		}
+		if !bytes.Equal(persisted, encoded) {
+			return State{}, errors.Join(
+				fmt.Errorf("updater start state was renamed but parent sync failed: %w", persistErr),
+				errors.New("renamed updater operation.json does not exactly match the start candidate"),
+			)
+		}
+	}
+	e.state = candidate
+	e.health = make(chan struct{})
+	e.running = true
 	go e.run(request)
-	return state, nil
+	if persistErr != nil {
+		return candidate, fmt.Errorf("updater start state committed but parent directory sync failed: %w", persistErr)
+	}
+	return candidate, nil
 }
 
 func (e *Engine) Status(request Request) (State, error) {
@@ -186,6 +212,17 @@ func (e *Engine) Healthy(request Request) (State, error) {
 		close(e.health)
 	}
 	return e.state, nil
+}
+
+func (e *Engine) SupportsRemoteRemoval() bool {
+	return e.config.AgentRemoval != nil && e.config.AgentRemoval.SupportsRemoteRemoval()
+}
+
+func (e *Engine) StartAgentRemoval(request Request) error {
+	if request.Action != ActionRemove || request.Validate() != nil || e.config.AgentRemoval == nil || !e.config.AgentRemoval.SupportsRemoteRemoval() {
+		return errors.New("Agent removal is not supported by the local updater")
+	}
+	return e.config.AgentRemoval.Start(context.Background(), request.OperationID, request.ReceiptToken)
 }
 
 func (e *Engine) run(request Request) {
@@ -671,6 +708,89 @@ func writeRootFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(temporary, path)
+}
+
+type rootStateFile interface {
+	Chmod(os.FileMode) error
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+type rootFileOps struct {
+	mkdirAll      func(string, os.FileMode) error
+	openFile      func(string, int, os.FileMode) (rootStateFile, error)
+	rename        func(string, string) error
+	remove        func(string) error
+	syncDirectory func(string) error
+}
+
+func defaultRootFileOps() rootFileOps {
+	return rootFileOps{
+		mkdirAll: os.MkdirAll,
+		openFile: func(path string, flag int, mode os.FileMode) (rootStateFile, error) {
+			return os.OpenFile(path, flag, mode)
+		},
+		rename:        os.Rename,
+		remove:        os.Remove,
+		syncDirectory: syncDirectory,
+	}
+}
+
+// writeRootFileCommitted reports whether rename completed. A directory-sync
+// error is post-commit: callers must inspect the destination before deciding
+// whether to publish the candidate in memory or start work.
+func writeRootFileCommitted(path string, data []byte, mode os.FileMode, ops rootFileOps) (bool, error) {
+	if err := ops.mkdirAll(filepath.Dir(path), 0700); err != nil {
+		return false, fmt.Errorf("create updater state directory: %w", err)
+	}
+	temporary := path + ".tmp"
+	file, err := ops.openFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return false, fmt.Errorf("open updater state temporary file: %w", err)
+	}
+	var writeErr error
+	if err := file.Chmod(mode); err != nil {
+		writeErr = fmt.Errorf("set updater state temporary file mode: %w", err)
+	}
+	if writeErr == nil {
+		written, err := file.Write(data)
+		if err != nil {
+			writeErr = fmt.Errorf("write updater state temporary file: %w", err)
+		} else if written != len(data) {
+			writeErr = fmt.Errorf("write updater state temporary file: %w", io.ErrShortWrite)
+		}
+	}
+	if writeErr == nil {
+		if err := file.Sync(); err != nil {
+			writeErr = fmt.Errorf("sync updater state temporary file: %w", err)
+		}
+	}
+	if closeErr := file.Close(); closeErr != nil {
+		wrappedCloseErr := fmt.Errorf("close updater state temporary file: %w", closeErr)
+		if writeErr == nil {
+			writeErr = wrappedCloseErr
+		} else {
+			writeErr = errors.Join(writeErr, wrappedCloseErr)
+		}
+	}
+	if writeErr != nil {
+		return false, cleanupUpdaterStateTemporary(ops, temporary, writeErr)
+	}
+	if err := ops.rename(temporary, path); err != nil {
+		return false, cleanupUpdaterStateTemporary(ops, temporary, fmt.Errorf("rename updater state temporary file: %w", err))
+	}
+	if err := ops.syncDirectory(filepath.Dir(path)); err != nil {
+		return true, fmt.Errorf("sync updater state parent directory after rename: %w", err)
+	}
+	return true, nil
+}
+
+func cleanupUpdaterStateTemporary(ops rootFileOps, path string, cause error) error {
+	if err := ops.remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(cause, fmt.Errorf("remove updater state temporary file: %w", err))
+	}
+	return cause
 }
 
 func requireRegular(path string) error {

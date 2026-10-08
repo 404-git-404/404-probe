@@ -114,6 +114,22 @@ func TestReportAuthentication(t *testing.T) {
 	}
 }
 
+func TestReportAdvertisesNetworkCounterCapability(t *testing.T) {
+	app, store, id, token := testApp(t)
+	defer store.Close()
+	response := postReport(t, app, token, reportFor(id, 1))
+	if response.Code != http.StatusOK {
+		t.Fatalf("report status=%d body=%s", response.Code, response.Body.String())
+	}
+	var decoded protocol.ReportResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Accepted || !decoded.Capabilities.NetworkCountersReport {
+		t.Fatalf("server did not negotiate network counters: %+v", decoded)
+	}
+}
+
 func TestReportRevocationHasStableMachineSignal(t *testing.T) {
 	app, store, id, token := testApp(t)
 	defer store.Close()

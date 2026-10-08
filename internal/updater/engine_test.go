@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,274 @@ import (
 
 	"404-probe/internal/releasemetadata"
 )
+
+func TestEngineStartPrecommitPersistenceFailuresPreservePriorStateAndRetry(t *testing.T) {
+	stages := []string{"mkdir", "open", "write", "file_sync", "close", "rename"}
+	for _, stage := range stages {
+		t.Run(stage, func(t *testing.T) {
+			engine, request, _, _, _ := testEngine(t, false, false, time.Second)
+			previous := State{
+				OperationID: "fedcba9876543210fedcba9876543210", TargetVersion: "v0.8.1",
+				Status: "failed", FailureCode: "previous_operation_failed", UpdatedAt: 12345,
+			}
+			previousBytes := marshalStateFile(t, previous)
+			if err := os.MkdirAll(engine.config.StateDirectory, 0700); err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(engine.config.StateDirectory, "operation.json")
+			if err := os.WriteFile(statePath, previousBytes, 0600); err != nil {
+				t.Fatal(err)
+			}
+			unchangedHealth := make(chan struct{})
+			engine.mu.Lock()
+			engine.state = previous
+			engine.health = unchangedHealth
+			engine.mu.Unlock()
+
+			injected := errors.New("injected " + stage + " failure")
+			ops := defaultRootFileOps()
+			ops.mkdirAll = func(path string, mode os.FileMode) error {
+				if stage == "mkdir" {
+					return injected
+				}
+				return os.MkdirAll(path, mode)
+			}
+			ops.openFile = func(path string, flag int, mode os.FileMode) (rootStateFile, error) {
+				if stage == "open" {
+					return nil, injected
+				}
+				file, err := os.OpenFile(path, flag, mode)
+				if err != nil {
+					return nil, err
+				}
+				return &injectedRootStateFile{rootStateFile: file, stage: stage, err: injected}, nil
+			}
+			ops.rename = func(oldPath, newPath string) error {
+				if stage == "rename" {
+					return injected
+				}
+				return os.Rename(oldPath, newPath)
+			}
+			engine.startStateOps = ops
+
+			if _, err := engine.Start(request); !errors.Is(err, injected) {
+				t.Fatalf("Start error=%v, want injected %s failure", err, stage)
+			}
+			engine.mu.Lock()
+			gotState, gotHealth, running := engine.state, engine.health, engine.running
+			engine.mu.Unlock()
+			if gotState != previous || gotHealth != unchangedHealth || running {
+				t.Fatalf("failed start changed in-memory state: state=%+v healthChanged=%t running=%t", gotState, gotHealth != unchangedHealth, running)
+			}
+			statusRequest := Request{ProtocolVersion: ProtocolVersion, Action: ActionStatus, OperationID: previous.OperationID, TargetVersion: previous.TargetVersion}
+			if got, err := engine.Status(statusRequest); err != nil || got != previous {
+				t.Fatalf("previous terminal state status=%+v err=%v", got, err)
+			}
+			if got, err := os.ReadFile(statePath); err != nil || !bytes.Equal(got, previousBytes) {
+				t.Fatalf("failed start changed persisted state: bytes=%q err=%v", got, err)
+			}
+			if _, err := os.Stat(statePath + ".tmp"); !os.IsNotExist(err) {
+				t.Fatalf("precommit temporary file remains: %v", err)
+			}
+
+			// Repair the injected filesystem operation and submit the same request
+			// again. It must perform a genuine run, not merely return stale state.
+			engine.startStateOps = defaultRootFileOps()
+			if _, err := engine.Start(request); err != nil {
+				t.Fatalf("retry Start after repair: %v", err)
+			}
+			waitLocalStatus(t, engine, request, "health_check")
+			healthyRequest := request
+			healthyRequest.Action = ActionHealthy
+			if _, err := engine.Healthy(healthyRequest); err != nil {
+				t.Fatal(err)
+			}
+			waitLocalStatus(t, engine, request, "succeeded")
+		})
+	}
+}
+
+func TestEngineStartPostRenameSyncFailureConfirmsCandidateAndRunsOnce(t *testing.T) {
+	engine, request, _, _, _ := testEngine(t, false, false, time.Second)
+	var requests int
+	var requestsMu sync.Mutex
+	client := *engine.config.HTTPClient
+	baseTransport := client.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requestsMu.Lock()
+		requests++
+		requestsMu.Unlock()
+		return baseTransport.RoundTrip(request)
+	})
+	engine.config.HTTPClient = &client
+
+	syncFailure := errors.New("injected parent directory sync failure")
+	syncCalls := 0
+	ops := defaultRootFileOps()
+	ops.syncDirectory = func(string) error {
+		syncCalls++
+		return syncFailure
+	}
+	engine.startStateOps = ops
+
+	state, err := engine.Start(request)
+	if !errors.Is(err, syncFailure) || state.OperationID != request.OperationID || state.Status != "claimed" {
+		t.Fatalf("Start state=%+v err=%v", state, err)
+	}
+	// A retry for the same operation is idempotent even though Start returned
+	// the durability diagnostic after confirming the exact renamed bytes.
+	retried, err := engine.Start(request)
+	if err != nil || retried.OperationID != request.OperationID {
+		t.Fatalf("same-operation retry state=%+v err=%v", retried, err)
+	}
+	waitLocalStatus(t, engine, request, "health_check")
+	healthyRequest := request
+	healthyRequest.Action = ActionHealthy
+	if _, err := engine.Healthy(healthyRequest); err != nil {
+		t.Fatal(err)
+	}
+	waitLocalStatus(t, engine, request, "succeeded")
+	requestsMu.Lock()
+	requestCount := requests
+	requestsMu.Unlock()
+	if requestCount != 3 || syncCalls != 1 {
+		t.Fatalf("run count evidence: HTTP requests=%d parent sync calls=%d, want 3 and 1", requestCount, syncCalls)
+	}
+}
+
+func TestEngineStartPostRenameSyncFailureDoesNotPublishUnconfirmedCandidate(t *testing.T) {
+	engine, request, _, _, _ := testEngine(t, false, false, time.Second)
+	var requests int
+	var requestsMu sync.Mutex
+	client := *engine.config.HTTPClient
+	baseTransport := client.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requestsMu.Lock()
+		requests++
+		requestsMu.Unlock()
+		return baseTransport.RoundTrip(request)
+	})
+	engine.config.HTTPClient = &client
+	previous := State{
+		OperationID: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", TargetVersion: "v0.8.1",
+		Status: "succeeded", UpdatedAt: 54321,
+	}
+	previousBytes := marshalStateFile(t, previous)
+	if err := os.MkdirAll(engine.config.StateDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(engine.config.StateDirectory, "operation.json")
+	if err := os.WriteFile(statePath, previousBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	engine.mu.Lock()
+	engine.state = previous
+	engine.mu.Unlock()
+
+	syncFailure := errors.New("injected parent directory sync failure")
+	ops := defaultRootFileOps()
+	ops.syncDirectory = func(directory string) error {
+		if err := os.WriteFile(filepath.Join(directory, "operation.json"), previousBytes, 0600); err != nil {
+			return errors.Join(syncFailure, err)
+		}
+		return syncFailure
+	}
+	engine.startStateOps = ops
+
+	if _, err := engine.Start(request); !errors.Is(err, syncFailure) {
+		t.Fatalf("Start error=%v, want injected sync failure", err)
+	}
+	engine.mu.Lock()
+	gotState, running, health := engine.state, engine.running, engine.health
+	engine.mu.Unlock()
+	if gotState != previous || running || health != nil {
+		t.Fatalf("unconfirmed commit changed memory: state=%+v running=%t health=%v", gotState, running, health)
+	}
+	if got, err := os.ReadFile(statePath); err != nil || !bytes.Equal(got, previousBytes) {
+		t.Fatalf("unconfirmed commit did not preserve prior disk state: bytes=%q err=%v", got, err)
+	}
+	if _, err := os.Stat(statePath + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("unexpected temporary file: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	requestsMu.Lock()
+	requestCount := requests
+	requestsMu.Unlock()
+	if requestCount != 0 {
+		t.Fatalf("unconfirmed candidate started an updater run: HTTP requests=%d", requestCount)
+	}
+}
+
+func TestEngineNewEngineLoadsPersistedStateAndRecoverMarksInterruptedStart(t *testing.T) {
+	engine, _, _, _, _ := testEngine(t, false, false, time.Second)
+	persisted := State{
+		OperationID: "dddddddddddddddddddddddddddddddd", TargetVersion: "v0.8.1",
+		Status: "claimed", UpdatedAt: 98765,
+	}
+	if err := os.MkdirAll(engine.config.StateDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(engine.config.StateDirectory, "operation.json"), marshalStateFile(t, persisted), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := NewEngine(engine.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.state != persisted {
+		t.Fatalf("NewEngine state=%+v, want persisted=%+v", recovered.state, persisted)
+	}
+	request := Request{ProtocolVersion: ProtocolVersion, Action: ActionStatus, OperationID: persisted.OperationID, TargetVersion: persisted.TargetVersion}
+	recovered.Recover()
+	failed := waitLocalStatus(t, recovered, request, "failed")
+	if failed.FailureCode != "updater_restarted" {
+		t.Fatalf("recovered interrupted operation=%+v", failed)
+	}
+}
+
+type injectedRootStateFile struct {
+	rootStateFile
+	stage string
+	err   error
+}
+
+func (f *injectedRootStateFile) Write(data []byte) (int, error) {
+	if f.stage == "write" {
+		return 0, f.err
+	}
+	return f.rootStateFile.Write(data)
+}
+
+func (f *injectedRootStateFile) Sync() error {
+	if f.stage == "file_sync" {
+		return f.err
+	}
+	return f.rootStateFile.Sync()
+}
+
+func (f *injectedRootStateFile) Close() error {
+	closeErr := f.rootStateFile.Close()
+	if f.stage == "close" {
+		return errors.Join(closeErr, f.err)
+	}
+	return closeErr
+}
+
+func marshalStateFile(t *testing.T, state State) []byte {
+	t.Helper()
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(data, '\n')
+}
 
 func TestEngineVerifiedUpgradeAndHealthCommit(t *testing.T) {
 	engine, request, live, previous, _ := testEngine(t, false, false, 2*time.Second)

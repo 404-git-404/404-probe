@@ -188,8 +188,8 @@ func (s *Store) MaterializeSchedule(ctx context.Context, scheduleID string, now 
 		return MaterializeOutcome{}, fmt.Errorf("%w: stored schedule config is invalid", ErrCorruptProbeData)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO probe_jobs(
-		id,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt
-	) VALUES(?,?,?,?,?,?,?,?,?,?,'queued',0)`, jobID, schedule.ID, schedule.AgentID, string(schedule.ProbeType), string(configJSON),
+		id,origin,schedule_id,agent_id,probe_type,config_json,timeout_ms,created_at,scheduled_for,not_before,expires_at,status,attempt
+	) VALUES(?,'scheduled',?,?,?,?,?,?,?,?,?,'queued',0)`, jobID, schedule.ID, schedule.AgentID, string(schedule.ProbeType), string(configJSON),
 		schedule.TimeoutMS, nowMillis, slot, nowMillis, expiresAt); err != nil {
 		return MaterializeOutcome{}, err
 	}

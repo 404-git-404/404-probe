@@ -25,7 +25,23 @@ func TestMigratesV4DatabaseWithAgentsEnabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropQualityFixtureSchema(t, db)
 	for _, statement := range []string{
+		`ALTER TABLE agent_state DROP COLUMN network_counters_json`,
+		`ALTER TABLE agent_state DROP COLUMN network_counters_version`,
+		`DELETE FROM schema_migrations WHERE version=22`,
+		`DROP INDEX idx_probe_jobs_scheduled_finished_retention`,
+		`DROP INDEX idx_probe_jobs_scheduled_expired_retention`,
+		`ALTER TABLE probe_jobs DROP COLUMN origin`,
+		`DELETE FROM schema_migrations WHERE version=21`,
+		`DROP TABLE agent_country_code_lookups`,
+		`DELETE FROM schema_migrations WHERE version=20`,
+		`DROP TABLE agent_removal_receipts`,
+		`DROP TABLE agent_removal_operations`,
+		`DELETE FROM schema_migrations WHERE version=19`,
+		`DELETE FROM schema_migrations WHERE version=18`,
+		`DROP TABLE agent_management_capabilities`,
+		`DELETE FROM schema_migrations WHERE version=17`,
 		`DROP TABLE agent_traffic_reset_requests`,
 		`DELETE FROM schema_migrations WHERE version=16`,
 		`DROP TABLE agent_traffic_baselines`,

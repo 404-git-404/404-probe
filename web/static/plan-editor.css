@@ -1,0 +1,32 @@
+/* Scoped override of the existing drawer, without card/global layout changes. */
+#plan-dialog.plan-editor { position:fixed; inset:auto; margin:0; box-sizing:border-box; width:min(560px,calc(100vw - 32px)); max-width:calc(100vw - 32px); height:auto; max-height:calc(100dvh - 32px); border:1px solid #d8d2c8; border-radius:18px; padding:0; overflow:hidden; color:#29393b; color-scheme:light; background:#faf8f3; box-shadow:0 24px 70px #24353733; }
+#plan-dialog::backdrop { background:#283e424d; backdrop-filter:blur(5px); }
+#plan-dialog form { padding:0; gap:0; min-height:0; max-height:calc(100dvh - 34px); display:flex; flex-direction:column; }
+#plan-dialog .drawer-head { flex-shrink:0; padding:18px 22px; border-bottom:1px solid #e3ddd3; }
+#plan-dialog .drawer-head p { overflow-wrap:anywhere; }
+#plan-dialog .plan-editor-body { overflow:auto; min-height:0; padding:0 22px; overscroll-behavior:contain; }
+#plan-dialog .plan-section { padding:18px 0; }
+#plan-dialog .plan-section summary { cursor:pointer; font-weight:600; font-size:14px; }
+#plan-dialog .plan-section[open] summary { margin-bottom:16px; }
+#plan-dialog .drawer-actions { flex-shrink:0; display:flex; justify-content:flex-end; gap:12px; margin:0; padding:16px 22px; border-top:1px solid #e3ddd3; }
+#plan-dialog input,#plan-dialog select,#plan-dialog button { font:inherit; color:#29393b; box-sizing:border-box; }
+#plan-dialog input,#plan-dialog select { background:#fffdf8; }
+#plan-dialog button { border:1px solid #d8d2c8; border-radius:9px; padding:8px 12px; background:#fffdf8; cursor:pointer; }
+#plan-dialog button:disabled { color:#87908c; cursor:not-allowed; }
+#plan-dialog #plan-save { color:white; background:#168577; border-color:#168577; }
+#plan-dialog .text-danger,#plan-dialog #plan-discard { color:#a83a40; }
+#plan-dialog .plan-confirmation { padding:12px 22px; background:#f6eee2; flex-shrink:0; border-top:1px solid #e3ddd3; }
+#plan-dialog .plan-confirmation[hidden] { display:none; }
+#plan-dialog .plan-confirmation p { margin:0 0 8px; line-height:1.5; }
+#plan-dialog .plan-confirmation div { display:flex; gap:10px; flex-wrap:wrap; }
+#plan-dialog .field-note { color:#687776; }
+#plan-dialog #plan-error { flex-shrink:0; box-sizing:border-box; margin:0; padding:12px 22px; max-height:min(120px,20dvh); overflow:auto; overflow-wrap:anywhere; line-height:1.5; color:#a83a40; background:#f8eee9; border-top:1px solid #e3ddd3; }
+@media(max-width:620px) {
+ #plan-dialog.plan-editor { left:0; top:0; width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; border:0; border-radius:0; }
+ #plan-dialog form { height:100%; max-height:100%; }
+ #plan-dialog .plan-editor-body { flex:1; padding:0 16px; }
+ #plan-dialog .drawer-head,#plan-dialog .drawer-actions,#plan-dialog .plan-confirmation { padding:16px; }
+ #plan-dialog #plan-error { padding:12px 16px; }
+ #plan-dialog .form-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+ #plan-dialog .form-grid.four label:last-child { grid-column:1/-1; }
+}
