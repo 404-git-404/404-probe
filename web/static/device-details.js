@@ -98,10 +98,16 @@
       else if(active('network')&&networkPending){networkPending=false;restoreNetwork();}
       else if(active('resources')&&pending){pending=false;request();}else if(active('resources'))renderPlot();}
     const cancel=e=>{e.preventDefault();close();},closed=()=>close();
+    let backdropPress=false;
+    const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);};
+    const pointerDown=e=>{backdropPress=e.button===0&&e.isPrimary!==false&&outside(e);};
+    const pointerCancel=()=>{backdropPress=false;};
+    const backdropClick=e=>{const dismiss=backdropPress&&outside(e);backdropPress=false;if(dismiss)close();};
+    dialog.addEventListener('pointerdown',pointerDown);dialog.addEventListener('pointercancel',pointerCancel);dialog.addEventListener('click',backdropClick);
     dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',closed);doc.addEventListener('visibilitychange',visibility);
     return {open,close,update,active,networkContainer:()=>panes.network,
       sync(){if(current&&!agents.has(current)){close({restoreFocus:false});current=null;networkIdentity=null;data=null;}},
-      shutdown(){close({restoreFocus:false});dead=true;release();network()?.releaseHistory();doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);current=null;data=null;},
+      shutdown(){close({restoreFocus:false});dead=true;release();network()?.releaseHistory();doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);dialog.removeEventListener('pointerdown',pointerDown);dialog.removeEventListener('pointercancel',pointerCancel);dialog.removeEventListener('click',backdropClick);current=null;data=null;},
       snapshot:()=>({id:current,tab,open:dialog.open,loading,points:data?.points.length||0,plot:!!plot,query:{...query},draft:{from:from.value,to:to.value}})};
   }
   const api={create};if(typeof module==='object'&&module.exports)module.exports=api;else root.DeviceDetails=api;
