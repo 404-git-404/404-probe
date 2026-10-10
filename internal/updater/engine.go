@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"404-probe/internal/buildinfo"
+	"404-probe/internal/protocol"
 	"404-probe/internal/releasemetadata"
 )
 
@@ -30,17 +31,20 @@ var officialReleaseBase = "https://github.com/404-git-404/404-probe/releases/dow
 var officialReleaseAPIBase = "https://api.github.com/repos/404-git-404/404-probe/releases/"
 
 type CandidateBuildInfo struct {
-	Path   string
-	Commit string
-	Dirty  bool
-	GOOS   string
-	GOARCH string
+	Path    string
+	Version string
+	Commit  string
+	Dirty   bool
+	GOOS    string
+	GOARCH  string
 }
 
 type Inspector func(string) (CandidateBuildInfo, error)
 type ServiceCommand func(context.Context, string) error
 
 type EngineConfig struct {
+	// LocalMigration is set only by the root-only, fixed Beta-to-v1.0.1 CLI.
+	LocalMigration   bool
 	CurrentVersion   string
 	GOOS             string
 	GOARCH           string
@@ -58,6 +62,7 @@ type EngineConfig struct {
 	DownloadAttempts int
 	Now              func() time.Time
 	OnCommitted      func()
+	OnRolledBack     func()
 	AgentRemoval     AgentRemovalLauncher
 }
 
@@ -136,21 +141,37 @@ func (e *Engine) Start(request Request) (State, error) {
 	if err := request.Validate(); err != nil {
 		return State{}, err
 	}
-	if comparison, ok := buildinfo.CompareVersions(e.config.CurrentVersion, request.TargetVersion); !ok || comparison >= 0 {
-		return State{}, errors.New("target version must be newer than the installed version")
+	if e.config.LocalMigration && (request.ProtocolVersion != 1 || request.TargetVersion != "v1.0.1" || !supportedLocalMigrationSource(e.config.CurrentVersion)) {
+		return State{}, errors.New("local migration is restricted to old Beta -> v1.0.1 Stable")
 	}
 	if e.config.GOOS != "linux" || (e.config.GOARCH != "amd64" && e.config.GOARCH != "arm64") {
 		return State{}, errors.New("unsupported platform")
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// An old Agent may retry Start before observing the last terminal result.
+	// Never rerun an already completed operation; a user retry needs a new ID.
+	if e.state.Status != "" && e.state.OperationID == request.OperationID && e.state.TargetVersion == request.TargetVersion && stateMatches(e.state, request) {
+		return e.state, nil
+	}
 	if e.running || isActiveLocalStatus(e.state.Status) {
-		if e.state.OperationID == request.OperationID && e.state.TargetVersion == request.TargetVersion {
+		if e.state.OperationID == request.OperationID && e.state.TargetVersion == request.TargetVersion && stateMatches(e.state, request) {
 			return e.state, nil
 		}
 		return State{}, errors.New("an updater operation is already active")
 	}
+	if comparison, ok := buildinfo.CompareReleaseVersions(e.config.CurrentVersion, request.TargetVersion); !ok || comparison >= 0 {
+		return State{}, errors.New("target version must be newer than the installed version")
+	}
 	candidate := State{OperationID: request.OperationID, TargetVersion: request.TargetVersion, Status: "claimed", UpdatedAt: e.config.Now().UnixMilli()}
+	candidate.SourceVersion = e.config.CurrentVersion
+	candidate.LocalMigration = e.config.LocalMigration
+	if request.ProtocolVersion == 2 {
+		candidate.ProtocolVersion = 2
+		candidate.Channel = request.Channel
+		candidate.TargetCommit = request.TargetCommit
+		candidate.ServerVersion = request.ServerVersion
+	}
 	encoded, err := json.Marshal(candidate)
 	if err != nil {
 		return State{}, err
@@ -185,13 +206,17 @@ func (e *Engine) Start(request Request) (State, error) {
 	return candidate, nil
 }
 
+func supportedLocalMigrationSource(version string) bool {
+	return version == "v0.9.3" || version == "v1.0.0" || version == "v1.0.1-beta.1" || version == "v1.0.1-beta.2"
+}
+
 func (e *Engine) Status(request Request) (State, error) {
 	if request.Action != ActionStatus || request.Validate() != nil {
 		return State{}, errors.New("invalid status request")
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state.OperationID != request.OperationID || e.state.TargetVersion != request.TargetVersion {
+	if e.state.OperationID != request.OperationID || e.state.TargetVersion != request.TargetVersion || !stateMatches(e.state, request) {
 		return State{}, errors.New("operation not found")
 	}
 	return e.state, nil
@@ -203,7 +228,7 @@ func (e *Engine) Healthy(request Request) (State, error) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state.OperationID != request.OperationID || e.state.TargetVersion != request.TargetVersion || e.state.Status != "health_check" || e.health == nil {
+	if e.state.OperationID != request.OperationID || e.state.TargetVersion != request.TargetVersion || !stateMatches(e.state, request) || e.state.Status != "health_check" || e.health == nil {
 		return State{}, errors.New("operation is not awaiting health confirmation")
 	}
 	select {
@@ -303,6 +328,12 @@ func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
 	if err != nil {
 		return fmt.Errorf("release_metadata_invalid: %w", err)
 	}
+	e.mu.Lock()
+	authorized := e.state
+	e.mu.Unlock()
+	if authorized.ProtocolVersion == 2 && (metadata.SchemaVersion != 2 || metadata.Commit != authorized.TargetCommit || !releasemetadata.Compatible(metadata, authorized.ServerVersion)) || authorized.ProtocolVersion != 2 && (metadata.SchemaVersion != 1 || !buildinfo.IsCanonicalVersion(target)) {
+		return errors.New("release_metadata_invalid: incompatible authorized release")
+	}
 	selected, err := releasemetadata.Select(metadata, target, asset, e.config.GOOS, e.config.GOARCH)
 	if err != nil {
 		if strings.Contains(err.Error(), "version") {
@@ -320,6 +351,13 @@ func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
 	checksumBody, err := e.fetch(ctx, base+"SHA256SUMS", 256<<10)
 	if err != nil {
 		return fmt.Errorf("checksum_manifest_failed: %w", err)
+	}
+	if metadata.SchemaVersion == 2 {
+		sum, err := parseChecksum(checksumBody, "RELEASE-METADATA.json")
+		actual := sha256.Sum256(metadataBody)
+		if err != nil || subtle.ConstantTimeCompare(sum, actual[:]) != 1 {
+			return errors.New("checksum_manifest_mismatch")
+		}
 	}
 	checksumWant, err := parseChecksum(checksumBody, asset)
 	if err != nil {
@@ -355,6 +393,9 @@ func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
 	}
 	if info.GOOS != selected.GOOS || info.GOARCH != selected.GOARCH {
 		return errors.New("candidate_platform_mismatch")
+	}
+	if requiresLinkedVersion(target) && info.Version != target {
+		return errors.New("candidate_version_mismatch")
 	}
 	return nil
 }
@@ -519,7 +560,7 @@ func parseContentRange(value string) (start, end, total int64, err error) {
 func (e *Engine) resolveOfficialAPIAsset(ctx context.Context, directURL string) (string, error) {
 	remainder := strings.TrimPrefix(directURL, officialReleaseBase)
 	parts := strings.Split(remainder, "/")
-	if len(parts) != 2 || !buildinfo.IsCanonicalVersion(parts[0]) || parts[1] == "" || strings.ContainsAny(parts[1], "?#") {
+	if len(parts) != 2 || !buildinfo.IsReleaseVersion(parts[0]) || parts[1] == "" || strings.ContainsAny(parts[1], "?#") {
 		return "", errors.New("official release asset URL is invalid")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, officialReleaseAPIBase+"tags/"+url.PathEscape(parts[0]), nil)
@@ -612,12 +653,16 @@ func (e *Engine) finishFailure(installed bool, code string) {
 			err := e.config.ServiceCommand(ctx, "restart")
 			cancel()
 			if err == nil {
-				_ = e.setStatus("rolled_back", code, "upgrade failed; previous version restored")
-				e.cleanupCommittedFiles()
-				e.mu.Lock()
-				e.running = false
-				e.mu.Unlock()
-				return
+				if err := e.setStatus("rolled_back", code, "upgrade failed; previous version restored"); err == nil {
+					e.cleanupCommittedFiles()
+					e.mu.Lock()
+					e.running = false
+					e.mu.Unlock()
+					if e.config.OnRolledBack != nil {
+						e.config.OnRolledBack()
+					}
+					return
+				}
 			}
 		}
 		code = "rollback_failed"
@@ -650,8 +695,20 @@ func readStateFile(path string) (State, error) {
 		return State{}, err
 	}
 	var state State
-	if json.Unmarshal(data, &state) != nil || !validOperationID(state.OperationID) || !buildinfo.IsCanonicalVersion(state.TargetVersion) || (state.ReleaseCommit != "" && !releasemetadata.IsCommit(state.ReleaseCommit)) {
+	if protocol.DecodeUpgradeJSON(data, &state) != nil || !validOperationID(state.OperationID) || (state.ReleaseCommit != "" && !releasemetadata.IsCommit(state.ReleaseCommit)) || (Request{ProtocolVersion: stateProtocol(state), Action: ActionStatus, OperationID: state.OperationID, TargetVersion: state.TargetVersion, Channel: state.Channel, TargetCommit: state.TargetCommit, ServerVersion: state.ServerVersion}).Validate() != nil {
 		return State{}, errors.New("stored updater state is invalid")
+	}
+	if state.LocalMigration && (stateProtocol(state) != 1 || state.TargetVersion != "v1.0.1") {
+		return State{}, errors.New("invalid local migration authorization")
+	}
+	if state.SourceVersion != "" {
+		comparison, ok := buildinfo.CompareReleaseVersions(state.SourceVersion, state.TargetVersion)
+		if !ok || comparison >= 0 {
+			return State{}, errors.New("invalid stored source version")
+		}
+	}
+	if !isActiveLocalStatus(state.Status) && state.Status != "succeeded" && state.Status != "failed" && state.Status != "rolled_back" {
+		return State{}, errors.New("invalid stored updater status")
 	}
 	return state, nil
 }
@@ -661,6 +718,20 @@ func assetName(goos, goarch string) (string, error) {
 		return "", errors.New("unsupported_platform")
 	}
 	return "404-probe-agent-linux-" + goarch, nil
+}
+
+func requiresLinkedVersion(target string) bool {
+	comparison, ok := buildinfo.CompareReleaseVersions(target, "v1.0.1")
+	return ok && comparison >= 0
+}
+func stateProtocol(s State) int {
+	if s.ProtocolVersion == 0 {
+		return 1
+	}
+	return s.ProtocolVersion
+}
+func stateMatches(s State, r Request) bool {
+	return stateProtocol(s) == r.ProtocolVersion && s.Channel == r.Channel && s.TargetCommit == r.TargetCommit && s.ServerVersion == r.ServerVersion
 }
 
 func parseChecksum(manifest []byte, asset string) ([]byte, error) {
@@ -828,7 +899,19 @@ func syncDirectory(path string) error {
 
 func (e *Engine) recoverInstalled() {
 	info, err := e.config.Inspect(e.config.LiveBinary)
-	if err != nil || e.state.ReleaseCommit == "" || info.Path != "404-probe/cmd/agent" || info.Commit != e.state.ReleaseCommit || info.Dirty || info.GOOS != e.config.GOOS || info.GOARCH != e.config.GOARCH {
+	if err != nil || e.state.ReleaseCommit == "" || info.Path != "404-probe/cmd/agent" || info.Commit != e.state.ReleaseCommit || info.Dirty || info.GOOS != e.config.GOOS || info.GOARCH != e.config.GOARCH || requiresLinkedVersion(e.state.TargetVersion) && info.Version != e.state.TargetVersion {
+		// The installing journal precedes the atomic swap. If there is no
+		// backup and this process runs the actual recorded source version,
+		// restart that original Agent instead of attempting a missing rollback.
+		if _, previousErr := os.Lstat(e.config.PreviousBinary); errors.Is(previousErr, os.ErrNotExist) && e.state.SourceVersion != "" && e.config.CurrentVersion == e.state.SourceVersion && requireRegular(e.config.LiveBinary) == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			restartErr := e.config.ServiceCommand(ctx, "restart")
+			cancel()
+			if restartErr == nil {
+				e.finishFailure(false, "updater_restarted")
+				return
+			}
+		}
 		e.finishFailure(true, "updater_restarted")
 		return
 	}
@@ -874,6 +957,9 @@ func (e *Engine) cleanupCommittedFiles() {
 }
 
 func classifyDownloadFailure(err error) string {
+	if strings.Contains(err.Error(), "candidate_version_mismatch") {
+		return "candidate_version_mismatch"
+	}
 	for _, code := range []string{"release_metadata_download_failed", "release_metadata_version_mismatch", "release_metadata_asset_invalid", "release_metadata_invalid", "checksum_manifest_failed", "checksum_manifest_mismatch", "checksum_mismatch", "download_failed", "candidate_buildinfo_invalid", "candidate_revision_mismatch", "candidate_dirty", "candidate_platform_mismatch", "unsupported_platform", "stage_failed"} {
 		if strings.Contains(err.Error(), code) {
 			return code
@@ -884,6 +970,8 @@ func classifyDownloadFailure(err error) string {
 
 func safeFailureMessage(code string) string {
 	switch code {
+	case "rollback_failed":
+		return "previous Agent restoration or actual process startup could not be confirmed"
 	case "release_metadata_download_failed", "release_metadata_invalid", "release_metadata_version_mismatch", "release_metadata_asset_invalid":
 		return "upgrade release metadata could not be verified"
 	case "checksum_manifest_failed":
@@ -892,7 +980,7 @@ func safeFailureMessage(code string) string {
 		return "upgrade release metadata and checksum manifest did not match"
 	case "checksum_mismatch":
 		return "upgrade candidate checksum did not match"
-	case "candidate_buildinfo_invalid", "candidate_revision_mismatch", "candidate_dirty", "candidate_platform_mismatch":
+	case "candidate_buildinfo_invalid", "candidate_revision_mismatch", "candidate_dirty", "candidate_platform_mismatch", "candidate_version_mismatch":
 		return "upgrade candidate build metadata is invalid"
 	case "restart_failed":
 		return "Agent restart failed"

@@ -5,7 +5,7 @@
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   function create({document:doc=root.document,state=root.AgentState,agents,coordinator,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Plot=root.uPlot,Resize=root.ResizeObserver,
-    management=()=>null,identity=()=>null,hydrate=()=>{},network=()=>null}={}) {
+    management=()=>null,resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},network=()=>null}={}) {
     const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={};
     let current=null,tab='management',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
     let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,selected=0,networkIdentity=null,networkPending=false;
@@ -31,7 +31,8 @@
     custom.addEventListener('submit',e=>{e.preventDefault();try{apply(H.range(from.value,to.value));rangeError.textContent='';}catch(err){rangeError.textContent=err.message;}});
     output.tabIndex=0;output.setAttribute('aria-label','分钟观测详情，左右方向键浏览');output.setAttribute('aria-live','polite');
     output.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();select(e.key==='Home'?0:e.key==='End'?(data?.points.length||1)-1:selected+(e.key==='ArrowLeft'?-1:1));});
-    panes.resources.append(controls,custom,note,status,chart,output);
+    const resourceInfo=el('div','details-resource-facts');panes.resources.append(resourceInfo,controls,custom,note,status,chart,output);
+    function renderResourceFacts(){const rows=resourceFacts(agents.get(current));resourceInfo.hidden=!rows.length;for(let i=0;i<rows.length;i++){let row=resourceInfo.children[i];if(!row){row=el('div');row.append(el('strong'),el('span'));resourceInfo.append(row);}if(row.children[0].textContent!==rows[i][0])row.children[0].textContent=rows[i][0];if(row.children[1].textContent!==rows[i][1])row.children[1].textContent=rows[i][1];}while(resourceInfo.children.length>rows.length)resourceInfo.lastElementChild.remove();}
     function active(key,id=current){return !dead&&dialog.open&&!doc.hidden&&tab===key&&current===id&&agents.has(id);}
     function destroyPlot(){resize?.disconnect();resize=null;if(tap)plot?.over?.removeEventListener('pointerdown',tap);tap=null;plot?.destroy();plot=null;chart.replaceChildren();output.textContent='';}
     function release(){serial++;loading=false;coordinator.release(owner);destroyPlot();}
@@ -41,7 +42,7 @@
         panes.network.replaceChildren(el('p','','原指定网络目标已不可用；请从卡片选择当前目标，不借用其他地址族数据。'));}
     let titleIdentity = null, securityIdentity = null;
     function updateTitle(){const agent=agents.get(current), signature=JSON.stringify([current,agent?.country_code,agent?.country_source,agent?.name,agent?.state?.hostname]);if(signature===titleIdentity)return;titleIdentity=signature;machine.replaceChildren();const mark=identity(agent);if(mark)machine.append(mark);machine.append(el('span','',agent?.name||agent?.state?.hostname||'未命名设备'));}
-    function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='management')renderManagement();if(tab==='security')renderSecurity();}
+    function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='management')renderManagement();if(tab==='resources')renderResourceFacts();if(tab==='security')renderSecurity();}
     function renderManagement(){const pane=panes.management,focused=pane.contains(doc.activeElement)?doc.activeElement?.dataset?.focusKey:null;
       const node=management(agents.get(current));if(node){node.hidden=false;if(node.parentNode!==pane)pane.replaceChildren(node);if(focused)pane.querySelector(`[data-focus-key="${focused}"]`)?.focus({preventScroll:true});}}
     function renderSecurity(){const security=agents.get(current)?.security,pane=panes.security,signature=JSON.stringify([current,security]);if(signature===securityIdentity)return;securityIdentity=signature;pane.replaceChildren();
@@ -59,7 +60,7 @@
       for(const [name,pane]of Object.entries(panes)){pane.hidden=name!==tab;tabs[name].setAttribute('aria-selected',String(name===tab));tabs[name].tabIndex=name===tab?0:-1;}
       if(!dialog.open)return;
       if(tab==='management')renderManagement();else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
-      else if(tab==='resources'){pending=false;renderPlot();request();}
+      else if(tab==='resources'){pending=false;renderResourceFacts();renderPlot();request();}
       else if(shouldRestoreNetwork&&networkIdentity)restoreNetwork();
       else if(!networkIdentity)panes.network.replaceChildren(el('p','','请从设备卡片的指定网络/地址族延迟或比例进入历史。'));
     }
@@ -97,7 +98,8 @@
     function visibility(){if(doc.hidden){if(tab==='resources'){pending=loading;release();}if(dialog.open&&tab==='network'){networkPending=Boolean(networkIdentity);network()?.releaseHistory();}}
       else if(active('network')&&networkPending){networkPending=false;restoreNetwork();}
       else if(active('resources')&&pending){pending=false;request();}else if(active('resources'))renderPlot();}
-    const cancel=e=>{e.preventDefault();close();},closed=()=>close();
+    // Native close events are queued: an older event must not close a reopened modal.
+    const cancel=e=>{e.preventDefault();close();},closed=()=>{if(!dialog.open)close();};
     let backdropPress=false;
     const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);};
     const pointerDown=e=>{backdropPress=e.button===0&&e.isPrimary!==false&&outside(e);};

@@ -53,19 +53,19 @@
     function release(c){c.serial++;c.loading=false;queue.release(c.owner);destroyPlot(c);c.data=null;c.error='';c.index=0;c.output.textContent='';}
     function summary(c){
       const lifecycle=inactive(c.agent),v=c.data;
-      if(lifecycle){c.status.textContent=statuses[lifecycle]+' · 当前数据不可用';return;}
-      if(!v){c.status.textContent=c.error||(!c.visible?'进入视口后读取真实观测':c.loading?'正在读取…':'等待真实观测');return;}
-      c.status.textContent=`${c.error?'读取失败 · 保留上次可信历史（非当前） · ':''}${!c.agent.online&&v.points.length?statuses.offline:statuses[v.status]}${v.truncated?' · 数量上限截断':''}${v.points.length?` · 实际覆盖 ${time(v.oldest_received_at)} — ${time(v.last_received_at)}`:''}`;
+      c.status.textContent=lifecycle?statuses[lifecycle]+' · 当前数据不可用':!v?c.error||(!c.visible?'进入视口后读取真实观测':c.loading?'正在读取…':'等待真实观测'):c.error?'读取失败 · 旧历史（非当前）':!c.agent.online&&v.points.length?'离线 · 历史':v.status==='online'?'':statuses[v.status];
+      c.status.title=c.status.textContent||(v?`${statuses[v.status]}${v.truncated?' · 数量上限截断':''}${v.points.length?` · 实际覆盖 ${time(v.oldest_received_at)} — ${time(v.last_received_at)}`:''}`:'');
     }
     function select(c,index){
       c.index=Math.max(0,Math.min((c.data?.points.length||1)-1,index));
-      c.output.textContent=detail(c.data?.points[c.index]);
+      const point=c.data?.points[c.index];c.output.textContent=point?`${time(point.received_at)} · ↓ ${bytes(point.rx_rate)} · ↑ ${bytes(point.tx_rate)}${point.reason?' · '+reasons[point.reason]:''}`:'';c.output.title=detail(point);
+      c.output.setAttribute('aria-live',doc.activeElement===c.chart?'polite':'off');
     }
     function renderPlot(c){
       if(!effective(c)||!c.data)return;
       const rect=c.chart.getBoundingClientRect(),width=Math.floor(rect.width);
       if(width<=0)return;
-      const height=(root.innerWidth||rect.width)>620?180:150,v=c.data;
+      const height=72,v=c.data;
       const measured=v.points.filter(p=>p.rx_rate!==null||p.tx_rate!==null).length;
       if(!measured||!Plot){destroyPlot(c);c.chart.append(el('p','traffic-empty',!Plot?'本地图表库未加载':'暂无有效速率 · 不补点'));return;}
       // A singleton is an honest marker, never a fabricated line segment.
@@ -75,15 +75,15 @@
       c.chart.replaceChildren();
       c.plot=new Plot({width,height,legend:{show:false},cursor:{drag:{x:false,y:false}},
         scales:{x:{time:true,range:()=>[(c.data.server_now-WINDOW)/1000,c.data.server_now/1000]},y:{range:yrange}},
-        axes:[{stroke:'#69727a',size:32,font:'10px system-ui',grid:{stroke:'#e7e1d7'}},{stroke:'#69727a',size:75,font:'10px system-ui',grid:{stroke:'#e7e1d7'},values:(_u,ticks)=>ticks.map(v=>bytes(v).replace('.00 ', ' '))}],
-        series:[{},...['↓ 下载','↑ 上传'].map((label,i)=>({label,stroke:i?'#9270AD':'#168577',width:1.5,spanGaps:false,points:{show:true,size:3}}))],
-        hooks:{setCursor:[u=>{if(effective(c)&&c.data)select(c,u.cursor.idx??c.index);}]}
+        axes:[{show:false},{show:false}],
+        series:[{},...['↓ 下载','↑ 上传'].map((label,i)=>({label,stroke:i?'#9978CB':'#25A994',fill:i?'#9978CB20':'#25A99428',width:1.5,spanGaps:false,points:{show:v.points.length===1,size:3}}))],
+        hooks:{setCursor:[u=>{if(effective(c)&&c.data)select(c,Number.isFinite(u.cursor.left)&&u.cursor.left>=0?u.posToIdx(u.cursor.left):u.cursor.idx??c.index);}]}
       },data,c.chart);
       // uPlot's pinned mouse cursor remains unchanged. Touch/pen has a bounded
       // explicit point selection, without a gesture framework or fake samples.
       c.tap=e=>{if(!effective(c)||!['touch','pen'].includes(e.pointerType)||e.isPrimary===false)return;
         const rect=c.plot.over.getBoundingClientRect();if(rect.width<=0||e.clientX<rect.left||e.clientX>rect.right)return;
-        const index=c.plot.posToIdx(e.clientX-rect.left);if(Number.isInteger(index))select(c,index);};
+        const index=c.plot.posToIdx(e.clientX-rect.left);if(Number.isInteger(index)){select(c,index);c.chart.focus({preventScroll:true});}};
       c.plot.over?.addEventListener('pointerdown',c.tap);
       if(Resize){c.resize=new Resize(()=>{if(c.plot&&effective(c))renderPlot(c);});c.resize.observe(c.chart);}
     }
@@ -109,17 +109,19 @@
     function mount(agent){
       let c=cards.get(agent.agent_id);
       if(!c){
-        const node=el('section','traffic-chart'),chart=el('div','traffic-plot'),head=el('div','traffic-head'),status=el('small','traffic-status'),output=el('output','traffic-detail');
-        node.dataset.trafficAgent=agent.agent_id;head.append(el('span','traffic-title','流量 · 最多最近 30 分钟'),el('span','traffic-legend','↓ 下载 / ↑ 上传'));
-        head.title='Server 内存中的已接受接收观测；名义上报间隔 10 秒（实际可配置），可见时每 30 秒读取快照。接收时间为横轴，缺测断线；实际保留覆盖可能更短。速率为十进制 B/s。重启后等待新观测。';
-        output.tabIndex=0;output.dataset.focusKey='traffic-point';output.setAttribute('aria-label','流量点详情；左右方向键浏览真实观测');
-        node.append(head,chart,status,output);
+        const node=el('section','traffic-chart'),chart=el('div','traffic-plot'),status=el('small','traffic-status'),output=el('output','traffic-detail');
+        node.dataset.trafficAgent=agent.agent_id;
+        chart.tabIndex=0;chart.dataset.focusKey='traffic-point';chart.setAttribute('aria-label','流量采样；左右方向键查看接收时间及上下行，Enter 或空格打开资源详情');
+        status.id='traffic-status-'+agent.agent_id;status.setAttribute('role','status');
+        output.id='traffic-sample-'+agent.agent_id;chart.setAttribute('aria-describedby',output.id+' '+status.id);
+        output.tabIndex=-1;output.dataset.focusKey='traffic-point';output.setAttribute('aria-label','流量点详情');
+        node.append(chart,status,output);
         c={id:agent.agent_id,agent,node,chart,status,output,owner:{},visible:false,serial:0,loading:false,dead:false,data:null,error:'',index:0,plot:null,resize:null,tap:null};
         c.key=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();if(!c.data?.points.length)return;
           if(e.key==='ArrowLeft'||e.key==='ArrowRight')select(c,c.index+(e.key==='ArrowLeft'?-1:1));else select(c,e.key==='Home'?0:c.data.points.length-1);};
         output.addEventListener('keydown',c.key);cards.set(c.id,c);observer?.observe(node);
-        if(openHistory){const historyButton=el('button','traffic-history','分钟历史');historyButton.type='button';historyButton.dataset.focusKey='traffic-history';historyButton.addEventListener('click',()=>openHistory(c.id,historyButton));head.append(historyButton);
-          chart.addEventListener('click',()=>openHistory(c.id,historyButton));}
+        chart.addEventListener('keydown',e=>{c.key(e);if(openHistory&&['Enter',' '].includes(e.key)){e.preventDefault();openHistory(c.id,chart);}});
+        if(openHistory)chart.addEventListener('dblclick',()=>openHistory(c.id,chart));
       }
       const before=inactive(c.agent);c.agent=agent;const after=inactive(agent);
       if(after&&after!==before)release(c);

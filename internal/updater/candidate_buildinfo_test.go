@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,15 @@ func TestInspectCandidateBuildReadsGoExecutable(t *testing.T) {
 	}
 	command := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", candidate, "./cmd/agent")
 	command.Dir = filepath.Clean(filepath.Join("..", ".."))
+	if runtime.GOOS == "linux" {
+		commitCommand := exec.Command("git", "rev-parse", "HEAD")
+		commitCommand.Dir = command.Dir
+		commit, err := commitCommand.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		command.Args = append(command.Args[:2], "-ldflags=-w -X 404-probe/internal/buildinfo.Version=v1.0.1 -X 404-probe/internal/buildinfo.Commit="+strings.TrimSpace(string(commit)), "-o", candidate, "./cmd/agent")
+	}
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build candidate: %v: %s", err, output)
 	}

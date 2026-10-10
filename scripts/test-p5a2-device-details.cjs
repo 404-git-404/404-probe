@@ -76,6 +76,11 @@ test('P5a2 production native cancel/close cleanup and exact connected focus retu
  f.details.open(id,'management',trigger);f.dialog.dispatch('cancel');assert.equal(f.doc.activeElement,trigger);assert.equal(f.doc.body.style.overflow,undefined);
  f.details.open(id,'management',trigger);f.dialog.close();assert.equal(f.details.snapshot().open,false);assert.equal(f.doc.activeElement,trigger);f.close();
 });
+test('M04 queued close from the previous dialog cannot close an immediately reopened resource view',()=>{
+ const f=fixture(),trigger=new f.Element('button');f.doc.body.append(trigger);
+ for(let i=0;i<30;i++){f.details.open(id,'resources',trigger);f.dialog.dispatch('cancel');assert.equal(f.doc.activeElement,trigger);f.details.open(id,'resources',trigger);f.dialog.dispatch('close');assert.equal(f.dialog.open,true);assert.equal(f.details.snapshot().tab,'resources');assert.equal(f.doc.body.style.overflow,'hidden');}
+ f.dialog.close();assert.equal(f.doc.activeElement,trigger);assert.equal(f.doc.body.style.overflow,undefined);f.close();
+});
 test('P5a2 production exact network visible return restores once; inactive/closed/device removal never restores',()=>{
  const f=fixture();f.details.open(id,'network',null,{target:'exact-v6',family:'ipv6',kind:'ratio'});
  f.doc.hidden=true;f.doc.dispatch('visibilitychange');assert.equal(f.released(),1);

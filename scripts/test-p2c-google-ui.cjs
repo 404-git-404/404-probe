@@ -58,7 +58,9 @@ test('actual dashboard panel always has exactly one YouTube row without a retire
     assert.deepEqual(items.map(row=>row[0]),['YouTube']);assert.equal(items.length,1);
     const panel=app.run('googleStatusPanel({google_status:input})',view);
     assert.equal(panel.attributes['aria-label'],'YouTube 检测结果');
-    assert.deepEqual(panel.children.filter(child=>child.className==='google-check').map(child=>child.children[0].textContent),['YouTube']);
+    const rows=panel.children.filter(child=>child.className==='google-check');
+    assert.deepEqual(rows.map(child=>child.children[0].textContent),['▶']);
+    assert.equal(rows[0].children[0].className,'youtube-icon');
     assert.doesNotMatch(panel.textContent,/Gemini|Search|Sign-in|登录/);
     if(view.stale) assert.deepEqual(items.map(row=>row[2]),['stale']);
     if(!view.supported) assert.deepEqual(items.map(row=>row[1]),['不支持']);

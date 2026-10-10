@@ -15,6 +15,7 @@ html { scrollbar-gutter: stable; }
 .details-tabs button[aria-selected=true] { background:#e3eee9; color:#167b70; }
 .details-body { box-sizing:border-box; overflow:auto; min-height:0; flex:1 1 auto; max-height:calc(100dvh - 208px); padding:22px 26px; overscroll-behavior:contain; }
 .details-pane[hidden] { display:none; }
+.details-resource-facts{display:grid;gap:8px;padding:12px;margin-bottom:16px;border:1px solid #e3ddd3;border-radius:10px;font-size:12px}.details-resource-facts[hidden]{display:none}.details-resource-facts>div{display:grid;grid-template-columns:55px minmax(0,1fr);gap:8px}.details-resource-facts span{overflow-wrap:anywhere}
 .details-history-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .details-history-controls button[aria-pressed=true] { color:#167b70; background:#e3eee9; }
 .details-custom { display:flex; align-items:end; gap:12px; flex-wrap:wrap; margin:16px 0; }

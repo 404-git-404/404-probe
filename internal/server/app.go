@@ -270,6 +270,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
 	response.Capabilities.NetworkQuality = true
+	response.Capabilities.AgentUpgradeV2 = true
 	writeJSON(w, http.StatusOK, a.qualityReportResponse(r, response, authenticatedID, report))
 }
 

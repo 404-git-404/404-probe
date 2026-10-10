@@ -28,6 +28,7 @@ type webAgentSummaryView struct {
 	LastSeen       *int64 `json:"last_seen"`
 	Version        string `json:"version"`
 	UpgradeCapable bool   `json:"upgrade_capable"`
+	UpgradeV2      bool   `json:"upgrade_v2"`
 }
 
 type webAgentDetailView struct {
@@ -435,6 +436,7 @@ func newWebAgentSummaryView(record storage.AgentSnapshot) webAgentSummaryView {
 		view.LastSeen = &lastSeen
 		view.Version = record.State.AgentVersion
 		view.UpgradeCapable = record.State.AgentUpgradeCapable
+		view.UpgradeV2 = record.State.AgentUpgradeV2
 	}
 	return view
 }

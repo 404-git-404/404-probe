@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"404-probe/internal/buildinfo"
+	"404-probe/internal/protocol"
 )
 
 const (
@@ -34,26 +35,36 @@ type Request struct {
 	OperationID     string `json:"operation_id"`
 	TargetVersion   string `json:"target_version"`
 	ReceiptToken    string `json:"receipt_token,omitempty"`
+	Channel         string `json:"channel,omitempty"`
+	TargetCommit    string `json:"target_commit,omitempty"`
+	ServerVersion   string `json:"server_version,omitempty"`
 }
 
 func (r Request) Validate() error {
-	if r.ProtocolVersion != ProtocolVersion {
+	if r.ProtocolVersion != ProtocolVersion && r.ProtocolVersion != 2 || r.ProtocolVersion == 1 && r.ServerVersion != "" {
 		return errors.New("invalid updater request")
 	}
 	switch r.Action {
 	case ActionCapabilities:
-		if r.OperationID != "" || r.TargetVersion != "" || r.ReceiptToken != "" {
+		if r.OperationID != "" || r.TargetVersion != "" || r.ReceiptToken != "" || r.Channel != "" || r.TargetCommit != "" || r.ServerVersion != "" {
 			return errors.New("invalid updater capability request")
 		}
 		return nil
 	case ActionRemove:
-		if !validOperationID(r.OperationID) || r.TargetVersion != "" || !validReceiptToken(r.ReceiptToken) {
+		if r.ProtocolVersion != 1 || !validOperationID(r.OperationID) || r.TargetVersion != "" || !validReceiptToken(r.ReceiptToken) || r.Channel != "" || r.TargetCommit != "" {
 			return errors.New("invalid Agent removal request")
 		}
 		return nil
 	case ActionStart, ActionStatus, ActionHealthy:
-		if !validOperationID(r.OperationID) || !buildinfo.IsCanonicalVersion(r.TargetVersion) || r.ReceiptToken != "" {
+		if !validOperationID(r.OperationID) || r.ReceiptToken != "" {
 			return errors.New("invalid updater request")
+		}
+		if r.ProtocolVersion == 1 {
+			if !buildinfo.IsCanonicalVersion(r.TargetVersion) || r.Channel != "" || r.TargetCommit != "" {
+				return errors.New("invalid legacy updater request")
+			}
+		} else if !protocol.ValidUpgradeTarget(r.Channel, r.TargetVersion) || !validHexCommit(r.TargetCommit) || !buildinfo.IsReleaseVersion(r.ServerVersion) {
+			return errors.New("invalid explicit updater request")
 		}
 		return nil
 	default:
@@ -62,13 +73,19 @@ func (r Request) Validate() error {
 }
 
 type State struct {
-	OperationID    string `json:"operation_id"`
-	TargetVersion  string `json:"target_version"`
-	ReleaseCommit  string `json:"release_commit,omitempty"`
-	Status         string `json:"status"`
-	FailureCode    string `json:"failure_code,omitempty"`
-	FailureMessage string `json:"failure_message,omitempty"`
-	UpdatedAt      int64  `json:"updated_at"`
+	SourceVersion   string `json:"source_version,omitempty"`
+	LocalMigration  bool   `json:"local_migration,omitempty"`
+	ServerVersion   string `json:"server_version,omitempty"`
+	ProtocolVersion int    `json:"protocol_version,omitempty"`
+	Channel         string `json:"channel,omitempty"`
+	TargetCommit    string `json:"target_commit,omitempty"`
+	OperationID     string `json:"operation_id"`
+	TargetVersion   string `json:"target_version"`
+	ReleaseCommit   string `json:"release_commit,omitempty"`
+	Status          string `json:"status"`
+	FailureCode     string `json:"failure_code,omitempty"`
+	FailureMessage  string `json:"failure_message,omitempty"`
+	UpdatedAt       int64  `json:"updated_at"`
 }
 
 type Response struct {
@@ -78,7 +95,26 @@ type Response struct {
 	Capabilities UpdaterCapabilities `json:"capabilities,omitempty"`
 }
 
+// A zero capability struct must be absent, rather than capabilities:{}:
+// the v0.9.3 decoder rejects even an empty unknown field.
+func (r Response) MarshalJSON() ([]byte, error) {
+	// SourceVersion is a private recovery fact, never part of either IPC wire.
+	r.State.SourceVersion = ""
+	var capabilities *UpdaterCapabilities
+	if r.Capabilities.RemoteRemoval || r.Capabilities.UpgradeV2 {
+		copy := r.Capabilities
+		capabilities = &copy
+	}
+	return json.Marshal(struct {
+		Accepted     bool                 `json:"accepted"`
+		Error        string               `json:"error,omitempty"`
+		State        State                `json:"state"`
+		Capabilities *UpdaterCapabilities `json:"capabilities,omitempty"`
+	}{r.Accepted, r.Error, r.State, capabilities})
+}
+
 type UpdaterCapabilities struct {
+	UpgradeV2     bool `json:"upgrade_v2,omitempty"`
 	RemoteRemoval bool `json:"remote_removal,omitempty"`
 }
 
@@ -145,6 +181,18 @@ func validOperationID(value string) bool {
 	}
 	for _, char := range value {
 		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func validHexCommit(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, c := range value {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
 			return false
 		}
 	}

@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v1.0.0"
+readonly DEFAULT_VERSION="v1.0.1"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -186,6 +186,7 @@ Usage:
   404-probe-install agent --server <origin>
   404-probe-install setup-security  enable V0.9 local security audit on an existing Agent
   404-probe-install selector-order <absolute-sing-box-config.json>
+  404-probe-install upgrade-agent   migrate old Beta, or repair missing Stable Updater in place
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install uninstall <server|agent> [--confirm-delete-data]
 
@@ -3055,6 +3056,284 @@ install_or_upgrade() {
   interactive_install
 }
 
+download_local_migration_runner() (
+  local destination="$1" architecture asset temporary_directory
+  architecture="$(detect_architecture)"; asset="404-probe-agent-linux-${architecture}"
+  temporary_directory="$(mktemp -d)"
+  trap 'rm -rf -- "${temporary_directory}"' EXIT
+  for name in "${asset}" RELEASE-METADATA.json SHA256SUMS; do
+    if [[ -n "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" ]]; then
+      [[ -f "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" && ! -L "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" ]] || die "missing migration asset: ${name}"
+      cp -- "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" "${temporary_directory}/${name}"
+    else
+      download_release_asset v1.0.1 "${name}" "${temporary_directory}/${name}" || die "could not download migration asset: ${name}"
+    fi
+  done
+  # MIGRATION_VERIFIER_BEGIN
+  python3 - "${temporary_directory}/${asset}" "${temporary_directory}/RELEASE-METADATA.json" "${temporary_directory}/SHA256SUMS" "${architecture}" <<'PY_MIGRATION' || die 'migration runner static verification failed; no Agent binary or service was changed'
+"""Static verifier embedded in install.sh; never executes the downloaded runner."""
+import hashlib
+import json
+import re
+import struct
+import sys
+from pathlib import Path
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, 'duplicate metadata field')
+        result[key] = value
+    return result
+
+
+def verify(binary, metadata, sums, arch):
+    require(arch in ('amd64', 'arm64'), 'unsupported architecture')
+    require(0 < len(binary) <= 128 << 20 and len(metadata) <= 256 << 10 and len(sums) <= 256 << 10, 'asset size limit')
+    doc = json.loads(metadata, object_pairs_hook=unique_object)
+    require(set(doc) == {'schema_version', 'version', 'commit', 'assets'}, 'unexpected schema1 fields')
+    require(type(doc['schema_version']) is int and doc['schema_version'] == 1 and doc['version'] == 'v1.0.1', 'require v1.0.1 schema1')
+    commit = doc['commit']
+    require(isinstance(commit, str) and re.fullmatch('[0-9a-f]{40}', commit), 'invalid commit')
+    expected = {'404-probe-' + role + '-linux-' + cpu: cpu for role in ('agent', 'server') for cpu in ('amd64', 'arm64')}
+    require(isinstance(doc['assets'], list) and len(doc['assets']) == 4, 'require four binary assets')
+    assets = {}
+    for asset in doc['assets']:
+        require(isinstance(asset, dict) and set(asset) == {'name', 'goos', 'goarch', 'sha256'}, 'unexpected asset fields')
+        name = asset['name']
+        require(name in expected and name not in assets and asset['goos'] == 'linux' and asset['goarch'] == expected[name], 'invalid asset identity')
+        require(isinstance(asset['sha256'], str) and re.fullmatch('[0-9a-f]{64}', asset['sha256']), 'invalid asset hash')
+        assets[name] = asset['sha256']
+    manifest = {}
+    for line in sums.decode('ascii').splitlines():
+        match = re.fullmatch('([0-9a-f]{64})  ([A-Za-z0-9.-]+)', line)
+        require(match is not None, 'invalid checksum line')
+        digest, name = match.groups()
+        require(name not in manifest and name in set(expected) | {'install.sh'}, 'unknown or duplicate checksum')
+        manifest[name] = digest
+    require(set(manifest) == set(expected) | {'install.sh'}, 'require schema1 five checksums')
+    require(all(manifest[name] == digest for name, digest in assets.items()), 'metadata checksum mismatch')
+    name = '404-probe-agent-linux-' + arch
+    require(hashlib.sha256(binary).hexdigest() == assets[name], 'binary checksum mismatch')
+    require(len(binary) >= 64 and binary[:7] == b'\x7fELF\x02\x01\x01', 'require ELF64 little endian')
+    h = struct.unpack_from('<HHIQQQIHHHHHH', binary, 16)
+    require(h[0] == 2 and h[1] == {'amd64': 62, 'arm64': 183}[arch] and h[8] == 56 and h[10] == 64, 'unsupported ELF layout')
+    phoff, shoff, phnum, shnum, namesidx = h[4], h[5], h[9], h[11], h[12]
+    require(0 < shnum <= 2048 and 0 < phnum <= 2048 and namesidx < shnum, 'invalid ELF table counts')
+    require(shoff <= len(binary) and shnum <= (len(binary) - shoff) // 64 and phoff <= len(binary) and phnum <= (len(binary) - phoff) // 56, 'ELF tables outside file')
+    sections = [struct.unpack_from('<IIQQQQIIQQ', binary, shoff + i * 64) for i in range(shnum)]
+    programs = [struct.unpack_from('<IIQQQQQQ', binary, phoff + i * 56) for i in range(phnum)]
+    for s in sections:
+        require(s[3] + s[5] < 1 << 64 and s[4] <= len(binary) and (s[1] == 8 or s[5] <= len(binary) - s[4]), 'invalid ELF section bounds')
+
+    def data(s):
+        require(s[1] != 8 and not s[2] & 2048, 'unsupported section encoding')
+        return binary[s[4]:s[4] + s[5]]
+
+    def text(table, offset):
+        require(offset < len(table), 'invalid string offset')
+        end = table.find(b'\0', offset)
+        require(end >= 0, 'unterminated string')
+        return table[offset:end].decode('ascii')
+
+    section_names = data(sections[namesidx])
+    names = [text(section_names, s[0]) for s in sections]
+    tables = [s for s in sections if s[1] == 2]
+    require(len(tables) == 1, 'require retained symbol table')
+    table = tables[0]
+    require(table[5] <= 16 << 20 and table[9] == 24 and table[5] % 24 == 0 and table[6] < shnum, 'invalid symbol table')
+    linked = sections[table[6]]
+    require(linked[1] == 3 and linked[5] <= 16 << 20, 'invalid symbol names')
+    strings, symbols = data(linked), {}
+    raw = data(table)
+    for offset in range(0, len(raw), 24):
+        sym = struct.unpack_from('<IBBHQQ', raw, offset)
+        nm = text(strings, sym[0])
+        if nm in ('404-probe/internal/buildinfo.Version', '404-probe/internal/buildinfo.Commit'):
+            require(nm not in symbols, 'ambiguous release symbol')
+            symbols[nm] = sym
+
+    def mapped(s, address, length, flags):
+        matches = [p for p in programs if p[0] == 1 and address >= p[3] and address - p[3] <= p[5] and length <= p[5] - (address - p[3])]
+        require(len(matches) == 1 and matches[0][1] == flags and matches[0][2] + address - matches[0][3] == s[4] + address - s[3], 'invalid ELF load mapping')
+
+    def release_string(suffix):
+        sym = symbols.get('404-probe/internal/buildinfo.' + suffix)
+        require(sym is not None, 'missing release symbol')
+        _, info, other, index, value, size = sym
+        require(info == 17 and other == 0 and index < shnum and size == 16 and value % 8 == 0, 'invalid Go string symbol')
+        s = sections[index]
+        require(names[index] == '.data' and s[1] == 1 and s[2] & 3 == 3 and not s[2] & 4 and value >= s[3] and value - s[3] <= s[5] and 16 <= s[5] - (value - s[3]), 'invalid Go string header')
+        mapped(s, value, 16, 6)
+        pointer, length = struct.unpack_from('<QQ', data(s), value - s[3])
+        require(0 < length <= 64, 'invalid Go string length')
+        matches = [s for s in sections if s[1] == 1 and s[2] & 2 and not s[2] & 5 and pointer >= s[3] and pointer - s[3] <= s[5] and length <= s[5] - (pointer - s[3])]
+        require(len(matches) == 1, 'invalid read-only release string')
+        s = matches[0]
+        mapped(s, pointer, length, 4)
+        return data(s)[pointer - s[3]:pointer - s[3] + length].decode('ascii')
+
+    require(release_string('Version') == 'v1.0.1' and release_string('Commit') == commit, 'linked Version/Commit mismatch')
+    build_sections = [s for i, s in enumerate(sections) if names[i] == '.go.buildinfo']
+    require(len(build_sections) == 1, 'require unique Go build info')
+    raw = data(build_sections[0])
+    require(len(raw) >= 32 and raw[:14] == b'\xff Go buildinf:' and raw[14] == 8 and raw[15] == 2, 'unsupported Go build info')
+
+    def read_string(offset):
+        length = 0
+        for shift in range(0, 70, 7):
+            require(offset < len(raw), 'truncated Go build info')
+            byte = raw[offset]
+            offset += 1
+            require(shift < 63 or byte <= 1, 'Go build info overflow')
+            length |= (byte & 127) << shift
+            if byte < 128:
+                require(length <= len(raw) - offset, 'Go build info outside section')
+                return raw[offset:offset + length], offset + length
+        raise ValueError('invalid Go build info length')
+
+    _, offset = read_string(32)
+    module, _ = read_string(offset)
+    require(len(module) >= 32 and module[-17] == 10, 'invalid Go module framing')
+    settings, paths = {}, []
+    for line in module[16:-16].decode('utf-8').splitlines():
+        if line.startswith('path\t'):
+            paths.append(line[5:])
+        elif line.startswith('build\t'):
+            pair = line[6:].split('=', 1)
+            require(len(pair) == 2 and pair[0] not in settings, 'ambiguous Go setting')
+            settings[pair[0]] = pair[1]
+    require(paths == ['404-probe/cmd/agent'] and settings.get('GOOS') == 'linux' and settings.get('GOARCH') == arch and settings.get('vcs.revision') == commit and settings.get('vcs.modified') == 'false', 'Go path/platform/VCS proof failed')
+    return commit
+
+
+if __name__ == '__main__':
+    try:
+        files = [Path(p) for p in sys.argv[1:4]]
+        require(len(files) == 3 and len(sys.argv) == 5, 'expected binary metadata sums architecture')
+        for p, limit in zip(files, (128 << 20, 256 << 10, 256 << 10)):
+            require(p.is_file() and not p.is_symlink() and 0 < p.stat().st_size <= limit, 'invalid input file')
+        commit = verify(*(p.read_bytes() for p in files), sys.argv[4])
+        print('Static migration runner verified: v1.0.1 ' + commit)
+    except (ValueError, TypeError, KeyError, UnicodeError, OSError, struct.error) as error:
+        print('Static migration runner rejected: ' + str(error), file=sys.stderr)
+        sys.exit(1)
+PY_MIGRATION
+  # MIGRATION_VERIFIER_END
+  install -m 0755 "${temporary_directory}/${asset}" "${destination}"
+)
+
+# Fixed local migration checks; never infer startup from Type=simple's early
+# active state. Existing daemon enabled state and unit files are untouched.
+wait_local_migration_updater_stopped() {
+  local properties job attempt
+  for (( attempt=0; attempt<50; attempt++ )); do
+    properties="$(systemctl show 404-probe-agent-updater.service --property=ActiveState,MainPID,Job --no-pager)" || return 1
+    job="$(sed -n 's/^Job=//p' <<<"${properties}")"
+    if grep -Fxq 'ActiveState=inactive' <<<"${properties}" && grep -Fxq 'MainPID=0' <<<"${properties}" \
+      && [[ -z "${job}" || "${job}" == 0 ]]; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_local_migration_process() {
+  local unit="$1" properties pid previous="" confirmed="" attempt
+  for (( attempt=0; attempt<300; attempt++ )); do
+    properties="$(systemctl show "${unit}" --property=ActiveState,SubState,MainPID --no-pager)" || return 1
+    pid="$(sed -n 's/^MainPID=\([0-9][0-9]*\)$/\1/p' <<<"${properties}")"
+    [[ "${properties}" != *'ActiveState=failed'* && "${properties}" != *'ActiveState=inactive'* && "${properties}" != *'SubState=auto-restart'* ]] || return 1
+    [[ -z "${previous}" || "${pid}" == "${previous}" ]] || return 1
+    if [[ "${pid}" =~ ^[1-9][0-9]*$ ]]; then previous="${pid}"; fi
+    if [[ "${pid}" =~ ^[1-9][0-9]*$ && "${properties}" == *'ActiveState=active'* && "${properties}" == *'SubState=running'* && "/proc/${pid}/exe" -ef "${AGENT_BINARY}" ]]; then
+      [[ "${confirmed}" != "${pid}" ]] || return 0
+      confirmed="${pid}"
+    else
+      confirmed=""
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+restore_local_migration_updater() {
+  systemctl start 404-probe-agent-updater.service \
+    && wait_local_migration_process 404-probe-agent-updater.service
+}
+
+upgrade_old_beta_agent() (
+  [[ $# -eq 0 ]] || die "usage: version-pinned v1.0.1 install.sh upgrade-agent"
+  reject_openrc_deferred upgrade-agent
+  [[ "$(target_version)" == v1.0.1 ]] || die "old Beta migration requires explicit v1.0.1 Stable; no files were changed"
+  command -v python3 >/dev/null 2>&1 || die "upgrade-agent requires python3 for static verification; install python3 using your distribution package manager, then rerun this command. No Agent files were changed."
+  local candidate="/usr/local/bin/.404-probe-agent.migrate-beta" lock_directory="/run/404-probe-upgrade" migration_marker="${AGENT_UPDATER_STATE}/local-migration-installer" version_json current helper_candidate="" updater_active=0 updater_enabled=0 recovering=0 repair_updater=0
+  for managed in "${AGENT_BINARY}" "${AGENT_UNIT}"; do
+    [[ -f "${managed}" && ! -L "${managed}" && "$(stat -c '%U' "${managed}")" == root ]] || die "existing Agent installation is incomplete or unsafe; no files were changed"
+  done
+  [[ "$(stat -c '%a' "${AGENT_BINARY}")" == 755 && "$(stat -c '%a' "${AGENT_UNIT}")" == 644 ]] || die "Agent binary/unit permissions are unsafe"
+  [[ -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}")" == "root:${SERVICE_USER}:750" && -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}/agent.env")" == "${SERVICE_USER}:${SERVICE_USER}:400" ]] || die "existing Agent configuration permissions are unsafe"
+  if [[ -e "${AGENT_UPDATER_UNIT}" ]]; then
+    [[ -f "${AGENT_UPDATER_UNIT}" && ! -L "${AGENT_UPDATER_UNIT}" && "$(stat -c '%U:%a' "${AGENT_UPDATER_UNIT}")" == root:644 ]] || die "unsafe Updater unit"
+    grep -Fxq "ExecStart=${AGENT_BINARY} updater" "${AGENT_UPDATER_UNIT}" || die "unsupported Updater unit"
+  else repair_updater=1; fi
+  [[ ! -e "${AGENT_UPDATER_STATE}" || ( -d "${AGENT_UPDATER_STATE}" && ! -L "${AGENT_UPDATER_STATE}" && "$(stat -c '%U:%a' "${AGENT_UPDATER_STATE}")" == root:700 ) ]] || die "existing updater state is unsafe"
+  [[ -f "${INSTALL_HELPER}" && ! -L "${INSTALL_HELPER}" && "$(stat -c '%U:%a' "${INSTALL_HELPER}")" == root:755 ]] || die "existing installer helper is unsafe"
+  if [[ -e "${migration_marker}" ]]; then
+    [[ -f "${migration_marker}" && ! -L "${migration_marker}" && "$(stat -c '%U:%a' "${migration_marker}")" == root:600 ]] || die "unsafe migration recovery marker"
+    case "$(cat "${migration_marker}")" in 'v1.0.1 updater=existing') repair_updater=0 ;; 'v1.0.1 updater=absent') repair_updater=1 ;; *) die "invalid migration recovery marker" ;; esac
+    recovering=1
+  fi
+  [[ ! -e "${AGENT_REMOVAL_REQUEST_FILE}" ]] || die "Agent removal is pending; no files were changed"
+  grep -Fxq "User=${SERVICE_USER}" "${AGENT_UNIT}" && grep -Fxq "EnvironmentFile=${CONFIG_DIRECTORY}/agent.env" "${AGENT_UNIT}" && grep -Fq "ExecStart=${AGENT_BINARY} " "${AGENT_UNIT}" || die "unsupported Agent unit"
+  version_json="$("${AGENT_BINARY}" version --json)" || die "installed Agent identity unavailable"
+  current="$(json_string_field "${version_json}" version)"
+  [[ "${version_json}" == *'"dirty":false'* && ( "${current}" == v0.9.3 || "${current}" == v1.0.0 || "${current}" == v1.0.1-beta.1 || "${current}" == v1.0.1-beta.2 || "${current}" == v1.0.1 ) ]] || die "unsupported installed release"
+  [[ "${current}" != v1.0.1 || "${recovering}" == 1 ]] || die "already Stable; use the Web upgrade action"
+  if [[ "${current}" == v0.9.3 || "${current}" == v1.0.0 ]]; then (( repair_updater != 0 )) || die "existing Stable Updater is available; use Web upgrade"; fi
+  [[ ! -e "${lock_directory}" || ( -d "${lock_directory}" && ! -L "${lock_directory}" && "$(stat -c '%U:%a' "${lock_directory}")" == root:700 ) ]] || die "unsafe migration lock directory"
+  install -d -m 0700 -o root -g root "${lock_directory}"
+  [[ ! -e "${lock_directory}/agent-migrate.lock" || ( -f "${lock_directory}/agent-migrate.lock" && ! -L "${lock_directory}/agent-migrate.lock" && "$(stat -c '%U' "${lock_directory}/agent-migrate.lock")" == root ) ]] || die "unsafe migration lock"
+  exec 9>"${lock_directory}/agent-migrate.lock"
+  flock -n 9 || die "another local Agent migration is running"
+  if [[ -e "${candidate}" ]]; then [[ -f "${candidate}" && ! -L "${candidate}" && "$(stat -c '%U' "${candidate}")" == root ]] || die "unsafe migration runner"; rm -f -- "${candidate}"; fi
+  download_local_migration_runner "${candidate}"
+  systemctl is-active --quiet 404-probe-agent-updater.service && updater_active=1
+  systemctl is-enabled --quiet 404-probe-agent-updater.service && updater_enabled=1
+  (( repair_updater != 0 || (updater_enabled != 0 && (updater_active != 0 || recovering != 0)) )) || die "Agent Updater must be enabled/active before a new migration"
+  install -d -m 0700 -o root -g root "${AGENT_UPDATER_STATE}"
+  trap 'status=$?; if (( status != 0 && repair_updater == 0 )); then if ! restore_local_migration_updater; then printf "404-probe installer: actual Updater restoration could not be confirmed; failure journal and marker retained\n" >&2; fi; fi; [[ -z "${helper_candidate}" ]] || rm -f -- "${helper_candidate}"; rm -f -- "${candidate}"; exit "${status}"' EXIT HUP INT TERM
+  if (( recovering == 0 )); then
+    local marker_candidate
+    marker_candidate="$(mktemp "${AGENT_UPDATER_STATE}/.local-migration-installer.XXXXXX")"
+    if (( repair_updater != 0 )); then printf '%s\n' 'v1.0.1 updater=absent' >"${marker_candidate}"; else printf '%s\n' 'v1.0.1 updater=existing' >"${marker_candidate}"; fi; chmod 0600 "${marker_candidate}"
+    sync -f "${marker_candidate}"; mv -f -- "${marker_candidate}" "${migration_marker}"; sync -f "${AGENT_UPDATER_STATE}"
+  fi
+  if [[ -f "${AGENT_UPDATER_UNIT}" ]]; then
+    systemctl stop 404-probe-agent-updater.service || die "could not stop the old Updater"
+    wait_local_migration_updater_stopped || die "old Updater did not actually stop or has a pending job"
+  fi
+  "${candidate}" updater migrate-legacy || die "migration did not commit; rerun this command to recover the original identity"
+  if (( repair_updater != 0 )); then install_agent_updater_unit; systemctl daemon-reload; systemctl enable --now 404-probe-agent-updater.service; else systemctl start 404-probe-agent-updater.service; fi
+  wait_local_migration_process 404-probe-agent-updater.service || die "actual Stable Updater startup could not be confirmed"
+  wait_local_migration_process 404-probe-agent.service || die "actual Stable Agent startup could not be confirmed"
+  version_json="$("${AGENT_BINARY}" version --json)"
+  [[ "$(json_string_field "${version_json}" version)" == v1.0.1 && "${version_json}" == *'"dirty":false'* ]] || die "installed Stable identity did not verify"
+  helper_candidate="$(mktemp "$(dirname "${INSTALL_HELPER}")/.404-probe-install.migrate.XXXXXX")"
+  render_local_helper >"${helper_candidate}"
+  bash -n "${helper_candidate}" || die "new helper syntax failed"
+  chown root:root "${helper_candidate}"; chmod 0755 "${helper_candidate}"
+  mv -f -- "${helper_candidate}" "${INSTALL_HELPER}"; helper_candidate=""
+  sync -f "${INSTALL_HELPER}" "$(dirname "${INSTALL_HELPER}")"
+  rm -f -- "${migration_marker}"; sync -f "${AGENT_UPDATER_STATE}"
+  note "Agent migrated to v1.0.1 Stable after real accepted version report. Identity, credentials, configuration, epoch, selector and security state were preserved."
+)
+
 main() {
   case "${1:-}" in -h|--help|help) usage; return ;; esac
   reject_deferred_command_on_host "${1:-}"
@@ -3065,6 +3344,10 @@ main() {
     exit $?
   fi
   case "${1:-}" in
+    upgrade-agent)
+      shift
+      upgrade_old_beta_agent "$@"
+      ;;
     agent)
       shift
       install_agent_command "$@"

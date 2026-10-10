@@ -39,7 +39,7 @@ test('price uses actual currency and value with symbol, never exchange conversio
  assert.equal(C.price({currency:'USD',purchase_price:'9.99',purchase_price_period:'monthly'}),'USD $9.99/月');
  assert.equal(C.price({currency:'EUR',renewal_price:'10',renewal_price_period:'yearly'}),'EUR €10.00/年');assert.equal(C.price(null),'未设价格');assert.equal(C.price({currency:'USD',purchase_price:'0'}),'USD $0.00');
 });
-class Element {constructor(){this.children=[];this.attributes={};}setAttribute(k,v){this.attributes[k]=v;}append(...children){this.children.push(...children);}}
+class Element {constructor(){this.children=[];this.attributes={};this.dataset={};}setAttribute(k,v){this.attributes[k]=v;}append(...children){this.children.push(...children);}}
 test('production tile DOM uses finite neutral ring/accessible old label and seven actual stamp components',()=>{
  const sandbox={document:{createElement:()=>new Element()},Intl,Date};vm.createContext(sandbox);vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/card-metrics.js'),'utf8'),sandbox);
  const cards=sandbox.CardMetrics;

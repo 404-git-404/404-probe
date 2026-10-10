@@ -170,6 +170,7 @@ func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	mux.Handle("/api/v1/web/agents/{agent_id}/outbounds/switch", a.requireWebSession(http.HandlerFunc(a.handleWebSelectorSwitchMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/upgrade", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebUpgrade)))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/upgrade", a.requireWebSession(http.HandlerFunc(a.handleGetWebUpgrade), true))
+	mux.Handle("GET /api/v1/web/agents/{agent_id}/upgrade-targets", a.requireWebSession(http.HandlerFunc(a.handleWebUpgradeTargets), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/google-status", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebGoogleStatus)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/google-status", a.requireWebSession(http.HandlerFunc(a.handleWebGoogleStatusMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/revoke", a.requireWebMutation(http.HandlerFunc(a.handleRevokeWebAgent)))

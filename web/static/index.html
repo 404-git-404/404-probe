@@ -50,9 +50,13 @@
   </dialog>
   <dialog id="upgrade-agent-dialog" class="agent-dialog" aria-labelledby="upgrade-agent-title">
     <h2 id="upgrade-agent-title">升级 Agent</h2>
-    <p>将通过受限 updater 下载、校验并事务性替换单个 Agent。升级失败时会尝试恢复旧版本。</p>
+    <p>仅升级所选 Agent。程序通过校验后替换；启动或健康验证失败时恢复旧版本。</p>
     <div class="upgrade-versions"><span>当前版本 <strong id="upgrade-current-version"></strong></span><span>目标版本 <strong id="upgrade-target-version"></strong></span></div>
     <form id="upgrade-agent-form">
+      <label for="upgrade-release">选择目标版本（默认 Stable）</label>
+      <select id="upgrade-release" name="release"></select>
+      <p id="upgrade-release-reason" role="status"></p>
+      <label id="upgrade-beta-label" hidden><input id="upgrade-beta-confirm" type="checkbox"> 我确认仅将此 Agent 升级到所选 Beta 预发布版本</label>
       <div id="upgrade-agent-error" class="dialog-error hidden" role="alert">升级请求失败，请重试。</div>
       <div class="dialog-actions"><button id="upgrade-agent-cancel" type="button">取消</button><button id="upgrade-agent-confirm" class="primary-action" type="submit">开始升级</button></div>
     </form>

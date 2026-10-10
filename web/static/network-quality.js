@@ -76,7 +76,7 @@
         if(!target.id||target.status!=='active'||card.loading.has(target.id))continue;
         const key=C.historyKey(card.id,target.id,card.family,1);card.loading.add(target.id);
         read(key,card.historyOwner,`${path(card.id)}history?target_id=${encodeURIComponent(target.id)}&hours=1`).then(value=>{
-          if(card.dead||generation!==card.generation||!effective(card)||value.target?.id!==target.id||value.target?.family!==card.family)return;
+          if(card.dead||generation!==card.generation||!effective(card)||value.target?.id!==target.id||value.target?.family!==card.family||value.target?.protocol!==target.protocol||value.target?.slot!==target.slot)return;
           card.data.set(target.id,{value,updated:now(),error:''});renderCard(card);
         }).catch(error=>{
           if(!card.dead&&generation===card.generation&&error.name!=='AbortError'){
@@ -91,14 +91,15 @@
       if(history?.card===card)closeHistory();renderCard(card);refreshCard(card);
     }
     function updateStrip(row,blocks,target,kind,disabled) {
-      const incoming=(blocks||[]).slice(-20);
-      row.setAttribute('aria-label',`${kind==='latency'?'延迟':'比例'}，最近20个真实一分钟桶`);
-      if(!incoming.length){if(!row.querySelector('.nq-muted'))row.replaceChildren(el('small','nq-muted','暂无一分钟数据'));return;}
+      const incoming=(blocks||[]).slice(-10);
+      row.setAttribute('aria-label',`${kind==='latency'?'TCP 延迟':'ICMP 丢包'}，最近${incoming.length}个真实一分钟桶`);
+      if(!incoming.length){if(!row.querySelector('.nq-unknown-slot'))row.replaceChildren(el('small','nq-muted nq-unknown-slot','未知'));return;}
       row.querySelector('.nq-muted')?.remove();
       for(let i=0;i<incoming.length;i++) {
         const block=incoming[i],value=kind==='latency'?block.p50_ms:C.ratio(block,target.protocol).value;
         const neutral=disabled||block.gap||!C.finite(value);
-        const tone=neutral?'neutral':kind==='latency'?(value<100?'low':value<250?'mid':'high'):(value===0?'low':value<20?'mid':'high');
+        const failed=!disabled&&!block.gap&&target.protocol==='tcp'&&block.attempts>0&&block.failures>0&&!block.successes;
+        const tone=failed?'failure':neutral?'neutral':kind==='latency'?(value<100?'low':value<250?'mid':'high'):(value===0?'low':'loss');
         let wrap=row.children[i];
         if(!wrap){
           wrap=el('span','nq-block-wrap');const square=button('',()=>{square.focus();note.textContent=square.title;}),note=el('span','nq-bucket-note');
@@ -106,18 +107,20 @@
           square.addEventListener('pointerenter',()=>{note.textContent=square.title;});square.addEventListener('pointerleave',()=>{if(doc.activeElement!==square)note.textContent='';});
           wrap.append(square,note);row.append(wrap);
         }
-        const square=wrap.firstElementChild,text=C.blockText(block,target.protocol);square.className=`nq-block nq-${tone}`;
+        const square=wrap.firstElementChild,text=C.blockText(block,target.protocol);square.className=`nq-block nq-${tone}`;square.textContent=failed?'×':neutral?'·':kind==='ratio'&&value>0?'!':'';
         if(square.title!==text){square.title=text;square.setAttribute('aria-label',text);if(doc.activeElement===square)wrap.lastElementChild.textContent=text;}
       }
       while(row.children.length>incoming.length)row.lastElementChild.remove();
     }
     function renderCard(card) {
       if(!card.head) {
-        const head=el('div','nq-head');head.append(el('strong','','网络质量'));
+        const head=el('div','nq-head'),title=el('div','nq-title');title.append(el('strong','','网络质量'),el('span','nq-subtitle','(TCP 延迟/ICMP 丢包)'));head.append(title);
         const region=button('地区选择',event=>openPanel(card,event.currentTarget),'nq-link');region.dataset.focusKey='nq-region';head.append(region);
-        const tabs=el('div','nq-tabs');for(const [v,text]of [['ipv4','V4'],['ipv6','V6']]){const b=button(text,()=>family(card,v));b.dataset.focusKey=`nq-${v}`;tabs.append(b);}head.append(tabs);
-        card.head=head;card.reason=el('p','nq-status');card.content=el('div','nq-rows');card.rows=new Map();
-        card.node.append(head,card.reason,card.content,el('small','nq-legend','分钟延迟颜色：<100 / 100–249 / ≥250 ms；灰色为缺测或旧状态。比例见数值及分母，不是综合评分。'));
+        const tabs=el('div','nq-tabs');for(const [v,text]of [['ipv4','IPv4'],['ipv6','IPv6']]){const b=button(text,()=>family(card,v));b.dataset.focusKey=`nq-${v}`;tabs.append(b);}head.append(tabs);
+        card.head=head;card.reason=el('p','nq-status');card.reason.id='nq-status-'+card.id;card.title=title;
+        title.tabIndex=0;title.dataset.focusKey='nq-status';title.setAttribute('aria-describedby',card.reason.id);
+        card.content=el('div','nq-rows');card.rows=new Map();
+        card.node.append(head,card.reason,card.content);
       }
       for(const b of card.head.querySelectorAll('.nq-tabs button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
       const disabled=card.agent.revoked||card.agent.disabled_at||!card.config?.supported||!card.config?.enabled||(card.family==='ipv6'&&!card.config?.ipv6);
@@ -129,27 +132,34 @@
           view.latency=button('',event=>openHistory(card,view.target,'latency',event.currentTarget),'nq-metric');
           view.ratio=button('',event=>openHistory(card,view.target,'ratio',event.currentTarget),'nq-metric');
           view.latency.dataset.focusKey=`nq-${key}-latency`;view.ratio.dataset.focusKey=`nq-${key}-ratio`;
-          view.metric.append(view.latency,view.ratio);view.node.append(view.label,view.metric,view.latencyStrip,view.ratioStrip,view.note);card.rows.set(key,view);
+          view.node.append(view.label,view.latency,view.latencyStrip,view.ratio,view.ratioStrip,view.note);card.rows.set(key,view);
         }
         view.target=target;
         if(view.node!==position)card.content.insertBefore(view.node,position);position=view.node.nextElementSibling;
         const cached=card.data.get(target.id),stored=cached?.value;
         const expired=stored&&C.finite(stored.latest_age_ms)&&stored.latest_age_ms+Math.max(0,now()-(cached.updated||now()))>36000;
         const h=expired?{...stored,stale:true}:stored,shownTarget=disabled&&target.status==='active'?{...target,status:'paused'}:target;
-        const display=C.current(cached?.error&&h?{...h,stale:true}:h,shownTarget),old=!!h?.stale||!!cached?.error,r=C.ratio(h?.recent_5min,target.protocol);
+        const old=!!h?.stale||!!cached?.error||card.agent.online===false||!!card.agent.state?.stale;
+        const display=C.current(old&&h?{...h,stale:true}:h,shownTarget),r=C.ratio(h?.recent_5min,target.protocol);
         const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
-        text(view.label,label(target));text(view.latency,`延迟 ${display.text}`);view.latency.title=display.detail;
-        text(view.ratio,`近5分钟${r.label} ${C.percent(disabled?null:r.value)}${old?' · 旧数据':''}`);
-        view.ratio.title=`${r.label} ${r.fraction}；${old?'旧数据，非当前结果；':''}${h?.recent_5min?.not_executed||0} 未执行。小样本不构成可靠性承诺。`;
-        view.latency.disabled=view.ratio.disabled=!target.id;
+        const tcp=target.protocol==='tcp',icmp=target.protocol==='icmp';
+        text(view.label,C.names[target.slot]);view.label.title=label(target);
+        text(view.latency,tcp?display.text:'未知');view.latency.title=tcp?display.detail:'没有对应 TCP 目标/数据，不借用 ICMP 延迟';
+        text(view.ratio,icmp?`${disabled||old||!C.finite(r.value)?'未知':C.percent(r.value)}${old?' 旧':''}`:'未知');
+        view.ratio.title=icmp?`${r.label} ${r.fraction}；${old?'旧数据，非当前结果；':''}${h?.recent_5min?.not_executed||0} 未执行。小样本不构成可靠性承诺。`:'没有对应 ICMP 目标/真实丢包数据，不采用 TCP 连接失败率';
+        view.latency.disabled=!target.id||!tcp;view.ratio.disabled=!target.id||!icmp;
         if(history?.card===card&&history.target.id===target.id)history.trigger=history.kind==='latency'?view.latency:view.ratio;
-        updateStrip(view.latencyStrip,h?.recent_blocks,target,'latency',disabled||old);updateStrip(view.ratioStrip,h?.recent_blocks,target,'ratio',disabled||old);
+        updateStrip(view.latencyStrip,tcp?h?.recent_blocks:[],target,'latency',disabled||old);updateStrip(view.ratioStrip,icmp?h?.recent_blocks:[],target,'ratio',disabled||old);
         text(view.note,cached?.error||`${display.neutral?display.detail+' · ':''}${cached?.updated?'更新 '+C.time(cached.updated):'等待质量数据'}`);
       }
       for(const [key,view]of card.rows)if(!live.has(key)){view.node.remove();card.rows.delete(key);}
       let reason=card.error||(!card.config?'配置尚未读取':!card.config.supported?'Agent 尚未支持网络质量':!card.config.enabled?'检测已暂停':card.family==='ipv6'&&!card.config.ipv6?'V6 检测未启用':'');
       if(card.agent.revoked||card.agent.disabled_at)reason='设备已撤销/暂停，当前数据不可用';
       card.reason.hidden=!reason;if(card.reason.textContent!==reason)card.reason.textContent=reason;
+      card.title.querySelector('.nq-subtitle').textContent=reason||'(TCP 延迟/ICMP 丢包)';
+      card.title.title=`网络质量 (TCP 延迟/ICMP 丢包)${reason?' · '+reason:''}`;
+      card.title.setAttribute('aria-label',card.title.title);
+      card.title.dataset.hasStatus=String(!!reason);
     }
     function mount(agent) {
       let card=cards.get(agent.agent_id);

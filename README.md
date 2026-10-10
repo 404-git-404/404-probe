@@ -1,30 +1,38 @@
 # 404-probe
 
-> v1.0.0：设备监控、套餐与流量管理、网络质量历史、YouTube 检测，以及有界的 Agent 管理操作。
+> v1.0.1：改进设备卡片、详情与实时交互，支持默认 Stable、显式单 Agent Beta 选择，以及保留身份的旧 Agent 升级。
 > 支持 Debian 12/13 systemd；Alpine 3.24.x OpenRC 仅支持 Agent 基础功能。
 > 真实网络质量评分及 Alpine 自动升级/回滚、安全观察、远程永久删除延期至 v1.1。
-> 版本详情与限制见 [v1.0.0 发布说明](RELEASE_NOTES_v1.0.0.md)。
+> 版本详情与限制见 [v1.0.1 发布说明](RELEASE_NOTES_v1.0.1.md)。
 
-## 快速开始：安装与 v0.9.3 → v1.0.0 升级
+## 快速开始：安装与升级到 v1.0.1 Stable
 
 在 Debian 12/13 systemd 主机运行以下固定版本命令，按提示选择 Server 或 Agent。已有受支持 Server 会进入升级确认流程；已有 Agent 不会被这个命令自动升级。
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.0/install.sh | sudo PROBE_404_VERSION=v1.0.0 bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.1/install.sh | sudo PROBE_404_VERSION=v1.0.1 bash
 ```
 
 Server 新装需输入公开 HTTPS 地址与 Web 管理员密码；反向代理或 Cloudflare Tunnel 由你自行配置，安装器不管理 Tunnel。Agent 新装先在 Server 创建 Agent，复制显示一次的 enrollment 值，然后在 Agent 主机的隐藏提示中粘贴；不要把凭据放进命令、URL 或历史记录。
 
-**现有 v0.9.3 Server 升级：**在 Server 主机运行上面的同一命令，确认目标 v1.0.0。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。数据库迁移到 schema 24；不要手动替换旧二进制降级。
+**现有受支持 Server 升级（包括 v0.9.3/v1.0.0）：**在 Server 主机运行上面的同一命令，确认目标 v1.0.1。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。数据库迁移到 schema 25；迁移后恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。
 
-**现有 v0.9.3 Agent 升级：**先升级 Server，再登录 Web，打开设备管理中的升级操作，确认目标 v1.0.0。仅在线、未暂停/撤销、正式且具有 updater 能力的受支持 Agent 可执行；逐台操作并核对健康版本上报，失败由 updater 回滚。此路径只替换 Agent 二进制，不安装新的 root helper。Alpine 的自动升级不在 v1.0 范围内；不要在现有 Alpine Agent 上把新装命令当作升级命令。
+**现有 v0.9.3/v1.0.0 Agent，且 Updater 正常：**先升级 Server，再登录 Web，打开设备管理中的升级操作，确认目标 v1.0.1。默认只显示 Stable；Beta 需要在当前单台 Agent 的操作中显式勾选，不能因此为其他设备开启 Beta。仅在线、未暂停/撤销、正式且具有所需 updater 能力的受支持 Agent 可执行；逐台操作并核对健康版本上报，失败由 updater 回滚。Web 路径只替换 Agent 二进制，不安装新的 root helper。
 
-Alpine 3.24.x 新装仅选 Agent，并须预先具备完整 OpenRC 启动环境和 Bash、GNU coreutils/tar、util-linux、shadow、curl、CA；以 root 运行固定版本 installer。v1.0 不提供 Alpine Server，也不提供已装 Alpine Agent 的自动升级、安全观察或远程永久删除。
+**现有 v1.0.1-beta.1/beta.2 Agent，或缺失 Updater 的 v0.9.3/v1.0.0 Agent：**在 Debian 12/13 Agent 主机以 root 使用下面的固定 v1.0.1 本地迁移入口。需要预先安装 Python3 用于静态验证；缺少时安装器会在改变 Agent 文件或服务前拒绝，不自动安装系统包。入口保留 Agent ID、凭据、epoch、配置及业务状态，无需重新 enrollment；仅在实际健康版本上报被接受后完成，缺失 Updater 也只在成功后补装。
+
+```bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.1/install.sh | sudo PROBE_404_VERSION=v1.0.1 bash -s -- upgrade-agent
+```
+
+失败或中断后按错误提示重跑同一固定入口，恢复标记和事务用于继续恢复；不要删除它们或手动替换二进制。已有正常 Stable Updater 的 Agent 继续使用 Web 升级。Alpine 自动升级延期至 v1.1，不要在现有 Alpine Agent 上把新装命令当作升级命令。
+
+Alpine 3.24.x 新装仅选 Agent，并须预先具备完整 OpenRC 启动环境和 Bash、GNU coreutils/tar、util-linux、shadow、curl、CA；以 root 运行固定版本 installer。v1.0.1 不提供 Alpine Server，也不提供已装 Alpine Agent 的自动升级、安全观察或远程永久删除。
 
 在满足上述条件的 Alpine 新主机上，以 root 执行（替换 Server HTTPS 地址，凭据仍在隐藏提示输入）：
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.0/install.sh | PROBE_404_VERSION=v1.0.0 bash -s -- agent --server 'https://probe.example.com'
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.1/install.sh | PROBE_404_VERSION=v1.0.1 bash -s -- agent --server 'https://probe.example.com'
 ```
 
 ### 域名后缀：本地入口与可复制命令

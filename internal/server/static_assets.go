@@ -93,10 +93,15 @@ func newStaticAssets(source fs.FS) (*staticAssets, error) {
 	for _, icon := range []string{"cpu", "memory", "disk", "io"} {
 		name := "vendor/card-icons/" + icon + ".svg"
 		old := "url('/" + name + "')"
-		if strings.Count(css, old) != 1 {
+		// M04 renders resource names inside rings, so CSS no longer references
+		// these icons. Retain immutable icon URLs for prior pages and rollback.
+		if strings.Count(css, old) > 1 {
 			return nil, fmt.Errorf("CSS reference mismatch %s", name)
 		}
 		css = strings.ReplaceAll(css, old, "url('"+a.fingerprints[name]+"')")
+	}
+	if strings.Contains(css, "url('/vendor/card-icons/") {
+		return nil, fmt.Errorf("unlisted CSS icon reference")
 	}
 	add("card-layout.css", []byte(css))
 	used := make(map[string]bool)

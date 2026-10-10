@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"404-probe/internal/auth"
 	"404-probe/internal/buildinfo"
@@ -23,12 +24,58 @@ type webUpgradeView struct {
 	StartedAt      *int64                `json:"started_at,omitempty"`
 	FinishedAt     *int64                `json:"finished_at,omitempty"`
 	UpdatedAt      int64                 `json:"updated_at"`
+	Channel        string                `json:"channel,omitempty"`
 }
 
 func newWebUpgradeView(operation storage.UpgradeOperation) webUpgradeView {
-	return webUpgradeView{OperationID: operation.OperationID, FromVersion: operation.FromVersion, TargetVersion: operation.TargetVersion,
+	view := webUpgradeView{OperationID: operation.OperationID, FromVersion: operation.FromVersion, TargetVersion: operation.TargetVersion,
 		Status: operation.Status, FailureCode: operation.FailureCode, FailureMessage: operation.FailureMessage,
 		CreatedAt: operation.CreatedAt, StartedAt: operation.StartedAt, FinishedAt: operation.FinishedAt, UpdatedAt: operation.UpdatedAt}
+	if operation.RequiredProtocol == 2 {
+		view.Channel = operation.Channel
+	}
+	return view
+}
+
+type webUpgradeInput struct {
+	Channel       string `json:"channel"`
+	TargetVersion string `json:"target_version"`
+	ConfirmBeta   bool   `json:"confirm_beta"`
+}
+
+func decodeUpgradeInput(body []byte) (webUpgradeInput, error) {
+	var input webUpgradeInput
+	if len(strings.TrimSpace(string(body))) < 2 || strings.TrimSpace(string(body))[0] != '{' || decodeStrictJSON(body, &input) != nil {
+		return input, errors.New("invalid upgrade input")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if _, err := decoder.Token(); err != nil {
+		return input, err
+	}
+	keys := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return input, err
+		}
+		key, ok := token.(string)
+		if !ok || keys[key] {
+			return input, errors.New("duplicate upgrade field")
+		}
+		keys[key] = true
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return input, errors.New("invalid upgrade field")
+		}
+	}
+	if input.Channel == "" {
+		if len(keys) != 0 {
+			return input, errors.New("default upgrade must be empty")
+		}
+	} else if !protocol.ValidUpgradeTarget(input.Channel, input.TargetVersion) || input.Channel == "beta" && !input.ConfirmBeta || input.Channel == "stable" && (input.ConfirmBeta || keys["confirm_beta"]) {
+		return input, errors.New("explicit channel confirmation required")
+	}
+	return input, nil
 }
 
 func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
@@ -42,8 +89,9 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := readBoundedBody(w, r, 1024)
-	if err != nil || !strictEmptyObject(body) {
-		writeJobError(w, http.StatusBadRequest, "invalid_request", "upgrade request must be an empty JSON object")
+	input, inputErr := decodeUpgradeInput(body)
+	if err != nil || inputErr != nil {
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "select a fixed compatible release and explicitly confirm Beta")
 		return
 	}
 	record, err := a.store.GetAgentSnapshot(r.Context(), agentID, a.now(), a.offlineTimeout)
@@ -68,14 +116,45 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if record.State == nil || !record.State.AgentUpgradeCapable {
-		writeJobError(w, http.StatusConflict, "bootstrap_required", "local v0.8 bootstrap is required before remote upgrades")
+		writeJobError(w, http.StatusConflict, "bootstrap_required", "Updater missing: supported v0.9.3/v1.0.0 installations can use version-pinned v1.0.1 install.sh upgrade-agent to preserve identity and configuration")
 		return
 	}
 	if !a.buildInfo.UpgradeEligible() {
 		writeJobError(w, http.StatusConflict, "server_build_ineligible", "remote upgrade is unavailable on this Server build")
 		return
 	}
-	if comparison, ok := buildinfo.CompareVersions(record.State.AgentVersion, a.buildInfo.Version); !ok || comparison >= 0 {
+	target := upgradeTarget{Version: a.buildInfo.Version, Channel: "stable", RequiredProtocol: 1, Supported: true, Commit: a.buildInfo.Commit}
+	if input.Channel != "" || requiresNewUpgradeContract(target.Version) || requiresLegacyStaticProof(target.Version, record.State.AgentUpgradeV2) {
+		version := target.Version
+		if input.Channel != "" {
+			version = input.TargetVersion
+		}
+		target, err = a.releaseTarget(r.Context(), version)
+		if err != nil {
+			writeJobError(w, 409, "release_unavailable", err.Error())
+			return
+		}
+		if input.Channel != "" && input.Channel != target.Channel {
+			writeJobError(w, 400, "invalid_request", "release channel mismatch")
+			return
+		}
+	}
+	if comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version); !ok || comparison >= 0 {
+		writeJobError(w, http.StatusConflict, "upgrade_not_available", "a newer eligible Agent version is not available")
+		return
+	}
+	available := targetForAgent(target, record)
+	if !available.Supported {
+		writeJobError(w, 409, "bootstrap_required", available.Reason)
+		return
+	}
+	if requiresLegacyStaticProof(target.Version, record.State.AgentUpgradeV2) {
+		if err := a.verifyLegacyRelease(r.Context(), target, record.State.Arch); err != nil {
+			writeJobError(w, 409, "release_unavailable", err.Error())
+			return
+		}
+	}
+	if comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version); !ok || comparison >= 0 {
 		writeJobError(w, http.StatusConflict, "upgrade_not_available", "a newer eligible Agent version is not available")
 		return
 	}
@@ -86,7 +165,7 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	created := a.now().UnixMilli()
 	operation, err := a.store.CreateUpgrade(r.Context(), storage.UpgradeOperation{OperationID: operationID, AgentID: agentID,
-		FromVersion: record.State.AgentVersion, TargetVersion: a.buildInfo.Version, CreatedAt: created})
+		FromVersion: record.State.AgentVersion, TargetVersion: target.Version, CreatedAt: created, Channel: target.Channel, RequiredProtocol: target.RequiredProtocol, TargetCommit: protocolCommit(target), ServerVersion: protocolServerVersion(target, a.buildInfo.Version), BetaConfirmed: target.Channel == "beta" && input.ConfirmBeta})
 	if err != nil {
 		if errors.Is(err, storage.ErrUpgradeConflict) {
 			writeJobError(w, http.StatusConflict, "operation_conflict", "Agent already has an active upgrade")
@@ -128,11 +207,11 @@ func (a *App) handleClaimUpgrade(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := readBoundedBody(w, r, protocol.MaxUpgradeBodyBytes)
 	var request protocol.UpgradeClaimRequest
-	if err != nil || decodeStrictJSON(body, &request) != nil || request.Validate() != nil {
+	if err != nil || protocol.DecodeUpgradeJSON(body, &request) != nil || request.Validate() != nil {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid upgrade claim")
 		return
 	}
-	operation, err := a.store.ClaimUpgrade(r.Context(), agentID, a.now())
+	operation, err := a.store.ClaimUpgrade(r.Context(), agentID, a.now(), request.ProtocolVersion)
 	if err != nil {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not claim upgrade")
 		return
@@ -141,8 +220,39 @@ func (a *App) handleClaimUpgrade(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeJSON(w, http.StatusOK, protocol.UpgradeOperation{ProtocolVersion: protocol.UpgradeProtocolVersion, OperationID: operation.OperationID,
-		FromVersion: operation.FromVersion, TargetVersion: operation.TargetVersion, Status: string(operation.Status)})
+	wire := protocol.UpgradeOperation{ProtocolVersion: operation.RequiredProtocol, OperationID: operation.OperationID, FromVersion: operation.FromVersion, TargetVersion: operation.TargetVersion, Status: string(operation.Status)}
+	if operation.RequiredProtocol == 2 {
+		wire.Channel = operation.Channel
+		wire.TargetCommit = operation.TargetCommit
+		wire.ServerVersion = operation.ServerVersion
+	}
+	if wire.Validate() != nil {
+		writeJobError(w, 500, "internal_error", "invalid persisted upgrade authorization")
+		return
+	}
+	writeJSON(w, http.StatusOK, wire)
+}
+
+func requiresNewUpgradeContract(version string) bool {
+	comparison, ok := buildinfo.CompareReleaseVersions(version, "v1.0.2-beta.1")
+	return ok && comparison >= 0
+}
+
+func requiresLegacyStaticProof(version string, v2 bool) bool {
+	comparison, ok := buildinfo.CompareReleaseVersions(version, "v1.0.1")
+	return !v2 && ok && comparison >= 0 && !requiresNewUpgradeContract(version)
+}
+func protocolCommit(t upgradeTarget) string {
+	if t.RequiredProtocol == 2 {
+		return t.Commit
+	}
+	return ""
+}
+func protocolServerVersion(t upgradeTarget, version string) string {
+	if t.RequiredProtocol == 2 {
+		return version
+	}
+	return ""
 }
 
 func (a *App) handleUpgradeStatus(w http.ResponseWriter, r *http.Request) {

@@ -71,7 +71,7 @@ func TestStaticAssetsIdentityUpgradeAndRollback(t *testing.T) {
 	b := mustStaticAssets(t, sourceB)
 	rollback := mustStaticAssets(t, staticTestSource(t))
 	for _, name := range fingerprintAssetNames {
-		changed := name == "app.js" || name == "vendor/card-icons/cpu.svg" || name == "card-layout.css"
+		changed := name == "app.js" || name == "vendor/card-icons/cpu.svg" || name == "card-layout.css" && strings.Contains(string(sourceA["card-layout.css"].Data), "url('/vendor/card-icons/cpu.svg')")
 		if (a.fingerprints[name] != b.fingerprints[name]) != changed {
 			t.Fatalf("unexpected identity change: %s", name)
 		}
@@ -116,7 +116,7 @@ func TestStaticAssetsIdentityUpgradeAndRollback(t *testing.T) {
 		css := string(target.immutable[target.fingerprints["card-layout.css"]].data)
 		for _, icon := range []string{"cpu", "memory", "disk", "io"} {
 			path := target.fingerprints["vendor/card-icons/"+icon+".svg"]
-			if !strings.Contains(css, "url('"+path+"')") || staticResponse(target, "GET", path, nil).Code != 200 {
+			if (strings.Contains(string(target.legacy["/card-layout.css"].data), "url('/vendor/card-icons/"+icon+".svg')") && !strings.Contains(css, "url('"+path+"')")) || staticResponse(target, "GET", path, nil).Code != 200 {
 				t.Fatal("CSS dependency missing")
 			}
 		}
@@ -145,6 +145,7 @@ func TestStaticAssetsInitializationFailsClosed(t *testing.T) {
 			}
 			if kind == "css-reference" {
 				name, old, replacement = "card-layout.css", "cpu.svg", "unknown.svg"
+				source[name] = &fstest.MapFile{Data: append(append([]byte{}, source[name].Data...), []byte("\n.fixture{background:url('/vendor/card-icons/cpu.svg')}\n")...)}
 			}
 			source[name] = &fstest.MapFile{Data: []byte(strings.ReplaceAll(string(source[name].Data), old, replacement))}
 			if _, err := newStaticAssets(source); err == nil {

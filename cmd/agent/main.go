@@ -56,6 +56,13 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "updater" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		if len(os.Args) == 3 && (os.Args[2] == "migrate-legacy" || os.Args[2] == "migrate-beta") {
+			if err := updater.ServeLocalMigration(ctx); err != nil {
+				slog.Error("local Beta migration stopped", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if len(os.Args) == 3 && os.Args[2] == "removal-worker" {
 			if err := updater.ServeAgentRemovalWorker(ctx); err != nil {
 				slog.Error("Agent removal worker stopped", "error", err)

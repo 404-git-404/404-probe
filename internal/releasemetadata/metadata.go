@@ -19,10 +19,27 @@ const SchemaVersion = 1
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type Document struct {
-	SchemaVersion int     `json:"schema_version"`
-	Version       string  `json:"version"`
-	Commit        string  `json:"commit"`
-	Assets        []Asset `json:"assets"`
+	SchemaVersion int            `json:"schema_version"`
+	Version       string         `json:"version"`
+	Commit        string         `json:"commit"`
+	Assets        []Asset        `json:"assets"`
+	Compatibility *Compatibility `json:"compatibility,omitempty"`
+}
+
+type Compatibility struct {
+	MinServerVersion string `json:"min_server_version"`
+	UpgradeProtocol  int    `json:"upgrade_protocol"`
+}
+
+func Compatible(document Document, serverVersion string) bool {
+	if document.SchemaVersion == 1 {
+		return buildinfo.IsCanonicalVersion(document.Version)
+	}
+	if document.Compatibility == nil || document.Compatibility.UpgradeProtocol != 2 {
+		return false
+	}
+	comparison, ok := buildinfo.CompareReleaseVersions(serverVersion, document.Compatibility.MinServerVersion)
+	return ok && comparison >= 0
 }
 
 type Asset struct {
@@ -108,8 +125,14 @@ func rejectDuplicateObjectKeys(data []byte) error {
 }
 
 func Validate(document Document) error {
-	if document.SchemaVersion != SchemaVersion {
+	if document.SchemaVersion != SchemaVersion && document.SchemaVersion != 2 {
 		return errors.New("unsupported release metadata schema")
+	}
+	if document.SchemaVersion == 1 && document.Compatibility != nil {
+		return errors.New("legacy metadata cannot contain compatibility")
+	}
+	if document.SchemaVersion == 2 && (document.Compatibility == nil || !buildinfo.IsCanonicalVersion(document.Compatibility.MinServerVersion) || document.Compatibility.UpgradeProtocol != 2) {
+		return errors.New("invalid release compatibility contract")
 	}
 	if !buildinfo.IsReleaseVersion(document.Version) {
 		return errors.New("release metadata version is invalid")

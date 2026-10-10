@@ -60,13 +60,13 @@ test('P4b2 malformed DTO fails locally: contracts, clocks, duplicate order, hidd
 });
 test('P4b2 production mount twice/no SSE reads, private plot update/resize, keyboard tooltip, offline old/no-data restart',async()=>{
  const f=fixture();assert.equal(f.requests.length,0);assert.equal(f.ui.mount(f.agent),f.node);assert.equal(f.timers.size,1);assert.equal(f.observers[0].opts.rootMargin,'0px');
- f.visible();await flush();assert.equal(f.requests.length,1);assert.equal(f.plots.length,1);const p=f.plots[0];assert.equal(p.opts.series[1].spanGaps,false);assert.equal(p.opts.series[1].stroke,'#168577');assert.equal(p.opts.series[2].stroke,'#9270AD');
+ f.visible();await flush();assert.equal(f.requests.length,1);assert.equal(f.plots.length,1);const p=f.plots[0];assert.equal(p.opts.height,72);assert.ok(p.opts.axes.every(a=>a.show===false));assert.equal(p.opts.series[1].spanGaps,false);assert.equal(p.opts.series[1].stroke,'#25A994');assert.equal(p.opts.series[2].stroke,'#9978CB');
  assert.deepEqual(p.opts.scales.x.range(),[(at-1800000)/1000,at/1000]);assert.deepEqual(p.opts.scales.y.range(null,0,0),[0,1]);
- const out=f.node.querySelector('.traffic-detail');out.dispatch('keydown',{key:'Home'});assert.match(out.textContent,/首次观测/);out.dispatch('keydown',{key:'ArrowRight'});assert.match(out.textContent,/9223372036854775628/);
+ const out=f.node.querySelector('.traffic-detail');out.dispatch('keydown',{key:'Home'});assert.match(out.textContent,/首次观测/);out.dispatch('keydown',{key:'ArrowRight'});assert.match(out.title,/9223372036854775628/);
  p.opts.hooks.setCursor[0]({cursor:{idx:30}});assert.match(out.textContent,/0 B\/s/);
  for(let i=0;i<20;i++)f.ui.mount({...f.agent,name:'metadata'+i});await flush();assert.equal(f.requests.length,1);
  f.node.querySelector('.traffic-plot').rect.width=320;f.resizes[0].fn();assert.equal(p.size.width,320);assert.equal(f.plots.length,1);
- f.set(dto({truncated:true,generation:'new-generation'}));f.ui.tick();await flush();assert.equal(f.ui.snapshot().observations[0].generation,'new-generation');assert.match(f.node.querySelector('.traffic-status').textContent,/截断/);
+ f.set(dto({truncated:true,generation:'new-generation'}));f.ui.tick();await flush();assert.equal(f.ui.snapshot().observations[0].generation,'new-generation');assert.match(f.node.querySelector('.traffic-status').title,/截断/);
  f.ui.mount({...f.agent,online:false});assert.match(f.node.querySelector('.traffic-status').textContent,/离线.*历史/);
  f.set(dto({status:'no_data',reason:'no_retained_observations',generation:'restart',points:[],oldest_received_at:null,last_received_at:null}));f.ui.tick();await flush();assert.equal(f.ui.snapshot().observations[0].points,0);assert.ok(p.destroyed);assert.match(f.node.querySelector('.traffic-status').textContent,/等待真实/);f.ui.close();f.queue.close();
 });
@@ -113,6 +113,15 @@ test('P4b2 actual bounded touch/pen callback selects nonlast null and zero, igno
  p.over.dispatch('pointerdown',{pointerType:'pen',isPrimary:true,clientX:75+400*30/180});assert.match(out.textContent,/0 B\/s/);const old=out.textContent;
  p.over.dispatch('pointerdown',{pointerType:'touch',isPrimary:false,clientX:300});assert.equal(out.textContent,old);p.over.dispatch('pointerdown',{pointerType:'touch',isPrimary:true,clientX:500});assert.equal(out.textContent,old);
  f.visible(false);assert.equal(p.over.listeners.get('pointerdown').length,0);p.over.dispatch('pointerdown',{pointerType:'touch',clientX:300});assert.equal(out.textContent,'');f.ui.close();f.queue.close();
+});
+
+test('M04 round2 horizontal cursor and keyboard keep received time and rx/tx from one accepted observation',async()=>{
+ const f=fixture();f.visible();await flush();const p=f.plots[0],out=f.node.querySelector('.traffic-detail'),chart=f.node.querySelector('.traffic-plot');
+ const point=dto().points[80];p.opts.hooks.setCursor[0]({...p,cursor:{left:400*80/180,idx:140},posToIdx:p.posToIdx.bind(p)});
+ assert.match(out.textContent,/↓ — · ↑ —.*缺测/);assert.ok(out.textContent.includes(new Date(point.received_at).toLocaleString()));assert.ok(out.title.includes('序号 '+point.order));
+ chart.dispatch('keydown',{key:'Home'});for(let i=0;i<30;i++)chart.dispatch('keydown',{key:'ArrowRight'});
+ assert.match(out.textContent,/↓ 0 B\/s · ↑ 0 B\/s/);assert.ok(out.textContent.includes(new Date(dto().points[30].received_at).toLocaleString()));assert.equal(chart.tabIndex,0);
+ const node=f.node,plot=p,selected=out.textContent;f.ui.mount({...f.agent,state:{rx_rate:99}});assert.equal(f.node,node);assert.equal(f.plots[0],plot);assert.equal(out.textContent,selected);f.ui.close();f.queue.close();
 });
 test('P4b2 mixed actual N3/traffic share physical4; N3 close releases only its owners and never aborts traffic',async(t)=>{
  const held=[],q=C.coordinator(),f=fixture({queue:q,transport:(url,init)=>{const d=deferred();held.push({url,init,...d});return d.promise;}});

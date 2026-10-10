@@ -39,8 +39,9 @@ function fixture(options={}){
   let value,status=200;
   if(url.endsWith('/catalog'))value={regions};
   else if(url.endsWith('/config')){if(init.method==='PUT'){writes.push(JSON.parse(init.body));if(options.writeDelay)await options.writeDelay.promise;status=putStatus;value=cfg;}else value=cfg;}
-  else {const query=new URL(url,'http://local').searchParams;const t=cfg.targets.find(t=>t.id===query.get('target_id')&&t.family===(options.family||'ipv4'))||cfg.targets[0];value=history(t,options.stale?{stale:true}:{});
+  else {const query=new URL(url,'http://local').searchParams;const t=cfg.targets.find(t=>t.id===query.get('target_id')&&t.family===(options.family||query.get('family')||'ipv4'))||cfg.targets[0];value=history(t,options.stale?{stale:true}:{});
    if(one)value.blocks=value.blocks.map((b,i)=>({...b,gap:i!==12}));if(late){const l=late;late=null;await l.promise;}}
+  if(options.historyTransform&&url.includes('/history'))value=options.historyTransform(value);
   return {ok:status===200,status,statusText:String(status),json:async()=>value};
  };
  class Plot{constructor(opts,data){this.opts=opts;this.data=data;plots.push(this);}destroy(){this.destroyed=true;}setSize(){}}
@@ -98,7 +99,7 @@ test('N3 coordinator bounded failure backoff no tight loop and retired key clean
 test('N3 actual card callbacks: visible first, current family three targets, no config on metadata refresh, hidden stops',async(t)=>{
  const f=fixture();assert.equal(f.requests.length,0);f.visible();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/history')).length,3);
  const reads=f.requests.filter(r=>r.url.endsWith('/config')).length;assert.equal(f.ui.mount({...f.agent,name:'新名字'}),f.node);await flush();assert.equal(f.requests.filter(r=>r.url.endsWith('/config')).length,reads);
- f.byText(f.node,'V6').click();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/history')).length,5);
+ f.byText(f.node,'IPv6').click();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/history')).length,5);
  f.doc.hidden=true;f.doc.dispatch('visibilitychange');const count=f.requests.length;f.ui.tick();await flush();assert.equal(f.requests.length,count);
  t.diagnostic(JSON.stringify({initialVisibleHistory:3,switchedFamilyHistoryTotal:5,hiddenExtraRequests:f.requests.length-count,configReadsAcrossMetadataRefresh:reads}));f.ui.close();
 });
@@ -123,8 +124,23 @@ test('N3 actual explicit panel config survives viewport departure and does not c
  delay.resolve();await flush();assert.equal(f.ui.snapshot().panel,null);assert.equal(f.writes.length,1);f.ui.close();
 });
 test('N3 actual stale card neutralizes both strips and visibly labels ratio old',async()=>{
- const f=fixture({stale:true});f.visible();await flush();assert.equal(f.node.querySelectorAll('.nq-low').length,0);assert.equal(f.node.querySelectorAll('.nq-neutral').length,120);
+ const f=fixture({stale:true});f.visible();await flush();assert.equal(f.node.querySelectorAll('.nq-low').length,0);assert.equal(f.node.querySelectorAll('.nq-neutral').length,30);
  assert.ok(f.node.querySelectorAll('button').some(b=>b.textContent?.includes('旧数据')));f.ui.close();
+});
+test('M04 TCP and ICMP card columns never borrow another protocol statistic',async()=>{
+ const f=fixture();f.visible();await flush();const rows=f.node.querySelectorAll('.nq-row');
+ assert.equal(rows.length,3);
+ const tcp=rows[0],icmp=rows[1];
+ assert.equal(tcp.children[1].textContent,'0.0 ms');assert.equal(tcp.children[3].textContent,'未知');assert.equal(tcp.children[3].disabled,true);
+ assert.equal(tcp.children[2].querySelectorAll('.nq-block').length,10);assert.equal(tcp.children[4].querySelectorAll('.nq-block').length,0);assert.equal(tcp.children[4].children[0].textContent,'未知');
+ assert.equal(icmp.children[1].textContent,'未知');assert.equal(icmp.children[1].disabled,true);assert.equal(icmp.children[3].textContent,'0.0%');
+ assert.equal(icmp.children[2].querySelectorAll('.nq-block').length,0);assert.equal(icmp.children[2].children[0].textContent,'未知');assert.equal(icmp.children[4].querySelectorAll('.nq-block').length,10);f.ui.close();
+});
+test('M04 mismatched history protocol or slot cannot populate a current target',async()=>{
+ for(const field of ['protocol','slot']){const f=fixture({historyTransform:h=>({...h,target:{...h.target,[field]:field==='protocol'?(h.target.protocol==='tcp'?'icmp':'tcp'):'wrong-slot'}})});f.visible();await flush();assert.equal(f.node.querySelectorAll('.nq-low').length,0);assert.ok(f.node.querySelectorAll('button').filter(b=>b.className==='nq-metric').every(b=>!/[0-9]/.test(b.textContent)));f.ui.close();}
+});
+test('M04 offline accepted cached values are visibly old and every history block neutral',async()=>{
+ const f=fixture();f.visible();await flush();f.ui.mount({...f.agent,online:false});assert.equal(f.node.querySelectorAll('.nq-low').length,0);assert.equal(f.node.querySelectorAll('.nq-neutral').length,30);assert.ok(f.node.querySelectorAll('button').some(b=>b.textContent==='旧数据'));f.ui.close();
 });
 test('N3 actual panel mode/draft survives mount and search focus; explicit dirty close guard',async()=>{
  const f=fixture();f.visible();await flush();f.byText(f.node,'地区选择').click();await flush();let p=f.panel();const selects=p.querySelectorAll('select');
@@ -150,7 +166,7 @@ test('N3 actual manual Host/Port callbacks preserve other slots and ICMP writes 
 });
 test('N3 actual unsupported/disabled V6 has no automatic enable, PUT or family fallback',async()=>{
  const f=fixture();f.setConfig({...config(),supported:false,enabled:false,ipv6:false,targets:[]});f.visible();await flush();
- f.byText(f.node,'V6').click();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/history')).length,0);assert.equal(f.writes.length,0);
+ f.byText(f.node,'IPv6').click();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/history')).length,0);assert.equal(f.writes.length,0);
  f.byText(f.node,'地区选择').click();await flush();assert.equal(f.byText(f.panel(),'保存').disabled,true);assert.equal(f.ui.snapshot().panel.draft.enabled,false);f.ui.close();
 });
 test('N3 actual save503 uncertain no auto PUT; success stays closed after refresh',async()=>{

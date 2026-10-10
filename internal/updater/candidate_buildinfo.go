@@ -7,5 +7,11 @@ func inspectCandidateBuild(path string) (CandidateBuildInfo, error) {
 	if err != nil {
 		return CandidateBuildInfo{}, err
 	}
-	return CandidateBuildInfo{Path: metadata.Path, Commit: metadata.Commit, Dirty: metadata.Dirty, GOOS: metadata.GOOS, GOARCH: metadata.GOARCH}, nil
+	if metadata.GOOS == "linux" {
+		metadata, err = buildinfo.InspectLinkedRelease(path)
+		if err != nil {
+			return CandidateBuildInfo{}, err
+		}
+	}
+	return CandidateBuildInfo{Path: metadata.Path, Version: metadata.Version, Commit: metadata.Commit, Dirty: metadata.Dirty, GOOS: metadata.GOOS, GOARCH: metadata.GOARCH}, nil
 }

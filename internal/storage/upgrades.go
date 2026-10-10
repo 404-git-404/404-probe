@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"404-probe/internal/buildinfo"
+	"404-probe/internal/protocol"
+	"404-probe/internal/releasemetadata"
 	"context"
 	"database/sql"
 	"errors"
@@ -25,22 +28,40 @@ const (
 )
 
 type UpgradeOperation struct {
-	OperationID    string
-	AgentID        string
-	FromVersion    string
-	TargetVersion  string
-	Status         UpgradeStatus
-	FailureCode    string
-	FailureMessage string
-	CreatedAt      int64
-	StartedAt      *int64
-	FinishedAt     *int64
-	UpdatedAt      int64
+	Channel          string
+	RequiredProtocol int
+	TargetCommit     string
+	ServerVersion    string
+	BetaConfirmed    bool
+	OperationID      string
+	AgentID          string
+	FromVersion      string
+	TargetVersion    string
+	Status           UpgradeStatus
+	FailureCode      string
+	FailureMessage   string
+	CreatedAt        int64
+	StartedAt        *int64
+	FinishedAt       *int64
+	UpdatedAt        int64
 }
 
 func (s *Store) CreateUpgrade(ctx context.Context, operation UpgradeOperation) (UpgradeOperation, error) {
 	if !validStorageID(operation.OperationID, 64) || !validStorageID(operation.AgentID, 128) || operation.FromVersion == "" || operation.TargetVersion == "" {
 		return UpgradeOperation{}, errors.New("invalid upgrade operation")
+	}
+	if operation.Channel == "" {
+		operation.Channel = "stable"
+	}
+	if operation.RequiredProtocol == 0 {
+		operation.RequiredProtocol = 1
+	}
+	if operation.RequiredProtocol == 1 {
+		if !buildinfo.IsCanonicalVersion(operation.TargetVersion) || operation.Channel != "stable" || operation.TargetCommit != "" || operation.ServerVersion != "" || operation.BetaConfirmed {
+			return UpgradeOperation{}, errors.New("invalid legacy upgrade authorization")
+		}
+	} else if operation.RequiredProtocol != 2 || !protocol.ValidUpgradeTarget(operation.Channel, operation.TargetVersion) || !releasemetadata.IsCommit(operation.TargetCommit) || !buildinfo.IsReleaseVersion(operation.ServerVersion) || (operation.Channel == "beta") != operation.BetaConfirmed {
+		return UpgradeOperation{}, errors.New("invalid explicit release authorization")
 	}
 	now := operation.CreatedAt
 	if now <= 0 {
@@ -57,8 +78,8 @@ func (s *Store) CreateUpgrade(ctx context.Context, operation UpgradeOperation) (
 	if err := requireNoAgentRemovalTx(ctx, tx, operation.AgentID); err != nil {
 		return UpgradeOperation{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO agent_upgrade_operations(operation_id,agent_id,from_version,target_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`,
-		operation.OperationID, operation.AgentID, operation.FromVersion, operation.TargetVersion, UpgradeRequested, now, now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO agent_upgrade_operations(operation_id,agent_id,from_version,target_version,status,created_at,updated_at,channel,required_protocol,target_commit,server_version,beta_confirmed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		operation.OperationID, operation.AgentID, operation.FromVersion, operation.TargetVersion, UpgradeRequested, now, now, operation.Channel, operation.RequiredProtocol, operation.TargetCommit, operation.ServerVersion, boolInt(operation.BetaConfirmed))
 	if err != nil {
 		_ = tx.Rollback()
 		if existing, readErr := s.GetActiveUpgrade(ctx, operation.AgentID); readErr == nil && existing != nil {
@@ -75,15 +96,15 @@ func (s *Store) CreateUpgrade(ctx context.Context, operation UpgradeOperation) (
 }
 
 func (s *Store) GetActiveUpgrade(ctx context.Context, agentID string) (*UpgradeOperation, error) {
-	return readUpgrade(s.db.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at FROM agent_upgrade_operations WHERE agent_id=? AND status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check') ORDER BY created_at DESC LIMIT 1`, agentID))
+	return readUpgrade(s.db.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at,channel,required_protocol,target_commit,server_version,beta_confirmed FROM agent_upgrade_operations WHERE agent_id=? AND status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check') ORDER BY created_at DESC LIMIT 1`, agentID))
 }
 
 func (s *Store) GetLatestUpgrade(ctx context.Context, agentID string) (*UpgradeOperation, error) {
-	return readUpgrade(s.db.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at FROM agent_upgrade_operations WHERE agent_id=? ORDER BY created_at DESC LIMIT 1`, agentID))
+	return readUpgrade(s.db.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at,channel,required_protocol,target_commit,server_version,beta_confirmed FROM agent_upgrade_operations WHERE agent_id=? ORDER BY created_at DESC LIMIT 1`, agentID))
 }
 
 func (s *Store) GetUpgrade(ctx context.Context, operationID string) (UpgradeOperation, error) {
-	operation, err := readUpgrade(s.db.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at FROM agent_upgrade_operations WHERE operation_id=?`, operationID))
+	operation, err := readUpgrade(s.db.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at,channel,required_protocol,target_commit,server_version,beta_confirmed FROM agent_upgrade_operations WHERE operation_id=?`, operationID))
 	if err != nil {
 		return UpgradeOperation{}, err
 	}
@@ -93,7 +114,7 @@ func (s *Store) GetUpgrade(ctx context.Context, operationID string) (UpgradeOper
 	return *operation, nil
 }
 
-func (s *Store) ClaimUpgrade(ctx context.Context, agentID string, now time.Time) (*UpgradeOperation, error) {
+func (s *Store) ClaimUpgrade(ctx context.Context, agentID string, now time.Time, protocols ...int) (*UpgradeOperation, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -108,9 +129,16 @@ func (s *Store) ClaimUpgrade(ctx context.Context, agentID string, now time.Time)
 		}
 		return nil, err
 	}
-	operation, err := readUpgrade(tx.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at FROM agent_upgrade_operations WHERE agent_id=? AND status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check') ORDER BY created_at LIMIT 1`, agentID))
+	operation, err := readUpgrade(tx.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at,channel,required_protocol,target_commit,server_version,beta_confirmed FROM agent_upgrade_operations WHERE agent_id=? AND status IN ('requested','claimed','downloading','verifying','staging','installing','restarting','health_check') ORDER BY created_at LIMIT 1`, agentID))
 	if err != nil || operation == nil {
 		return operation, err
+	}
+	consumer := 1
+	if len(protocols) > 0 {
+		consumer = protocols[0]
+	}
+	if operation.RequiredProtocol > consumer {
+		return nil, nil
 	}
 	if operation.Status == UpgradeRequested {
 		stamp := now.UnixMilli()
@@ -137,7 +165,7 @@ func (s *Store) UpdateUpgradeStatus(ctx context.Context, agentID, operationID st
 		return UpgradeOperation{}, err
 	}
 	defer tx.Rollback()
-	operation, err := readUpgrade(tx.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at FROM agent_upgrade_operations WHERE operation_id=?`, operationID))
+	operation, err := readUpgrade(tx.QueryRowContext(ctx, `SELECT operation_id,agent_id,from_version,target_version,status,failure_code,failure_message,created_at,started_at,finished_at,updated_at,channel,required_protocol,target_commit,server_version,beta_confirmed FROM agent_upgrade_operations WHERE operation_id=?`, operationID))
 	if err != nil {
 		return UpgradeOperation{}, err
 	}
@@ -193,15 +221,17 @@ type rowScanner interface{ Scan(...any) error }
 
 func readUpgrade(row rowScanner) (*UpgradeOperation, error) {
 	var operation UpgradeOperation
+	var betaConfirmed int
 	var failureCode, failureMessage sql.NullString
 	var startedAt, finishedAt sql.NullInt64
 	if err := row.Scan(&operation.OperationID, &operation.AgentID, &operation.FromVersion, &operation.TargetVersion, &operation.Status,
-		&failureCode, &failureMessage, &operation.CreatedAt, &startedAt, &finishedAt, &operation.UpdatedAt); err != nil {
+		&failureCode, &failureMessage, &operation.CreatedAt, &startedAt, &finishedAt, &operation.UpdatedAt, &operation.Channel, &operation.RequiredProtocol, &operation.TargetCommit, &operation.ServerVersion, &betaConfirmed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read upgrade operation: %w", err)
 	}
+	operation.BetaConfirmed = betaConfirmed == 1
 	operation.FailureCode, operation.FailureMessage = failureCode.String, failureMessage.String
 	if startedAt.Valid {
 		value := startedAt.Int64

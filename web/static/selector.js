@@ -372,9 +372,11 @@
     }
     function trigger(agent) {
       if (!agent.outbounds?.configured) { triggers.delete(agent.agent_id); return null; }
+      const choices=agent.outbounds.selectors||[],current=choices.length===1?choices[0].current:'';
+      const label='出站选择 ▾',hint=`出站选择${current?'：'+current:''}`;
       const existing = triggers.get(agent.agent_id);
-      if (existing) { existing.setAttribute('aria-expanded', String(controller.model(agent.agent_id).open)); return existing; }
-      const id = agent.agent_id, button = el('button', '出站选择 ▾', 'selector-trigger'); button.type = 'button';
+      if (existing) { if(existing.textContent!==label)existing.textContent=label;existing.title=hint;existing.setAttribute('aria-label',hint);existing.setAttribute('aria-expanded', String(controller.model(agent.agent_id).open)); return existing; }
+      const id = agent.agent_id, button = el('button', label, 'selector-trigger'); button.type = 'button';button.title=hint;button.setAttribute('aria-label',hint);
       button.dataset.focusKey = 'selector'; button.dataset.agentId = id;
       button.setAttribute('aria-controls', 'selector-popover'); button.setAttribute('aria-expanded', String(controller.model(id).open));
       triggers.set(id, button);

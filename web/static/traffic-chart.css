@@ -1,13 +1,8 @@
-/* P4b2: scoped main-card Server-memory traffic, no global layout changes. */
-.agent-card .traffic-chart{grid-column:1/-1;min-width:0;width:100%;border-top:1px solid #e7e1d7;padding-top:8px;color:#69727a}
-.agent-card .network .traffic-chart div{display:block;gap:0}
-.agent-card .network .traffic-chart .traffic-head{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:11px}
-.agent-card .network .traffic-chart .u-off{display:none}
-.agent-card .traffic-head .traffic-title{font-size:12px;color:#555d66;font-weight:600}
-.agent-card .traffic-plot{width:100%;min-width:0;min-height:180px;overflow:hidden}
-.agent-card .network .traffic-status,.agent-card .traffic-detail{display:block;font-size:10px;line-height:1.5;overflow-wrap:anywhere;white-space:normal;margin:3px 0;min-height:15px}
-.agent-card .traffic-detail:focus{outline:2px solid #168577;outline-offset:2px}
-.agent-card .traffic-plot .uplot{font-size:10px;color:#69727a}
-.agent-card .traffic-plot .u-cursor-pt{border:0}
-.agent-card .traffic-empty{font-size:12px;padding:50px 0;text-align:center;margin:0}
-@media(max-width:620px){.agent-card .traffic-plot{min-height:150px}.agent-card .traffic-head{font-size:10px}.agent-card .traffic-status,.agent-card .traffic-detail{font-size:10px}}
+/* M04: real 72px plot; existing data validation and window remain unchanged. */
+.agent-card .network .traffic-chart .traffic-head{display:flex}.agent-card .network-rx>span,.agent-card .network-tx>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.agent-card .traffic-chart:focus-within .traffic-detail:not(:empty){opacity:1}.agent-card .traffic-detail{left:0;bottom:4px;max-width:100%;font-size:12px;line-height:1.4;padding:5px 7px;overflow-wrap:anywhere}.agent-card .traffic-plot:focus-visible{outline:2px solid #25A994;outline-offset:2px}
+.agent-card .traffic-chart{grid-column:1/-1;position:relative;width:100%;min-width:0;border:0;padding-top:4px;color:#657080;cursor:default}.agent-card .traffic-plot{width:100%;height:72px;min-height:72px;min-width:0}.agent-card .traffic-plot canvas{width:100%;height:100%}.agent-card .network .traffic-chart div{display:block;padding:0;border:0}.agent-card .network .traffic-head{display:flex;align-items:center;gap:6px;font-size:11px;justify-content:space-between;line-height:1.4}.agent-card .traffic-title{margin-right:auto}.agent-card .traffic-history{font-size:11px;padding:2px 5px}.agent-card .traffic-status{display:block;font-size:11px;line-height:1.4;margin:0}.agent-card .traffic-status:empty{display:none}.agent-card .traffic-empty{margin:0;padding:24px 0;text-align:center;font-size:12px}.agent-card .traffic-detail{position:absolute;left:4px;bottom:22px;z-index:45;max-width:calc(100% - 8px);font-size:12px;line-height:1.5;padding:6px;border-radius:7px;background:#fffaf1;box-shadow:0 3px 12px #0002;opacity:0;pointer-events:none}.agent-card .traffic-chart:hover .traffic-detail:not(:empty),.agent-card .traffic-detail:focus{opacity:1}.agent-card .traffic-detail:empty{display:none}.agent-card .traffic-plot .uplot{font-size:11px;color:#657080}
+.agent-card .traffic-chart{padding-top:0}
+/* Keep the existing status line in flow throughout the first read and retries. */
+.agent-card .traffic-status{height:1.4em;min-height:1.4em;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent-card .traffic-status:empty{display:block;visibility:hidden}

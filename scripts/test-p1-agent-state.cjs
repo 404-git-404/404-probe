@@ -73,6 +73,33 @@ function dashboard(file = 'app.js', readTimeout = 1000) {
     request:fragment=>requests.findLast(r=> /^\/[a-z]{32}$/.test(fragment) ? r.url.endsWith(fragment) : r.url.includes(fragment))};
 }
 
+test('Stable preparation: Beta never selected by default; explicit confirmation targets one Agent',async()=>{
+  const app=dashboard();seed(app.state);app.eval("serverBuild={version:'v1.0.1',upgrade_eligible:true}");
+  app.setRoute((url,options)=>url.endsWith('/upgrade-targets')?response({targets:[
+    {version:'v1.0.2-beta.1',channel:'beta',supported:true},
+    {version:'v1.0.1',channel:'stable',supported:false,reason:'equal version'}]}):options.method==='POST'?response({status:'requested',target_version:'v1.0.2-beta.1'},201):undefined);
+  await app.eval(`openUpgradeAgentDialog(agents.get('${A}'))`);
+  assert.equal(app.nodes.get('#upgrade-release').value,'1');assert.equal(app.nodes.get('#upgrade-agent-confirm').disabled,true);
+  app.nodes.get('#upgrade-release').value='0';await app.nodes.get('#upgrade-release').emit('change');
+  await app.nodes.get('#upgrade-agent-form').emit('submit');assert.equal(app.requests.filter(r=>r.options.method==='POST').length,0);
+  app.nodes.get('#upgrade-beta-confirm').checked=true;await app.nodes.get('#upgrade-beta-confirm').emit('change');
+  await app.nodes.get('#upgrade-agent-form').emit('submit');
+  const mutation=app.requests.find(r=>r.options.method==='POST');assert.equal(mutation.url,`/api/v1/web/agents/${A}/upgrade`);
+  assert.deepEqual(JSON.parse(mutation.options.body),{channel:'beta',target_version:'v1.0.2-beta.1',confirm_beta:true});
+});
+test('Stable preparation: late catalog cannot overwrite another Agent or a closed dialog',async()=>{
+  const app=dashboard();seed(app.state);seed(app.state,dto(B));
+  const first=app.eval(`openUpgradeAgentDialog(agents.get('${A}'))`);const old=app.request(A+'/upgrade-targets');
+  const second=app.eval(`openUpgradeAgentDialog(agents.get('${B}'))`);const current=app.request(B+'/upgrade-targets');
+  assert.equal(old.options.signal.aborted,true);
+  current.resolve(response({targets:[{version:'v1.0.2',channel:'stable',supported:true}]}));await second;
+  old.resolve(response({targets:[{version:'v9.0.0',channel:'beta',supported:true}]}));await first;
+  assert.equal(app.nodes.get('#upgrade-target-version').textContent,'v1.0.2');
+  const third=app.eval(`openUpgradeAgentDialog(agents.get('${B}'))`);const pending=app.request(B+'/upgrade-targets');
+  app.nodes.get('#upgrade-agent-dialog').close();assert.equal(pending.options.signal.aborted,true);
+  pending.resolve(response({targets:[{version:'v9.0.0',channel:'beta',supported:true}]}));await third;
+  await app.nodes.get('#upgrade-agent-form').emit('submit');assert.equal(app.requests.filter(r=>r.options.method==='POST').length,0);
+});
 test('production store: slow detail cannot overwrite newer partial even equal/rolled-back timestamps',()=>{
   const s=State.create(); seed(s); const old=s.read(A);
   s.event({agent_id:A,name:'queued old name',online:true,last_seen:100,state:{cpu_percent:93,collected_at:1,uptime:1}});
@@ -699,7 +726,9 @@ test('P5c actual renewal merges current_plan not replay receipt into overview an
 function renewalResult(request,current={...renewalPlan,renewal_date:'2026-02-28'},replayed=false,undoID=null){const q=JSON.parse(request.options.body),now=Date.now();return {replayed,current_revision:'2'.repeat(32),current_plan:current,operation:{request_id:q.request_id,kind:'apply',field:q.field,from_date:q.from_date,to_date:q.to_date,applied_at:now,undo_until:now+300000},undo:{available:true,operation_id:undoID||q.request_id}};}
 test('P5b1c actual card footer has renewal in order; offline, disabled and absent state do not gate button',()=>{
  const app=dashboard();seed(app.state,{...dto(),online:false,state:null,disabled_at:100});app.eval('actualDashboardRender()');
- const card=app.nodes.get('#agents').children[0],actions=card.children.at(-1);assert.equal(actions.children[0].className,'footer-price');assert.equal(actions.children.length,5);assert.deepEqual(Array.from(actions.children.slice(2),x=>x.className),['renew-plan','edit-plan','detail-toggle']);assert.equal(actions.children[2].textContent,'已续费');assert.equal(actions.children[2].disabled,false);
+ const card=app.nodes.get('#agents').children[0],actions=card.children.at(-1);assert.equal(actions.children[0].className,'footer-price');assert.equal(actions.children.length,3);
+ const controls=actions.children[2];assert.equal(controls.className,'plan-controls');assert.deepEqual(Array.from(controls.children,x=>x.className),['renew-plan','edit-plan']);assert.equal(controls.children[0].textContent,'已续费');assert.equal(controls.children[0].disabled,false);
+ const head=card.children.find(n=>n.className==='card-head'),details=head.children.find(n=>n.dataset.focusKey==='manage');assert.equal(details.textContent,'详情');assert.equal(details.title,'设备详情 · 尚无真实评分');assert.ok(!actions.children.includes(details));
  assert.equal(app.requests.filter(r=>r.url.includes('/renewal/')).length,0);
 });
 test('P5b1c actual first click and SSE20 are preview-only; explicit confirm once and plan-only merge',async()=>{

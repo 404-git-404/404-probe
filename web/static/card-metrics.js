@@ -59,22 +59,37 @@
     }
     return {observe,sync,size:()=>records.size};
   }
-  function tile(kind,label,value,detail,toneValue,extra='',stale=false) {
+  function annotation(kind,value,toneValue,stale=false,ioTone='') {
+    const reason=percent(value)==null?'未知':stale?'旧数据':toneValue==='critical'?'高占用':toneValue==='warning'?'接近阈值':'';
+    const name=({cpu:'CPU',memory:'RAM',disk:'磁盘容量'})[kind]||'资源';
+    const capacity=reason?`${name} ${reason}`:'';
+    const io=kind==='disk'&&!stale&&['warning','critical'].includes(ioTone)?'磁盘 I/O 高占用':'';
+    return {reason,capacity,io};
+  }
+  function tile(kind,label,value,detail,toneValue,extra='',stale=false,ioTone='') {
     const el = document.createElement('section');
     el.className = `metric-tile metric-${kind} tone-${toneValue}`;
     const n = percent(value), visible = pct(value);
     const ring = document.createElement('div');ring.className='metric-ring';
     // Only finite clamped numeric values and a fixed icon allowlist enter markup.
-    const icon = ({cpu:'cpu',memory:'memory',disk:'disk','disk-io':'io'})[kind] || 'generic';
-    ring.innerHTML = `<svg viewBox="0 0 100 100" aria-hidden="true"><circle class="ring-track" cx="50" cy="50" r="41"/><circle class="ring-value" cx="50" cy="50" r="41" pathLength="100" stroke-dasharray="${!stale && n != null ? n : 0} 100"/></svg><span class="metric-icon icon-${icon}" aria-hidden="true"></span>`;
+    const name = ({cpu:'CPU',memory:'RAM',disk:'DISK'})[kind] || '资源';
+    ring.innerHTML = `<svg viewBox="0 0 100 100" aria-hidden="true"><circle class="ring-track" cx="50" cy="50" r="41"/><circle class="ring-value" cx="50" cy="50" r="41" pathLength="100" stroke-dasharray="${!stale && n != null ? n : 0} 100"/></svg><span class="metric-name" aria-hidden="true">${name}</span>`;
     const amount=document.createElement('strong');amount.textContent=visible;
     const title=document.createElement('span');title.className='metric-title';title.textContent=label;
     const note=document.createElement('small');note.textContent=detail;note.title=detail;
     const auxiliary=document.createElement('small');auxiliary.textContent=extra;
     const meaning=document.createElement('small');meaning.className='metric-meaning';
-    meaning.textContent=n == null ? '尚无有效样本' : stale ? '旧数据 / 等待新上报' : toneValue==='critical' ? '高占用' : toneValue==='warning' ? (n>=85 && (kind==='cpu'||kind==='disk-io') ? '高占用 · 连续观测不足30秒' : '接近阈值') : '正常';
-    el.setAttribute('aria-label',`${label} ${visible}，${meaning.textContent}，${detail}，${extra}`);
-    el.append(ring,amount,title,note,auxiliary,meaning);return el;
+    const description=annotation(kind,value,toneValue,stale,ioTone);
+    meaning.textContent=!description.reason?'':description.reason==='未知'?'?':description.reason==='旧数据'?'旧':kind==='disk'?'容':'!';
+    meaning.hidden=!description.reason;meaning.title=description.capacity;meaning.dataset.reason=description.capacity;
+    meaning.dataset.state=description.reason==='未知'||description.reason==='旧数据'?'neutral':'alert';meaning.setAttribute('aria-label',description.capacity);
+    el.tabIndex=0;el.setAttribute('role','button');el.dataset.focusKey=`resource-${kind}`;el.setAttribute('aria-haspopup','dialog');
+    el.title=`${name} ${visible} · ${detail}${extra?' · '+extra:''}${description.capacity?' · '+description.capacity:''}${description.io?' · '+description.io:''}；点击查看资源详情`;
+    const tooltip=document.createElement('span');tooltip.className='resource-tooltip';tooltip.setAttribute('role','tooltip');tooltip.textContent=el.title;
+    el.setAttribute('aria-label',`${label} ${visible}，${description.capacity}，${detail}，${extra}${description.io?'，'+description.io:''}`);
+    el.append(ring,amount,title,note,auxiliary,meaning,tooltip);
+    if(kind==='disk'){const io=document.createElement('small');io.className='metric-io-alert';io.textContent='I/O';io.hidden=!description.io;io.title=description.io;io.dataset.reason=description.io;io.setAttribute('aria-label',description.io);el.append(io);}
+    return el;
   }
   function stamp(tier) {
     if (!['SSS','SS','S','A','B','C','D'].includes(tier)) return null;
@@ -85,5 +100,5 @@
     el.innerHTML=`<svg viewBox="0 0 100 100" aria-hidden="true"><polygon class="stamp-edge" points="${points}"/><circle class="stamp-inner" cx="50" cy="50" r="40"/><circle class="stamp-inset" cx="50" cy="50" r="35"/>${ornate ? '<path class="stamp-laurel" d="M30 72 Q12 47 32 26 M70 72 Q88 47 68 26 M25 62l-9-5m7-3l-8-7m9-2l-6-8m11-1l-4-9m50 35l9-5m-7-3l8-7m-9-2l6-8m-11-1l4-9"/>' : ''}</svg><strong>${tier}</strong>`;
     return el;
   }
-  return {finite,percent,pct,size,os,price,tone,createObserver,tile,stamp};
+  return {finite,percent,pct,size,os,price,tone,createObserver,annotation,tile,stamp};
 });

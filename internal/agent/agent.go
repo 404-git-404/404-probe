@@ -118,6 +118,8 @@ type Runner struct {
 	reportNetworkCounters        bool
 	versionReportAccepted        atomic.Bool
 	upgradeAPISupported          atomic.Bool
+	upgradeV2ServerSupported     atomic.Bool
+	upgradeV2UpdaterSupported    atomic.Bool
 	interactiveControlSupported  atomic.Bool
 	googleStatusSupported        atomic.Bool
 	securitySupported            atomic.Bool
@@ -413,6 +415,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	if r.reportAgentVersion {
 		measurement.AgentVersion = r.config.AgentVersion
 		measurement.AgentUpgradeCapable = r.updaterAvailable()
+		measurement.AgentUpgradeV2 = r.upgradeV2ServerSupported.Load() && r.upgradeV2UpdaterSupported.Load()
 	}
 	measurement.Epoch = r.epoch
 	measurement.NetworkQuality = r.qualitySupported.Load()
@@ -447,6 +450,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	if response.Capabilities.AgentVersionReport {
 		r.reportAgentVersion = true
 	}
+	r.upgradeV2ServerSupported.Store(response.Capabilities.AgentUpgradeV2)
 	if response.Capabilities.LinuxMetricsReport {
 		r.reportLinuxMetrics = true
 	}

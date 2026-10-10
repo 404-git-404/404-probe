@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 24
+const currentSchemaVersion = 25
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -63,6 +63,7 @@ type State struct {
 	OS                     string                             `json:"os"`
 	Arch                   string                             `json:"arch"`
 	AgentVersion           string                             `json:"agent_version"`
+	AgentUpgradeV2         bool                               `json:"agent_upgrade_v2,omitempty"`
 	AgentUpgradeCapable    bool                               `json:"agent_upgrade_capable"`
 	Uptime                 uint64                             `json:"uptime"`
 	CPUPercent             float64                            `json:"cpu_percent"`
@@ -806,6 +807,21 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 24: %w", err)
 		}
 	}
+	if version < 25 {
+		for _, statement := range []string{
+			`ALTER TABLE agent_state ADD COLUMN agent_upgrade_v2 INTEGER NOT NULL DEFAULT 0 CHECK(agent_upgrade_v2 IN (0,1))`,
+			`ALTER TABLE agent_upgrade_operations ADD COLUMN channel TEXT NOT NULL DEFAULT 'stable' CHECK(channel IN ('stable','beta'))`,
+			`ALTER TABLE agent_upgrade_operations ADD COLUMN required_protocol INTEGER NOT NULL DEFAULT 1 CHECK(required_protocol IN (1,2))`,
+			`ALTER TABLE agent_upgrade_operations ADD COLUMN target_commit TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE agent_upgrade_operations ADD COLUMN server_version TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE agent_upgrade_operations ADD COLUMN beta_confirmed INTEGER NOT NULL DEFAULT 0 CHECK(beta_confirmed IN (0,1))`,
+			`INSERT INTO schema_migrations(version,applied_at) VALUES(25,unixepoch())`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migration 25: %w", err)
+			}
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1211,7 +1227,7 @@ func calculateState(name string, old State, exists bool, r protocol.Report, rece
 	}
 	return State{
 		AgentID: r.AgentID, Name: name, Epoch: r.Epoch, SessionID: r.SessionID, Sequence: r.Sequence, BootID: r.BootID,
-		Hostname: r.Hostname, OS: r.OS, Arch: r.Arch, AgentVersion: agentVersion, AgentUpgradeCapable: r.AgentUpgradeCapable, Uptime: r.Uptime, CPUPercent: r.CPUPercent, CPUStealPercent: r.CPUStealPercent, CPUCores: r.CPUCores,
+		Hostname: r.Hostname, OS: r.OS, Arch: r.Arch, AgentVersion: agentVersion, AgentUpgradeCapable: r.AgentUpgradeCapable, AgentUpgradeV2: r.AgentUpgradeV2, Uptime: r.Uptime, CPUPercent: r.CPUPercent, CPUStealPercent: r.CPUStealPercent, CPUCores: r.CPUCores,
 		Load1: r.Load1, Load5: r.Load5, Load15: r.Load15, RAMUsed: r.RAMUsed, RAMTotal: r.RAMTotal, RAMPercent: r.RAMPercent,
 		SwapUsed: r.SwapUsed, SwapTotal: r.SwapTotal, SwapPercent: r.SwapPercent, DiskUsed: r.DiskUsed, DiskTotal: r.DiskTotal, DiskPercent: r.DiskPercent,
 		DiskReadRate: r.DiskReadRate, DiskWriteRate: r.DiskWriteRate, DiskBusyPercent: r.DiskBusyPercent, CountryCode: r.CountryCode,
@@ -1308,10 +1324,10 @@ func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool,
 	s := State{AgentID: id, Name: name}
 	var epoch, sequence, uptime, cpuCores, ramUsed, ramTotal, swapUsed, swapTotal, diskUsed, diskTotal, rawRX, rawTX, rxTotal, txTotal, networkCountersVersion int64
 	var networkCountersJSON string
-	var upgradeCapable int
+	var upgradeCapable, upgradeV2 int
 	var cpuSteal, diskReadRate, diskWriteRate, diskBusy sql.NullFloat64
-	err := tx.QueryRowContext(ctx, `SELECT epoch,session_id,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,COALESCE(country_code,''),network_counters_version,network_counters_json FROM agent_state WHERE agent_id=?`, id).Scan(
-		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON)
+	err := tx.QueryRowContext(ctx, `SELECT epoch,session_id,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,agent_upgrade_v2,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,COALESCE(country_code,''),network_counters_version,network_counters_json FROM agent_state WHERE agent_id=?`, id).Scan(
+		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &upgradeV2, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return State{}, false, nil
 	}
@@ -1324,6 +1340,7 @@ func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool,
 		return State{}, false, err
 	}
 	s.AgentUpgradeCapable = upgradeCapable == 1
+	s.AgentUpgradeV2 = upgradeV2 == 1
 	s.CPUCores = uint32(cpuCores)
 	s.CPUStealPercent = nullableFloat(cpuSteal)
 	s.DiskReadRate = nullableFloat(diskReadRate)
@@ -1384,9 +1401,9 @@ func writeStateTx(ctx context.Context, tx *sql.Tx, s State) error {
 	default:
 		return errors.New("network counter version is unsupported")
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,epoch,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,country_code,network_counters_version,network_counters_json)
-	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,sequence=excluded.sequence,boot_id=excluded.boot_id,hostname=excluded.hostname,os=excluded.os,arch=excluded.arch,agent_version=excluded.agent_version,agent_upgrade_capable=excluded.agent_upgrade_capable,uptime=excluded.uptime,cpu=excluded.cpu,cpu_cores=excluded.cpu_cores,load1=excluded.load1,load5=excluded.load5,load15=excluded.load15,ram_used=excluded.ram_used,ram_total=excluded.ram_total,ram_percent=excluded.ram_percent,swap_used=excluded.swap_used,swap_total=excluded.swap_total,swap_percent=excluded.swap_percent,disk_used=excluded.disk_used,disk_total=excluded.disk_total,disk_percent=excluded.disk_percent,raw_rx=excluded.raw_rx,raw_tx=excluded.raw_tx,rx_rate=excluded.rx_rate,tx_rate=excluded.tx_rate,rx_total=excluded.rx_total,tx_total=excluded.tx_total,collected_at=excluded.collected_at,last_seen=excluded.last_seen,epoch=excluded.epoch,cpu_steal=excluded.cpu_steal,disk_read_rate=excluded.disk_read_rate,disk_write_rate=excluded.disk_write_rate,disk_busy=excluded.disk_busy,country_code=excluded.country_code,network_counters_version=excluded.network_counters_version,network_counters_json=excluded.network_counters_json`,
-		s.AgentID, s.SessionID, s.CollectedAt, int64(s.Sequence), s.BootID, s.Hostname, s.OS, s.Arch, s.AgentVersion, boolInt(s.AgentUpgradeCapable), int64(s.Uptime), s.CPUPercent, int64(s.CPUCores), s.Load1, s.Load5, s.Load15, int64(s.RAMUsed), int64(s.RAMTotal), s.RAMPercent, int64(s.SwapUsed), int64(s.SwapTotal), s.SwapPercent, int64(s.DiskUsed), int64(s.DiskTotal), s.DiskPercent, int64(s.RXBytes), int64(s.TXBytes), s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), s.CollectedAt, s.LastSeen, int64(s.Epoch), s.CPUStealPercent, s.DiskReadRate, s.DiskWriteRate, s.DiskBusyPercent, nullable(s.CountryCode), int64(s.NetworkCountersVersion), countersJSON)
+	_, err := tx.ExecContext(ctx, `INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,agent_upgrade_v2,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,epoch,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,country_code,network_counters_version,network_counters_json)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,sequence=excluded.sequence,boot_id=excluded.boot_id,hostname=excluded.hostname,os=excluded.os,arch=excluded.arch,agent_version=excluded.agent_version,agent_upgrade_capable=excluded.agent_upgrade_capable,agent_upgrade_v2=excluded.agent_upgrade_v2,uptime=excluded.uptime,cpu=excluded.cpu,cpu_cores=excluded.cpu_cores,load1=excluded.load1,load5=excluded.load5,load15=excluded.load15,ram_used=excluded.ram_used,ram_total=excluded.ram_total,ram_percent=excluded.ram_percent,swap_used=excluded.swap_used,swap_total=excluded.swap_total,swap_percent=excluded.swap_percent,disk_used=excluded.disk_used,disk_total=excluded.disk_total,disk_percent=excluded.disk_percent,raw_rx=excluded.raw_rx,raw_tx=excluded.raw_tx,rx_rate=excluded.rx_rate,tx_rate=excluded.tx_rate,rx_total=excluded.rx_total,tx_total=excluded.tx_total,collected_at=excluded.collected_at,last_seen=excluded.last_seen,epoch=excluded.epoch,cpu_steal=excluded.cpu_steal,disk_read_rate=excluded.disk_read_rate,disk_write_rate=excluded.disk_write_rate,disk_busy=excluded.disk_busy,country_code=excluded.country_code,network_counters_version=excluded.network_counters_version,network_counters_json=excluded.network_counters_json`,
+		s.AgentID, s.SessionID, s.CollectedAt, int64(s.Sequence), s.BootID, s.Hostname, s.OS, s.Arch, s.AgentVersion, boolInt(s.AgentUpgradeCapable), boolInt(s.AgentUpgradeV2), int64(s.Uptime), s.CPUPercent, int64(s.CPUCores), s.Load1, s.Load5, s.Load15, int64(s.RAMUsed), int64(s.RAMTotal), s.RAMPercent, int64(s.SwapUsed), int64(s.SwapTotal), s.SwapPercent, int64(s.DiskUsed), int64(s.DiskTotal), s.DiskPercent, int64(s.RXBytes), int64(s.TXBytes), s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), s.CollectedAt, s.LastSeen, int64(s.Epoch), s.CPUStealPercent, s.DiskReadRate, s.DiskWriteRate, s.DiskBusyPercent, nullable(s.CountryCode), int64(s.NetworkCountersVersion), countersJSON)
 	return err
 }
 

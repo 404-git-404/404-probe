@@ -34,6 +34,10 @@ func run(args []string) error {
 		return errors.New("version, commit, output, and release asset paths are required")
 	}
 	document := releasemetadata.Document{SchemaVersion: releasemetadata.SchemaVersion, Version: *version, Commit: *commit}
+	if comparison, ok := buildinfo.CompareReleaseVersions(*version, "v1.0.2-beta.1"); ok && comparison >= 0 {
+		document.SchemaVersion = 2
+		document.Compatibility = &releasemetadata.Compatibility{MinServerVersion: "v1.0.1", UpgradeProtocol: 2}
+	}
 	checksums := make(map[string]string, len(flags.Args()))
 	for _, path := range flags.Args() {
 		info, err := os.Lstat(path)
@@ -57,6 +61,10 @@ func run(args []string) error {
 	metadata, err := releasemetadata.Encode(document)
 	if err != nil {
 		return err
+	}
+	if document.SchemaVersion == 2 {
+		digest := sha256.Sum256(metadata)
+		checksums["RELEASE-METADATA.json"] = hex.EncodeToString(digest[:])
 	}
 	names := make([]string, 0, len(checksums))
 	for name := range checksums {

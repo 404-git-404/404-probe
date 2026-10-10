@@ -118,3 +118,9 @@ a,.nav-link,.details,.detail-toggle,.card-detail-actions a,.card-detail-actions 
 .selector-popover-feedback{color:#4e6542;font-size:13px}
 .selector-trigger{color:#302d28;background:#f6ecd9;border:1px solid #d7c9b1;border-radius:8px;padding:7px 10px;font:inherit;white-space:nowrap}
 .google-selector-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+/* Stable/Beta selection belongs to the single-Agent upgrade dialog. */
+#upgrade-agent-dialog .upgrade-versions strong{color:#29333d}
+#upgrade-release{width:100%;padding:8px;border:1px solid #d7c9b1;border-radius:7px;background:#fffefa;color:#29333d;font:inherit;color-scheme:light}
+#upgrade-beta-label{display:flex;align-items:flex-start;gap:8px}
+#upgrade-beta-label[hidden],#upgrade-release-reason:empty{display:none}
+#upgrade-beta-confirm{width:auto;flex:none;margin:3px 0 0}

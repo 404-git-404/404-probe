@@ -21,6 +21,7 @@ type Report struct {
 	Arch                string                       `json:"arch"`
 	AgentVersion        string                       `json:"agent_version,omitempty"`
 	AgentUpgradeCapable bool                         `json:"agent_upgrade_capable,omitempty"`
+	AgentUpgradeV2      bool                         `json:"agent_upgrade_v2,omitempty"`
 	Management          *AgentManagementCapabilities `json:"management_capabilities,omitempty"`
 	BootID              string                       `json:"boot_id"`
 	Uptime              uint64                       `json:"uptime"`
@@ -179,6 +180,7 @@ type ReportResponse struct {
 }
 
 type ReportCapabilities struct {
+	AgentUpgradeV2        bool `json:"agent_upgrade_v2,omitempty"`
 	NetworkQuality        bool `json:"network_quality,omitempty"`
 	AgentVersionReport    bool `json:"agent_version_report,omitempty"`
 	LinuxMetricsReport    bool `json:"linux_metrics_report,omitempty"`

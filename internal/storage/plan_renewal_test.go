@@ -484,6 +484,7 @@ func TestPlanRenewalMigration24BackfillAndAtomicFailure(t *testing.T) {
 	s, id := renewalSetup(t, path)
 	ctx := context.Background()
 	before := tableRenewalSnapshot(t, s, "agent_plans")
+	dropUpgradeV2FixtureSchema(t, s.db)
 	for _, statement := range []string{`DROP TABLE agent_plan_renewal_requests`, `DROP TABLE agent_plan_config`, `DELETE FROM schema_migrations WHERE version=24`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -516,9 +517,12 @@ func TestPlanRenewalMigration24BackfillAndAtomicFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	version, err = s.SchemaVersion(ctx)
-	if err != nil || version != 24 {
+	if err != nil || version != currentSchemaVersion {
 		t.Fatalf("version %d %v", version, err)
 	}
+	// Compare migration24 against its original schema24 contract; schema25 adds
+	// intentional upgrade authorization columns to two existing tables.
+	dropUpgradeV2FixtureSchema(t, s.db)
 	if tableRenewalSnapshot(t, s, "agent_plans") != before {
 		t.Fatal("migration changed plan")
 	}

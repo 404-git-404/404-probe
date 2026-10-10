@@ -25,11 +25,12 @@ type Info struct {
 }
 
 type ExecutableInfo struct {
-	Path   string `json:"path"`
-	Commit string `json:"commit"`
-	Dirty  bool   `json:"dirty"`
-	GOOS   string `json:"goos"`
-	GOARCH string `json:"goarch"`
+	Path    string `json:"path"`
+	Version string `json:"version,omitempty"`
+	Commit  string `json:"commit"`
+	Dirty   bool   `json:"dirty"`
+	GOOS    string `json:"goos"`
+	GOARCH  string `json:"goarch"`
 }
 
 func InspectExecutable(path string) (ExecutableInfo, error) {
@@ -96,20 +97,49 @@ func Current() Info {
 }
 
 func (i Info) UpgradeEligible() bool {
-	return canonicalVersion.MatchString(i.Version) && i.Commit != "" && !i.Dirty
+	return IsCanonicalVersion(i.Version) && i.Commit != "" && !i.Dirty
 }
 
-func IsCanonicalVersion(value string) bool { return canonicalVersion.MatchString(value) }
+func IsCanonicalVersion(value string) bool { _, ok := parseVersion(value, false); return ok }
+
+func parseVersion(value string, release bool) ([4]uint64, bool) {
+	var result [4]uint64
+	if len(value) > 64 {
+		return result, false
+	}
+	pattern := canonicalVersion
+	if release {
+		pattern = releaseVersion
+	}
+	parts := pattern.FindStringSubmatch(value)
+	if parts == nil {
+		return result, false
+	}
+	for i := 1; i <= 3; i++ {
+		n, err := strconv.ParseUint(parts[i], 10, 64)
+		if err != nil {
+			return result, false
+		}
+		result[i-1] = n
+	}
+	if release && parts[5] != "" {
+		n, err := strconv.ParseUint(parts[5], 10, 64)
+		if err != nil {
+			return result, false
+		}
+		result[3] = n
+	}
+	return result, true
+}
 
 func CompareVersions(left, right string) (int, bool) {
-	l := canonicalVersion.FindStringSubmatch(left)
-	r := canonicalVersion.FindStringSubmatch(right)
-	if l == nil || r == nil {
+	l, lok := parseVersion(left, false)
+	r, rok := parseVersion(right, false)
+	if !lok || !rok {
 		return 0, false
 	}
-	for index := 1; index <= 3; index++ {
-		lv, _ := strconv.ParseUint(l[index], 10, 64)
-		rv, _ := strconv.ParseUint(r[index], 10, 64)
+	for index := 0; index < 3; index++ {
+		lv, rv := l[index], r[index]
 		if lv < rv {
 			return -1, true
 		}
@@ -122,7 +152,7 @@ func CompareVersions(left, right string) (int, bool) {
 
 // IsReleaseVersion permits an explicitly selected release. Stable auto-upgrade
 // boundaries must continue using IsCanonicalVersion and UpgradeEligible.
-func IsReleaseVersion(value string) bool { return releaseVersion.MatchString(value) }
+func IsReleaseVersion(value string) bool { _, ok := parseVersion(value, true); return ok }
 
 // CompareReleaseVersions is for explicit installer/Server transitions only.
 // Agent remote upgrades keep the stable-only CompareVersions boundary.

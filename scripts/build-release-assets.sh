@@ -61,7 +61,7 @@ for architecture in amd64 arm64; do
     package="./cmd/${role}"
     printf 'Building %s\n' "${asset}"
     CGO_ENABLED=0 GOOS=linux GOARCH="${architecture}" \
-      go build -trimpath -ldflags="-s -w -X 404-probe/internal/buildinfo.Version=${VERSION} -X 404-probe/internal/buildinfo.Commit=${head_commit}" -o "${OUTPUT_DIRECTORY}/${asset}" "${package}"
+      go build -trimpath -ldflags="-w -X 404-probe/internal/buildinfo.Version=${VERSION} -X 404-probe/internal/buildinfo.Commit=${head_commit}" -o "${OUTPUT_DIRECTORY}/${asset}" "${package}"
     metadata="$(go version -m "${OUTPUT_DIRECTORY}/${asset}")"
     grep -Fq "vcs.revision=${head_commit}" <<<"${metadata}" || {
       printf '%s does not contain the expected VCS revision\n' "${asset}" >&2

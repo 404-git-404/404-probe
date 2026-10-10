@@ -160,8 +160,8 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 	javascript := string(jsBytes)
 	stylesheet := string(cssBytes)
 	for _, required := range []string{
-		`agent.revoked ? 'revoked' : agent.disabled_at ? 'paused'`,
-		`agent.disabled_at ? '● PAUSED'`,
+		`agent.revoked?'revoked':agent.disabled_at?'paused'`,
+		`online:'在线',offline:'离线',paused:'暂停',revoked:'已撤销',unknown:'状态未知'`,
 		`stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable'`,
 		`stateAction.textContent = agent.disabled_at ? '恢复' : '暂停'`,
 		`const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale)`,
@@ -205,14 +205,14 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 		t.Fatal("dashboard Agent collection is missing its responsive grid hook")
 	}
 	cardCSS, err := fs.ReadFile(static, "card-layout.css")
-	if err != nil || !strings.Contains(string(cardCSS), `.agent-card .google-checks{display:grid;grid-template-columns:minmax(0,1fr)`) || strings.Index(html, `href="/card-layout.css"`) <= strings.Index(html, `href="/style.css"`) {
+	if err != nil || !strings.Contains(string(cardCSS), `.agent-card .google-checks{flex:1;min-width:0`) || strings.Index(html, `href="/card-layout.css"`) <= strings.Index(html, `href="/style.css"`) {
 		t.Fatal("current card service row needs its loaded single-column override")
 	}
 	for _, required := range []string{
 		`card.className = 'card agent-card'`, `title.className = 'card-identity'`,
 		`card.dataset.agentId = agent.agent_id`, `status.dataset.agentState = stateName`,
 		`remove.dataset.agentId = agent.agent_id`,
-		`CardMetrics.tile('cpu'`, `CardMetrics.tile('memory'`, `CardMetrics.tile('disk'`, `CardMetrics.tile('disk-io'`,
+		`CardMetrics.tile('cpu'`, `CardMetrics.tile('memory'`, `CardMetrics.tile('disk'`,
 		`note.title = detail`, `usedPercent >= 100 ? 'critical' : usedPercent >= 80 ? 'warning' : 'healthy'`,
 		`cardObservations.observe(agent)`, `for (const agent of list)`,
 		`setReadableText(heading, agent.name || state.hostname || '未命名 VPS')`,
@@ -222,6 +222,14 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	} {
 		if !strings.Contains(javascript, required) {
 			t.Fatalf("dashboard script missing fixed-card behavior %q", required)
+		}
+	}
+	if strings.Contains(javascript, `CardMetrics.tile('disk-io'`) || strings.Contains(javascript, `CardMetrics.stamp(`) {
+		t.Fatal("M04 real cards must have three resource rings and no fabricated score")
+	}
+	for _, required := range []string{`repeat(4,minmax(0,1fr))`, `repeat(3,minmax(0,1fr))`, `.score-space`, `.resource-tooltip`, `.state-offline`, `#25A994`, `#9978CB`, `#D4A34E`} {
+		if !strings.Contains(string(cardCSS), required) {
+			t.Fatalf("M04 layout missing %q", required)
 		}
 	}
 	for _, required := range []string{
