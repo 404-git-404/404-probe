@@ -46,8 +46,19 @@ func TestN3EmbeddedFixedLocalQualityDependencies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		source := string(data)
+		if name == "network-quality.js" {
+			// M09 persists only the selected address-family UI preference.
+			// Keep rejecting any other storage access, including history data.
+			for _, preference := range []string{
+				`root.localStorage?.setItem('404-probe:nq-family:'+card.id,value)`,
+				`root.localStorage?.getItem('404-probe:nq-family:'+agent.agent_id)`,
+			} {
+				source = strings.Replace(source, preference, "", 1)
+			}
+		}
 		for _, forbidden := range []string{"https://", "http://", "localStorage", "sessionStorage", "eval(", "new Function("} {
-			if strings.Contains(string(data), forbidden) {
+			if strings.Contains(source, forbidden) {
 				t.Fatalf("%s runtime dependency/persistence: %s", name, forbidden)
 			}
 		}

@@ -231,8 +231,8 @@ func TestN2aQualityRetentionCountersAndCascade(t *testing.T) {
 	}
 	qualityCounts(t, s, id, 0)
 	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM quality_targets WHERE agent_id=?`, id).Scan(&count); err != nil || count != 3 {
-		t.Fatalf("current disabled targets lost: %d %v", count, err)
+	if err := s.db.QueryRow(`SELECT count(*) FROM quality_targets WHERE agent_id=?`, id).Scan(&count); err != nil || count != 4 {
+		t.Fatalf("current disabled targets or 30d historical target lost: %d %v", count, err)
 	}
 	if _, err := s.db.Exec(`DELETE FROM agents WHERE id=?`, id); err != nil {
 		t.Fatal(err)

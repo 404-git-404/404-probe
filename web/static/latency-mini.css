@@ -1,0 +1,26 @@
+/* The entire original 72px plot + 15.390625px status region is reassigned. */
+.agent-card .dv-c .latency-mini{position:relative;width:100%;min-width:0;height:104.0625px;display:flex;flex-direction:column;gap:0;margin-top:2px;padding:0;border:0;color:var(--card-warm-muted,#4e5965)}
+.agent-card .dv-c .lm-top,.agent-card .dv-c .lm-bottom{display:flex;align-items:center;gap:4px;padding:0;border:0;font-size:11px;line-height:1.2;flex:none}
+.agent-card .dv-c .lm-top{height:24px;min-height:24px;gap:3px;flex:1;min-width:0}
+.agent-card .dv-c .lm-bottom{height:24px;min-height:24px;gap:3px}
+.agent-card .dv-c :is(.lm-top,.lm-bottom) button{height:20px;min-height:20px;min-width:29px;padding:0 3px;font-size:11px;line-height:1;border:0;border-radius:0;background:transparent;box-shadow:none;color:#70655a;white-space:nowrap;cursor:pointer}
+.agent-card .dv-c :is(.lm-top,.lm-bottom) button[aria-pressed=true]{color:#3b3936;font-weight:600}
+.agent-card .dv-c .lm-top>button[aria-pressed=true]{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
+.agent-card .dv-c :is(.lm-top,.lm-bottom) button:focus-visible,.agent-card .dv-c input:focus-visible,.agent-card .dv-c .lm-plot:focus-visible{outline:2px solid #785b42;outline-offset:1px}
+.agent-card .dv-c .lm-legend{margin-left:auto;display:flex;gap:5px;padding:0;border:0}
+.agent-card .dv-c .lm-legend button{display:inline-flex;align-items:center;gap:4px;padding:0 2px;color:var(--lm-color);font-weight:400}
+.agent-card .dv-c .lm-legend button[aria-pressed=false]{color:#766c60}
+.agent-card .dv-c .lm-dot{display:inline-block;width:7px;height:7px;flex:none;box-sizing:border-box;border:1px solid var(--lm-color);border-radius:50%;background:var(--lm-color)}
+.agent-card .dv-c .lm-legend button[aria-pressed=false] .lm-dot{background:transparent}
+.agent-card .dv-c .lm-plot{height:80.0625px;min-height:80.0625px;width:100%;position:relative;padding:0;border:0;touch-action:pan-y;cursor:grab}
+.agent-card .dv-c .lm-plot:active{cursor:grabbing}
+.agent-card .dv-c svg{width:100%;height:100%;display:block;overflow:hidden;user-select:none}
+.agent-card .dv-c input{appearance:none;-webkit-appearance:none;min-width:0;width:auto;flex:1;height:24px;margin:0;padding:0;border:0;border-radius:0;background:transparent;cursor:pointer}
+.agent-card .dv-c input::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:#d5c9b8}
+.agent-card .dv-c input::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;margin-top:-4px;border:1px solid #fffaf1;border-radius:50%;background:#785f49}
+.agent-card .dv-c input::-moz-range-track{height:3px;border:0;border-radius:2px;background:#d5c9b8}
+.agent-card .dv-c input::-moz-range-thumb{width:11px;height:11px;box-sizing:border-box;border:1px solid #fffaf1;border-radius:50%;background:#785f49}
+.agent-card .dv-c .lm-bottom button{height:24px;min-height:24px;padding:0 2px}
+.agent-card .dv-c .lm-span{width:21px;flex:none;font-size:11px;color:#70655a}
+.agent-card .dv-c .lm-note{position:absolute;left:0;bottom:24px;z-index:45;max-width:100%;box-sizing:border-box;margin:0;padding:5px 7px;border-radius:5px;background:#fffaf1;color:#3b3936;box-shadow:0 3px 12px #0002;font-size:11px;line-height:1.4;white-space:pre-line;overflow-wrap:anywhere;pointer-events:none}
+.agent-card .dv-c .lm-note:empty{display:none}

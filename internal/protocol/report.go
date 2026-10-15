@@ -10,6 +10,7 @@ import (
 const MaxReportBytes = 64 << 10
 
 type Report struct {
+	NetworkQualityV2    *QualityCapabilities         `json:"network_quality_v2,omitempty"`
 	NetworkQuality      bool                         `json:"network_quality,omitempty"`
 	AgentID             string                       `json:"agent_id"`
 	Epoch               uint64                       `json:"epoch"`
@@ -70,6 +71,11 @@ type AgentManagementCapabilities struct {
 }
 
 func (r Report) Validate() error {
+	if r.NetworkQualityV2 != nil {
+		if err := r.NetworkQualityV2.Validate(); err != nil {
+			return err
+		}
+	}
 	if !validID(r.AgentID, 128) || !validID(r.SessionID, 128) || !validID(r.BootID, 256) {
 		return errors.New("agent_id, session_id and boot_id are required and must be reasonably sized")
 	}
@@ -180,6 +186,8 @@ type ReportResponse struct {
 }
 
 type ReportCapabilities struct {
+	NetworkQualityStaged  bool `json:"network_quality_staged,omitempty"`
+	NetworkQualityV2      bool `json:"network_quality_v2,omitempty"`
 	AgentUpgradeV2        bool `json:"agent_upgrade_v2,omitempty"`
 	NetworkQuality        bool `json:"network_quality,omitempty"`
 	AgentVersionReport    bool `json:"agent_version_report,omitempty"`

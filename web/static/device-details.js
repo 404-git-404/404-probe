@@ -21,6 +21,13 @@
       b.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const keys=Object.keys(tabs),i=keys.indexOf(key),next=e.key==='Home'?0:e.key==='End'?3:(i+(e.key==='ArrowRight'?1:3))%4;activate(keys[next]);tabs[keys[next]].focus();});
     }
     dialog.replaceChildren(header,tablist,body);
+    const networkControls=el('div','details-history-controls'),networkTarget=el('select'),networkChart=el('div'),networkHint=el('span','details-note');
+    networkTarget.setAttribute('aria-label','网络质量历史目标');networkTarget.dataset.focusKey='details-network-target';networkControls.append(el('span','','历史目标'),networkTarget,networkHint);panes.network.append(networkControls,networkChart);
+    function populateNetworkTargets(){const available=network()?.historyTargets(current)||[],signature=JSON.stringify(available.map(t=>[t.id,t.label]));if(networkTarget.dataset.signature!==signature){networkTarget.replaceChildren();for(const t of available){const option=el('option','',t.label);option.value=t.id;networkTarget.append(option);}networkTarget.dataset.signature=signature;}
+      if(networkIdentity&&!available.some(t=>t.id===networkIdentity.target&&t.family===networkIdentity.family)){network()?.releaseHistory();networkIdentity=null;}
+      if(!networkIdentity){const first=available.find(t=>t.slot==='telecom'&&t.family==='ipv4'&&t.protocol==='tcp')||available[0];if(first)networkIdentity={target:first.id,family:first.family,kind:'latency'};}
+      networkTarget.disabled=!available.length;networkTarget.value=networkIdentity?.target||'';networkHint.textContent=available.length?'现有单目标历史，独立于卡片显示模式':'暂无有效目标；地区配置加载或 Agent 不支持';return available;}
+    networkTarget.addEventListener('change',()=>{const chosen=(network()?.historyTargets(current)||[]).find(t=>t.id===networkTarget.value);if(!chosen)return;networkIdentity={target:chosen.id,family:chosen.family,kind:'latency'};restoreNetwork();});
     const controls=el('div','details-history-controls'),status=el('p','details-history-status'),note=el('p','details-note','持久化一分钟算术均值 · 当前及边缘分钟可能不完整；包含原首次/重置零速率，不证明完整或健康。与卡片近期内存观测不同。'),chart=el('div','details-resource-plot'),output=el('output','details-point');
     const hoursButtons=new Map();for(const hours of [1,6,24]){const b=button(hours+' 小时',()=>apply({hours}));hoursButtons.set(hours,b);controls.append(b);}
     controls.append(button('刷新',()=>request()));
@@ -39,7 +46,7 @@
     function leave(){if(tab==='resources'){pending=loading;release();}if(tab==='network'){networkPending=false;network()?.releaseHistory();}}
     function restoreNetwork(){if(!active('network')||!networkIdentity)return;
       if(network()?.openHistoryFor(current,networkIdentity.target,networkIdentity.family,networkIdentity.kind,origin?.node)===false)
-        panes.network.replaceChildren(el('p','','原指定网络目标已不可用；请从卡片选择当前目标，不借用其他地址族数据。'));}
+        networkChart.replaceChildren(el('p','','原指定目标已不可用；请在此选择当前有效目标，不借用其他地址族数据。'));}
     let titleIdentity = null, securityIdentity = null;
     function updateTitle(){const agent=agents.get(current), signature=JSON.stringify([current,agent?.country_code,agent?.country_source,agent?.name,agent?.state?.hostname]);if(signature===titleIdentity)return;titleIdentity=signature;machine.replaceChildren();const mark=identity(agent);if(mark)machine.append(mark);machine.append(el('span','',agent?.name||agent?.state?.hostname||'未命名设备'));}
     function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='management')renderManagement();if(tab==='resources')renderResourceFacts();if(tab==='security')renderSecurity();}
@@ -61,14 +68,13 @@
       if(!dialog.open)return;
       if(tab==='management')renderManagement();else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
       else if(tab==='resources'){pending=false;renderResourceFacts();renderPlot();request();}
-      else if(shouldRestoreNetwork&&networkIdentity)restoreNetwork();
-      else if(!networkIdentity)panes.network.replaceChildren(el('p','','请从设备卡片的指定网络/地址族延迟或比例进入历史。'));
+      else {network()?.ensureHistoryTargets?.(current);populateNetworkTargets();if(shouldRestoreNetwork&&networkIdentity)restoreNetwork();else if(!networkIdentity)networkChart.replaceChildren(el('p','','暂无有效网络历史目标；请检查现有地区配置。'));}
     }
     function open(id,key='management',trigger=null,exact=null){if(dead||!agents.has(id))return;
       if(current!==id){leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';rangeError.textContent='';networkIdentity=null;current=id;}
       if(trigger||current!==origin?.id)origin={node:trigger,id,key:trigger?.dataset?.focusKey||'manage'};
-      if(!dialog.open){opened=true;scroll=[root.scrollX||0,root.scrollY||0];overflow=doc.body.style.overflow;doc.body.style.overflow='hidden';dialog.showModal();}
-      if(exact)networkIdentity={...exact};updateTitle();activate(key,{restoreNetwork:!exact});closeButton.focus({preventScroll:true});
+      const opening=!dialog.open;if(opening){opened=true;scroll=[root.scrollX||0,root.scrollY||0];overflow=doc.body.style.overflow;doc.body.style.overflow='hidden';dialog.showModal();}
+      if(exact)networkIdentity={...exact};updateTitle();activate(key,{restoreNetwork:!exact});if(opening)closeButton.focus({preventScroll:true});
     }
     function close({restoreFocus=true}={}){if(!opened)return;opened=false;leave();release();pending=false;data=null;error='';if(dialog.open)dialog.close();doc.body.style.overflow=overflow;
       if(restoreFocus&&origin&&agents.has(origin.id)){const trigger=origin.node?.isConnected?origin.node:doc.querySelector(`.agent-card[data-agent-id="${origin.id}"] [data-focus-key="${origin.key}"]`);trigger?.focus({preventScroll:true});}
@@ -96,7 +102,7 @@
       if(Resize){resize=new Resize(()=>{if(active('resources')&&plot)plot.setSize({width:width(),height:300});});resize.observe(chart);}select(selected);
     }
     function visibility(){if(doc.hidden){if(tab==='resources'){pending=loading;release();}if(dialog.open&&tab==='network'){networkPending=Boolean(networkIdentity);network()?.releaseHistory();}}
-      else if(active('network')&&networkPending){networkPending=false;restoreNetwork();}
+      else if(active('network')){network()?.ensureHistoryTargets?.(current);if(networkPending){networkPending=false;restoreNetwork();}}
       else if(active('resources')&&pending){pending=false;request();}else if(active('resources'))renderPlot();}
     // Native close events are queued: an older event must not close a reopened modal.
     const cancel=e=>{e.preventDefault();close();},closed=()=>{if(!dialog.open)close();};
@@ -107,7 +113,8 @@
     const backdropClick=e=>{const dismiss=backdropPress&&outside(e);backdropPress=false;if(dismiss)close();};
     dialog.addEventListener('pointerdown',pointerDown);dialog.addEventListener('pointercancel',pointerCancel);dialog.addEventListener('click',backdropClick);
     dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',closed);doc.addEventListener('visibilitychange',visibility);
-    return {open,close,update,active,networkContainer:()=>panes.network,
+    return {open,close,update,active,networkContainer:()=>networkChart,
+      networkChanged(id){if(active('network',id)){populateNetworkTargets();restoreNetwork();}},
       sync(){if(current&&!agents.has(current)){close({restoreFocus:false});current=null;networkIdentity=null;data=null;}},
       shutdown(){close({restoreFocus:false});dead=true;release();network()?.releaseHistory();doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);dialog.removeEventListener('pointerdown',pointerDown);dialog.removeEventListener('pointercancel',pointerCancel);dialog.removeEventListener('click',backdropClick);current=null;data=null;},
       snapshot:()=>({id:current,tab,open:dialog.open,loading,points:data?.points.length||0,plot:!!plot,query:{...query},draft:{from:from.value,to:to.value}})};

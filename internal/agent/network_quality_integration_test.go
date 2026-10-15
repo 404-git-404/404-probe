@@ -72,6 +72,19 @@ func TestN2bRealServerFallbackLostACKAndUniqueMinute(t *testing.T) {
 		}
 		recorder := httptest.NewRecorder()
 		app.Handler().ServeHTTP(recorder, r)
+		// This existing test exercises the v1 fallback/ACK contract. Emulate
+		// a v1 Server advertisement; v2 negotiation is tested separately.
+		if r.URL.Path == "/api/v1/report" && recorder.Code == 200 {
+			var response protocol.ReportResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Error(err)
+			}
+			response.Capabilities.NetworkQualityV2 = false
+			recorder.Body.Reset()
+			if err := json.NewEncoder(recorder.Body).Encode(response); err != nil {
+				t.Error(err)
+			}
+		}
 		if len(batch.Samples) > 0 && recorder.Code == 200 {
 			var ack protocol.QualityBatchResponse
 			_ = json.Unmarshal(recorder.Body.Bytes(), &ack)
@@ -368,7 +381,7 @@ func TestN2bSleepingWakeSkipsCatchUpAndIndependentInitialJitter(t *testing.T) {
 		}
 		return 1
 	})
-	if plan.lanes["telecom/ipv4"].next.Equal(plan.lanes["unicom/ipv4"].next) {
+	if plan.lanes["telecom/ipv4/tcp"].next.Equal(plan.lanes["unicom/ipv4/tcp"].next) {
 		t.Fatal("initial timers not independently jittered")
 	}
 }

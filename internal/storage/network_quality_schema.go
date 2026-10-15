@@ -4,7 +4,9 @@ import (
 	"404-probe/internal/protocol"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -63,6 +65,23 @@ func migrateQualityTx(ctx context.Context, tx *sql.Tx) error {
 }
 
 func saveQualityCapabilityTx(ctx context.Context, tx *sql.Tx, r protocol.Report) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO quality_capability(agent_id,epoch,session_id,supported) VALUES(?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET epoch=excluded.epoch,session_id=excluded.session_id,supported=excluded.supported`, r.AgentID, int64(r.Epoch), r.SessionID, boolInt(r.NetworkQuality))
+	var details any
+	reason := ""
+	if r.NetworkQualityV2 != nil {
+		if err := r.NetworkQualityV2.Validate(); err != nil {
+			return err
+		}
+		wire, err := json.Marshal(r.NetworkQualityV2)
+		if err != nil {
+			return err
+		}
+		details = string(wire)
+		reason = r.NetworkQualityV2.ExcludedReason
+	}
+	// Legacy reports identify the distribution in OS (collector: platform + version).
+	if fields := strings.Fields(strings.ToLower(r.OS)); len(fields) > 0 && fields[0] == "alpine" {
+		reason = "platform_excluded:alpine"
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO quality_capability(agent_id,epoch,session_id,supported,v2_details,excluded_reason) VALUES(?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET epoch=excluded.epoch,session_id=excluded.session_id,supported=excluded.supported,v2_details=excluded.v2_details,excluded_reason=excluded.excluded_reason`, r.AgentID, int64(r.Epoch), r.SessionID, boolInt(r.NetworkQuality || r.NetworkQualityV2 != nil), details, reason)
 	return err
 }

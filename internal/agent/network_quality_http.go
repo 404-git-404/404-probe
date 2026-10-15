@@ -17,8 +17,10 @@ import (
 )
 
 var errQualityAuthorization = errors.New("quality session unavailable")
+var errQualityV2Rejected = errors.New("quality v2 report rejected")
 
 type qualityControl struct {
+	excludedReason   string // Local platform gate, immutable for this Runner.
 	mu               sync.Mutex
 	wake             chan struct{}
 	allowed, fetch   bool
@@ -57,7 +59,18 @@ func (r *Runner) stopQuality(reason string) {
 	r.logger.Info("quality stopped", "reason", reason)
 }
 func qualityValidateConfig(c protocol.QualityConfig) error {
-	if c.Version != 1 || c.IntervalMS != 30000 || c.JitterPercent != 20 || c.TimeoutMS != 5000 || len(c.Targets) > 6 {
+	limit := 6
+	if c.Version == 2 {
+		limit = 12
+		if c.Capabilities != nil && c.Capabilities.Validate() != nil {
+			return errors.New("invalid quality capability details")
+		}
+		if c.Semantics != protocol.QualityV2Semantics && c.Semantics != protocol.QualityStagedSemantics {
+			return errors.New("unsupported quality semantics")
+		}
+	}
+	intervalValid := c.IntervalMS == 30000 || c.Version == 2 && c.Semantics == protocol.QualityStagedSemantics && c.IntervalMS >= 30000 && c.IntervalMS <= 300000 && c.IntervalMS%30000 == 0
+	if (c.Version != 1 && c.Version != 2) || !intervalValid || c.JitterPercent != 20 || c.TimeoutMS != 5000 || len(c.Targets) > limit {
 		return errors.New("invalid quality configuration")
 	}
 	if c.Revision != "0" {
@@ -77,15 +90,35 @@ func qualityValidateConfig(c protocol.QualityConfig) error {
 			return errors.New("invalid quality family")
 		}
 		key := t.Slot + "/" + t.Family
+		if !protocol.QualityProtocol(t.Protocol) {
+			return errors.New("invalid quality protocol")
+		}
+		if c.Version == 2 {
+			key += "/" + t.Protocol
+			if t.Status == "active" && (c.RegionID == "" || t.Region != c.RegionID) {
+				return errors.New("quality region mismatch")
+			}
+		}
 		if seen[key] {
 			return errors.New("duplicate quality slot")
 		}
 		seen[key] = true
-		if t.Status != "active" && t.Status != "paused" && t.Status != "unavailable" {
+		if t.Status != "active" && t.Status != "paused" && t.Status != "unavailable" && !(c.Version == 2 && t.Status == "not_scheduled_legacy") {
 			return errors.New("invalid quality status")
 		}
 		if t.Status != "active" {
 			continue
+		}
+		if c.Version == 2 && c.Capabilities != nil {
+			supported := false
+			for _, l := range c.Capabilities.Lanes {
+				if l.Family == t.Family && l.Protocol == t.Protocol {
+					supported = l.Supported
+				}
+			}
+			if !supported || c.Capabilities.ExcludedReason != "" {
+				return errors.New("unsupported active quality lane")
+			}
 		}
 		if !c.Enabled || (t.Family == "ipv6" && !c.IPv6) || t.Source != "manual" && t.Source != "catalog" {
 			return errors.New("unauthorized quality target")
@@ -143,6 +176,10 @@ func (q *qualityControl) install(c protocol.QualityConfig) bool {
 }
 func (r *Runner) observeQualityReport(optIn bool, response protocol.ReportResponse) {
 	if r.quality == nil {
+		return
+	}
+	if r.quality.excludedReason != "" {
+		r.stopQuality(r.quality.excludedReason)
 		return
 	}
 	if !response.Capabilities.NetworkQuality {
@@ -210,10 +247,16 @@ func (r *Runner) qualityHTTP(ctx context.Context, path string, body []byte, limi
 }
 func (r *Runner) fetchQualityConfig(ctx context.Context) (protocol.QualityConfig, error) {
 	request := protocol.QualityConfigRequest{Epoch: strconv.FormatUint(r.epoch, 10), SessionID: r.sessionID}
+	if r.qualityV2Supported.Load() {
+		request.Version = 2
+	}
 	body, _ := json.Marshal(request)
 	var c protocol.QualityConfig
 	err := r.qualityHTTP(ctx, "/api/v1/agent/network-quality/config", body, protocol.QualityConfigResponseLimit, &c)
 	if err == nil {
+		if request.Version == 2 && c.Version != 2 {
+			return c, errors.New("quality config negotiation mismatch")
+		}
 		err = qualityValidateConfig(c)
 	}
 	return c, err

@@ -38,7 +38,7 @@ func (a *App) handleAgentQualityConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	epoch, _ := protocol.QualityInteger(request.Epoch)
-	config, err := a.store.GetQualitySessionConfig(r.Context(), id, uint64(epoch), request.SessionID)
+	config, err := a.store.GetQualitySessionConfig(r.Context(), id, uint64(epoch), request.SessionID, request.Version)
 	if err != nil {
 		qualityHTTPError(w, err)
 		return
@@ -131,12 +131,16 @@ func qualityBudgetHandler(next http.Handler) http.Handler {
 
 // Resource report has already committed: quality failure must not undo its ACK.
 func (a *App) qualityReportResponse(r *http.Request, response protocol.ReportResponse, id string, report protocol.Report) protocol.ReportResponse {
-	if !response.Accepted || !report.NetworkQuality {
+	if !response.Accepted || (!report.NetworkQuality && report.NetworkQualityV2 == nil) {
 		return response
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	config, err := a.store.GetQualitySessionConfig(ctx, id, report.Epoch, report.SessionID)
+	version := 1
+	if report.NetworkQualityV2 != nil {
+		version = 2
+	}
+	config, err := a.store.GetQualitySessionConfig(ctx, id, report.Epoch, report.SessionID, version)
 	if err == nil && config.Supported {
 		response.NetworkQuality = &config
 		wire, encodeErr := json.Marshal(response)

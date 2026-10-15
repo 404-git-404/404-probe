@@ -142,6 +142,10 @@ func TestN2aQualityPressureDuplicateResourceAndRecoverySemantics(t *testing.T) {
 	file.Close()
 	original := s.databasePath
 	s.databasePath = dummy
+	// A2 pressure is actual filesystem headroom, not a fixed 2 GiB file size.
+	s.qualityDiskObserve = func() (qualityDisk, error) {
+		return qualityDisk{DB: 2 << 30, Free: 2 << 30, Total: 8 << 30, RootFree: 16 << 20, RootTotal: 4 << 30}, nil
+	}
 	defer func() { s.databasePath = original }()
 	next := sample
 	next.Sequence = "2"
@@ -161,6 +165,14 @@ func TestN2aQualityPressureDuplicateResourceAndRecoverySemantics(t *testing.T) {
 		t.Fatal("failed checkpoint accepted")
 	}
 	qualityCounts(t, s, id, 1)
+	s.qualityDiskObserve = nil
+	s.databasePath = original
+	s.qualityBudgetAt = time.Time{}
+	ack = qualitySave(t, s, id, now, next)
+	if ack.Results[0][2] != "committed" {
+		t.Fatal("pressure recovery", ack)
+	}
+	qualityCounts(t, s, id, 2)
 }
 
 func TestN2aQualityMinutePageCost10000(t *testing.T) {

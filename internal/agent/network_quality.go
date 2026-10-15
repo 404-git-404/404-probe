@@ -6,16 +6,18 @@ import (
 	"errors"
 	"math"
 	"math/rand/v2"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 )
 
 type qualityLane struct {
-	target protocol.QualityTarget
-	next   time.Time
-	cancel context.CancelFunc
-	busy   bool
+	target    protocol.QualityTarget
+	next      time.Time
+	cancel    context.CancelFunc
+	busy      bool
+	semantics string
 }
 type qualitySampleDone struct {
 	lane    *qualityLane
@@ -70,7 +72,9 @@ func qualityDelay(base time.Duration, random func() float64) time.Duration {
 	}
 	return time.Duration(float64(base) * (0.8 + 0.4*x))
 }
-func qualityLaneKey(t protocol.QualityTarget) string { return t.Slot + "/" + t.Family }
+func qualityLaneKey(t protocol.QualityTarget) string {
+	return t.Slot + "/" + t.Family + "/" + t.Protocol
+}
 func qualitySameLane(a, b protocol.QualityTarget) bool {
 	return a.ID == b.ID && a.SlotRevision == b.SlotRevision && a.Protocol == b.Protocol && a.Host == b.Host && a.Port == b.Port && a.Family == b.Family
 }
@@ -88,7 +92,7 @@ func (s *qualitySchedule) reconcile(c *protocol.QualityConfig, now time.Time, ra
 	}
 	for key, l := range s.lanes {
 		t, ok := wanted[key]
-		if !ok || !qualitySameLane(l.target, t) {
+		if !ok || !qualitySameLane(l.target, t) || c != nil && l.semantics != c.Semantics {
 			if l.cancel != nil {
 				l.cancel()
 			}
@@ -97,7 +101,7 @@ func (s *qualitySchedule) reconcile(c *protocol.QualityConfig, now time.Time, ra
 	}
 	for key, t := range wanted {
 		if _, ok := s.lanes[key]; !ok {
-			s.lanes[key] = &qualityLane{target: t, next: now.Add(qualityDelay(30*time.Second, random))}
+			s.lanes[key] = &qualityLane{target: t, semantics: c.Semantics, next: now.Add(qualityDelay(time.Duration(c.IntervalMS)*time.Millisecond, random))}
 		}
 	}
 }
@@ -117,7 +121,7 @@ func qualityBackoff(failures int, base time.Duration, random func() float64) tim
 }
 
 func (r *Runner) runQualityWorker(ctx context.Context) {
-	if r.quality == nil {
+	if r.quality == nil || r.quality.excludedReason != "" {
 		return
 	}
 	control := r.quality
@@ -130,6 +134,7 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 		random = rand.Float64
 	}
 	probe := control.probe
+	stagedProbe := probe
 	if probe == nil {
 		tcp := NewTCPExecutor()
 		var icmp *ICMPExecutor
@@ -148,6 +153,12 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 				return icmp.qualityProbe(ctx, t)
 			}
 			return tcp.qualityProbe(ctx, t)
+		}
+		stagedProbe = func(ctx context.Context, t protocol.QualityTarget) qualityProbeResult {
+			if t.Protocol == "icmp" {
+				return icmp.qualityStagedProbe(ctx, t)
+			}
+			return tcp.qualityStagedProbe(ctx, t)
 		}
 	}
 	queue := qualityQueue{}
@@ -233,13 +244,28 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 			fetchCancel()
 		}
 		queue.expire(now)
-		for _, lane := range schedule.lanes {
+		// Oldest due lane first, stable tie break; pending lanes retain their
+		// deadline when six workers are busy instead of being skipped for 30s.
+		ordered := make([]*qualityLane, 0, len(schedule.lanes))
+		for _, l := range schedule.lanes {
+			ordered = append(ordered, l)
+		}
+		sort.Slice(ordered, func(i, j int) bool {
+			if ordered[i].next.Equal(ordered[j].next) {
+				return qualityLaneKey(ordered[i].target) < qualityLaneKey(ordered[j].target)
+			}
+			return ordered[i].next.Before(ordered[j].next)
+		})
+		for _, lane := range ordered {
 			if now.Before(lane.next) {
 				continue
 			}
 			scheduled := lane.next
-			lane.next = now.Add(qualityDelay(30*time.Second, random)) // Never catch up missed ticks.
-			if lane.busy || len(flights) >= 6 {
+			if !lane.busy && len(flights) >= 6 {
+				continue
+			}
+			lane.next = now.Add(qualityDelay(time.Duration(config.IntervalMS)*time.Millisecond, random)) // Never catch up missed ticks.
+			if lane.busy {
 				queue.addGap(scheduled.UnixMilli(), now.UnixMilli(), "unknown_gap", nil)
 				continue
 			}
@@ -251,17 +277,27 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 			lane.busy = true
 			flights[lane] = true
 			target, revision, frozenAuth := lane.target, config.Revision, auth
+			runProbe := probe
+			intervalMS := config.IntervalMS
+			if config.Semantics == protocol.QualityStagedSemantics {
+				runProbe = stagedProbe
+			}
 			frozenAnchor, frozenAnchorGeneration := anchor.point, anchor.generation
 			workers.Add(1)
 			go func(l *qualityLane) {
 				defer workers.Done()
 				defer cancel()
 				started := clock()
-				result := probe(probeCtx, target)
+				result := runProbe(probeCtx, target)
 				finishedAt := clock()
 				elapsed := finishedAt.Sub(started)
 				ok := qualityClockValid(frozenAnchor.UnixMilli(), started.UnixMilli(), finishedAt.UnixMilli(), started.Sub(frozenAnchor), elapsed) && started.UnixMilli() >= scheduled.UnixMilli()
 				sample := protocol.QualitySample{TargetID: target.ID, ConfigRevision: revision, SlotRevision: target.SlotRevision, ScheduledAt: scheduled.UnixMilli(), StartedAt: started.UnixMilli(), FinishedAt: finishedAt.UnixMilli(), DurationMS: float64(elapsed) / float64(time.Millisecond), Outcome: result.outcome, ResolvedIP: result.ip, LatencyMS: result.latency, Sent: result.sent, Received: result.received}
+				sample.Details = result.details
+				if d, err := protocol.DecodeQualityDetails(sample.Details); err == nil && d != nil {
+					d.IntervalMS = intervalMS
+					sample.Details = d.Encode()
+				}
 				finished <- qualitySampleDone{lane: l, sample: sample, auth: frozenAuth, clockOK: ok, anchor: frozenAnchorGeneration}
 			}(lane)
 		}
@@ -278,7 +314,11 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 			nextFetch = now.Add(30 * time.Second)
 		}
 		if allowed && uploadCancel == nil && (len(queue.rows) > 0 || len(queue.gaps) > 0) && !now.Before(nextUpload) {
-			u, err := queue.pack(strconv.FormatUint(r.epoch, 10), r.sessionID)
+			version := 1
+			if config != nil {
+				version = config.Version
+			}
+			u, err := queue.pack(strconv.FormatUint(r.epoch, 10), r.sessionID, version)
 			if err != nil {
 				r.logger.Warn("quality batch encode", "error", err)
 				nextUpload = now.Add(30 * time.Second)
@@ -298,6 +338,9 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 		}
 		wakeAt := now.Add(time.Hour)
 		for _, l := range schedule.lanes {
+			if !l.busy && len(flights) >= 6 {
+				continue
+			} // Completion wakes the bounded dispatcher.
 			if l.next.Before(wakeAt) {
 				wakeAt = l.next
 			}

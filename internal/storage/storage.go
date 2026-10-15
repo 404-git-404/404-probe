@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"404-probe/internal/auth"
@@ -18,7 +19,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 25
+const currentSchemaVersion = 27
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -34,8 +35,12 @@ var (
 )
 
 type Store struct {
-	db           *sql.DB
-	databasePath string
+	db                 *sql.DB
+	databasePath       string
+	qualityBudgetMu    sync.Mutex
+	qualityBudgetCache qualityBudget
+	qualityBudgetAt    time.Time
+	qualityDiskObserve func() (qualityDisk, error)
 }
 
 type DatabaseVerification struct {
@@ -820,6 +825,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migration 25: %w", err)
 			}
+		}
+	}
+	if version < 26 {
+		if err := migrateQualityV2Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 26: %w", err)
+		}
+	}
+	if version < 27 {
+		if err := migrateQualityRollupTx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 27: %w", err)
 		}
 	}
 	return tx.Commit()

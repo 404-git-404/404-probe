@@ -127,7 +127,13 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 	path := "/api/v1/web/agents/{agent_id}/network-quality/"
 	mux.Handle("GET "+path+"config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityConfig), true)))
 	mux.Handle("PUT "+path+"config", qualityBudgetHandler(a.requireWebMutation(http.HandlerFunc(a.handleQualityConfig))))
+	mux.Handle("GET "+path+"v2/config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityConfigV2), true)))
+	mux.Handle("PUT "+path+"v2/config", qualityBudgetHandler(a.requireWebMutation(http.HandlerFunc(a.handleQualityConfigV2))))
 	mux.Handle("GET "+path+"history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistory), true)))
+	mux.Handle("GET "+path+"v2/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryV2), true)))
+	mux.Handle("GET "+path+"v3/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryRollup), true)))
+	mux.Handle("GET "+path+"v3/card-history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardHistory), true)))
+	mux.Handle("GET "+path+"v3/card-config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardConfig), true)))
 }
 func (a *App) handleQualityCatalog(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
@@ -199,8 +205,59 @@ func (a *App) handleQualityConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, config)
 }
 func (a *App) handleQualityHistory(w http.ResponseWriter, r *http.Request) {
+	a.qualityHistoryResponse(w, r, false)
+}
+func (a *App) handleQualityHistoryV2(w http.ResponseWriter, r *http.Request) {
+	a.qualityHistoryResponse(w, r, true)
+}
+func (a *App) handleQualityHistoryRollup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !qualityWebPath(r, "history") {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if !qualityWebPath(r, "v3/history") || err != nil || len(q) != 2 || len(q["target_id"]) != 1 || len(q["view"]) != 1 || !validLowerHexID(q.Get("target_id"), 32) {
+		writeJobError(w, 400, "invalid_query", "target_id and view required")
+		return
+	}
+	history, err := a.store.QualityHistoryRollup(r.Context(), r.PathValue("agent_id"), q.Get("target_id"), q.Get("view"), a.now())
+	if err != nil {
+		qualityHTTPError(w, err)
+		return
+	}
+	writeJSON(w, 200, history)
+}
+func (a *App) handleQualityCardHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if !qualityWebPath(r, "v3/card-history") || err != nil || len(q) != 1 || len(q["target_id"]) != 1 || !validLowerHexID(q.Get("target_id"), 32) {
+		writeJobError(w, 400, "invalid_query", "target_id required")
+		return
+	}
+	history, err := a.store.QualityCardHistory(r.Context(), r.PathValue("agent_id"), q.Get("target_id"), a.now())
+	if err != nil {
+		qualityHTTPError(w, err)
+		return
+	}
+	writeJSON(w, 200, history)
+}
+func (a *App) handleQualityCardConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !qualityWebPath(r, "v3/card-config") || r.URL.RawQuery != "" {
+		writeJobError(w, 400, "invalid_query", "no query accepted")
+		return
+	}
+	config, err := a.store.QualityCardConfiguration(r.Context(), r.PathValue("agent_id"))
+	if err != nil {
+		qualityHTTPError(w, err)
+		return
+	}
+	writeJSON(w, 200, config)
+}
+func (a *App) qualityHistoryResponse(w http.ResponseWriter, r *http.Request, v2 bool) {
+	w.Header().Set("Cache-Control", "no-store")
+	suffix := "history"
+	if v2 {
+		suffix = "v2/history"
+	}
+	if !qualityWebPath(r, suffix) {
 		writeJobError(w, 400, "invalid_request", "invalid quality path")
 		return
 	}
@@ -214,7 +271,12 @@ func (a *App) handleQualityHistory(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, 400, "invalid_query", "hours must be 1 or 24")
 		return
 	}
-	history, err := a.store.QualityHistory(r.Context(), r.PathValue("agent_id"), q.Get("target_id"), hours, a.now())
+	var history any
+	if v2 {
+		history, err = a.store.QualityHistoryV2(r.Context(), r.PathValue("agent_id"), q.Get("target_id"), hours, a.now())
+	} else {
+		history, err = a.store.QualityHistory(r.Context(), r.PathValue("agent_id"), q.Get("target_id"), hours, a.now())
+	}
 	if err != nil {
 		qualityHTTPError(w, err)
 		return

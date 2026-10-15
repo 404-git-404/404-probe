@@ -39,10 +39,13 @@ const planTrafficFields = document.querySelector('#plan-traffic-fields');
 const planError = document.querySelector('#plan-error');
 const agentState = AgentState.create();
 const monitorCoordinator = NetworkQualityCore.coordinator();
+const chartAxes = NetworkQualityCore.plotAxes();
 const networkQuality = NetworkQuality.create({csrf: () => mutationCSRFToken, coordinator: monitorCoordinator,
+  onConfig: (id,config) => {latencyCharts.bindConfig(id,config);deviceDetails.networkChanged(id);},
   historyHost: {open: (id,trigger,exact) => deviceDetails.open(id,'network',trigger,exact), container: () => deviceDetails.networkContainer(),
     active: id => deviceDetails.active('network',id), close: () => deviceDetails.close()}});
-const trafficCharts = TrafficChart.create({coordinator: monitorCoordinator,openHistory: (id,trigger) => deviceDetails.open(id,'resources',trigger)});
+const latencyCharts = LatencyMini.create({coordinator: monitorCoordinator,axes:chartAxes});
+const trafficCharts = TrafficChart.create({coordinator: monitorCoordinator,axes:chartAxes});
 const cardObservations = CardMetrics.createObserver();
 const agents = agentState.agents;
 let overviewReady = false;
@@ -1109,7 +1112,7 @@ function setCardText(node, value) {
 function render() {
   overview.update(agents,overviewReady);
   const ids = [...agents.keys()];
-  networkQuality.sync(ids); trafficCharts.sync(ids); cardObservations.sync(ids); selectorView.sync(ids);
+  networkQuality.sync(ids); latencyCharts.sync(ids); trafficCharts.sync(ids); cardObservations.sync(ids); selectorView.sync(ids);
   for (const [id, view] of agentCards) {
     if (!agents.has(id)) { view.card.remove(); view.detailPanel.remove(); agentCards.delete(id); }
   }
@@ -1135,6 +1138,12 @@ function render() {
 }
 
 function cardLifecycle(agent) {return agent.revoked?'revoked':agent.disabled_at?'paused':agent.online===true?'online':agent.online===false&&(agent.state||agent.last_seen)?'offline':'unknown';}
+function cardUptimeLabel(agent) {return cardLifecycle(agent)==='offline'?'上次运行':'运行时长';}
+function cardRuntimeText(agent, oldMetrics) {
+  if (!agent.state) return '— · 等待首次上报';
+  const label = cardLifecycle(agent)==='offline'?'上次运行':'运行';
+  return `${label} ${duration(agent.state.uptime)}${oldMetrics?` · 旧数据 · 最后上报 ${seen(agent.last_seen)}`:''}`;
+}
 
 function resourceFactsFor(agent) {
   const s=agent?.state||{},old=!agent?.online||agent?.disabled_at||s.stale,prefix=old?'旧数据 · ':'';
@@ -1181,7 +1190,7 @@ function createAgentCard(initialAgent) {
     titleLine.append(mark, identityText);
     const runtime = document.createElement('small');
     runtime.className = 'card-runtime';
-    setReadableText(runtime, !hasState ? '— · 等待首次上报' : oldMetrics ? `运行 ${duration(state.uptime)} · 旧数据 · 最后上报 ${seen(state.collected_at)}` : `运行 ${duration(state.uptime)}`);
+    setReadableText(runtime, cardRuntimeText(agent, oldMetrics));
     title.append(titleLine, runtime);
     const status = document.createElement('span');
     const stateName = cardLifecycle(agent);
@@ -1202,10 +1211,25 @@ function createAgentCard(initialAgent) {
       CardMetrics.tile('disk', '磁盘', hasState ? state.disk_percent : null, `${CardMetrics.size(state.disk_used,false,true)} / ${CardMetrics.size(state.disk_total,false,true)}`, metricTone(state.disk_percent), `I/O 最忙 ${CardMetrics.pct(state.disk_busy_percent)} · 读 ${CardMetrics.size(state.disk_read_rate,true,true)} · 写 ${CardMetrics.size(state.disk_write_rate,true,true)}`, oldMetrics, observed.io),
     );
     const resources=document.createElement('section');resources.className='card-resources';resources.setAttribute('aria-label','资源与流量');
-    resources.append(metrics);card.append(resources);
+    const resourceModule=document.createElement('section');resourceModule.className='dv-a';resourceModule.dataset.module='A';
+    const resourceDetail=document.createElement('div');resourceDetail.className='dv-a-details';
+    const resourceRows=['cpu','memory','disk'].map((kind,i)=>{const row=document.createElement('button');row.type='button';row.className='dv-a-row';row.dataset.dvToggle='A';row.dataset.focusKey='resource-detail-'+kind;
+      const label=document.createElement('strong');label.textContent=['CPU','RAM','DISK'][i];const percentage=document.createElement('span');percentage.className='dv-resource-percent';const bar=document.createElement('span');bar.className='dv-load-track';bar.append(document.createElement('span'));const extra=document.createElement('small');row.append(label,percentage,bar,extra);resourceDetail.append(row);return row;});
+    function updateResourceDetail(state,hasState,old,observed){
+      const known=value=>typeof value==='number'&&Number.isFinite(value);const load=['load1','load5','load15'].map(k=>known(state[k])?state[k].toFixed(2):'—').join('/');
+      const descriptions=[`${state.cpu_cores||'未知'}核 · Load ${load}`,`${CardMetrics.size(state.ram_used,false,true)} / ${CardMetrics.size(state.ram_total,false,true)}`,`${CardMetrics.size(state.disk_used,false,true)} / ${CardMetrics.size(state.disk_total,false,true)}`];
+      const extras=[`Steal ${CardMetrics.pct(state.cpu_steal_percent)}`,`Swap ${CardMetrics.size(state.swap_used,false,true)} / ${CardMetrics.size(state.swap_total,false,true)}`,`I/O 最忙 ${CardMetrics.pct(state.disk_busy_percent)} · 读 ${CardMetrics.size(state.disk_read_rate,true,true)} · 写 ${CardMetrics.size(state.disk_write_rate,true,true)}`];
+      const kinds=['cpu','memory','disk'],values=[state.cpu_percent,state.ram_percent,state.disk_percent],tones=[observed.cpu,old?'unknown':CardMetrics.tone(state.ram_percent),old?'unknown':CardMetrics.tone(state.disk_percent)];
+      resourceRows.forEach((row,i)=>{const value=hasState?values[i]:null,tone=old?'unknown':tones[i],annotation=CardMetrics.annotation(kinds[i],value,tone,old,i===2?observed.io:null);row.className='dv-a-row tone-'+tone;row.children[1].textContent=CardMetrics.pct(value)+(old&&hasState?'旧':'');row.children[2].firstElementChild.style.width=(old?0:CardMetrics.percent(value)||0)+'%';row.children[3].textContent=(annotation.reason&&annotation.reason!=='旧数据'&&annotation.reason!=='未知'?'! ':'')+descriptions[i];row.title=`${row.children[0].textContent} ${CardMetrics.pct(value)} · ${descriptions[i]} · ${extras[i]}${annotation.capacity?' · '+annotation.capacity:''}${annotation.io?' · '+annotation.io:''}${old?' · 旧观测，不是当前负载':''}；切换资源视图`;row.setAttribute('aria-label',row.title);});
+    }
+    updateResourceDetail(state,hasState,oldMetrics,observed);resourceModule.append(metrics,resourceDetail);resources.append(resourceModule);card.append(resources);
 
     const network = document.createElement('div');
-    network.className = 'network';
+    network.className = 'network dv-b';network.dataset.module='B';
+    const networkDetail=document.createElement('div');networkDetail.className='dv-b-details';
+    const networkHeader=document.createElement('div');networkHeader.className='dv-b-head';const networkTitle=document.createElement('button');networkTitle.type='button';networkTitle.className='dv-switch';networkTitle.dataset.dvToggle='B';networkTitle.textContent='流量';networkHeader.append(networkTitle);
+    const trafficCounterMeaning='设备累计统计，不等于套餐本周期用量，也不代表 VPS 自购买以来的总量';
+    const rateBoxes=[],networkValues=document.createElement('div');networkValues.className='dv-b-values';networkDetail.append(networkHeader,networkValues);
     for (const [label, arrow, rate, total] of [['下载', '↓', state.rx_rate, state.rx_total], ['上传', '↑', state.tx_rate, state.tx_total]]) {
       const box = document.createElement('div');
       const directionTone = oldMetrics ? 'unknown' : bandwidthTone(rate, agent.plan);
@@ -1216,14 +1240,14 @@ function createAgentCard(initialAgent) {
       setReadableText(strong, oldMetrics ? '—' : CardMetrics.size(rate, true));
       const small = document.createElement('small');
       setReadableText(small, `${label === '下载' ? '入站' : '出站'} ${hasState ? CardMetrics.size(total) : '—'}${oldMetrics && hasState ? ' · 旧值' : ''}`);
+      small.title=small.textContent+'；'+trafficCounterMeaning;small.setAttribute('aria-label',small.title);
       box.append(networkName, strong, small);
-      network.append(box);
+      rateBoxes.push(box);networkValues.append(box);
     }
     const bandwidth = document.createElement('span');
     bandwidth.className = 'network-bandwidth';
     bandwidth.textContent = `带宽 ${compactBandwidth(agent.plan)}`;
-    network.append(bandwidth);
-    network.append(trafficCharts.mount(agent));
+    bandwidth.title=bandwidth.textContent+'；配置带宽，不是实时测速结果';bandwidth.setAttribute('aria-label',bandwidth.title);networkHeader.append(bandwidth);const trafficNode=trafficCharts.mount(agent);network.append(trafficNode,networkDetail);
     resources.append(network);
 
     const googleTools = document.createElement('div');
@@ -1231,9 +1255,10 @@ function createAgentCard(initialAgent) {
     googleTools.append(googleStatusPanel(agent));
     let selectorTrigger = selectorView.trigger(agent);
     if (selectorTrigger) googleTools.append(selectorTrigger);
+    const qualityNode=networkQuality.mount(agent);qualityNode.classList.add('dv-c');qualityNode.dataset.module='C';
+    const latencyNode=latencyCharts.mount(agent),latencyTop=latencyNode.querySelector('.lm-top');qualityNode.querySelector('.nq-head').append(latencyTop);qualityNode.append(latencyNode);card.append(qualityNode);
     card.append(googleTools);
     selectorView.refresh(agent.agent_id);
-    card.append(networkQuality.mount(agent));
     const planSummary = planPanel(agent.plan || {});
     card.append(planSummary);
 
@@ -1284,7 +1309,7 @@ function createAgentCard(initialAgent) {
       detailFact('Swap', hasState ? `${bytes(state.swap_used,false,true)} / ${bytes(state.swap_total,false,true)}` : '—'),
       detailFact('磁盘 I/O', state.disk_busy_percent == null || metricsStale ? '—' : `最忙 ${pct(state.disk_busy_percent)} · 读 ${bytes(state.disk_read_rate,true,true)} · 写 ${bytes(state.disk_write_rate,true,true)}`),
       detailFact('Agent 版本', agent.version),
-      detailFact('运行时长', hasState ? duration(state.uptime) : '—'),
+      detailFact(cardUptimeLabel(agent), hasState ? duration(state.uptime) : '—'),
       detailFact('最近上报', seen(agent.last_seen)),
       detailFact('检测时间', agent.google_status?.checked_at ? seen(agent.google_status.checked_at) : '尚未检测'),
       detailFact('流量周期截止', agent.plan?.cycle_end ? dateInTimezone(agent.plan.cycle_end, agent.plan.timezone || 'UTC') : '未配置或尚未开始'),
@@ -1350,17 +1375,36 @@ function createAgentCard(initialAgent) {
     const price = document.createElement('span');
     price.className = 'footer-price';
     price.textContent = compactPrice(agent.plan);
+    const planCost=document.createElement('div');planCost.className='footer-cost';planCost.append(price,due);
     const planControls=document.createElement('div');planControls.className='plan-controls';planControls.append(renewPlan,editPlan);
-    actions.append(price, due, planControls);
+    actions.append(planCost, planControls);
     card.append(actions);
     renewPlan.title='记录本次已续费，需确认；此按钮不是已确认状态';renewPlan.setAttribute('aria-label','记录已续费');
-    const independent='button,input,select,a,summary,[contenteditable],.traffic-plot,.traffic-detail';
-    const hasSelection=()=>Boolean(window.getSelection?.().toString());
-    head.addEventListener('click',e=>{if(!e.target.closest(independent)&&!hasSelection())deviceDetails.open(agent.agent_id,'management',detailToggle);});
-    resources.addEventListener('click',e=>{if(e.target.closest(independent)||hasSelection())return;const trigger=e.target.closest('.metric-tile')||resources.querySelector('.traffic-history');deviceDetails.open(agent.agent_id,'resources',trigger);});
-    metrics.addEventListener('keydown',e=>{if(['Enter',' '].includes(e.key)&&e.target.matches('.metric-tile')){e.preventDefault();deviceDetails.open(agent.agent_id,'resources',e.target);}});
+    const modes={A:'graph',B:'graph',C:'graph'},modules={A:resourceModule,B:network,C:qualityNode};
+    const allViews=document.createElement('button');allViews.type='button';allViews.className='dv-all';allViews.dataset.focusKey='dv-all';allViews.textContent='⇄';head.append(allViews);
+    function applyMode(key,value){modes[key]=value;const graph=value==='graph',module=modules[key],focused=module.contains(document.activeElement)?document.activeElement:null;module.dataset.view=value;
+      const hide=(node,hidden)=>{node.hidden=hidden;node.inert=hidden;};
+      if(key==='A'){hide(metrics,!graph);hide(resourceDetail,graph);}
+      if(key==='B'){hide(trafficNode,!graph);hide(networkDetail,graph);trafficCharts.setActive(agent.agent_id,graph);}
+      if(key==='C'){hide(latencyNode,!graph);hide(latencyTop,!graph);latencyCharts.setActive(agent.agent_id,graph);networkQuality.setCardView(agent.agent_id,graph);}
+      module.querySelectorAll('[data-dv-toggle]:not(.dv-a-row)').forEach(b=>{b.title=`${key} 当前${graph?'图形':'详细'}视图；切换为${graph?'详细':'图形'}`;b.setAttribute('aria-label',b.title);});
+      if(focused&&focused.closest('[hidden]')){const target=module.querySelector(graph?'.metric-tile,.dv-switch':'.dv-a-row,.dv-switch');target?.focus({preventScroll:true});}
+      const fullGraph=Object.values(modes).every(m=>m==='graph'),mixed=!fullGraph&&!Object.values(modes).every(m=>m==='detail');allViews.title=fullGraph?'全部切换为详细视图':mixed?'混合视图；恢复本卡全部图形视图':'全部切换为图形视图';allViews.setAttribute('aria-label',allViews.title);allViews.dataset.preset=fullGraph?'graph':mixed?'mixed':'detail';
+    }
+    function toggleModule(key){applyMode(key,modes[key]==='graph'?'detail':'graph');}
+    for(const [key,module]of Object.entries(modules)){
+      let gesture=null,suppressClick=false;
+      module.addEventListener('pointerdown',e=>{gesture={id:e.pointerId,x:e.clientX,y:e.clientY};suppressClick=false;},true);
+      module.addEventListener('pointermove',e=>{if(gesture?.id===e.pointerId&&Math.hypot(e.clientX-gesture.x,e.clientY-gesture.y)>5)suppressClick=true;},true);
+      module.addEventListener('pointercancel',()=>{suppressClick=true;gesture=null;},true);
+      module.addEventListener('pointerup',()=>{gesture=null;},true);
+      module.addEventListener('click',e=>{if(suppressClick&&e.detail!==0){suppressClick=false;return;}const explicit=e.target.closest('[data-dv-toggle]');if(explicit){toggleModule(key);return;}if(e.target.closest('button,input,select,a,summary,[contenteditable],output,[role=tooltip],.metric-meaning,.metric-io-alert,.nq-bucket-note')||window.getSelection?.().toString())return;toggleModule(key);});
+      module.addEventListener('keydown',e=>{if(key==='A'&&['Enter',' '].includes(e.key)&&e.target.matches('.metric-tile')){e.preventDefault();toggleModule(key);}});
+    }
+    allViews.addEventListener('click',()=>{const next=Object.values(modes).every(m=>m==='graph')?'detail':'graph';for(const key of ['A','B','C'])applyMode(key,next);});
+    for(const key of ['A','B','C'])applyMode(key,'graph');
 
-    return {card, detailPanel, update(next) {
+    return {card, detailPanel, modes, setView:applyMode, update(next) {
       agent = next;
       const state = agent.state || {}, hasState = Boolean(agent.state);
       const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
@@ -1387,7 +1431,7 @@ function createAgentCard(initialAgent) {
         setCardText(nameControl.querySelector('.name-tooltip'), agent.name || state.hostname || '未命名 VPS');
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }
-      setReadableText(runtime, !hasState ? '— · 等待首次上报' : oldMetrics ? `运行 ${duration(state.uptime)} · 旧数据 · 最后上报 ${seen(state.collected_at)}` : `运行 ${duration(state.uptime)}`);
+      setReadableText(runtime, cardRuntimeText(agent, oldMetrics));
       const metricTone = percent => oldMetrics ? 'unknown' : CardMetrics.tone(percent);
       const tiles = [
         CardMetrics.tile('cpu', 'CPU', hasState ? state.cpu_percent : null, state.cpu_cores ? `${state.cpu_cores} 核` : '核心数未知', observed.cpu, `steal ${CardMetrics.pct(state.cpu_steal_percent)}`, oldMetrics),
@@ -1395,15 +1439,17 @@ function createAgentCard(initialAgent) {
         CardMetrics.tile('disk', '磁盘', hasState ? state.disk_percent : null, `${CardMetrics.size(state.disk_used,false,true)} / ${CardMetrics.size(state.disk_total,false,true)}`, metricTone(state.disk_percent), `I/O 最忙 ${CardMetrics.pct(state.disk_busy_percent)} · 读 ${CardMetrics.size(state.disk_read_rate,true,true)} · 写 ${CardMetrics.size(state.disk_write_rate,true,true)}`, oldMetrics, observed.io),
       ];
       tiles.forEach((tile, index) => updateDisplay(metrics.children[index], tile));
+      updateResourceDetail(state,hasState,oldMetrics,observed);
       for (const [index, label, arrow, rate, total] of [[0, '下载', '↓', state.rx_rate, state.rx_total], [1, '上传', '↑', state.tx_rate, state.tx_total]]) {
-        const box = network.children[index];
+        const box = rateBoxes[index];
         box.className = `${index === 0 ? 'network-rx' : 'network-tx'} tone-${oldMetrics ? 'unknown' : bandwidthTone(rate, agent.plan)}`;
         setCardText(box.querySelector('span'), `${arrow} ${label}${oldMetrics ? ' · 旧数据' : ''}`);
         setReadableText(box.querySelector('strong'), oldMetrics ? '—' : CardMetrics.size(rate, true));
         setReadableText(box.querySelector('small'), `${index === 0 ? '入站' : '出站'} ${hasState ? CardMetrics.size(total) : '—'}${oldMetrics && hasState ? ' · 旧值' : ''}`);
       }
-      setCardText(bandwidth, `带宽 ${compactBandwidth(agent.plan)}`);
-      trafficCharts.mount(agent); networkQuality.mount(agent);
+      for(const box of rateBoxes){const small=box.querySelector('small');small.title=small.textContent+'；'+trafficCounterMeaning;small.setAttribute('aria-label',small.title);}
+      setCardText(bandwidth, `带宽 ${compactBandwidth(agent.plan)}`);bandwidth.title=bandwidth.textContent+'；配置带宽，不是实时测速结果';bandwidth.setAttribute('aria-label',bandwidth.title);
+      trafficCharts.mount(agent); latencyCharts.mount(agent); networkQuality.mount(agent);
       updateDisplay(googleTools.querySelector('.google-checks'), googleStatusPanel(agent));
       const nextTrigger = selectorView.trigger(agent);
       if (nextTrigger !== selectorTrigger) { selectorTrigger?.remove(); if (nextTrigger) googleTools.append(nextTrigger); selectorTrigger = nextTrigger; }
@@ -1417,7 +1463,7 @@ function createAgentCard(initialAgent) {
         detailFact('CPU steal', state.cpu_steal_percent == null || metricsStale ? '—' : `${pct(state.cpu_steal_percent)} · 等待宿主机 CPU`),
         detailFact('Swap', hasState ? `${bytes(state.swap_used,false,true)} / ${bytes(state.swap_total,false,true)}` : '—'),
         detailFact('磁盘 I/O', state.disk_busy_percent == null || metricsStale ? '—' : `最忙 ${pct(state.disk_busy_percent)} · 读 ${bytes(state.disk_read_rate,true,true)} · 写 ${bytes(state.disk_write_rate,true,true)}`),
-        detailFact('Agent 版本', agent.version), detailFact('运行时长', hasState ? duration(state.uptime) : '—'),
+        detailFact('Agent 版本', agent.version), detailFact(cardUptimeLabel(agent), hasState ? duration(state.uptime) : '—'),
         detailFact('最近上报', seen(agent.last_seen)), detailFact('检测时间', agent.google_status?.checked_at ? seen(agent.google_status.checked_at) : '尚未检测'),
         detailFact('流量周期截止', agent.plan?.cycle_end ? dateInTimezone(agent.plan.cycle_end, agent.plan.timezone || 'UTC') : '未配置或尚未开始'),
         detailFact('续费日期', agent.plan?.renewal_date || '未配置'), detailFact('到期日期', agent.plan?.expiry_date || '未配置'),
@@ -1572,7 +1618,7 @@ loadMutationSession();
 refresh();
 let suspended = false;
 setInterval(() => { if (suspended) return; reconciliation.retry(); if (!agentState.refreshing()) refresh(); }, 15000);
-addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); networkQuality.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
+addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); chartAxes.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 

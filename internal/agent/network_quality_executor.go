@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"golang.org/x/net/icmp"
 	"io"
 	"net"
@@ -18,6 +19,7 @@ type qualityProbeResult struct {
 	outcome, ip    string
 	latency        *float64
 	sent, received int
+	details        json.RawMessage
 }
 type qualityProbeFunc func(context.Context, protocol.QualityTarget) qualityProbeResult
 

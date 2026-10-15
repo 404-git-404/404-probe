@@ -120,8 +120,11 @@ func (q *qualityQueue) append(sample protocol.QualitySample, now time.Time) erro
 	q.bytes += len(raw)
 	return nil
 }
-func (q *qualityQueue) pack(epoch, session string) (qualityUpload, error) {
+func (q *qualityQueue) pack(epoch, session string, versions ...int) (qualityUpload, error) {
 	u := qualityUpload{batch: protocol.QualityBatch{Version: 1, Epoch: epoch, SessionID: session, Samples: []protocol.QualitySample{}}}
+	if len(versions) > 0 && versions[0] == 2 {
+		u.batch.Version = 2
+	}
 	for _, g := range q.gaps {
 		u.batch.Gaps = append(u.batch.Gaps, g.gap)
 		u.gaps = append(u.gaps, g.id)
@@ -163,7 +166,7 @@ func qualityAckActions(acks []protocol.QualityAck, seqs []string) (map[int]strin
 			return nil, errors.New("duplicate quality ACK index")
 		}
 		switch ack[2] {
-		case "committed", "duplicate", "invalid", "conflict", "too_old", "clock_skew", "unauthorized", "quota", "storage_pressure":
+		case "committed", "duplicate", "invalid", "conflict", "too_old", "clock_skew", "unauthorized", "quota", "storage_pressure", "pressure_drop", "throttled", "history_retired":
 		default:
 			return nil, errors.New("unknown quality ACK status")
 		}
@@ -190,6 +193,11 @@ func (q *qualityQueue) acknowledge(u qualityUpload, result protocol.QualityBatch
 	progress := false
 	for i, status := range samples {
 		if qualityAckTerminal(status) {
+			if status == "pressure_drop" || status == "throttled" {
+				s := u.batch.Samples[i]
+				dropped := 1
+				q.addGap(s.StartedAt, s.FinishedAt, "queue_drop", &dropped)
+			}
 			remove[seqs[i]] = true
 			progress = true
 			if status != "committed" && status != "duplicate" {

@@ -125,6 +125,8 @@ type Runner struct {
 	securitySupported            atomic.Bool
 	managementAPISupported       atomic.Bool
 	qualitySupported             atomic.Bool
+	qualityV2Supported           atomic.Bool
+	qualityStagedSupported       atomic.Bool
 	quality                      *qualityControl
 	googleStatusAvailable        bool
 	clashControlReady            atomic.Bool
@@ -213,6 +215,9 @@ func newWithPlatform(config Config, logger *slog.Logger, executor Executor, plat
 	if logger == nil {
 		logger = slog.Default()
 	}
+	quality := newQualityControl()
+	policy := platformsupport.QualityHost()
+	quality.excludedReason = policy.Reason
 	return &Runner{
 		deferredUnsupported: platform.DeferredUnsupported,
 		config:              config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
@@ -224,7 +229,7 @@ func newWithPlatform(config Config, logger *slog.Logger, executor Executor, plat
 		countryCodeLookup: func(ctx context.Context) (string, error) {
 			return geoip.LookupCountryCode(ctx, geoip.Client(geoip.DefaultTimeout), geoip.Endpoint)
 		},
-		quality: newQualityControl(),
+		quality: quality,
 		googleStatusAvailable: func() bool {
 			capable, ok := executor.(googleStatusCapability)
 			return ok && capable.SupportsGoogleStatus()
@@ -241,11 +246,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		workerContext, stopWorker := context.WithCancel(ctx)
 		var workers sync.WaitGroup
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			r.runQualityWorker(workerContext)
-		}()
+		if r.quality == nil || r.quality.excludedReason == "" {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				r.runQualityWorker(workerContext)
+			}()
+		}
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -419,10 +426,23 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	measurement.Epoch = r.epoch
 	measurement.NetworkQuality = r.qualitySupported.Load()
+	if r.qualityV2Supported.Load() {
+		measurement.NetworkQualityV2 = r.qualityCapabilities()
+	}
+	if r.quality != nil && r.quality.excludedReason != "" {
+		measurement.NetworkQuality = false
+	}
 	measurement.SessionID = r.sessionID
 	measurement.Sequence = *sequence
 	measurement.CollectedAt = time.Now().UnixMilli()
 	response, err := r.post(ctx, measurement)
+	if errors.Is(err, errQualityV2Rejected) {
+		r.qualityStagedSupported.Store(false)
+		r.qualityV2Supported.Store(false)
+		r.stopQuality("v2_negotiation_rejected")
+		measurement.NetworkQualityV2 = nil
+		response, err = r.post(ctx, measurement) // Once only; the rejected report was not committed.
+	}
 	if err != nil {
 		if errors.Is(err, ErrAgentAuthInvalid) || authenticationFailure(ctx) != nil {
 			return false, authenticationFailure(ctx)
@@ -439,6 +459,8 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	if !response.Accepted {
 		if strings.Contains(response.Reason, "session") || strings.Contains(response.Reason, "epoch") {
+			r.qualityStagedSupported.Store(false)
+			r.qualityV2Supported.Store(false)
 			r.stopQuality("report_session_rejected")
 		}
 		r.logger.Warn("report rejected", "reason", response.Reason, "epoch", r.epoch, "sequence", *sequence)
@@ -459,6 +481,14 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	r.reportManagementCapabilities = response.Capabilities.ManagementReport
 	r.qualitySupported.Store(response.Capabilities.NetworkQuality)
+	if r.qualityV2Supported.Load() && !response.Capabilities.NetworkQualityV2 {
+		r.stopQuality("v2_capability_withdrawn")
+	}
+	r.qualityV2Supported.Store(response.Capabilities.NetworkQualityV2)
+	if r.qualityStagedSupported.Load() && !response.Capabilities.NetworkQualityStaged {
+		r.stopQuality("staged_capability_withdrawn")
+	}
+	r.qualityStagedSupported.Store(response.Capabilities.NetworkQualityV2 && response.Capabilities.NetworkQualityStaged)
 	r.observeQualityReport(measurement.NetworkQuality, response)
 	r.reportNetworkCounters = response.Capabilities.NetworkCountersReport
 	r.managementAPISupported.Store(response.Capabilities.ManagementReport)
@@ -502,6 +532,8 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
+	req.Header.Set(protocol.QualityVersionHeader, "2")
+	req.Header.Set(protocol.QualitySemanticsHeader, protocol.QualityStagedSemantics)
 	resp, err := doAgentServerRequest(r.client, req)
 	if err != nil {
 		return protocol.ReportResponse{}, err
@@ -513,6 +545,9 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	}
 	if len(limited) > 4096 {
 		return protocol.ReportResponse{}, errors.New("server response is too large")
+	}
+	if resp.StatusCode == http.StatusBadRequest && report.NetworkQualityV2 != nil {
+		return protocol.ReportResponse{}, errQualityV2Rejected
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusLocked {

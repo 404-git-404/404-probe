@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v1.0.1"
+readonly DEFAULT_VERSION="v1.0.2"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -3056,6 +3056,8 @@ install_or_upgrade() {
   interactive_install
 }
 
+# The legacy Agent recovery protocol remains pinned to its published v1.0.1
+# runner and journal format. Finish that bridge, then use normal Stable upgrade.
 download_local_migration_runner() (
   local destination="$1" architecture asset temporary_directory
   architecture="$(detect_architecture)"; asset="404-probe-agent-linux-${architecture}"

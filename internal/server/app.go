@@ -270,6 +270,8 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
 	response.Capabilities.NetworkQuality = true
+	response.Capabilities.NetworkQualityV2 = r.Header.Get(protocol.QualityVersionHeader) == "2" || report.NetworkQualityV2 != nil
+	response.Capabilities.NetworkQualityStaged = r.Header.Get(protocol.QualitySemanticsHeader) == protocol.QualityStagedSemantics || report.NetworkQualityV2 != nil && report.NetworkQualityV2.Semantics == protocol.QualityStagedSemantics
 	response.Capabilities.AgentUpgradeV2 = true
 	writeJSON(w, http.StatusOK, a.qualityReportResponse(r, response, authenticatedID, report))
 }
@@ -643,7 +645,7 @@ func (a *App) CleanupLoop() {
 	cleanupTicker := time.NewTicker(a.removalReceiptCleanupInterval)
 	historyTicker := time.NewTicker(time.Hour)
 	walHealthTicker := time.NewTicker(a.walHealthInterval)
-	qualityTicker := time.NewTicker(5 * time.Minute)
+	qualityTicker := time.NewTicker(30 * time.Second)
 	defer qualityTicker.Stop()
 	defer cleanupTicker.Stop()
 	defer historyTicker.Stop()

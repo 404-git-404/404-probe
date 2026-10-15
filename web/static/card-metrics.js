@@ -83,8 +83,8 @@
     meaning.textContent=!description.reason?'':description.reason==='未知'?'?':description.reason==='旧数据'?'旧':kind==='disk'?'容':'!';
     meaning.hidden=!description.reason;meaning.title=description.capacity;meaning.dataset.reason=description.capacity;
     meaning.dataset.state=description.reason==='未知'||description.reason==='旧数据'?'neutral':'alert';meaning.setAttribute('aria-label',description.capacity);
-    el.tabIndex=0;el.setAttribute('role','button');el.dataset.focusKey=`resource-${kind}`;el.setAttribute('aria-haspopup','dialog');
-    el.title=`${name} ${visible} · ${detail}${extra?' · '+extra:''}${description.capacity?' · '+description.capacity:''}${description.io?' · '+description.io:''}；点击查看资源详情`;
+    el.tabIndex=0;el.setAttribute('role','button');el.dataset.focusKey=`resource-${kind}`;
+    el.title=`${name} ${visible} · ${detail}${extra?' · '+extra:''}${description.capacity?' · '+description.capacity:''}${description.io?' · '+description.io:''}；点击切换资源视图`;
     const tooltip=document.createElement('span');tooltip.className='resource-tooltip';tooltip.setAttribute('role','tooltip');tooltip.textContent=el.title;
     el.setAttribute('aria-label',`${label} ${visible}，${description.capacity}，${detail}，${extra}${description.io?'，'+description.io:''}`);
     el.append(ring,amount,title,note,auxiliary,meaning,tooltip);

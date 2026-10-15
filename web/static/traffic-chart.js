@@ -41,43 +41,66 @@
   const time=value=>new Date(value).toLocaleString();
   const detail=p=>p?`接收 ${time(p.received_at)} · 序号 ${p.order} · ↓ ${bytes(p.rx_rate)} · ↑ ${bytes(p.tx_rate)}${p.reason?' · '+reasons[p.reason]:''}`:'';
   const columns=v=>[v.points.map(p=>p.received_at/1000),v.points.map(p=>p.rx_rate),v.points.map(p=>p.tx_rate)];
-  function create({document:doc=root.document,coordinator=null,state=root.AgentState,fetcher=(...args)=>root.fetch(...args),
+  function create({document:doc=root.document,coordinator=null,axes=null,state=root.AgentState,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Plot=root.uPlot,Observer=root.IntersectionObserver,Resize=root.ResizeObserver,
     interval=root.setInterval,clear=root.clearInterval,now=()=>Date.now(),timeoutMs=10000,openHistory=null}={}) {
     const queue=coordinator||C.coordinator({now}),cards=new Map();let closed=false,timer=null;
     const el=(tag,cls,text)=>{const n=doc.createElement(tag);n.className=cls;if(text!=null)n.textContent=text;return n;};
     const inactive=a=>a.revoked?'revoked':a.removal?'removing':a.disabled_at?'paused':'';
-    const effective=c=>!closed&&!c.dead&&c.visible&&!doc.hidden&&c.node.isConnected&&!inactive(c.agent);
+    const effective=c=>!closed&&!c.dead&&c.active&&c.visible&&!doc.hidden&&c.node.isConnected&&!inactive(c.agent);
     const geometry=c=>{const r=c.node.getBoundingClientRect();return c.node.isConnected&&r.width>0&&r.bottom>0&&r.top<(root.innerHeight||0)&&r.right>0&&r.left<(root.innerWidth||0);};
-    function destroyPlot(c){c.resize?.disconnect();c.resize=null;if(c.tap)c.plot?.over?.removeEventListener('pointerdown',c.tap);c.tap=null;c.plot?.destroy();c.plot=null;c.chart.replaceChildren();}
-    function release(c){c.serial++;c.loading=false;queue.release(c.owner);destroyPlot(c);c.data=null;c.error='';c.index=0;c.output.textContent='';}
+    function destroyPlot(c){axes?.release(c.id,'B');c.resize?.disconnect();c.resize=null;if(c.tap)c.plot?.over?.removeEventListener('pointerdown',c.tap);c.tap=null;c.plot?.destroy();c.plot=null;c.chart.replaceChildren();}
+    function release(c,keep=false){c.serial++;c.loading=false;queue.release(c.owner);destroyPlot(c);if(!keep){c.data=null;c.updated=0;c.error='';c.index=0;}c.output.textContent='';}
     function summary(c){
       const lifecycle=inactive(c.agent),v=c.data;
       c.status.textContent=lifecycle?statuses[lifecycle]+' · 当前数据不可用':!v?c.error||(!c.visible?'进入视口后读取真实观测':c.loading?'正在读取…':'等待真实观测'):c.error?'读取失败 · 旧历史（非当前）':!c.agent.online&&v.points.length?'离线 · 历史':v.status==='online'?'':statuses[v.status];
+      const old=!c.agent.online||inactive(c.agent)||c.agent.state?.stale;for(const [n,key,arrow]of [[c.rx,'rx_rate','↓'],[c.tx,'tx_rate','↑']]){n.textContent=arrow+' '+(old?'—':bytes(c.agent.state?.[key]??null));n.title=(key==='rx_rate'?'当前下载':'当前上传')+' · '+n.textContent+(old?' · 非当前':'');}
       c.status.title=c.status.textContent||(v?`${statuses[v.status]}${v.truncated?' · 数量上限截断':''}${v.points.length?` · 实际覆盖 ${time(v.oldest_received_at)} — ${time(v.last_received_at)}`:''}`:'');
     }
     function select(c,index){
-      c.index=Math.max(0,Math.min((c.data?.points.length||1)-1,index));
-      const point=c.data?.points[c.index];c.output.textContent=point?`${time(point.received_at)} · ↓ ${bytes(point.rx_rate)} · ↑ ${bytes(point.tx_rate)}${point.reason?' · '+reasons[point.reason]:''}`:'';c.output.title=detail(point);
+      c.index=Math.max(0,Math.min((c.shown?.length||1)-1,index));
+      const point=c.shown?.[c.index];c.output.textContent=point?`${time(point.received_at)} · ↓ ${bytes(point.rx_rate)} · ↑ ${bytes(point.tx_rate)}${point.reason?' · '+reasons[point.reason]:''}`:'';c.output.title=detail(point);
       c.output.setAttribute('aria-live',doc.activeElement===c.chart?'polite':'off');
     }
     function renderPlot(c){
       if(!effective(c)||!c.data)return;
       const rect=c.chart.getBoundingClientRect(),width=Math.floor(rect.width);
       if(width<=0)return;
-      const height=72,v=c.data;
-      const measured=v.points.filter(p=>p.rx_rate!==null||p.tx_rate!==null).length;
+      const height=rect.height,v=c.data,serverNow=v.server_now+Math.max(0,now()-c.updated),from=serverNow-c.minutes*60000;
+      c.domain=[from/1000,serverNow/1000];
+      const points=v.points.filter(p=>p.received_at>=from&&p.received_at<=serverNow);c.chart.dataset.from=String(from);c.chart.dataset.to=String(serverNow);c.chart.dataset.points=String(points.length);
+      const measured=points.filter(p=>p.rx_rate!==null||p.tx_rate!==null).length;
       if(!measured||!Plot){destroyPlot(c);c.chart.append(el('p','traffic-empty',!Plot?'本地图表库未加载':'暂无有效速率 · 不补点'));return;}
       // A singleton is an honest marker, never a fabricated line segment.
-      const data=columns(v);
+      const data=columns({...v,points});
       const yrange=(_u,min,max)=>[0,Math.max(1,Number.isFinite(max)?max*1.1:1)];
-      if(c.plot){c.plot.setData(data);c.plot.setSize({width,height});return;}
-      c.chart.replaceChildren();
-      c.plot=new Plot({width,height,legend:{show:false},cursor:{drag:{x:false,y:false}},
-        scales:{x:{time:true,range:()=>[(c.data.server_now-WINDOW)/1000,c.data.server_now/1000]},y:{range:yrange}},
-        axes:[{show:false},{show:false}],
-        series:[{},...['↓ 下载','↑ 上传'].map((label,i)=>({label,stroke:i?'#9978CB':'#25A994',fill:i?'#9978CB20':'#25A99428',width:1.5,spanGaps:false,points:{show:v.points.length===1,size:3}}))],
-        hooks:{setCursor:[u=>{if(effective(c)&&c.data)select(c,Number.isFinite(u.cursor.left)&&u.cursor.left>=0?u.posToIdx(u.cursor.left):u.cursor.idx??c.index);}]}
+      if(c.plot){c.shown=points;c.plot.setData(data);c.plot.setSize({width,height});return;}
+      c.chart.replaceChildren();c.shown=points;
+      const rateUnit=max=>{const names=['B/s','KB/s','MB/s','GB/s','TB/s','PB/s','EB/s'];let factor=1,index=0;while(max>=factor*1000&&index<names.length-1){factor*=1000;index++;}return {factor,label:names[index]};};
+      const rateLabel=value=>{const unit=rateUnit(value);return `${Number((value/unit.factor).toPrecision(4))} ${unit.label}`;};
+      const axisSize=(u,labels,index)=>{
+        const axis=u.axes[index],ctx=u.ctx,ratio=Plot.pxRatio||root.devicePixelRatio||1;
+        ctx.save();ctx.font=axis.font[0];const longest=Math.max(...(labels||['0 B/s']).filter(v=>v!=null).map(label=>ctx.measureText(String(label)).width/ratio),0);ctx.restore();
+        const needed=Math.ceil(longest+axis.gap+2);if(labels)c.axisWidth=Math.max(c.axisWidth||0,needed);
+        c.chart.dataset.axisLabelWidth=String(longest);c.chart.dataset.axisRequired=String(needed);
+        const own=c.axisWidth||needed;return axes?axes.fit(c.id,'B',c.chart,own,()=>{if(c.plot&&effective(c))c.plot.redraw(true,true);}):own;
+      };
+      const drawWindow=u=>{
+        const ctx=u.ctx,ratio=Plot.pxRatio||root.devicePixelRatio||1,b=u.bbox,start=new Date(u.scales.x.min*1000),end=new Date(u.scales.x.max*1000);
+        const options={hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false};if(start.getTimezoneOffset()!==end.getTimezoneOffset())options.timeZoneName='short';
+        ctx.save();ctx.font=u.axes[0].font[0];let labels=[start,end].map(d=>d.toLocaleTimeString([],options));
+        if(labels.reduce((sum,label)=>sum+ctx.measureText(label).width,0)+8*ratio>b.width){delete options.second;labels=[start,end].map(d=>d.toLocaleTimeString([],options));}
+        ctx.fillStyle='#625b52';ctx.textBaseline='bottom';const y=Math.min(ctx.canvas.height-ratio,b.top+b.height+11*ratio);
+        ctx.textAlign='left';ctx.fillText(labels[0],b.left,y);ctx.textAlign='right';ctx.fillText(labels[1],b.left+b.width,y);ctx.restore();
+        c.chart.dataset.axisWidth=String(u.axes[1]._size);c.chart.dataset.from=String(u.scales.x.min*1000);c.chart.dataset.to=String(u.scales.x.max*1000);
+        c.chart.dataset.startLabel=labels[0];c.chart.dataset.endLabel=labels[1];
+        c.chart.title=`${c.minutes}m 窗口：${start.toLocaleString([],{timeZoneName:'short'})} — ${end.toLocaleString([],{timeZoneName:'short'})} · 浏览器本地时间`;
+      };
+      c.plot=new Plot({width,height,padding:[0,0,0,0],legend:{show:false},cursor:{drag:{x:false,y:false}},
+        scales:{x:{time:true,range:()=>c.domain},y:{range:yrange}},
+        axes:[{size:12,font:'10px Arial',stroke:'#625b52',grid:{show:false},ticks:{show:false},values:()=>[]},{size:axisSize,space:28,font:'10px Arial',stroke:'#625b52',grid:{show:false},ticks:{show:false},border:{show:true,width:.6,stroke:'#b9aa99'},filter:(u,ticks,index)=>{const margin=u.axes[index].font[1]/(Plot.pxRatio||root.devicePixelRatio||1)/2+1;return ticks.map(v=>u.valToPos(v,'y')<margin?null:v);},values:(_u,ticks)=>ticks.map(v=>v==null?null:rateLabel(v))}],
+        series:[{},...['↓ 下载','↑ 上传'].map((label,i)=>({label,stroke:i?'#9978CB':'#25A994',fill:i?'#9978CB20':'#25A99428',width:1.5,spanGaps:false,points:{show:points.length===1,size:3}}))],
+        hooks:{drawAxes:[drawWindow],setCursor:[u=>{if(effective(c)&&c.data)select(c,Number.isFinite(u.cursor.left)&&u.cursor.left>=0?u.posToIdx(u.cursor.left):u.cursor.idx??c.index);}]}
       },data,c.chart);
       // uPlot's pinned mouse cursor remains unchanged. Touch/pen has a bounded
       // explicit point selection, without a gesture framework or fake samples.
@@ -89,6 +112,8 @@
     }
     async function refresh(c){
       if(!effective(c)||c.loading)return;
+      if(c.failedAt!=null&&now()-c.failedAt<30000){summary(c);return;}
+      if(c.data&&now()-c.updated<30000){renderPlot(c);summary(c);return;}
       c.loading=true;const serial=c.serial;summary(c);
       try{
         const value=await queue.request(JSON.stringify(['traffic',c.id]),c.owner,signal=>C.transportLease(tracked=>state.fetchJSON(
@@ -96,13 +121,13 @@
         if(serial!==c.serial||!effective(c))return;
         const trusted=validate(value,c.id);
         // Every successful read replaces the whole bounded generation, never merges.
-        c.data=trusted;c.error='';c.index=Math.max(0,trusted.points.length-1);renderPlot(c);select(c,c.index);summary(c);
-      }catch(error){if(serial===c.serial&&effective(c)&&error.name!=='AbortError'){c.error='流量读取失败';summary(c);}}
+        c.data=trusted;c.updated=now();c.failedAt=null;c.error='';c.index=Math.max(0,trusted.points.length-1);renderPlot(c);select(c,c.index);summary(c);
+      }catch(error){if(serial===c.serial&&effective(c)&&error.name!=='AbortError'){c.failedAt=now();c.error='流量读取失败';summary(c);}}
       finally{if(serial===c.serial){c.loading=false;summary(c);}}
     }
     function visible(c,value){
       if(c.visible===value)return;c.visible=value;
-      if(!value)release(c);else refresh(c);summary(c);
+      if(!value)release(c,true);else refresh(c);summary(c);
     }
     const observer=Observer?new Observer(entries=>{for(const e of entries){const c=cards.get(e.target.dataset.trafficAgent);if(c)visible(c,e.isIntersecting);}},{rootMargin:'0px'}):null;
     function fallback(){if(!observer&&!doc.hidden)for(const c of cards.values())visible(c,geometry(c));}
@@ -111,14 +136,16 @@
       if(!c){
         const node=el('section','traffic-chart'),chart=el('div','traffic-plot'),status=el('small','traffic-status'),output=el('output','traffic-detail');
         node.dataset.trafficAgent=agent.agent_id;
-        chart.tabIndex=0;chart.dataset.focusKey='traffic-point';chart.setAttribute('aria-label','流量采样；左右方向键查看接收时间及上下行，Enter 或空格打开资源详情');
+        chart.tabIndex=0;chart.dataset.focusKey='traffic-point';chart.setAttribute('aria-label','真实近期流量观测，左右方向键查看采样；非拖动点击切换流量视图');
         status.id='traffic-status-'+agent.agent_id;status.setAttribute('role','status');
         output.id='traffic-sample-'+agent.agent_id;chart.setAttribute('aria-describedby',output.id+' '+status.id);
         output.tabIndex=-1;output.dataset.focusKey='traffic-point';output.setAttribute('aria-label','流量点详情');
-        node.append(chart,status,output);
-        c={id:agent.agent_id,agent,node,chart,status,output,owner:{},visible:false,serial:0,loading:false,dead:false,data:null,error:'',index:0,plot:null,resize:null,tap:null};
-        c.key=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();if(!c.data?.points.length)return;
-          if(e.key==='ArrowLeft'||e.key==='ArrowRight')select(c,c.index+(e.key==='ArrowLeft'?-1:1));else select(c,e.key==='Home'?0:c.data.points.length-1);};
+        const head=el('div','traffic-head'),title=el('button','dv-switch','流量'),live=el('div','traffic-live'),rx=el('span','traffic-live-rx'),tx=el('span','traffic-live-tx'),windows=new Map();title.type='button';title.dataset.dvToggle='B';live.append(rx,tx);head.append(title,live);
+        for(const minutes of [5,15]){const b=el('button','traffic-window',minutes+'m');b.type='button';b.dataset.focusKey='traffic-'+minutes;b.setAttribute('aria-pressed',String(minutes===15));b.addEventListener('click',()=>{c.minutes=minutes;c.axisWidth=0;for(const [m,n]of windows)n.setAttribute('aria-pressed',String(m===minutes));renderPlot(c);});windows.set(minutes,b);head.append(b);}
+        node.append(head,chart,status,output);
+        c={id:agent.agent_id,agent,node,chart,status,output,rx,tx,minutes:15,updated:0,failedAt:null,shown:[],owner:{},active:true,visible:false,serial:0,loading:false,dead:false,data:null,error:'',index:0,plot:null,resize:null,tap:null};
+        c.key=e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();if(!c.shown?.length)return;
+          if(e.key==='ArrowLeft'||e.key==='ArrowRight')select(c,c.index+(e.key==='ArrowLeft'?-1:1));else select(c,e.key==='Home'?0:c.shown.length-1);};
         output.addEventListener('keydown',c.key);cards.set(c.id,c);observer?.observe(node);
         chart.addEventListener('keydown',e=>{c.key(e);if(openHistory&&['Enter',' '].includes(e.key)){e.preventDefault();openHistory(c.id,chart);}});
         if(openHistory)chart.addEventListener('dblclick',()=>openHistory(c.id,chart));
@@ -132,16 +159,16 @@
     function sync(ids){const live=new Set(ids);for(const c of [...cards.values()])if(!live.has(c.id))retire(c);}
     function tick(){if(closed||doc.hidden)return;fallback();queue.pump();for(const c of cards.values())refresh(c);}
     function visibility(){
-      if(doc.hidden){for(const c of cards.values()){release(c);summary(c);}if(timer!==null){clear(timer);timer=null;}}
+      if(doc.hidden){for(const c of cards.values()){release(c,true);summary(c);}if(timer!==null){clear(timer);timer=null;}}
       else{if(timer===null&&!closed)timer=interval(tick,30000);tick();}
     }
     doc.addEventListener('visibilitychange',visibility);
     if(!observer){root.addEventListener?.('scroll',fallback,{passive:true});root.addEventListener?.('resize',fallback,{passive:true});}
     if(!doc.hidden)timer=interval(tick,30000);
-    return {mount,sync,tick,setVisible(id,value){const c=cards.get(id);if(c)visible(c,value);},
+    return {mount,sync,tick,setActive(id,value){const c=cards.get(id);if(!c||c.active===value)return;c.active=value;if(!value)release(c,true);else refresh(c);},setVisible(id,value){const c=cards.get(id);if(c)visible(c,value);},
       close(){if(closed)return;closed=true;if(timer!==null)clear(timer);timer=null;observer?.disconnect();for(const c of [...cards.values()])retire(c);
         doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
-      snapshot:()=>({cards:cards.size,requests:queue.snapshot(),timer:timer!==null,observations:[...cards.values()].map(c=>({id:c.id,visible:c.visible,loading:c.loading,points:c.data?.points.length||0,generation:c.data?.generation||null,plot:!!c.plot}))})};
+      snapshot:()=>({cards:cards.size,requests:queue.snapshot(),timer:timer!==null,observations:[...cards.values()].map(c=>({id:c.id,active:c.active,minutes:c.minutes,visible:c.visible,loading:c.loading,points:c.data?.points.length||0,shown:c.shown.length,generation:c.data?.generation||null,plot:!!c.plot}))})};
   }
   const api={create,validate,columns,bytes,detail};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.TrafficChart=api;

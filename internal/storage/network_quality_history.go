@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,26 +36,29 @@ type QualityBlock struct {
 	QualityStats
 }
 type QualityHistory struct {
-	Target        protocol.QualityTarget  `json:"target"`
-	Now           int64                   `json:"now"`
-	Algorithm     string                  `json:"algorithm"`
-	Partial       bool                    `json:"partial"`
-	GapReason     string                  `json:"gap_reason"`
-	Completeness  string                  `json:"completeness"`
-	Gaps          []protocol.QualityGap   `json:"gaps"`
-	LatestEpoch   string                  `json:"latest_epoch,omitempty"`
-	LatestSession string                  `json:"latest_session,omitempty"`
-	Latest        *protocol.QualitySample `json:"latest_success"`
-	LatestAgeMS   *int64                  `json:"latest_age_ms"`
-	LatestFailure *protocol.QualitySample `json:"latest_failure"`
-	Stale         bool                    `json:"stale"`
-	Recent        QualityStats            `json:"recent_5min"`
-	Window        QualityStats            `json:"window"`
-	Blocks        []QualityBlock          `json:"blocks"`
-	RecentBlocks  []QualityBlock          `json:"recent_blocks"`
+	HistogramGridMS      float64                 `json:"histogram_grid_ms,omitempty"`
+	PercentileMaxErrorMS float64                 `json:"percentile_max_error_ms,omitempty"`
+	WindowStart          int64                   `json:"window_start,omitempty"`
+	Target               protocol.QualityTarget  `json:"target"`
+	Now                  int64                   `json:"now"`
+	Algorithm            string                  `json:"algorithm"`
+	Partial              bool                    `json:"partial"`
+	GapReason            string                  `json:"gap_reason"`
+	Completeness         string                  `json:"completeness"`
+	Gaps                 []protocol.QualityGap   `json:"gaps"`
+	LatestEpoch          string                  `json:"latest_epoch,omitempty"`
+	LatestSession        string                  `json:"latest_session,omitempty"`
+	Latest               *protocol.QualitySample `json:"latest_success"`
+	LatestAgeMS          *int64                  `json:"latest_age_ms"`
+	LatestFailure        *protocol.QualitySample `json:"latest_failure"`
+	Stale                bool                    `json:"stale"`
+	Recent               QualityStats            `json:"recent_5min"`
+	Window               QualityStats            `json:"window"`
+	Blocks               []QualityBlock          `json:"blocks"`
+	RecentBlocks         []QualityBlock          `json:"recent_blocks"`
 }
 
-func (s *Store) QualityHistory(ctx context.Context, id, targetID string, hours int, now time.Time) (QualityHistory, error) {
+func (s *Store) qualityHistoryRaw(ctx context.Context, id, targetID string, hours int, now time.Time) (QualityHistory, error) {
 	out := QualityHistory{Now: now.UnixMilli(), Algorithm: "linear-success-v1", Completeness: "unverified", Gaps: []protocol.QualityGap{}, Stale: true}
 	if hours != 1 && hours != 24 {
 		return out, ErrQualityInvalid
@@ -87,7 +91,7 @@ func (s *Store) QualityHistory(ctx context.Context, id, targetID string, hours i
 	if active {
 		out.Target.Status = "active"
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+qualitySampleColumns+` FROM quality_raw WHERE agent_id=? AND target_id=? AND sample_time>=? AND sample_time<? ORDER BY sample_time,seq LIMIT ?`, id, targetID, windowStart, now.UnixMilli(), qualityRawDevice)
+	rows, err := tx.QueryContext(ctx, `SELECT `+qualitySampleColumns+` FROM quality_raw WHERE agent_id=? AND target_id=? AND sample_time>=? AND sample_time<? AND details_json IS NULL ORDER BY sample_time,seq LIMIT ?`, id, targetID, windowStart, now.UnixMilli(), qualityRawDevice)
 	if err != nil {
 		return out, err
 	}
@@ -108,7 +112,7 @@ func (s *Store) QualityHistory(ctx context.Context, id, targetID string, hours i
 	for _, success := range []int{1, 0} {
 		var session string
 		var epoch int64
-		q := `SELECT ` + qualitySampleColumns + `,epoch,session_id FROM quality_raw WHERE agent_id=? AND target_id=? AND sample_time>=? AND sample_time<? AND attempt=1 AND success=? ORDER BY sample_time DESC,seq DESC LIMIT 1`
+		q := `SELECT ` + qualitySampleColumns + `,epoch,session_id FROM quality_raw WHERE agent_id=? AND target_id=? AND sample_time>=? AND sample_time<? AND details_json IS NULL AND attempt=1 AND success=? ORDER BY sample_time DESC,seq DESC LIMIT 1`
 		sample, err := qualityReadSample(tx.QueryRowContext(ctx, q, id, targetID, now.Add(-QualityRetention).UnixMilli(), now.UnixMilli(), success), &epoch, &session)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -174,6 +178,9 @@ func (s *Store) QualityHistory(ctx context.Context, id, targetID string, hours i
 		if dropped.Valid {
 			n := int(dropped.Int64)
 			gap.Dropped = &n
+		}
+		if strings.HasPrefix(gap.Reason, qualityPrunedPrefix) {
+			gap.Reason = "storage_pruned"
 		}
 		out.Gaps = append(out.Gaps, gap)
 	}

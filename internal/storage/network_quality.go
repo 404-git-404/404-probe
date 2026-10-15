@@ -14,21 +14,11 @@ import (
 
 // Observation, not a hard physical disk ceiling. No checkpoint inside a write tx.
 func (s *Store) qualityPressure(ctx context.Context) bool {
-	if s.databasePath == "" {
-		return false
-	}
-	db, err := sqliteFileSize(s.databasePath, "database", false)
-	if err != nil {
+	p := s.qualityBudget(ctx)
+	if p.Pressure {
 		return true
 	}
-	wal, err := sqliteFileSize(s.databasePath+"-wal", "WAL", true)
-	if err != nil {
-		return true
-	}
-	if db+wal >= 2<<30 {
-		return true
-	}
-	if wal < 128<<20 {
+	if p.Disk.WAL < 128<<20 {
 		return false
 	}
 	health, err := s.CheckpointWAL(ctx)
@@ -47,6 +37,7 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		return out, err
 	}
 	epoch, _ := protocol.QualityInteger(b.Epoch)
+	budget := s.qualityBudget(ctx)
 	pressure := s.qualityPressure(ctx)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -60,13 +51,30 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		return out, err
 	}
 	var supported bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quality_capability c JOIN agent_state s ON c.agent_id=s.agent_id AND c.epoch=s.epoch AND c.session_id=s.session_id WHERE c.agent_id=? AND c.epoch=? AND c.session_id=? AND c.supported=1)`, id, epoch, b.SessionID).Scan(&supported); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quality_capability c JOIN agent_state s ON c.agent_id=s.agent_id AND c.epoch=s.epoch AND c.session_id=s.session_id WHERE c.agent_id=? AND c.epoch=? AND c.session_id=? AND c.supported=1 AND c.excluded_reason='' AND (?=1 OR c.v2_details IS NOT NULL))`, id, epoch, b.SessionID, b.Version).Scan(&supported); err != nil {
 		return out, err
 	}
 	if !supported {
 		return out, ErrQualityUnsupported
 	}
+	caps, _, _, err := qualityCapabilityTx(ctx, tx, id)
+	if err != nil {
+		return out, err
+	}
 	var rawLocal, rawGlobal, minuteLocal, minuteGlobal int
+	staged := b.Version == 2 && caps != nil && caps.Semantics == protocol.QualityStagedSemantics
+	rawLimit, minuteLimit := qualityRawDevice, qualityMinuteDevice
+	if staged {
+		var lanes int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM quality_intervals WHERE agent_id=? AND end_at IS NULL`, id).Scan(&lanes); err != nil {
+			return out, err
+		}
+		rawLimit, minuteLimit = budget.limits(lanes)
+		if s.databasePath == "" && s.qualityDiskObserve == nil {
+			rawLimit = max(1, lanes) * 7920
+			minuteLimit = max(1, lanes) * 3168
+		}
+	}
 	if err := qualityCountTx(ctx, tx, id, "raw", &rawLocal, &rawGlobal); err != nil {
 		return out, err
 	}
@@ -77,6 +85,8 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 	if err != nil {
 		return out, err
 	}
+	rotated := false
+	rawCredit, minuteCredit := 0, 0
 	for i, sample := range b.Samples {
 		ack := protocol.QualityAck{strconv.Itoa(i), sample.Sequence, "invalid"}
 		seq, err := protocol.QualityInteger(sample.Sequence)
@@ -87,6 +97,14 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		}
 		if sample.DurationMS == 0 {
 			sample.DurationMS = 0
+		}
+		if len(sample.Details) > 0 {
+			details, decodeErr := protocol.DecodeQualityDetails(sample.Details)
+			if decodeErr != nil || details == nil || b.Version != 2 || caps == nil || caps.Semantics != protocol.QualityStagedSemantics {
+				out.Results = append(out.Results, ack)
+				continue
+			}
+			sample.Details = details.Encode()
 		}
 		if sample.LatencyMS != nil && *sample.LatencyMS == 0 {
 			zero := 0.0
@@ -112,6 +130,44 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		if !errors.Is(err, sql.ErrNoRows) {
 			return protocol.QualityBatchResponse{}, err
 		}
+		var receiptHash []byte
+		var receiptLength int
+		receiptErr := tx.QueryRowContext(ctx, `SELECT r.content_hash,r.canonical_length FROM quality_receipts r JOIN quality_sessions s ON s.id=r.session_key WHERE s.agent_id=? AND s.epoch=? AND s.session_id=? AND r.seq=?`, id, epoch, b.SessionID, seq).Scan(&receiptHash, &receiptLength)
+		if receiptErr == nil {
+			ack[2] = "conflict"
+			if bytes.Equal(receiptHash, digest[:]) && receiptLength == len(payloadBytes) {
+				ack[2] = "duplicate"
+			}
+			out.Results = append(out.Results, ack)
+			continue
+		}
+		if !errors.Is(receiptErr, sql.ErrNoRows) {
+			return protocol.QualityBatchResponse{}, receiptErr
+		}
+		var retired bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quality_retired r JOIN quality_sessions s ON s.id=r.session_key WHERE s.agent_id=? AND s.epoch=? AND s.session_id=? AND (r.seq>=? OR r.sample_time>=?))`, id, epoch, b.SessionID, seq, sample.StartedAt).Scan(&retired); err != nil {
+			return protocol.QualityBatchResponse{}, err
+		}
+		if retired {
+			ack[2] = "too_old"
+			if staged {
+				ack[2] = "history_retired"
+			}
+			out.Results = append(out.Results, ack)
+			continue
+		}
+		mark, markErr := qualityPrunedTx(ctx, tx, id, epoch, b.SessionID)
+		if markErr != nil {
+			return protocol.QualityBatchResponse{}, markErr
+		}
+		if mark.id != 0 && (seq <= mark.sequence || sample.StartedAt <= mark.end) {
+			ack[2] = "too_old"
+			if staged {
+				ack[2] = "history_retired"
+			}
+			out.Results = append(out.Results, ack)
+			continue
+		}
 		var targetJSON string
 		err = tx.QueryRowContext(ctx, `SELECT payload FROM quality_targets WHERE id=? AND agent_id=?`, sample.TargetID, id).Scan(&targetJSON)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -126,6 +182,11 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		if err := json.Unmarshal([]byte(targetJSON), &target); err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
+		if b.Version == 2 && !qualityLaneSupported(caps, target.Family, target.Protocol) {
+			ack[2] = "unauthorized"
+			out.Results = append(out.Results, ack)
+			continue
+		}
 		if reason := sample.Validate(now, target); reason != "" {
 			ack[2] = reason
 			out.Results = append(out.Results, ack)
@@ -135,7 +196,7 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		cfgRev, _ := protocol.QualityInteger(sample.ConfigRevision)
 		var start, from int64
 		var end, until sql.NullInt64
-		err = tx.QueryRowContext(ctx, `SELECT start_at,end_at,config_from,config_until FROM quality_intervals WHERE agent_id=? AND target_id=? AND slot=? AND family=? AND revision=?`, id, target.ID, target.Slot, target.Family, slotRev).Scan(&start, &end, &from, &until)
+		err = tx.QueryRowContext(ctx, `SELECT start_at,end_at,config_from,config_until FROM quality_intervals WHERE agent_id=? AND target_id=? AND slot=? AND family=? AND protocol=? AND revision=? AND (?=2 OR v1_authorized=1)`, id, target.ID, target.Slot, target.Family, target.Protocol, slotRev, b.Version).Scan(&start, &end, &from, &until)
 		if errors.Is(err, sql.ErrNoRows) {
 			ack[2] = "unauthorized"
 			out.Results = append(out.Results, ack)
@@ -156,6 +217,9 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		}
 		if pressure {
 			ack[2] = "storage_pressure"
+			if staged {
+				ack[2] = "pressure_drop"
+			}
 			out.Results = append(out.Results, ack)
 			continue
 		}
@@ -164,13 +228,50 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quality_minute WHERE target_id=? AND bucket=?)`, target.ID, bucket).Scan(&minuteExists); err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
-		if rawLocal >= qualityRawDevice || rawGlobal >= qualityRawGlobal || (!minuteExists && (minuteLocal >= qualityMinuteDevice || minuteGlobal >= qualityMinuteGlobal)) {
+		fullRaw := rawLocal >= rawLimit || rawGlobal >= budget.RawLimit
+		fullMinute := !minuteExists && (minuteLocal >= minuteLimit || minuteGlobal >= budget.MinuteLimit)
+		if (fullRaw || fullMinute) && !rotated && !pressure && staged {
+			rotated = true
+			freedRaw, freedMinute, rotateErr := qualityRotateTx(ctx, tx, id, rawGlobal >= budget.RawLimit || minuteGlobal >= budget.MinuteLimit, min(sample.StartedAt, now.UnixMilli()))
+			if rotateErr != nil {
+				return protocol.QualityBatchResponse{}, rotateErr
+			}
+			rawCredit = freedRaw
+			minuteCredit = freedMinute
+			if err := qualityCountTx(ctx, tx, id, "raw", &rawLocal, &rawGlobal); err != nil {
+				return out, err
+			}
+			if err := qualityCountTx(ctx, tx, id, "minute", &minuteLocal, &minuteGlobal); err != nil {
+				return out, err
+			}
+			fullRaw = rawLocal >= rawLimit || rawGlobal >= budget.RawLimit
+			fullMinute = !minuteExists && (minuteLocal >= minuteLimit || minuteGlobal >= budget.MinuteLimit)
+		}
+		if fullRaw && rawCredit == 0 || fullMinute && minuteCredit == 0 {
 			ack[2] = "quota"
+			if staged {
+				ack[2] = "pressure_drop"
+			}
 			out.Results = append(out.Results, ack)
 			continue
 		}
+		if staged && budget.Scale > 1 {
+			var previous int64
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sample_time),0) FROM quality_raw WHERE agent_id=? AND target_id=? AND sample_time<=?`, id, target.ID, sample.StartedAt).Scan(&previous); err != nil {
+				return out, err
+			}
+			if previous > 0 && sample.StartedAt-previous < int64(30000*budget.Scale)*4/5 {
+				ack[2] = "throttled"
+				out.Results = append(out.Results, ack)
+				continue
+			}
+		}
 		attempt, success := boolInt(sample.Attempt()), boolInt(sample.Outcome == "success")
 		var latency any
+		var details any
+		if len(sample.Details) > 0 {
+			details = string(sample.Details)
+		}
 		var sum float64
 		if sample.LatencyMS != nil {
 			latency = *sample.LatencyMS
@@ -181,10 +282,17 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 			sent = sample.Sent
 			received = sample.Received
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO quality_raw(agent_id,target_id,epoch,session_id,seq,slot_revision,config_revision,sample_time,received_at,scheduled_at,finished_at,duration_ms,outcome,resolved_ip,raw_sent,raw_received,content_hash,attempt,success,latency,packet_sent,packet_received) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, target.ID, epoch, b.SessionID, seq, slotRev, cfgRev, sample.StartedAt, now.UnixMilli(), sample.ScheduledAt, sample.FinishedAt, sample.DurationMS, sample.Outcome, sample.ResolvedIP, sample.Sent, sample.Received, digest[:], attempt, success, latency, sent, received); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO quality_raw(agent_id,target_id,epoch,session_id,seq,slot_revision,config_revision,sample_time,received_at,scheduled_at,finished_at,duration_ms,outcome,resolved_ip,raw_sent,raw_received,content_hash,attempt,success,latency,packet_sent,packet_received,details_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, target.ID, epoch, b.SessionID, seq, slotRev, cfgRev, sample.StartedAt, now.UnixMilli(), sample.ScheduledAt, sample.FinishedAt, sample.DurationMS, sample.Outcome, sample.ResolvedIP, sample.Sent, sample.Received, digest[:], attempt, success, latency, sent, received, details); err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO quality_minute(agent_id,target_id,bucket,count,attempts,successes,latency_sum,sent,received) VALUES(?,?,?,1,?,?,?,?,?) ON CONFLICT(target_id,bucket) DO UPDATE SET count=count+1,attempts=attempts+excluded.attempts,successes=successes+excluded.successes,latency_sum=latency_sum+excluded.latency_sum,sent=sent+excluded.sent,received=received+excluded.received`, id, target.ID, bucket, attempt, success, sum, sent, received); err != nil {
+			return protocol.QualityBatchResponse{}, err
+		}
+		var rawID int64
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM quality_raw WHERE agent_id=? AND epoch=? AND session_id=? AND seq=?`, id, epoch, b.SessionID, seq).Scan(&rawID); err != nil {
+			return protocol.QualityBatchResponse{}, err
+		}
+		if err := qualityRollupTx(ctx, tx, id, epoch, b.SessionID, rawID, sample, target, digest[:], len(payloadBytes)); err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
 		rawLocal++
@@ -194,6 +302,12 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 			minuteGlobal++
 		}
 		ack[2] = "committed"
+		if rawCredit > 0 {
+			rawCredit--
+		}
+		if !minuteExists && minuteCredit > 0 {
+			minuteCredit--
+		}
 		out.Results = append(out.Results, ack)
 	}
 	var gapsLocal, gapsGlobal int
@@ -228,6 +342,9 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 			var dropped any
 			if gap.Dropped != nil {
 				dropped = *gap.Dropped
+			}
+			if err := qualityGapRollupTx(ctx, tx, id, gap); err != nil {
+				return protocol.QualityBatchResponse{}, err
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO quality_gaps(agent_id,epoch,session_id,start_at,end_at,reason,dropped) VALUES(?,?,?,?,?,?,?)`, id, epoch, b.SessionID, gap.Start, gap.End, gap.Reason, dropped); err != nil {
 				return protocol.QualityBatchResponse{}, err

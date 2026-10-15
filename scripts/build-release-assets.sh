@@ -4,7 +4,8 @@ set -Eeuo pipefail
 
 ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIRECTORY
-readonly VERSION="${1:-v0.8.0}"
+readonly VERSION="${1:-v1.0.2}"
+readonly RELEASE_COMMIT="${PROBE_404_RELEASE_COMMIT:-}"
 readonly OUTPUT_DIRECTORY="${PROBE_404_RELEASE_OUTPUT:-${ROOT_DIRECTORY}/build/release-${VERSION}}"
 
 command -v go >/dev/null 2>&1 || {
@@ -29,16 +30,33 @@ cd "${ROOT_DIRECTORY}"
   printf 'release builds require a clean git worktree\n' >&2
   exit 1
 }
-git show-ref --verify --quiet "refs/tags/${VERSION}" || {
-  printf 'release tag %s does not exist\n' "${VERSION}" >&2
-  exit 1
-}
 head_commit="$(git rev-parse --verify HEAD)"
-tag_commit="$(git rev-parse --verify "${VERSION}^{commit}")"
-[[ "${head_commit}" == "${tag_commit}" ]] || {
-  printf 'HEAD %s does not match tag %s commit %s\n' "${head_commit}" "${VERSION}" "${tag_commit}" >&2
-  exit 1
-}
+if [[ -n "${RELEASE_COMMIT}" ]]; then
+  # Pre-publication High review builds the exact clean commit before creating
+  # the public tag. This mode never creates or moves any Git reference.
+  [[ "${RELEASE_COMMIT}" =~ ^[0-9a-f]{40}$ && "${RELEASE_COMMIT}" == "${head_commit}" ]] || {
+    printf 'explicit release commit must be the full clean HEAD commit\n' >&2
+    exit 1
+  }
+  tag_commit="${RELEASE_COMMIT}"
+  if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
+    [[ "$(git rev-parse --verify "${VERSION}^{commit}")" == "${tag_commit}" ]] || {
+      printf 'existing release tag does not match explicit commit\n' >&2
+      exit 1
+    }
+  fi
+  printf 'Building unpublished review assets for exact commit %s\n' "${tag_commit}"
+else
+  git show-ref --verify --quiet "refs/tags/${VERSION}" || {
+    printf 'release tag %s does not exist\n' "${VERSION}" >&2
+    exit 1
+  }
+  tag_commit="$(git rev-parse --verify "${VERSION}^{commit}")"
+  [[ "${head_commit}" == "${tag_commit}" ]] || {
+    printf 'HEAD %s does not match tag %s commit %s\n' "${head_commit}" "${VERSION}" "${tag_commit}" >&2
+    exit 1
+  }
+fi
 
 mkdir -p "${OUTPUT_DIRECTORY}"
 
@@ -53,6 +71,12 @@ if LC_ALL=C grep -q $'\r' "${installer_path}"; then
   exit 1
 fi
 bash -n "${installer_path}"
+if [[ "${VERSION}" != *-beta.* ]]; then
+  grep -Fxq "readonly DEFAULT_VERSION=\"${VERSION}\"" "${installer_path}" || {
+    printf 'stable installer default does not match release version\n' >&2
+    exit 1
+  }
+fi
 
 asset_paths=()
 for architecture in amd64 arm64; do
@@ -67,8 +91,8 @@ for architecture in amd64 arm64; do
       printf '%s does not contain the expected VCS revision\n' "${asset}" >&2
       exit 1
     }
-    if grep -Fq 'vcs.modified=true' <<<"${metadata}"; then
-      printf '%s was built from a modified worktree\n' "${asset}" >&2
+    if ! grep -Fq 'vcs.modified=false' <<<"${metadata}"; then
+      printf '%s does not prove an unmodified worktree\n' "${asset}" >&2
       exit 1
     fi
     asset_paths+=("${OUTPUT_DIRECTORY}/${asset}")

@@ -243,7 +243,7 @@ function draw(canvas, points, key, color, format) {
   const values = points.map(point => Number(point[key] || 0));
   const maximum = Math.max(1, ...values) * 1.1;
   context.strokeStyle = '#c8beb1';
-  context.fillStyle = '#7d7368';
+  context.fillStyle = '#5c554d';
   context.font = '11px system-ui';
   for (let index = 0; index <= 4; index++) {
     const y = padding + (height - padding * 2) * index / 4;

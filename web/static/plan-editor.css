@@ -11,15 +11,15 @@
 #plan-dialog .drawer-actions { flex-shrink:0; display:flex; justify-content:flex-end; gap:12px; margin:0; padding:16px 22px; border-top:1px solid #e3ddd3; }
 #plan-dialog input,#plan-dialog select,#plan-dialog button { font:inherit; color:#29393b; box-sizing:border-box; }
 #plan-dialog input,#plan-dialog select { background:#fffdf8; }
-#plan-dialog button { border:1px solid #d8d2c8; border-radius:9px; padding:8px 12px; background:#fffdf8; cursor:pointer; }
-#plan-dialog button:disabled { color:#87908c; cursor:not-allowed; }
+#plan-dialog button { border:1px solid #786e60; border-radius:9px; padding:8px 12px; background:#fffdf8; cursor:pointer; }
+#plan-dialog button:disabled { color:#6d675e; cursor:not-allowed; }
 #plan-dialog #plan-save { color:white; background:#168577; border-color:#168577; }
 #plan-dialog .text-danger,#plan-dialog #plan-discard { color:#a83a40; }
 #plan-dialog .plan-confirmation { padding:12px 22px; background:#f6eee2; flex-shrink:0; border-top:1px solid #e3ddd3; }
 #plan-dialog .plan-confirmation[hidden] { display:none; }
 #plan-dialog .plan-confirmation p { margin:0 0 8px; line-height:1.5; }
 #plan-dialog .plan-confirmation div { display:flex; gap:10px; flex-wrap:wrap; }
-#plan-dialog .field-note { color:#687776; }
+#plan-dialog .field-note { color:#596563; }
 #plan-dialog #plan-error { flex-shrink:0; box-sizing:border-box; margin:0; padding:12px 22px; max-height:min(120px,20dvh); overflow:auto; overflow-wrap:anywhere; line-height:1.5; color:#a83a40; background:#f8eee9; border-top:1px solid #e3ddd3; }
 @media(max-width:620px) {
  #plan-dialog.plan-editor { left:0; top:0; width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; border:0; border-radius:0; }
@@ -30,3 +30,9 @@
  #plan-dialog .form-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
  #plan-dialog .form-grid.four label:last-child { grid-column:1/-1; }
 }
+#plan-dialog button:not(:disabled):hover{background:#f0e6d8;border-color:#785b42}
+#plan-dialog button:not(:disabled):active{background:#e5d7c0}
+#plan-dialog #plan-save:not(:disabled):hover{background:#126e62;border-color:#126e62}
+#plan-dialog #plan-save:not(:disabled):active{background:#0e5a51;border-color:#0e5a51}
+#plan-dialog #plan-save:disabled{background:#e9e3d9;border-color:#a69b8d;color:#6d675e}
+#plan-dialog :is(input,select,button):disabled{background:#e9e3d9;border-color:#a69b8d;color:#6d675e}

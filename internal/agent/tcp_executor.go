@@ -20,7 +20,8 @@ type dialContextFunc func(context.Context, string, string) (net.Conn, error)
 // immediately closes a connection; it does not exchange application data or
 // negotiate TLS.
 type TCPExecutor struct {
-	dialContext dialContextFunc
+	dialContext     dialContextFunc
+	qualityResolver icmpResolver
 }
 
 func NewTCPExecutor() *TCPExecutor {

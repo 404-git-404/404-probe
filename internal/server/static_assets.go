@@ -16,8 +16,8 @@ var fingerprintAssetNames = []string{
 	"agent-state.js", "app.js", "card-metrics.js", "device-details.js", "history.js",
 	"jobs.js", "management.js", "network-quality-core.js", "network-quality.js",
 	"overview.js", "plan-editor.js", "plan-renewal.js", "plan-units.js",
-	"resource-history.js", "schedules.js", "selector.js", "session.js", "traffic-chart.js",
-	"network-quality.css", "card-layout.css", "traffic-chart.css", "device-details.css",
+	"resource-history.js", "schedules.js", "selector.js", "session.js", "traffic-chart.js", "latency-mini.js",
+	"network-quality.css", "card-layout.css", "traffic-chart.css", "latency-mini.css", "device-details.css",
 	"plan-editor.css", "plan-renewal.css", "overview.css",
 	"vendor/uplot/uPlot.min.css", "vendor/uplot/uPlot.iife.min.js",
 	"vendor/card-icons/cpu.svg", "vendor/card-icons/memory.svg",
@@ -26,7 +26,7 @@ var fingerprintAssetNames = []string{
 
 var staticPageNames = []string{"index.html", "history.html", "jobs.html", "schedules.html"}
 var staticPageReferences = map[string][]string{
-	"index.html":     {"style.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "card-layout.css", "traffic-chart.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "agent-state.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "card-metrics.js", "resource-history.js", "device-details.js", "plan-editor.js", "plan-renewal.js", "overview.js", "plan-units.js", "app.js", "session.js"},
+	"index.html":     {"style.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "card-layout.css", "traffic-chart.css", "latency-mini.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "agent-state.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "latency-mini.js", "card-metrics.js", "resource-history.js", "device-details.js", "plan-editor.js", "plan-renewal.js", "overview.js", "plan-units.js", "app.js", "session.js"},
 	"history.html":   {"style.css", "agent-state.js", "management.js", "selector.js", "history.js", "session.js"},
 	"jobs.html":      {"style.css", "jobs.js", "session.js"},
 	"schedules.html": {"style.css", "schedules.js", "session.js"},

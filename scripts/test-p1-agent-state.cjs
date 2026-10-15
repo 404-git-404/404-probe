@@ -15,6 +15,37 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a,b) 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function flush(n = 4) { while(n--) await tick(); }
 function seed(store, value = dto()) { store.commitRead(store.read(value.agent_id),value); }
+test('M06 offline uptime is historical and last report uses Server last_seen, not client collection time',()=>{
+  const app=dashboard(), collected=1700000000000, received=1700000900000;
+  app.eval(`var m06Agent=${JSON.stringify({...dto(),online:false,last_seen:received,state:{collected_at:collected,uptime:60}})}`);
+  assert.equal(app.eval('cardRuntimeText(m06Agent,true)'),`上次运行 ${app.eval('duration(60)')} · 旧数据 · 最后上报 ${app.eval(`seen(${received})`)}`);
+  assert.equal(app.eval('cardUptimeLabel(m06Agent)'),'上次运行');
+  app.eval('m06Agent.last_seen=null');
+  assert.match(app.eval('cardRuntimeText(m06Agent,true)'),/最后上报 从未上报$/);
+  assert.doesNotMatch(app.eval('cardRuntimeText(m06Agent,true)'),new RegExp(app.eval(`seen(${collected})`).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+});
+test('M06 existing lifecycle keeps paused/revoked/unknown distinct from actual offline',()=>{
+  const app=dashboard();
+  for(const [extra,want] of [[{online:false},'offline'],[{online:false,disabled_at:1},'paused'],[{online:false,revoked:true},'revoked'],[{online:false,state:null,last_seen:null},'unknown'],[{online:true},'online']]) {
+    app.eval(`var m06State=${JSON.stringify({...dto(),...extra})}`);
+    assert.equal(app.eval('cardLifecycle(m06State)'),want);
+    assert.equal(app.eval('cardUptimeLabel(m06State)'),want==='offline'?'上次运行':'运行时长');
+  }
+});
+test('M06 reconnect retains old metrics until a fresh valid collection, without inventing uptime',()=>{
+  const app=dashboard(), now=Date.now();
+  app.eval(`var m06Now=${now};var m06Recovery=${JSON.stringify({...dto(),online:false,last_seen:now-60000,state:{collected_at:now-60000,uptime:73,cpu_percent:90}})};var m06Observer=CardMetrics.createObserver()`);
+  assert.equal(app.eval('m06Observer.observe(m06Recovery,m06Now).stale'),true);
+  app.eval('m06Recovery.online=true');
+  assert.equal(app.eval('m06Observer.observe(m06Recovery,m06Now).stale'),true);
+  assert.match(app.eval('cardRuntimeText(m06Recovery,m06Observer.observe(m06Recovery,m06Now).stale)'),/旧数据/);
+  app.eval('m06Recovery.state.collected_at=m06Now+10000');
+  assert.equal(app.eval('m06Observer.observe(m06Recovery,m06Now).stale'),true);
+  app.eval('m06Recovery.state.collected_at=m06Now;m06Recovery.last_seen=m06Now');
+  assert.equal(app.eval('m06Observer.observe(m06Recovery,m06Now).stale'),false);
+  assert.equal(app.eval('cardRuntimeText(m06Recovery,false)'),`运行 ${app.eval('duration(73)')}`);
+  assert.equal(app.eval('m06Recovery.state.uptime'),73);
+});
 function response(value, status = 200) { return {status,ok:status>=200 && status<300,statusText:'test failure',json:async()=>value}; }
 class Element {
   get value(){return this._value ?? '';}

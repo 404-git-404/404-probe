@@ -16,11 +16,15 @@ const QualityConfigRequestLimit = 512
 const QualityConfigResponseLimit = 16384
 
 type QualityConfigRequest struct {
+	Version   int    `json:"version,omitempty"`
 	Epoch     string `json:"epoch"`
 	SessionID string `json:"session_id"`
 }
 
 func (r QualityConfigRequest) Validate() error {
+	if r.Version != 0 && r.Version != 2 {
+		return errors.New("invalid quality config version")
+	}
 	if _, err := QualityInteger(r.Epoch); err != nil {
 		return err
 	}
@@ -72,31 +76,37 @@ type QualityTarget struct {
 }
 
 type QualityConfig struct {
-	Version       int             `json:"version"`
-	Revision      string          `json:"revision"`
-	Supported     bool            `json:"supported"`
-	Enabled       bool            `json:"enabled"`
-	IPv6          bool            `json:"ipv6"`
-	IntervalMS    int             `json:"interval_ms"`
-	JitterPercent int             `json:"jitter_percent"`
-	TimeoutMS     int             `json:"timeout_ms"`
-	Targets       []QualityTarget `json:"targets"`
+	Capabilities  *QualityCapabilities `json:"capabilities,omitempty"`
+	RegionID      string               `json:"region_id,omitempty"`
+	State         string               `json:"state,omitempty"`
+	Semantics     string               `json:"semantics,omitempty"`
+	Version       int                  `json:"version"`
+	Revision      string               `json:"revision"`
+	Supported     bool                 `json:"supported"`
+	Enabled       bool                 `json:"enabled"`
+	IPv6          bool                 `json:"ipv6"`
+	IntervalMS    int                  `json:"interval_ms"`
+	JitterPercent int                  `json:"jitter_percent"`
+	TimeoutMS     int                  `json:"timeout_ms"`
+	Targets       []QualityTarget      `json:"targets"`
 }
 
 type QualitySample struct {
-	Sequence       string   `json:"seq"`
-	TargetID       string   `json:"target_id"`
-	ConfigRevision string   `json:"config_revision"`
-	SlotRevision   string   `json:"slot_revision"`
-	ScheduledAt    int64    `json:"scheduled_at"`
-	StartedAt      int64    `json:"started_at"`
-	FinishedAt     int64    `json:"finished_at"`
-	DurationMS     float64  `json:"duration_ms"`
-	Outcome        string   `json:"outcome"`
-	ResolvedIP     string   `json:"resolved_ip,omitempty"`
-	LatencyMS      *float64 `json:"latency_ms,omitempty"`
-	Sent           int      `json:"sent"`
-	Received       int      `json:"received"`
+	// Staged details require current-session semantic negotiation; nil is legacy.
+	Details        json.RawMessage `json:"details,omitempty"`
+	Sequence       string          `json:"seq"`
+	TargetID       string          `json:"target_id"`
+	ConfigRevision string          `json:"config_revision"`
+	SlotRevision   string          `json:"slot_revision"`
+	ScheduledAt    int64           `json:"scheduled_at"`
+	StartedAt      int64           `json:"started_at"`
+	FinishedAt     int64           `json:"finished_at"`
+	DurationMS     float64         `json:"duration_ms"`
+	Outcome        string          `json:"outcome"`
+	ResolvedIP     string          `json:"resolved_ip,omitempty"`
+	LatencyMS      *float64        `json:"latency_ms,omitempty"`
+	Sent           int             `json:"sent"`
+	Received       int             `json:"received"`
 }
 
 type QualityBatch struct {
@@ -142,7 +152,7 @@ type QualityBatchResponse struct {
 }
 
 func (b QualityBatch) Validate() error {
-	if b.Version != 1 || !validID(b.SessionID, 128) || (len(b.Samples) == 0 && len(b.Gaps) == 0) || len(b.Samples) > QualityBatchLimit || len(b.Gaps) > 8 {
+	if (b.Version != 1 && b.Version != 2) || !validID(b.SessionID, 128) || (len(b.Samples) == 0 && len(b.Gaps) == 0) || len(b.Samples) > QualityBatchLimit || len(b.Gaps) > 8 {
 		return errors.New("invalid quality envelope")
 	}
 	_, err := QualityInteger(b.Epoch)
@@ -150,6 +160,9 @@ func (b QualityBatch) Validate() error {
 }
 
 func (s QualitySample) Validate(now time.Time, target QualityTarget) string {
+	if len(s.Details) != 0 {
+		return s.ValidateDetails(now, target)
+	}
 	for _, v := range []string{s.Sequence, s.ConfigRevision, s.SlotRevision} {
 		if _, err := QualityInteger(v); err != nil {
 			return "invalid"
@@ -216,6 +229,9 @@ func (s QualitySample) Validate(now time.Time, target QualityTarget) string {
 
 func qualityFinite(v float64) bool { return v >= 0 && !math.IsNaN(v) && !math.IsInf(v, 0) }
 func (s QualitySample) Attempt() bool {
+	if d, err := DecodeQualityDetails(s.Details); err == nil && d != nil {
+		return d.ProbeComplete
+	}
 	switch s.Outcome {
 	case "success", "timeout", "dns_error", "refused", "network_error":
 		return true
@@ -223,5 +239,8 @@ func (s QualitySample) Attempt() bool {
 	return false
 }
 func (s QualitySample) PacketDenominator() bool {
+	if d, err := DecodeQualityDetails(s.Details); err == nil && d != nil {
+		return d.WindowComplete && s.Sent > 0
+	}
 	return s.Sent > 0 && (s.Outcome == "success" || s.Outcome == "timeout")
 }

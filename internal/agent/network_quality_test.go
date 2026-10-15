@@ -176,13 +176,13 @@ func TestN2bScheduleJitterRevisionAndNoBurst(t *testing.T) {
 	}())
 	var plan qualitySchedule
 	plan.reconcile(&cfg, start, func() float64 { return 0 })
-	first := plan.lanes["telecom/ipv4"]
-	other := plan.lanes["unicom/ipv4"]
+	first := plan.lanes["telecom/ipv4/tcp"]
+	other := plan.lanes["unicom/ipv4/tcp"]
 	if first.next.Sub(start) != 24*time.Second || qualityDelay(30*time.Second, func() float64 { return 1 }) != 36*time.Second {
 		t.Fatal("jitter bounds")
 	}
 	plan.reconcile(&cfg, start.Add(time.Second), func() float64 { return 1 })
-	if plan.lanes["telecom/ipv4"] != first || first.next.Sub(start) != 24*time.Second {
+	if plan.lanes["telecom/ipv4/tcp"] != first || first.next.Sub(start) != 24*time.Second {
 		t.Fatal("same revision reset")
 	}
 	var canceled atomic.Int32
@@ -191,7 +191,7 @@ func TestN2bScheduleJitterRevisionAndNoBurst(t *testing.T) {
 	cfg.Targets[0].ID = strings.Repeat("c", 32)
 	cfg.Targets[0].SlotRevision = "2"
 	plan.reconcile(&cfg, start.Add(2*time.Second), func() float64 { return 1 })
-	if canceled.Load() != 1 || plan.lanes["unicom/ipv4"] != other || plan.lanes["telecom/ipv4"].next.Before(start.Add(26*time.Second)) {
+	if canceled.Load() != 1 || plan.lanes["unicom/ipv4/tcp"] != other || plan.lanes["telecom/ipv4/tcp"].next.Before(start.Add(26*time.Second)) {
 		t.Fatal("changed slot affected unchanged slot")
 	}
 	plan.reconcile(nil, start, func() float64 { return 0 })

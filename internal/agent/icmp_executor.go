@@ -387,20 +387,23 @@ type icmpSocketMode struct {
 type icmpListenFunc func(string, string) (icmpPacketConn, error)
 
 type socketICMPBackend struct {
-	modes  map[icmpFamily]icmpSocketMode
-	listen icmpListenFunc
+	modes    map[icmpFamily]icmpSocketMode
+	listen   icmpListenFunc
+	failures map[icmpFamily]error
 }
 
 func detectICMPSocketBackend(candidates map[icmpFamily][]icmpSocketMode, listen icmpListenFunc) *socketICMPBackend {
-	backend := &socketICMPBackend{modes: make(map[icmpFamily]icmpSocketMode), listen: listen}
+	backend := &socketICMPBackend{modes: make(map[icmpFamily]icmpSocketMode), failures: make(map[icmpFamily]error), listen: listen}
 	for family, familyCandidates := range candidates {
 		for _, candidate := range familyCandidates {
 			connection, err := listen(candidate.network, candidate.address)
 			if err != nil {
+				backend.failures[family] = err
 				continue
 			}
 			_ = connection.Close()
 			backend.modes[family] = candidate
+			delete(backend.failures, family)
 			break
 		}
 	}
@@ -413,6 +416,13 @@ func (b *socketICMPBackend) Supports(family icmpFamily) bool {
 	}
 	_, ok := b.modes[family]
 	return ok
+}
+
+func (b *socketICMPBackend) Failure(family icmpFamily) error {
+	if b == nil {
+		return errICMPUnsupportedFamily
+	}
+	return b.failures[family]
 }
 
 func (b *socketICMPBackend) Open(family icmpFamily) (icmpPacketConn, bool, error) {
