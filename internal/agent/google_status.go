@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +41,7 @@ type googleTarget struct {
 }
 
 var googleTargets = []googleTarget{
-	{googleYouTube, "https://www.youtube.com/premium", "CONSENT=YES+cb.20220301-11-p0.en+FX+700"},
+	{googleYouTube, "https://www.youtube.com/premium", ""},
 }
 
 type googleHTTPResponse struct {
@@ -69,6 +71,8 @@ func (e *GoogleStatusExecutor) Execute(ctx context.Context, job protocol.Job) (E
 	if job.ProbeType != protocol.ProbeTypeGoogleStatus || job.Config.GoogleStatus == nil {
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	}
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
 	// Keep legal legacy wire/DB slots without executing the removed checks.
 	result := protocol.GoogleStatusResult{
 		Search: protocol.GoogleSearchResult{Status: protocol.GoogleSearchUnknown},
@@ -77,13 +81,25 @@ func (e *GoogleStatusExecutor) Execute(ctx context.Context, job protocol.Job) (E
 	}
 	for _, target := range googleTargets {
 		response, category := e.fetcher.fetch(ctx, target)
+		if err := ctx.Err(); err != nil {
+			response, category = googleHTTPResponse{}, googleFetchCategory(ctx, err)
+		}
 		switch target.service {
 		case googleYouTube:
 			result.YouTube = parseYouTube(response)
+			if err := ctx.Err(); err != nil {
+				result.YouTube = protocol.YouTubeResult{Status: protocol.YouTubeUnknown}
+				category = googleFetchCategory(ctx, err)
+			}
 			if result.YouTube.Status == protocol.YouTubeUnknown {
-				result.YouTube.Error.Category = firstCategory(category, "unrecognized_response")
+				result.YouTube.Error.Category = firstCategory(category, firstCategory(result.YouTube.Error.Category, "unrecognized_response"))
 			}
 		}
+	}
+	if result.YouTube.Status == protocol.YouTubeUnknown {
+		reason := result.YouTube.Error.Category
+		result.YouTube.Error.Category = protocol.CompatibleYouTubeCategory(reason)
+		return Execution{Success: false, ErrorCategory: "youtube_" + reason, Result: protocol.ProbeResult{GoogleStatus: &result}}, nil
 	}
 	return Execution{Success: true, Result: protocol.ProbeResult{GoogleStatus: &result}}, nil
 }
@@ -95,37 +111,68 @@ func firstCategory(value, fallback string) string {
 	return fallback
 }
 
-type googleNetworkFetcher struct{ transport http.RoundTripper }
+type googleNetworkFetcher struct {
+	transport      http.RoundTripper // Legacy deterministic transport fixtures only.
+	resolve        func(context.Context, string, string) ([]netip.Addr, error)
+	dial           func(context.Context, string, string) (net.Conn, error)
+	roots          *x509.CertPool
+	addressAllowed func(netip.Addr) bool // Unexported controlled-TLS fixture seam.
+}
 
 var (
-	errGoogleRedirectLimit  = errors.New("Google Status redirect limit exceeded")
-	errGoogleUnsafeRedirect = errors.New("Google Status redirect target is not allowed")
+	errGoogleRedirectLimit   = errors.New("Google Status redirect limit exceeded")
+	errGoogleUnsafeRedirect  = errors.New("Google Status redirect target is not allowed")
+	errGoogleConsentRedirect = errors.New("YouTube consent redirect")
+	errGoogleUnsafeAddress   = errors.New("no public IPv4 destination")
 )
 
 func (f googleNetworkFetcher) fetch(ctx context.Context, target googleTarget) (googleHTTPResponse, string) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.TLSHandshakeTimeout = 3 * time.Second
+	if target.service != googleYouTube {
+		return googleHTTPResponse{}, "invalid_target"
+	}
+	ctx, cancelRequest := context.WithTimeout(ctx, 6*time.Second)
+	defer cancelRequest()
+	transport := &http.Transport{Proxy: nil, TLSHandshakeTimeout: 3 * time.Second, ResponseHeaderTimeout: 3 * time.Second, MaxResponseHeaderBytes: 32 << 10, MaxConnsPerHost: 1, TLSClientConfig: &tls.Config{RootCAs: f.roots, MinVersion: tls.VersionTLS12}}
 	defer transport.CloseIdleConnections()
 	dialer := &net.Dialer{Timeout: 3 * time.Second}
-	transport.DialContext = func(ctx context.Context, _ string, address string) (net.Conn, error) {
+	dial := f.dial
+	if dial == nil {
+		dial = dialer.DialContext
+	}
+	resolve := f.resolve
+	if resolve == nil {
+		resolve = net.DefaultResolver.LookupNetIP
+	}
+	allowed := f.addressAllowed
+	if allowed == nil {
+		allowed = googlePublicIPv4
+	}
+	transport.DialContext = func(_ context.Context, _ string, address string) (net.Conn, error) {
 		connectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return nil, err
 		}
-		ips, err := net.DefaultResolver.LookupNetIP(connectCtx, "ip4", host)
+		ips, err := resolve(connectCtx, "ip4", host)
 		if err != nil {
 			return nil, err
 		}
 		var lastErr error
-		for _, ip := range ips {
-			if !googlePublicIPv4(ip) {
+		for i, ip := range ips {
+			if i >= 4 {
+				break
+			}
+			if !allowed(ip) {
 				continue
 			}
-			connection, err := dialer.DialContext(connectCtx, "tcp4", net.JoinHostPort(ip.String(), port))
+			connection, err := dial(connectCtx, "tcp4", net.JoinHostPort(ip.String(), port))
 			if err == nil {
+				peer, peerErr := netip.ParseAddrPort(connection.RemoteAddr().String())
+				if peerErr != nil || !peer.Addr().Is4() || peer.Addr().Is4In6() {
+					connection.Close()
+					return nil, errors.New("YouTube socket family mismatch")
+				}
 				return connection, nil
 			}
 			lastErr = err
@@ -133,7 +180,7 @@ func (f googleNetworkFetcher) fetch(ctx context.Context, target googleTarget) (g
 		if lastErr != nil {
 			return nil, lastErr
 		}
-		return nil, errors.New("no public IPv4 address")
+		return nil, errGoogleUnsafeAddress
 	}
 	transport.DialTLSContext = nil
 	var roundTripper http.RoundTripper = transport
@@ -144,6 +191,9 @@ func (f googleNetworkFetcher) fetch(ctx context.Context, target googleTarget) (g
 		Transport: roundTripper,
 		Timeout:   6 * time.Second,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if request.URL.Hostname() == "consent.youtube.com" || request.URL.Hostname() == "consent.google.com" {
+				return errGoogleConsentRedirect
+			}
 			if len(via) > 5 {
 				return errGoogleRedirectLimit
 			}
@@ -169,21 +219,24 @@ func (f googleNetworkFetcher) fetch(ctx context.Context, target googleTarget) (g
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-			return googleHTTPResponse{}, "timeout"
-		}
-		if errors.Is(err, errGoogleRedirectLimit) {
-			return googleHTTPResponse{}, "redirect_limit"
-		}
-		if errors.Is(err, errGoogleUnsafeRedirect) {
-			return googleHTTPResponse{}, "unexpected_redirect"
-		}
-		return googleHTTPResponse{}, "network_error"
+		return googleHTTPResponse{}, googleFetchCategory(ctx, err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, googleStatusBodyLimit+1))
+	// Cancellation can close a body with a clean EOF. Neither that EOF nor a
+	// usable prefix is proof that the request completed before its deadline.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return googleHTTPResponse{}, googleFetchCategory(ctx, ctxErr)
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return googleHTTPResponse{}, "timeout"
+	}
 	if err != nil {
-		return googleHTTPResponse{}, "response_read_error"
+		category := googleFetchCategory(ctx, err)
+		if category == "network_error" {
+			category = "response_read_error"
+		}
+		return googleHTTPResponse{}, category
 	}
 	if len(body) > googleStatusBodyLimit {
 		return googleHTTPResponse{}, "response_body_too_large"
@@ -221,11 +274,32 @@ var googleSearchRedirectHosts = map[string]bool{
 	"www.google.nl": true, "www.google.co.nz": true, "www.google.ch": true,
 }
 
-func googlePublicIPv4(ip netip.Addr) bool {
-	return ip.Is4() && ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() &&
-		!netip.MustParsePrefix("100.64.0.0/10").Contains(ip) &&
-		!netip.MustParsePrefix("198.18.0.0/15").Contains(ip) &&
-		!netip.MustParsePrefix("192.0.0.0/24").Contains(ip)
+func googlePublicIPv4(ip netip.Addr) bool { return protocol.PublicEgressIP(ip.String(), "ipv4") }
+
+func googleFetchCategory(ctx context.Context, err error) string {
+	var netError net.Error
+	var dns *net.DNSError
+	var certificate *tls.CertificateVerificationError
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netError) && netError.Timeout():
+		return "timeout"
+	case errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, errGoogleUnsafeAddress):
+		return "unsafe_address"
+	case errors.Is(err, errGoogleConsentRedirect):
+		return "consent_page"
+	case errors.Is(err, errGoogleRedirectLimit):
+		return "redirect_limit"
+	case errors.Is(err, errGoogleUnsafeRedirect):
+		return "unexpected_redirect"
+	case errors.As(err, &dns):
+		return "dns_error"
+	case errors.As(err, &certificate):
+		return "tls_error"
+	default:
+		return "network_error"
+	}
 }
 
 func validGoogleSearchHost(host string) bool {
@@ -252,73 +326,6 @@ func lowerLetters(value string) bool {
 
 func validHTML(response googleHTTPResponse) bool {
 	return len(response.body) != 0 && strings.HasPrefix(response.contentType, "text/html")
-}
-
-func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
-	unknown := protocol.YouTubeResult{Status: protocol.YouTubeUnknown}
-	if !validHTML(response) || response.status != http.StatusOK ||
-		!(response.finalURL == "https://www.youtube.com" || strings.HasPrefix(response.finalURL, "https://www.youtube.com/")) {
-		return unknown
-	}
-	body := string(response.body)
-	if strings.Contains(body, "<title>Before you continue to YouTube</title>") || strings.Contains(body, "consent.youtube.com/save") {
-		return unknown
-	}
-	cn := strings.Contains(body, "www.google.cn")
-	inner, innerCN := scanYouTubeRegion(body, "INNERTUBE_CONTEXT_GL")
-	content, contentCN := scanYouTubeRegion(body, "contentRegion")
-	if cn || innerCN || contentCN {
-		value := true
-		return protocol.YouTubeResult{Status: protocol.YouTubeCN, Region: "CN", SentToChina: &value}
-	}
-	region := inner
-	if region == "" {
-		region = content
-	}
-	if region == "" {
-		return unknown
-	}
-	value := false
-	return protocol.YouTubeResult{Status: protocol.YouTubeNotCN, Region: region, SentToChina: &value}
-}
-
-func scanYouTubeRegion(body, key string) (string, bool) {
-	needle := `"` + key + `"`
-	first := ""
-	for offset := 0; ; {
-		relative := strings.Index(body[offset:], needle)
-		if relative < 0 {
-			return first, false
-		}
-		position := offset + relative + len(needle)
-		for position < len(body) && strings.ContainsRune(" \t\r\n\v\f", rune(body[position])) {
-			position++
-		}
-		if position >= len(body) || body[position] != ':' {
-			offset = position
-			continue
-		}
-		position++
-		for position < len(body) && strings.ContainsRune(" \t\r\n\v\f", rune(body[position])) {
-			position++
-		}
-		if position+3 >= len(body) || body[position] != '"' || body[position+3] != '"' {
-			offset = position
-			continue
-		}
-		value := body[position+1 : position+3]
-		if !upperRegion(value, 2) {
-			offset = position + 1
-			continue
-		}
-		if value == "CN" {
-			return first, true
-		}
-		if first == "" {
-			first = value
-		}
-		offset = position + 4
-	}
 }
 
 func parseGoogleSearch(response googleHTTPResponse) protocol.GoogleSearchResult {

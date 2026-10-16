@@ -175,7 +175,7 @@ async function openUpgradeAgentDialog(agent) {
     for (const [index, target] of upgradeReleaseTargets.entries()) {
       const option = document.createElement('option');
       option.value = String(index);
-      option.textContent = `${target.version} · ${target.channel === 'beta' ? 'Beta 预发布' : 'Stable'}${target.supported ? '' : ' · 不可用'}`;
+      option.textContent = `${target.version} · ${target.channel === 'beta' ? (target.version.includes('-rc.')?'RC 预发布':'Beta 预发布') : 'Stable'}${target.supported ? '' : ' · 不可用'}`;
       upgradeReleaseSelect.append(option);
     }
     // Never select Beta by default, including when the current Stable is equal.
@@ -376,22 +376,27 @@ async function setAgentDisabled(agent, disabled, button) {
   }
 }
 
+let activeYouTubeTooltip = null;
+function positionYouTubeTooltip() {
+ const anchor=activeYouTubeTooltip;
+ if(!anchor?.isConnected){activeYouTubeTooltip=null;return;}
+ const tip=anchor.nextElementSibling;
+ if(!tip||!(document.activeElement===anchor||anchor.matches(':hover')||tip.matches(':hover')))return;
+ const margin=8,width=Math.min(300,document.documentElement.clientWidth-margin*2);
+ tip.style.width=`${width}px`;tip.style.maxHeight=`${innerHeight-margin*2}px`;tip.style.overflowY='auto';
+ const rect=anchor.getBoundingClientRect(),height=tip.getBoundingClientRect().height;
+ const below=rect.bottom,above=rect.top-height;
+ const top=below+height<=innerHeight-margin?below:above>=margin?above:Math.max(margin,Math.min(below,innerHeight-height-margin));
+ tip.style.left=`${Math.max(margin,Math.min(rect.left,document.documentElement.clientWidth-width-margin))}px`;
+ tip.style.top=`${top}px`;
+}
+function openYouTubeTooltip(anchor){activeYouTubeTooltip=anchor;positionYouTubeTooltip();}
+addEventListener('resize',positionYouTubeTooltip,{passive:true});
+addEventListener('scroll',positionYouTubeTooltip,{capture:true,passive:true});
+
 function googleCheckItems(agent) {
-  const google = agent.google_status;
-  const all = (value, tone) => [
-    ['YouTube', value, tone],
-  ];
-  if (!google?.supported) return all('不支持', 'unknown');
-  if (google.pending) return all('检测中', 'pending');
-  if (!google.result) return all('尚未检测', 'unknown');
-  const result = google.result;
-  const youtube = result.youtube?.status === 'cn'
-    ? ['CN · 送中', 'danger']
-    : result.youtube?.status === 'not_cn'
-      ? [result.youtube.region ? `${result.youtube.region} 正常` : '非 CN', 'ok']
-      : ['未知', 'unknown'];
-  const items = [['YouTube', ...youtube]];
-  return google.stale ? items.map(([label, value]) => [label, value, 'stale']) : items;
+ const value=YouTubeStatus.view(agent);
+ return [['YouTube',value.label,value.tone]];
 }
 
 function googleStatusSummary(agent) {
@@ -419,14 +424,13 @@ function googleStatusPanel(agent) {
     result.className = `check-result ${tone}`;
     result.textContent = value;
     const brand = document.createElement('span');brand.className='youtube-name';brand.textContent='YouTube';
-    item.append(name, brand, result);
+    const detail=YouTubeStatus.view(agent).description;
+    result.tabIndex=0;result.setAttribute('aria-label',detail);
+    result.addEventListener('mouseenter',()=>openYouTubeTooltip(result));result.addEventListener('focus',()=>openYouTubeTooltip(result));result.addEventListener('click',()=>{result.focus();openYouTubeTooltip(result);});
+    const tip=document.createElement('span');tip.className='youtube-status-tip';tip.setAttribute('role','tooltip');tip.textContent=detail;
+    tip.id=`youtube-observation-${agent.agent_id||'preview'}`;result.setAttribute('aria-describedby',tip.id);
+    item.append(name, brand, result,tip);
     panel.append(item);
-  }
-  const noteText = googleStatusState(agent.google_status);
-  if (noteText) {
-    const note = document.createElement('small');
-    note.textContent = noteText;
-    panel.append(note);
   }
   return panel;
 }
@@ -448,14 +452,16 @@ async function rerunGoogleStatus(agent, button, feedback) {
     if (!response.ok) {
       let message = '检测请求失败';
       try { message = (await response.json()).error?.message || message; } catch (error) { /* use safe fallback */ }
-      throw new Error(message);
+      throw Object.assign(new Error(message),{status:response.status});
     }
     finishResource(mutation, {google_status: {...agents.get(agent.agent_id)?.google_status, pending: true}});
     render();
   } catch (error) {
     button.textContent = '重新检测';
     button.disabled = false;
-    feedback.textContent = error.message || '检测请求失败';
+    const uncertain=!error.status||error.status>=500;
+    button.disabled=uncertain;
+    feedback.textContent = uncertain?'提交结果未确认，正在核实；不会自动重发':error.message||'检测请求失败';
     agentActionErrors.set(`${agent.agent_id}/google`, feedback.textContent);
   } finally {
     finishResource(mutation);
@@ -1181,7 +1187,40 @@ function createAgentCard(initialAgent) {
     logo.setAttribute('aria-hidden', 'true');
     const systemText = document.createElement('span');
     setReadableText(systemText, system.text);
-    name.append(logo, systemText);
+    const egress = document.createElement('div');
+    egress.className = 'public-egress';
+    egress.setAttribute('aria-label', 'Agent 公网出口');
+    const egressItems = ['ipv4','ipv6'].map((family, index) => {
+      const item=document.createElement('button');item.type='button';item.className='public-egress-item';item.dataset.family=family;
+      item.textContent=index?'V6':'V4';
+      const tip=document.createElement('div');tip.className='public-egress-tip';tip.id=`egress-${agent.agent_id}-${family}`;tip.setAttribute('role','tooltip');
+      item.setAttribute('aria-describedby',tip.id);egress.append(item,tip);
+      item.addEventListener('click',event=>event.stopPropagation());
+      item.addEventListener('keydown',event=>{event.stopPropagation();if(event.key==='Escape'){item.blur();item.classList.add('tip-dismissed');}});
+      item.addEventListener('blur',()=>item.classList.remove('tip-dismissed'));
+      item.addEventListener('mouseleave',()=>item.classList.remove('tip-dismissed'));
+      item.addEventListener('focus',()=>item.classList.remove('tip-dismissed'));
+      item.addEventListener('mouseenter',()=>item.classList.remove('tip-dismissed'));
+      return {family,item,tip};
+    });
+    function updateEgress(agent) {
+      const p=agent.state?.public_egress;
+      const lifecycle=Boolean(!agent.online||agent.disabled_at||agent.revoked||agent.state?.stale);
+      for(const {family,item,tip} of egressItems) {
+        const observation=p?.[family],status=observation?.status||'unknown';
+        const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
+        const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
+        const base=available?'可用 '+observation.ip:status==='unavailable'?'不可用':'未知';
+        const at=observation?.checked_at?new Date(observation.checked_at).toLocaleString():'尚未检测';
+        const reason={not_reported:'旧版不支持或尚未上报',not_checked:'等待异步检测',no_route:'无可用路由',family_unavailable:'系统不支持该地址族',dns:'DNS 失败',tls:'TLS 校验失败',timeout:'请求超时',http_status:'回显服务异常',invalid_response:'回显无效',invalid_report:'可选报告无效',network:'网络检测失败',verified:'已验证'}[observation?.reason]||'尚无可靠结果';
+        const history=observation?.last_success;
+        const full=`${family==='ipv4'?'IPv4':'IPv6'} · ${base} · ${at} · ${reason}${stale?' · 旧数据，不能代表当前可用':''}${lifecycle?' · Agent 离线或暂停':''}${history?' · 最后成功 '+history.ip+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
+        setCardText(tip,full);item.setAttribute('aria-label',full);
+        item.dataset.status=status;item.dataset.stale=String(stale);
+      }
+    }
+    updateEgress(agent);
+    name.append(logo, systemText, egress);
     const identityText = document.createElement('div');
     identityText.className = 'identity-text';
     let nameControl = agentNameControl(agent, state);
@@ -1417,6 +1456,7 @@ function createAgentCard(initialAgent) {
       const system = CardMetrics.os(state.os);
       if (logo.getAttribute('src') !== `/vendor/card-icons/${system.icon}.svg`) logo.src = `/vendor/card-icons/${system.icon}.svg`;
       setReadableText(systemText, system.text);
+      updateEgress(agent);
       updateDisplay(mark, countryMark(agent.country_code, agent.country_source));
       const editing = editingAgentNames.has(agent.agent_id);
       if (editing !== nameControl.classList.contains('agent-name-editor')) {
@@ -1451,6 +1491,7 @@ function createAgentCard(initialAgent) {
       setCardText(bandwidth, `带宽 ${compactBandwidth(agent.plan)}`);bandwidth.title=bandwidth.textContent+'；配置带宽，不是实时测速结果';bandwidth.setAttribute('aria-label',bandwidth.title);
       trafficCharts.mount(agent); latencyCharts.mount(agent); networkQuality.mount(agent);
       updateDisplay(googleTools.querySelector('.google-checks'), googleStatusPanel(agent));
+      positionYouTubeTooltip();
       const nextTrigger = selectorView.trigger(agent);
       if (nextTrigger !== selectorTrigger) { selectorTrigger?.remove(); if (nextTrigger) googleTools.append(nextTrigger); selectorTrigger = nextTrigger; }
       selectorView.refresh(agent.agent_id);

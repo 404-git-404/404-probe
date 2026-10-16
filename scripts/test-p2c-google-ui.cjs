@@ -39,6 +39,7 @@ function page(file) {
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/plan-renewal.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/overview.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/plan-units.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/youtube-status.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static',file),'utf8'),sandbox);
   return {nodes,run:(code,input)=>{sandbox.input=input;return vm.runInContext(code,sandbox);}};
 }
@@ -70,13 +71,13 @@ test('actual dashboard panel always has exactly one YouTube row without a retire
 test('actual history summary uses only retained services for current/partial/failed, retaining pending/stale/missing states',()=>{
   const history=page('history.js');
   for(const [view,want] of [
-    [google(),'当前结果'],[google({result:{...result,search:{status:'blocked'},signin:{status:'challenge'}}}),'当前结果'],
-    [google({result:{...result,youtube:{status:'unknown'}}}),'检测失败'],
-    [google({result:{...result,gemini:{status:'unknown',error:{category:'timeout'}}}}),'当前结果'],
-    [google({result:{...result,gemini:{status:'blocked'}}}),'当前结果'],
-    [google({result:{...result,youtube:{status:'unknown'},gemini:{status:'unknown'}}}),'检测失败'],
-    [google({result:{search:{status:'ok'},signin:{status:'reachable'}}}),'检测失败'],
-    [google({pending:true}),'检测中…'],[google({stale:true}),'旧结果 · 等待在线后重新核实'],
+    [google(),'本次页面地区已识别'],[google({result:{...result,search:{status:'blocked'},signin:{status:'challenge'}}}),'本次页面地区已识别'],
+    [google({result:{...result,youtube:{status:'unknown'}}}),'本次结果未知'],
+    [google({result:{...result,gemini:{status:'unknown',error:{category:'timeout'}}}}),'本次页面地区已识别'],
+    [google({result:{...result,gemini:{status:'blocked'}}}),'本次页面地区已识别'],
+    [google({result:{...result,youtube:{status:'unknown'},gemini:{status:'unknown'}}}),'本次结果未知'],
+    [google({result:{search:{status:'ok'},signin:{status:'reachable'}}}),'本次结果未知'],
+    [google({pending:true}),'检测正在进行，上次记录不是本次结论'],[google({stale:true}),'结果已过期，当前地区未知'],
     [google({result:null}),'尚未检测'],[google({supported:false}),'当前 Agent 不支持检测']]) {
     history.run('renderGoogleStatus(input)',{google_status:view,online:true});
     assert.equal(history.nodes.get('#google-status-state').textContent,want);

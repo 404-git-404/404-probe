@@ -19,7 +19,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 27
+const currentSchemaVersion = 29
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -58,6 +58,7 @@ type Agent struct {
 }
 
 type State struct {
+	PublicEgress           EgressState                        `json:"public_egress"`
 	AgentID                string                             `json:"agent_id"`
 	Name                   string                             `json:"name"`
 	Epoch                  uint64                             `json:"-"`
@@ -837,6 +838,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 27: %w", err)
 		}
 	}
+	if version < 28 {
+		if err := migratePublicEgressTx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 28: %w", err)
+		}
+	}
+	if version < 29 {
+		if err := migrateTCPMiniTx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 29: %w", err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1183,6 +1194,10 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	if err != nil {
 		return State{}, false, "", err
 	}
+	state.PublicEgress = mergePublicEgress(previous, state, r, received)
+	if err := writePublicEgressTx(ctx, tx, state); err != nil {
+		return State{}, false, "", err
+	}
 	if err := writeStateTx(ctx, tx, state); err != nil {
 		return State{}, false, "", err
 	}
@@ -1361,6 +1376,10 @@ func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool,
 	s.DiskReadRate = nullableFloat(diskReadRate)
 	s.DiskWriteRate = nullableFloat(diskWriteRate)
 	s.DiskBusyPercent = nullableFloat(diskBusy)
+	s.PublicEgress, err = readPublicEgressTx(ctx, tx, id)
+	if err != nil {
+		return State{}, false, err
+	}
 	return s, true, nil
 }
 

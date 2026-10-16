@@ -22,11 +22,12 @@ const (
 type Action string
 
 const (
-	ActionStart        Action = "start"
-	ActionStatus       Action = "status"
-	ActionHealthy      Action = "healthy"
-	ActionCapabilities Action = "capabilities"
-	ActionRemove       Action = "remove"
+	ActionStart          Action = "start"
+	ActionStatus         Action = "status"
+	ActionHealthy        Action = "healthy"
+	ActionCapabilities   Action = "capabilities"
+	ActionRCCapabilities Action = "capabilities_rc"
+	ActionRemove         Action = "remove"
 )
 
 type Request struct {
@@ -45,7 +46,10 @@ func (r Request) Validate() error {
 		return errors.New("invalid updater request")
 	}
 	switch r.Action {
-	case ActionCapabilities:
+	case ActionCapabilities, ActionRCCapabilities:
+		if r.Action == ActionRCCapabilities && r.ProtocolVersion != 2 {
+			return errors.New("RC capabilities require protocol 2")
+		}
 		if r.OperationID != "" || r.TargetVersion != "" || r.ReceiptToken != "" || r.Channel != "" || r.TargetCommit != "" || r.ServerVersion != "" {
 			return errors.New("invalid updater capability request")
 		}

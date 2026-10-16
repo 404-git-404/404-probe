@@ -37,6 +37,9 @@ func run(args []string) error {
 	if comparison, ok := buildinfo.CompareReleaseVersions(*version, "v1.0.2-beta.1"); ok && comparison >= 0 {
 		document.SchemaVersion = 2
 		document.Compatibility = &releasemetadata.Compatibility{MinServerVersion: "v1.0.1", UpgradeProtocol: 2}
+		if buildinfo.IsRCVersion(*version) {
+			document.Compatibility.MinServerVersion = buildinfo.FirstRCSupportVersion
+		}
 	}
 	checksums := make(map[string]string, len(flags.Args()))
 	for _, path := range flags.Args() {

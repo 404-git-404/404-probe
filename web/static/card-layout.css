@@ -83,3 +83,26 @@ body>header{padding-block:9px 7px}.agent-card .network-rx strong::before{content
 .agent-card .dv-all{position:absolute;right:48px;top:0;width:24px;height:24px;padding:0;border:1px solid #d8cfc1;border-radius:5px;background:#fffaf1;color:#785f49;font-size:15px;line-height:22px;cursor:pointer}
 .agent-card .agent-name-display,.agent-card .agent-name-editor{padding-right:76px}
 @media(max-width:820px){.agent-card .dv-b{height:112.96875px}.agent-card .dv-b .dv-b-details{height:100.96875px}}
+
+/* M10: user-approved compact entries; complete status/IP opens on hover or focus. */
+.agent-card .name { padding-right: 145px; gap: .5px; }
+.agent-card .name > img { flex-shrink: 0; }
+.agent-card .name > span { flex: 0 1 auto; }
+.agent-card .name .public-egress { display: flex; flex: none; gap: 2px; }
+.agent-card .name .public-egress-item { display: block; flex: none; width: 11px; height: 15px; padding: 0; border: 0; border-radius: 2px; background: transparent; font: 9px/15px ui-monospace, monospace; color: #785b42; text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
+.agent-card .public-egress-item[data-status="available"][data-stale="false"] { text-decoration-style: solid; }
+.agent-card .public-egress-item[data-status="unavailable"] { text-decoration-style: double; }
+.agent-card .public-egress-item[data-stale="true"] { text-decoration-style: wavy; }
+.agent-card .name .public-egress-tip { display: none; position: absolute; z-index: 60; left: 0; right: 0; top: 41px; padding: 9px; border: 1px solid #cfb99e; border-radius: 8px; background: #fff9ed; box-shadow: 0 4px 12px #695b442b; color: #493b30; font: 12px/1.6 system-ui; white-space: normal; overflow-wrap: anywhere; }
+.agent-card .public-egress-item:not(.tip-dismissed):is(:hover,:focus) + .public-egress-tip,
+.agent-card .name .public-egress-item:not(.tip-dismissed) + .public-egress-tip:hover { display: block; }
+.agent-card .public-egress-item:focus-visible { outline: 1px solid #ac8563; outline-offset: 1px; }
+.agent-card .name .public-egress:has(.public-egress-item:focus-visible) .public-egress-item:not(:focus-visible) + .public-egress-tip { display: none; }
+.agent-card .name .public-egress:not(:has(.public-egress-item:focus-visible)):has(.public-egress-item:hover) .public-egress-item:not(:hover) + .public-egress-tip { display: none; }
+
+/* M11: keep one YouTube row; diagnostic detail never participates in layout. */
+.agent-card .google-checks { position: relative; }
+.agent-card .google-check .check-result.observed { color: #655344; }
+.agent-card .google-check .youtube-status-tip { display: none; position: fixed; z-index: 60; left: 8px; top: 8px; width: min(300px,calc(100vw - 68px)); box-sizing: border-box; padding: 9px; border: 1px solid #cfb99e; border-radius: 8px; background: #fff9ed; box-shadow: 0 4px 12px #695b442b; font: 12px/1.6 system-ui; color: #493b30; white-space: normal; overflow-wrap: anywhere; }
+.agent-card .google-check .check-result:is(:hover,:focus) + .youtube-status-tip,
+.agent-card .google-check .youtube-status-tip:hover { display: block; }

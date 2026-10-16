@@ -298,7 +298,7 @@ func TestDashboardContinuousListAndTelemetryStatusContracts(t *testing.T) {
 	}
 }
 
-func TestGoogleStatusUIShowsAllCanonicalStates(t *testing.T) {
+func TestGoogleStatusUIShowsPageObservationStates(t *testing.T) {
 	static, err := fs.Sub(Files, "static")
 	if err != nil {
 		t.Fatal(err)
@@ -307,17 +307,19 @@ func TestGoogleStatusUIShowsAllCanonicalStates(t *testing.T) {
 	htmlBytes, _ := fs.ReadFile(static, "history.html")
 	historyBytes, _ := fs.ReadFile(static, "history.js")
 	jobsBytes, _ := fs.ReadFile(static, "jobs.js")
+	youtubeBytes, _ := fs.ReadFile(static, "youtube-status.js")
+	youtube := string(youtubeBytes)
 	app, historyHTML, history := string(appBytes), string(htmlBytes), string(historyBytes)
-	for _, marker := range []string{"CN · 送中", "非 CN", "未知", "尚未检测", "检测中", "旧结果", "重新检测", "/google-status"} {
-		if !strings.Contains(app, marker) {
-			t.Errorf("app.js missing %q", marker)
+	for _, marker := range []string{"地区 ", "未知", "尚未检测", "检测中", "过期", "重新检测", "/google-status", "未验证视频播放或 Premium 解锁"} {
+		if !strings.Contains(app+youtube, marker) {
+			t.Errorf("YouTube observation UI missing %q", marker)
 		}
 	}
-	if !strings.Contains(historyHTML, "YouTube 检测") || !strings.Contains(history, "检测时间：") || !strings.Contains(history, "CN · 送中") || strings.Contains(app+history+string(jobsBytes), "SENT TO CHINA") {
+	if !strings.Contains(historyHTML, "YouTube 检测") || !strings.Contains(history, "YouTubeStatus.view(agent)") || !strings.Contains(app, "YouTubeStatus.view(agent)") || !strings.Contains(historyHTML, `src="/youtube-status.js"`) || strings.Contains(app+history+youtube+string(jobsBytes), "SENT TO CHINA") || strings.Contains(app+history+youtube, "CN · 送中") {
 		t.Fatal("history detail is missing complete Google Status rendering")
 	}
 	for _, removed := range []string{"Gemini", "gemini", "result.search", "result.signin", "value.search", "value.signin", "Google Search", "Google Sign-in", "['Search'", "['登录'"} {
-		if strings.Contains(app+history+historyHTML+string(jobsBytes), removed) {
+		if strings.Contains(app+history+youtube+historyHTML+string(jobsBytes), removed) {
 			t.Fatalf("current Google Status UI still renders removed service %q", removed)
 		}
 	}

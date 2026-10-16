@@ -45,4 +45,13 @@ check 'wrong installer rejected' 'stable installer default does not match' FIXTU
 check 'clean exact commit reaches compiler without tag' COMPILE_GATE_REACHED PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
 check 'clean exact existing tag reaches compiler' COMPILE_GATE_REACHED FIXTURE_TAG=1 PROBE_404_RELEASE_COMMIT=
 check 'matching tag and explicit commit reaches compiler' COMPILE_GATE_REACHED FIXTURE_TAG=1 PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+for version in v1.0.3-beta.1 v1.0.3-rc.1; do
+  if env PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}" bash "${root}/scripts/build-release-assets.sh" "${version}" >"${temporary}/result" 2>&1; then exit 1; fi
+  grep -Fq COMPILE_GATE_REACHED "${temporary}/result" || { cat "${temporary}/result"; exit 1; }
+  printf '%s: explicit clean commit reaches compiler, no tag created\n' "${version}"
+done
+for version in v1.0.3-rc.0 v1.0.3-rc.01 v1.0.3-rc.18446744073709551616; do
+  if env PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}" bash "${root}/scripts/build-release-assets.sh" "${version}" >"${temporary}/result" 2>&1; then exit 1; fi
+  if grep -Fq COMPILE_GATE_REACHED "${temporary}/result"; then cat "${temporary}/result"; exit 1; fi
+done
 printf 'Release build gate tests passed (mock compiler; not a release build).\n'

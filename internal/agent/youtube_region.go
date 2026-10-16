@@ -1,0 +1,394 @@
+package agent
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"404-probe/internal/protocol"
+	"golang.org/x/net/html"
+)
+
+// This observes an anonymous web-page content region, not playback, entitlement
+// or physical location. Web configuration is undocumented: unknown is deliberate
+// when its structure, completeness or corroborating evidence is ambiguous.
+func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
+	unknown := func(reason string) protocol.YouTubeResult {
+		return protocol.YouTubeResult{Status: protocol.YouTubeUnknown, Error: protocol.GoogleServiceError{Category: reason}}
+	}
+	switch response.status {
+	case http.StatusOK:
+	case 403:
+		return unknown("http_forbidden")
+	case 429:
+		return unknown("rate_limited")
+	case 451:
+		return unknown("http_restricted")
+	default:
+		if response.status >= 500 {
+			return unknown("http_server_error")
+		}
+		return unknown("unrecognized_response")
+	}
+	u, err := url.Parse(response.finalURL)
+	if err != nil || !googleHostAllowed(googleYouTube, u) || (u.Path != "/premium" && u.Path != "/premium/") {
+		return unknown("unexpected_page")
+	}
+	media, _, err := mime.ParseMediaType(response.contentType)
+	if err != nil || !strings.EqualFold(media, "text/html") || len(response.body) == 0 {
+		return unknown("unrecognized_response")
+	}
+	z := html.NewTokenizer(bytes.NewReader(response.body))
+	var scripts []string
+	var corroboration []string
+	var title strings.Builder
+	inScript, inTitle, inHead, closedHTML := false, false, false, false
+	scriptAllowed := false
+	var script strings.Builder
+	for {
+		kind := z.Next()
+		if kind == html.ErrorToken {
+			if z.Err() != io.EOF {
+				return unknown("response_read_error")
+			}
+			break
+		}
+		token := z.Token()
+		switch kind {
+		case html.StartTagToken, html.SelfClosingTagToken:
+			attrs := map[string]string{}
+			for _, a := range token.Attr {
+				attrs[a.Key] = a.Val
+			}
+			switch token.Data {
+			case "head":
+				inHead = true
+			case "title":
+				inTitle = true
+			case "script":
+				inScript = true
+				script.Reset()
+				scriptAllowed = attrs["src"] == "" && (attrs["type"] == "" || attrs["type"] == "text/javascript" || attrs["type"] == "application/javascript")
+				if strings.Contains(strings.ToLower(attrs["src"]), "recaptcha") || strings.Contains(strings.ToLower(attrs["src"]), "challenge-platform") {
+					return unknown("challenge_page")
+				}
+			case "form":
+				action, _ := url.Parse(attrs["action"])
+				if action != nil && (action.Hostname() == "consent.youtube.com" || action.Hostname() == "consent.google.com") {
+					return unknown("consent_page")
+				}
+			case "meta":
+				if inHead && strings.EqualFold(attrs["itemprop"], "contentRegion") {
+					corroboration = append(corroboration, attrs["content"])
+				}
+			}
+			for _, key := range []string{"id", "class"} {
+				v := strings.ToLower(attrs[key])
+				if strings.Contains(v, "g-recaptcha") || strings.Contains(v, "h-captcha") || strings.Contains(v, "cf-challenge") {
+					return unknown("challenge_page")
+				}
+			}
+		case html.TextToken:
+			if inScript {
+				script.WriteString(token.Data)
+			} else if inTitle {
+				title.WriteString(token.Data)
+			} else {
+				text := strings.ToLower(token.Data)
+				if strings.Contains(text, "our systems have detected unusual traffic") || strings.Contains(text, "unusual traffic from your computer network") {
+					return unknown("challenge_page")
+				}
+			}
+		case html.EndTagToken:
+			switch token.Data {
+			case "script":
+				if scriptAllowed {
+					scripts = append(scripts, script.String())
+				}
+				inScript = false
+			case "title":
+				inTitle = false
+			case "head":
+				inHead = false
+			case "html":
+				closedHTML = true
+			}
+		}
+	}
+	label := strings.ToLower(title.String())
+	if strings.Contains(label, "before you continue") {
+		return unknown("consent_page")
+	}
+	if strings.Contains(label, "verify your identity") || strings.Contains(label, "just a moment") || strings.Contains(label, "access denied") {
+		return unknown("challenge_page")
+	}
+	if !closedHTML || inScript {
+		return unknown("response_truncated")
+	}
+	if !strings.Contains(label, "youtube") {
+		return unknown("missing_evidence")
+	}
+	var regions []string
+	for _, s := range scripts {
+		configs, err := youtubeConfigs(s)
+		if err != nil {
+			return unknown("invalid_configuration")
+		}
+		for _, config := range configs {
+			if raw, ok := config["INNERTUBE_CONTEXT_GL"]; ok {
+				v, ok := raw.(string)
+				if !ok || !protocol.ValidCountryCode(v) {
+					return unknown("invalid_region")
+				}
+				regions = append(regions, v)
+			}
+			if context, ok := config["INNERTUBE_CONTEXT"].(map[string]any); ok {
+				if client, ok := context["client"].(map[string]any); ok {
+					if raw, ok := client["gl"]; ok {
+						v, ok := raw.(string)
+						if !ok || !protocol.ValidCountryCode(v) {
+							return unknown("invalid_region")
+						}
+						regions = append(regions, v)
+					}
+				}
+			}
+			if raw, ok := config["contentRegion"]; ok {
+				v, ok := raw.(string)
+				if !ok {
+					return unknown("invalid_region")
+				}
+				corroboration = append(corroboration, v)
+			}
+		}
+	}
+	if len(regions) == 0 {
+		return unknown("missing_evidence")
+	}
+	region := regions[0]
+	for _, v := range append(regions, corroboration...) {
+		if !protocol.ValidCountryCode(v) {
+			return unknown("invalid_region")
+		}
+		if v != region {
+			return unknown("region_conflict")
+		}
+	}
+	cn := region == "CN"
+	status := protocol.YouTubeNotCN
+	if cn {
+		status = protocol.YouTubeCN
+	}
+	return protocol.YouTubeResult{Status: status, Region: region, SentToChina: &cn}
+}
+
+// Extract only literal, top-level ytcfg.set(JSON) statements in inline script.
+// Skip JS strings, templates, comments and nested/dead function bodies. Do not
+// execute JavaScript or scan arbitrary occurrences of country-like strings.
+func youtubeConfigs(script string) ([]map[string]any, error) {
+	var configs []map[string]any
+	depth := 0
+	statement := true
+	for i := 0; i < len(script); {
+		c := script[i]
+		if strings.ContainsRune(" \t\r\n\f", rune(c)) {
+			i++
+			continue
+		}
+		if c == '/' && i+1 < len(script) {
+			if script[i+1] == '/' {
+				end := strings.IndexByte(script[i+2:], '\n')
+				if end < 0 {
+					break
+				}
+				i += end + 3
+				continue
+			}
+			if script[i+1] == '*' {
+				end := strings.Index(script[i+2:], "*/")
+				if end < 0 {
+					return nil, errors.New("incomplete script comment")
+				}
+				i += end + 4
+				continue
+			}
+			// Regex contents must not become config calls. Ambiguous division
+			// syntax is conservatively unsupported rather than executed.
+			i++
+			closed, inClass := false, false
+			for i < len(script) {
+				if script[i] == '\\' {
+					i += 2
+					continue
+				}
+				if script[i] == '[' {
+					inClass = true
+				}
+				if script[i] == ']' {
+					inClass = false
+				}
+				if script[i] == '/' && !inClass {
+					i++
+					closed = true
+					break
+				}
+				i++
+			}
+			if !closed {
+				return nil, errors.New("ambiguous script literal")
+			}
+			statement = false
+			continue
+		}
+		if depth == 0 && statement {
+			start := i
+			for _, prefix := range []string{"ytcfg", "window.ytcfg"} {
+				if !strings.HasPrefix(script[start:], prefix) {
+					continue
+				}
+				j := start + len(prefix)
+				for j < len(script) && strings.ContainsRune(" \t\r\n", rune(script[j])) {
+					j++
+				}
+				if j >= len(script) || script[j] != '.' {
+					continue
+				}
+				j++
+				for j < len(script) && strings.ContainsRune(" \t\r\n", rune(script[j])) {
+					j++
+				}
+				if !strings.HasPrefix(script[j:], "set") {
+					continue
+				}
+				j += 3
+				for j < len(script) && strings.ContainsRune(" \t\r\n", rune(script[j])) {
+					j++
+				}
+				if j >= len(script) || script[j] != '(' {
+					continue
+				}
+				j++
+				d := json.NewDecoder(strings.NewReader(script[j:]))
+				d.UseNumber()
+				value, err := youtubeJSON(d, 0)
+				if err != nil {
+					return nil, err
+				}
+				object, ok := value.(map[string]any)
+				if !ok {
+					return nil, errors.New("config not an object")
+				}
+				j += int(d.InputOffset())
+				for j < len(script) && strings.ContainsRune(" \t\r\n", rune(script[j])) {
+					j++
+				}
+				if j >= len(script) || script[j] != ')' {
+					return nil, errors.New("incomplete config call")
+				}
+				configs = append(configs, object)
+				i = j + 1
+				statement = false
+				break
+			}
+			if i != start {
+				continue
+			}
+		}
+		if c == '\'' || c == '"' || c == '`' {
+			quote := c
+			i++
+			closed := false
+			for i < len(script) {
+				if script[i] == '\\' {
+					i += 2
+					continue
+				}
+				if script[i] == quote {
+					i++
+					closed = true
+					break
+				}
+				i++
+			}
+			if !closed {
+				return nil, errors.New("incomplete script string")
+			}
+			statement = false
+			continue
+		}
+		switch c {
+		case '{', '[', '(':
+			depth++
+		case '}', ']', ')':
+			if depth > 0 {
+				depth--
+			}
+		case ';':
+			if depth == 0 {
+				statement = true
+				i++
+				continue
+			}
+		}
+		statement = false
+		i++
+	}
+	return configs, nil
+}
+
+// Duplicate keys and pathological nesting are ambiguous, even when encoding/json
+// would otherwise silently choose the final country value.
+func youtubeJSON(d *json.Decoder, depth int) (any, error) {
+	if depth > 64 {
+		return nil, errors.New("config nesting limit")
+	}
+	t, err := d.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delimiter, ok := t.(json.Delim); ok {
+		switch delimiter {
+		case '{':
+			m := map[string]any{}
+			for d.More() {
+				key, err := d.Token()
+				if err != nil {
+					return nil, err
+				}
+				k, ok := key.(string)
+				if !ok {
+					return nil, errors.New("invalid key")
+				}
+				if _, exists := m[k]; exists {
+					return nil, errors.New("duplicate key")
+				}
+				v, err := youtubeJSON(d, depth+1)
+				if err != nil {
+					return nil, err
+				}
+				m[k] = v
+			}
+			_, err = d.Token()
+			return m, err
+		case '[':
+			var values []any
+			for d.More() {
+				v, err := youtubeJSON(d, depth+1)
+				if err != nil {
+					return nil, err
+				}
+				values = append(values, v)
+			}
+			_, err = d.Token()
+			return values, err
+		default:
+			return nil, errors.New("invalid delimiter")
+		}
+	}
+	return t, nil
+}

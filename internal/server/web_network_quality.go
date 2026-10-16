@@ -125,6 +125,7 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/agent/network-quality/config", a.handleAgentQualityConfig)
 	mux.Handle("GET /api/v1/web/network-quality/catalog", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCatalog), true)))
 	path := "/api/v1/web/agents/{agent_id}/network-quality/"
+	mux.Handle("GET "+path+"v3/tcp-mini", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleTCPMini), true)))
 	mux.Handle("GET "+path+"config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityConfig), true)))
 	mux.Handle("PUT "+path+"config", qualityBudgetHandler(a.requireWebMutation(http.HandlerFunc(a.handleQualityConfig))))
 	mux.Handle("GET "+path+"v2/config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityConfigV2), true)))

@@ -45,7 +45,7 @@ func TestExplicitBetaDoesNotOpenStableUpgradeChannel(t *testing.T) {
 			t.Fatal("stable comparator accepted Beta")
 		}
 	}
-	for _, value := range []string{"v1.0.1-beta.0", "v1.0.1-beta.01", "v01.0.1-beta.1", "v1.0.1-rc.1", "v1.0.1-beta.1+build", "v1.0.1-beta.1/asset"} {
+	for _, value := range []string{"v1.0.1-beta.0", "v1.0.1-beta.01", "v01.0.1-beta.1", "v1.0.1-rc.0", "v1.0.1-rc.01", "v1.0.1-beta.1+build", "v1.0.1-beta.1/asset"} {
 		if IsReleaseVersion(value) {
 			t.Fatalf("invalid release accepted: %s", value)
 		}

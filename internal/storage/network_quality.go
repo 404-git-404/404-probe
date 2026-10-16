@@ -292,7 +292,7 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM quality_raw WHERE agent_id=? AND epoch=? AND session_id=? AND seq=?`, id, epoch, b.SessionID, seq).Scan(&rawID); err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
-		if err := qualityRollupTx(ctx, tx, id, epoch, b.SessionID, rawID, sample, target, digest[:], len(payloadBytes)); err != nil {
+		if err := qualityRollupTx(ctx, tx, id, epoch, b.SessionID, rawID, sample, target, digest[:], len(payloadBytes), now); err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
 		rawLocal++

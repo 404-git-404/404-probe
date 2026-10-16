@@ -10,6 +10,7 @@ import (
 const MaxReportBytes = 64 << 10
 
 type Report struct {
+	PublicEgress        *PublicEgress                `json:"public_egress,omitempty"`
 	NetworkQualityV2    *QualityCapabilities         `json:"network_quality_v2,omitempty"`
 	NetworkQuality      bool                         `json:"network_quality,omitempty"`
 	AgentID             string                       `json:"agent_id"`
@@ -186,6 +187,7 @@ type ReportResponse struct {
 }
 
 type ReportCapabilities struct {
+	PublicEgressReport    bool `json:"public_egress_report,omitempty"`
 	NetworkQualityStaged  bool `json:"network_quality_staged,omitempty"`
 	NetworkQualityV2      bool `json:"network_quality_v2,omitempty"`
 	AgentUpgradeV2        bool `json:"agent_upgrade_v2,omitempty"`

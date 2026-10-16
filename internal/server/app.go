@@ -268,7 +268,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishReportedState(state, owner, received)
 	}
-	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
+	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{PublicEgressReport: true, AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
 	response.Capabilities.NetworkQuality = true
 	response.Capabilities.NetworkQualityV2 = r.Header.Get(protocol.QualityVersionHeader) == "2" || report.NetworkQualityV2 != nil
 	response.Capabilities.NetworkQualityStaged = r.Header.Get(protocol.QualitySemanticsHeader) == protocol.QualityStagedSemantics || report.NetworkQualityV2 != nil && report.NetworkQualityV2.Semantics == protocol.QualityStagedSemantics
@@ -650,6 +650,7 @@ func (a *App) CleanupLoop() {
 	defer cleanupTicker.Stop()
 	defer historyTicker.Stop()
 	defer walHealthTicker.Stop()
+	a.maintainTCPMini()
 	a.cleanupExpiredRemovalReceipts()
 	a.cleanupPlanRenewalRequests()
 	for {

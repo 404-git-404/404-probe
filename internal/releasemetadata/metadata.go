@@ -125,13 +125,16 @@ func rejectDuplicateObjectKeys(data []byte) error {
 }
 
 func Validate(document Document) error {
+	if buildinfo.IsRCVersion(document.Version) && document.SchemaVersion != 2 {
+		return errors.New("RC requires explicit schema2 compatibility")
+	}
 	if document.SchemaVersion != SchemaVersion && document.SchemaVersion != 2 {
 		return errors.New("unsupported release metadata schema")
 	}
 	if document.SchemaVersion == 1 && document.Compatibility != nil {
 		return errors.New("legacy metadata cannot contain compatibility")
 	}
-	if document.SchemaVersion == 2 && (document.Compatibility == nil || !buildinfo.IsCanonicalVersion(document.Compatibility.MinServerVersion) || document.Compatibility.UpgradeProtocol != 2) {
+	if document.SchemaVersion == 2 && (document.Compatibility == nil || !(buildinfo.IsCanonicalVersion(document.Compatibility.MinServerVersion) || buildinfo.IsRCVersion(document.Version) && buildinfo.IsRCVersion(document.Compatibility.MinServerVersion)) || document.Compatibility.UpgradeProtocol != 2) {
 		return errors.New("invalid release compatibility contract")
 	}
 	if !buildinfo.IsReleaseVersion(document.Version) {

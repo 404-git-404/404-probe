@@ -3,7 +3,7 @@ package buildinfo
 import "testing"
 
 func TestReleaseVersionsRejectOverflowAndOrderBeta(t *testing.T) {
-	for _, v := range []string{"v18446744073709551616.0.0", "v1.0.2-beta.18446744073709551616", "v1.00.1", "v1.0.2-beta.0", "v1.0.2-rc.1"} {
+	for _, v := range []string{"v18446744073709551616.0.0", "v1.0.2-beta.18446744073709551616", "v1.00.1", "v1.0.2-beta.0", "v1.0.2-rc.18446744073709551616"} {
 		if IsReleaseVersion(v) {
 			t.Fatal("accepted", v)
 		}

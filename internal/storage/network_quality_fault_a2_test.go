@@ -71,7 +71,7 @@ func TestA2RotationAtomicRollbackAndRestartRetirement(t *testing.T) {
 	}
 	qualityCounts(t, reopened, id, 1)
 	version, versionErr := schemaVersion(ctx, reopened.db)
-	if versionErr != nil || version != 27 {
+	if versionErr != nil || version != currentSchemaVersion {
 		t.Fatal("schema changed", version, versionErr)
 	}
 	h, err := reopened.QualityHistoryV2(ctx, id, target.ID, 1, now)

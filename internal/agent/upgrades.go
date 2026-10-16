@@ -123,7 +123,12 @@ func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, 
 	}
 	if r.upgradeV2ServerSupported.Load() || r.config.AgentVersion == "v1.0.1" {
 		response, err := local.Call(ctx, updater.Request{ProtocolVersion: 2, Action: updater.ActionCapabilities})
-		r.upgradeV2UpdaterSupported.Store(r.upgradeV2ServerSupported.Load() && err == nil && response.Accepted && response.Capabilities.UpgradeV2)
+		supported := err == nil && response.Accepted && response.Capabilities.UpgradeV2
+		if supported && rcVersionAware(r.config.AgentVersion) {
+			proof, e := local.Call(ctx, updater.Request{ProtocolVersion: 2, Action: updater.ActionRCCapabilities})
+			supported = e == nil && proof.Accepted && proof.Capabilities.UpgradeV2
+		}
+		r.upgradeV2UpdaterSupported.Store(r.upgradeV2ServerSupported.Load() && supported)
 		if err == nil && response.Accepted && response.State.LocalMigration && !isTerminalMigrationStatus(response.State.Status) {
 			if response.State.TargetVersion == "v1.0.1" && response.State.Status == "health_check" && r.config.AgentVersion == "v1.0.1" && r.versionReportAccepted.Load() {
 				_, _ = local.Call(ctx, updater.Request{ProtocolVersion: 1, Action: updater.ActionHealthy, OperationID: response.State.OperationID, TargetVersion: "v1.0.1"})
@@ -184,6 +189,11 @@ func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, 
 		}
 	}
 	return true
+}
+
+func rcVersionAware(version string) bool {
+	cmp, ok := buildinfo.CompareReleaseVersions(version, buildinfo.FirstRCSupportVersion)
+	return ok && cmp >= 0
 }
 
 func isTerminalMigrationStatus(status string) bool {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"404-probe/internal/protocol"
@@ -65,11 +66,19 @@ func (s *Store) GoogleStatusPending(ctx context.Context, agentID string, now tim
 	return pending == 1, err
 }
 
+type googleStatusReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func (s *Store) GetGoogleStatus(ctx context.Context, agentID string) (GoogleStatusSnapshot, bool, error) {
+	return readGoogleStatus(ctx, s.db, agentID)
+}
+
+func readGoogleStatus(ctx context.Context, db googleStatusReader, agentID string) (GoogleStatusSnapshot, bool, error) {
 	var snapshot GoogleStatusSnapshot
 	var youtubeRegion, youtubeError, searchError, signinError, geminiRegion, geminiError sql.NullString
 	var sentToChina sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT agent_id,youtube_status,youtube_region,sent_to_china,youtube_error,
+	err := db.QueryRowContext(ctx, `SELECT agent_id,youtube_status,youtube_region,sent_to_china,youtube_error,
 		search_status,search_error,signin_status,signin_error,gemini_status,gemini_region,gemini_error,
 		checked_at,unknown_streak,next_due_at FROM agent_google_status WHERE agent_id=?`, agentID).Scan(
 		&snapshot.AgentID, &snapshot.Result.YouTube.Status, &youtubeRegion, &sentToChina, &youtubeError,
@@ -153,6 +162,9 @@ func (s *Store) createGoogleStatusJob(ctx context.Context, agentID string, now t
 	if err := cleanupExpiredJobsTx(ctx, tx, agentID, nowMS); err != nil {
 		return false, err
 	}
+	if err := expireYouTubeObservationTx(ctx, tx, agentID, nowMS); err != nil {
+		return false, err
+	}
 	var pending int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM probe_jobs WHERE agent_id=? AND probe_type='google_status' AND status IN ('queued','leased'))`, agentID).Scan(&pending); err != nil {
 		return false, err
@@ -191,14 +203,24 @@ func (s *Store) createGoogleStatusJob(ctx context.Context, agentID string, now t
 	return true, tx.Commit()
 }
 
-func saveGoogleStatusTx(ctx context.Context, tx *sql.Tx, agentID string, result protocol.GoogleStatusResult, checkedAt int64) error {
+func saveGoogleStatusTx(ctx context.Context, tx *sql.Tx, agentID string, result protocol.GoogleStatusResult, checkedAt int64, diagnostic ...string) error {
 	if err := result.Validate(); err != nil {
 		return err
 	}
+	if len(diagnostic) > 0 && result.YouTube.Status == protocol.YouTubeUnknown {
+		reason := strings.TrimPrefix(diagnostic[0], "youtube_")
+		if strings.HasPrefix(diagnostic[0], "youtube_") && protocol.YouTubeDiagnosticCategory(reason) && protocol.CompatibleYouTubeCategory(reason) == result.YouTube.Error.Category {
+			result.YouTube.Error.Category = reason
+		}
+	}
 	var prior int
-	if err := tx.QueryRowContext(ctx, `SELECT unknown_streak FROM agent_google_status WHERE agent_id=?`, agentID).Scan(&prior); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	var priorAt int64
+	if err := tx.QueryRowContext(ctx, `SELECT unknown_streak,checked_at FROM agent_google_status WHERE agent_id=?`, agentID).Scan(&prior, &priorAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	if checkedAt <= priorAt {
+		return nil
+	} // A late result must not resurrect a superseded region.
 	streak := 0
 	next := checkedAt + GoogleStatusInterval.Milliseconds()
 	if result.HasRetainedUnknown() {
@@ -237,4 +259,53 @@ func googleStatusJobID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+// Expose expiration even before an Agent's next claim performs queue cleanup.
+// No old successful region survives a newer attempt that expired without a result.
+func (s *Store) GetGoogleStatusAt(ctx context.Context, agentID string, now time.Time) (GoogleStatusSnapshot, bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return GoogleStatusSnapshot{}, false, err
+	}
+	defer tx.Rollback()
+	snapshot, exists, err := readGoogleStatus(ctx, tx, agentID)
+	if err != nil {
+		return snapshot, exists, err
+	}
+	var expired sql.NullInt64
+	err = tx.QueryRowContext(ctx, `SELECT MAX(expires_at) FROM probe_jobs WHERE agent_id=? AND probe_type='google_status' AND status IN ('queued','leased','expired') AND expires_at<=?`, agentID, now.UnixMilli()).Scan(&expired)
+	if err != nil {
+		return snapshot, exists, err
+	}
+	if expired.Valid && expired.Int64 > snapshot.CheckedAt {
+		snapshot = expiredYouTubeSnapshot(agentID, snapshot, expired.Int64)
+		exists = true
+	}
+	return snapshot, exists, tx.Commit()
+}
+
+func expiredYouTubeSnapshot(agentID string, prior GoogleStatusSnapshot, at int64) GoogleStatusSnapshot {
+	streak := prior.UnknownStreak + 1
+	retry := time.Hour
+	if streak == 1 {
+		retry = 10 * time.Minute
+	} else if streak == 2 {
+		retry = 30 * time.Minute
+	}
+	return GoogleStatusSnapshot{AgentID: agentID, CheckedAt: at, UnknownStreak: streak, NextDueAt: at + retry.Milliseconds(), Result: protocol.GoogleStatusResult{
+		YouTube: protocol.YouTubeResult{Status: protocol.YouTubeUnknown, Error: protocol.GoogleServiceError{Category: "job_expired"}},
+		Search:  protocol.GoogleSearchResult{Status: protocol.GoogleSearchUnknown}, SignIn: protocol.GoogleSignInResult{Status: protocol.GoogleSignInUnknown}, Gemini: protocol.GeminiResult{Status: protocol.GeminiUnknown}}}
+}
+
+func expireYouTubeObservationTx(ctx context.Context, tx *sql.Tx, agentID string, now int64) error {
+	var expired sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(expires_at) FROM probe_jobs WHERE agent_id=? AND probe_type='google_status' AND status='expired' AND expires_at<=?`, agentID, now).Scan(&expired); err != nil {
+		return err
+	}
+	if !expired.Valid {
+		return nil
+	}
+	result := expiredYouTubeSnapshot(agentID, GoogleStatusSnapshot{}, expired.Int64).Result
+	return saveGoogleStatusTx(ctx, tx, agentID, result, expired.Int64)
 }

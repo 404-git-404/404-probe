@@ -245,7 +245,7 @@ func handleConnection(connection net.Conn, engine *Engine, allowedUID uint32) {
 		state, err = engine.Status(request)
 	case ActionHealthy:
 		state, err = engine.Healthy(request)
-	case ActionCapabilities:
+	case ActionCapabilities, ActionRCCapabilities:
 		if request.ProtocolVersion == 1 {
 			_ = json.NewEncoder(connection).Encode(Response{Accepted: true, Capabilities: UpdaterCapabilities{RemoteRemoval: engine.SupportsRemoteRemoval()}})
 			return

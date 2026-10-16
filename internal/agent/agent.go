@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"404-probe/internal/collector"
+	"404-probe/internal/egress"
 	"404-probe/internal/geoip"
 	"404-probe/internal/platformsupport"
 	"404-probe/internal/protocol"
@@ -52,8 +53,9 @@ type Config struct {
 }
 
 var (
-	ErrAgentRevoked  = errors.New("agent credential has been revoked")
-	ErrAgentDisabled = errors.New("agent has been disabled")
+	errPublicEgressRejected = errors.New("optional public egress rejected")
+	ErrAgentRevoked         = errors.New("agent credential has been revoked")
+	ErrAgentDisabled        = errors.New("agent has been disabled")
 )
 
 const (
@@ -103,6 +105,7 @@ func (c Config) Validate() error {
 }
 
 type Runner struct {
+	egress                       *egress.Monitor
 	deferredUnsupported          bool
 	config                       Config
 	client                       *http.Client
@@ -219,6 +222,7 @@ func newWithPlatform(config Config, logger *slog.Logger, executor Executor, plat
 	policy := platformsupport.QualityHost()
 	quality.excludedReason = policy.Reason
 	return &Runner{
+		egress:              egress.NewMonitor(),
 		deferredUnsupported: platform.DeferredUnsupported,
 		config:              config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: &collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
@@ -246,6 +250,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		workerContext, stopWorker := context.WithCancel(ctx)
 		var workers sync.WaitGroup
+		if r.egress != nil {
+			workers.Add(1)
+			go func() { defer workers.Done(); r.egress.Run(workerContext) }()
+		}
 		if r.quality == nil || r.quality.excludedReason == "" {
 			workers.Add(1)
 			go func() {
@@ -435,7 +443,16 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	measurement.SessionID = r.sessionID
 	measurement.Sequence = *sequence
 	measurement.CollectedAt = time.Now().UnixMilli()
+	measurement.PublicEgress = nil
+	if r.egress != nil {
+		measurement.PublicEgress = r.egress.Snapshot()
+	}
 	response, err := r.post(ctx, measurement)
+	if errors.Is(err, errPublicEgressRejected) {
+		r.egress.SetSupported(false)
+		measurement.PublicEgress = nil
+		response, err = r.post(ctx, measurement) // A strict old Server did not commit the 400.
+	}
 	if errors.Is(err, errQualityV2Rejected) {
 		r.qualityStagedSupported.Store(false)
 		r.qualityV2Supported.Store(false)
@@ -478,6 +495,9 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	if response.Capabilities.CountryCodeReport {
 		r.reportCountryCode = true
+	}
+	if r.egress != nil {
+		r.egress.SetSupported(response.Capabilities.PublicEgressReport)
 	}
 	r.reportManagementCapabilities = response.Capabilities.ManagementReport
 	r.qualitySupported.Store(response.Capabilities.NetworkQuality)
@@ -545,6 +565,9 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	}
 	if len(limited) > 4096 {
 		return protocol.ReportResponse{}, errors.New("server response is too large")
+	}
+	if resp.StatusCode == http.StatusBadRequest && report.PublicEgress != nil {
+		return protocol.ReportResponse{}, errPublicEgressRejected
 	}
 	if resp.StatusCode == http.StatusBadRequest && report.NetworkQualityV2 != nil {
 		return protocol.ReportResponse{}, errQualityV2Rejected

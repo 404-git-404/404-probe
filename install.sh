@@ -96,12 +96,18 @@ download_to_file() (
 )
 
 release_version() {
-  [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?$ ]]
+  local version="$1" part
+  [[ ${#version} -le 64 && "${version}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(beta|rc)\.[1-9][0-9]*)?$ ]] || return 1
+  version="${version#v}"; version="${version/-beta./.}"; version="${version/-rc./.}"
+  local -a parts; IFS=. read -r -a parts <<<"${version}"
+  for part in "${parts[@]}"; do
+    [[ ${#part} -lt 20 || ( ${#part} -eq 20 && ! "${part}" > 18446744073709551615 ) ]] || return 1
+  done
 }
 
 download_release_asset() {
   local version="$1" name="$2" destination="$3" api_document api_url tag deadline remaining
-  release_version "${version}" || die "release asset version must be stable or explicit beta.N"
+  release_version "${version}" || die "release asset version must be stable or explicit beta.N/rc.N"
   [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "release asset name is invalid"
 	deadline=$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))
 	DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_PRESERVE_PARTIAL=1 download_to_file "${destination}" \
@@ -132,12 +138,12 @@ download_release_asset() {
 }
 
 canonical_version() {
-  [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+  release_version "$1" && [[ "$1" != *-* ]]
 }
 
 target_version() {
   local version="${PROBE_404_VERSION:-${DEFAULT_VERSION}}"
-  release_version "${version}" || die "target version must be stable or explicit beta.N"
+  release_version "${version}" || die "target version must be stable or explicit beta.N/rc.N"
   printf '%s\n' "${version}"
 }
 
@@ -145,7 +151,7 @@ bootstrap_latest_installer() (
   local effective latest release_base temporary_directory installer checksum_line status
   if [[ -n "${PROBE_404_VERSION:-}" ]]; then
     latest="${PROBE_404_VERSION}"
-    release_version "${latest}" || die "explicit target version must be stable or beta.N"
+    release_version "${latest}" || die "explicit target version must be stable or beta.N/rc.N"
   else
     effective="$(curl_with_retry \
       --output /dev/null --write-out '%{url_effective}' "https://github.com/${REPOSITORY}/releases/latest")" \
@@ -2545,22 +2551,28 @@ json_string_field() {
 }
 
 compare_versions() {
-  local left="$1" right="$2" lmajor lminor lpatch rmajor rminor rpatch lbeta rbeta lbase rbase
+  local left="$1" right="$2" lmajor lminor lpatch rmajor rminor rpatch lbase rbase lkind=2 rkind=2 ln=0 rn=0 comparison pair
   release_version "${left}" && release_version "${right}" || return 2
-  lbase="${left%%-beta.*}"; rbase="${right%%-beta.*}"
+  lbase="${left%%-*}"; rbase="${right%%-*}"
   IFS=. read -r lmajor lminor lpatch <<<"${lbase#v}"
   IFS=. read -r rmajor rminor rpatch <<<"${rbase#v}"
   for pair in "${lmajor}:${rmajor}" "${lminor}:${rminor}" "${lpatch}:${rpatch}"; do
-    if (( 10#${pair%%:*} < 10#${pair#*:} )); then printf '%s\n' -1; return; fi
-    if (( 10#${pair%%:*} > 10#${pair#*:} )); then printf '%s\n' 1; return; fi
+    comparison="$(compare_release_numbers "${pair%%:*}" "${pair#*:}")"
+    [[ "${comparison}" == 0 ]] || { printf '%s\n' "${comparison}"; return; }
   done
-  [[ "${left}" == *-beta.* || "${right}" == *-beta.* ]] || { printf '%s\n' 0; return; }
-  [[ "${left}" == *-beta.* ]] || { printf '%s\n' 1; return; }
-  [[ "${right}" == *-beta.* ]] || { printf '%s\n' -1; return; }
-  lbeta="${left##*-beta.}"; rbeta="${right##*-beta.}"
-  if (( 10#${lbeta} < 10#${rbeta} )); then printf '%s\n' -1
-  elif (( 10#${lbeta} > 10#${rbeta} )); then printf '%s\n' 1
-  else printf '%s\n' 0; fi
+  if [[ "${left}" == *-beta.* ]]; then lkind=0; ln="${left##*-beta.}"; elif [[ "${left}" == *-rc.* ]]; then lkind=1; ln="${left##*-rc.}"; fi
+  if [[ "${right}" == *-beta.* ]]; then rkind=0; rn="${right##*-beta.}"; elif [[ "${right}" == *-rc.* ]]; then rkind=1; rn="${right##*-rc.}"; fi
+  comparison="$(compare_release_numbers "${lkind}" "${rkind}")"
+  [[ "${comparison}" == 0 ]] || { printf '%s\n' "${comparison}"; return; }
+  compare_release_numbers "${ln}" "${rn}"
+}
+
+compare_release_numbers() {
+  if [[ ${#1} -lt ${#2} ]]; then printf '%s\n' -1
+  elif [[ ${#1} -gt ${#2} ]]; then printf '%s\n' 1
+  elif [[ "$1" == "$2" ]]; then printf '%s\n' 0
+  elif LC_ALL=C test "$1" \< "$2"; then printf '%s\n' -1
+  else printf '%s\n' 1; fi
 }
 
 download_server_upgrade_candidate() (
@@ -2770,6 +2782,57 @@ verify_legacy_server_upgrade_backup() {
   (cd "${backup}" && sha256sum --check --strict SHA256SUMS >/dev/null) || return 1
 }
 
+# Compare the complete restored file set before SQLite can rebuild sidecars.
+verify_restored_server_files() {
+  local backup="$1" file expected actual
+  for file in 404-probe.db 404-probe.db-wal 404-probe.db-shm; do
+    if grep -Fxq "${file}" "${backup}/database-files"; then
+      [[ -f "${STATE_DIRECTORY}/${file}" && ! -L "${STATE_DIRECTORY}/${file}" ]] || return 1
+      expected="$(sha256sum "${backup}/database/${file}" | awk '{print $1}')" || return 1
+      actual="$(sha256sum "${STATE_DIRECTORY}/${file}" | awk '{print $1}')" || return 1
+      [[ "${actual}" == "${expected}" ]] || return 1
+      sync -f "${STATE_DIRECTORY}/${file}" || return 1
+    else
+      [[ ! -e "${STATE_DIRECTORY}/${file}" && ! -L "${STATE_DIRECTORY}/${file}" ]] || return 1
+    fi
+  done
+  [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" ]] || return 1
+  expected="$(sha256sum "${backup}/server-binary" | awk '{print $1}')" || return 1
+  actual="$(sha256sum "${SERVER_BINARY}" | awk '{print $1}')" || return 1
+  [[ "${actual}" == "${expected}" ]]
+}
+
+verify_restored_server_readiness() {
+  local listen origin expected pid current_pid executable status_code observation
+  listen="$(sed -n "s#^ExecStart=${SERVER_BINARY} serve --listen \([^ ]*\) .*#\1#p" "${SERVER_UNIT}")" || return 1
+  [[ "$(printf '%s\n' "${listen}" | grep -c .)" -eq 1 ]] || return 1
+  if [[ "${listen}" =~ ^(127\.0\.0\.1|localhost):([0-9]{1,5})$ || "${listen}" =~ ^\[::1\]:([0-9]{1,5})$ ]]; then
+    origin="http://${listen}"
+  else
+    return 1
+  fi
+  expected="$(sha256sum "${SERVER_BINARY}" | awk '{print $1}')" || return 1
+  # Keep the existing readiness helper's exit inside a subshell so recovery
+  # can stop a failed service and retain its pending transaction.
+  (wait_for_server_readiness 404-probe-server.service "${origin}") || return 1
+  pid="$(systemctl show -p MainPID --value 404-probe-server.service)" || return 1
+  [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+  # Type=simple accepting start is not health. Require the same original
+  # executable and HTTP readiness throughout at least five seconds.
+  for observation in {0..10}; do
+    systemctl is-active --quiet 404-probe-server.service || return 1
+    current_pid="$(systemctl show -p MainPID --value 404-probe-server.service)" || return 1
+    [[ "${current_pid}" == "${pid}" ]] || return 1
+    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+    [[ "${executable}" == "${SERVER_BINARY}" && "/proc/${pid}/exe" -ef "${SERVER_BINARY}" ]] || return 1
+    [[ "$(sha256sum "/proc/${pid}/exe" | awk '{print $1}')" == "${expected}" ]] || return 1
+    status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --connect-timeout 1 --max-time 1 --request POST \
+      "${origin}/api/v1/agent/jobs/claim" || true)"
+    [[ "${status_code}" == 401 ]] || return 1
+    (( observation == 10 )) || sleep 0.5
+  done
+}
+
 restore_server_upgrade() {
   reject_openrc_deferred Server-upgrade-recovery
   local phase active enabled target restore_temporary helper_restore_temporary helper_state legacy_backup=0
@@ -2807,6 +2870,10 @@ restore_server_upgrade() {
         sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" || return 1
         sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" || return 1
       fi
+      verify_restored_server_files "${SERVER_UPGRADE_BACKUP}" || {
+        printf '404-probe installer: restored Server/database files do not match the protected backup; recovery remains pending\n' >&2
+        return 1
+      }
       if (( legacy_backup == 0 )); then
         helper_state="$(<"${SERVER_UPGRADE_BACKUP}/helper-state")" || return 1
         if [[ "${helper_state}" == 1 ]]; then
@@ -2822,10 +2889,28 @@ restore_server_upgrade() {
       ;;
     *) return 1 ;;
   esac
+  # The restored version itself must read its database without migration.
+  # This command also exists in the supported v0.9.3 Server. Older binaries
+  # without it fail closed, preserving backup/pending for manual recovery.
+  runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" database verify --db "${SERVER_DATABASE}" >/dev/null || {
+    printf '404-probe installer: restored Server cannot verify its database; recovery remains pending\n' >&2
+    return 1
+  }
   if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || return 1
   else systemctl disable 404-probe-server.service >/dev/null || return 1; fi
-  if (( active != 0 )); then systemctl start 404-probe-server.service || return 1
-  else systemctl stop 404-probe-server.service >/dev/null 2>&1 || true; fi
+  if (( active != 0 )); then
+    if ! systemctl start 404-probe-server.service || ! verify_restored_server_readiness; then
+      systemctl stop 404-probe-server.service >/dev/null 2>&1 || true
+      if systemctl is-active --quiet 404-probe-server.service; then
+        printf '404-probe installer: recovered Server failed health verification and could not be stopped; recovery remains pending\n' >&2
+      else
+        printf '404-probe installer: recovered Server failed health verification; left stopped with recovery pending\n' >&2
+      fi
+      return 1
+    fi
+  else
+    systemctl is-active --quiet 404-probe-server.service && return 1
+  fi
   clear_server_upgrade_state || return 1
   rm -f -- "${SERVER_UPGRADE_CANDIDATE}" || return 1
   rm -f -- "${SERVER_UPGRADE_HELPER_CANDIDATE}" || return 1
@@ -2988,6 +3073,12 @@ EOF
   version_json="$("${SERVER_BINARY}" version --json)"
   [[ "$(json_string_field "${version_json}" version)" == "${target}" && "${version_json}" == *'"dirty":false'* ]] \
     || die "installed candidate identity check failed"
+  runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" database verify --db "${SERVER_DATABASE}" >/dev/null \
+    || die "post-upgrade database query and integrity verification failed"
+  mv -f -- "${SERVER_UPGRADE_HELPER_CANDIDATE}" "${INSTALL_HELPER}" || die "could not atomically replace local helper"
+  write_server_upgrade_state helper-replaced "${active}" "${enabled}" "${target}" || die "could not persist local helper replacement state"
+  "${INSTALL_HELPER}" --help >/dev/null || die "upgraded local helper failed its help check"
+  "${INSTALL_HELPER}" domains list >/dev/null || die "upgraded local helper failed its offline domain-management check"
   if (( active != 0 )); then
     systemctl start 404-probe-server.service || die "candidate Server failed to start"
     write_server_upgrade_state candidate-started "${active}" "${enabled}" "${target}" || die "could not persist candidate startup state"
@@ -2997,12 +3088,6 @@ EOF
     executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
     [[ "${executable}" == "${SERVER_BINARY}" ]] || die "running Server process is not the installed candidate"
   fi
-  runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" database verify --db "${SERVER_DATABASE}" >/dev/null \
-    || die "post-upgrade database query and integrity verification failed"
-  mv -f -- "${SERVER_UPGRADE_HELPER_CANDIDATE}" "${INSTALL_HELPER}" || die "could not atomically replace local helper"
-  write_server_upgrade_state helper-replaced "${active}" "${enabled}" "${target}" || die "could not persist local helper replacement state"
-  "${INSTALL_HELPER}" --help >/dev/null || die "upgraded local helper failed its help check"
-  "${INSTALL_HELPER}" domains list >/dev/null || die "upgraded local helper failed its offline domain-management check"
   if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || die "could not restore enabled state"
   else systemctl disable 404-probe-server.service >/dev/null || die "could not restore disabled state"; fi
   (( active != 0 )) || systemctl stop 404-probe-server.service >/dev/null 2>&1 || true
@@ -3018,7 +3103,7 @@ EOF
 print_install_banner() {
   local version label=""
   version="$(target_version)" || return
-  [[ "${version}" != *-beta.* ]] || label=" (Pre-release)"
+  canonical_version "${version}" || label=" (Pre-release)"
   printf 'Install 404-probe %s%s\n\n  1) Server\n  2) Agent\n\n' "${version}" "${label}"
 }
 

@@ -75,7 +75,7 @@ func (s *Store) BackfillQualityBatch(ctx context.Context, now time.Time) (int, b
 		if err = json.Unmarshal([]byte(wire), &target); err != nil {
 			return 0, false, err
 		}
-		if err = qualityRollupTx(ctx, tx, r.agent, r.epoch, r.session, r.id, r.sample, target, r.hash, len(payload)); err != nil {
+		if err = qualityRollupTx(ctx, tx, r.agent, r.epoch, r.session, r.id, r.sample, target, r.hash, len(payload), now); err != nil {
 			return 0, false, err
 		}
 		cursor = r.id

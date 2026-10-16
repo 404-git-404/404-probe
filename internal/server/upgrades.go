@@ -91,7 +91,7 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 	body, err := readBoundedBody(w, r, 1024)
 	input, inputErr := decodeUpgradeInput(body)
 	if err != nil || inputErr != nil {
-		writeJobError(w, http.StatusBadRequest, "invalid_request", "select a fixed compatible release and explicitly confirm Beta")
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "select a fixed compatible release and explicitly confirm pre-release (Beta/RC)")
 		return
 	}
 	record, err := a.store.GetAgentSnapshot(r.Context(), agentID, a.now(), a.offlineTimeout)
@@ -119,7 +119,7 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusConflict, "bootstrap_required", "Updater missing: supported v0.9.3/v1.0.0 installations can use version-pinned v1.0.1 install.sh upgrade-agent to preserve identity and configuration")
 		return
 	}
-	if !a.buildInfo.UpgradeEligible() {
+	if !a.buildInfo.UpgradeEligible() && !(buildinfo.IsRCVersion(a.buildInfo.Version) && a.buildInfo.ExplicitUpgradeEligible() && input.Channel != "") {
 		writeJobError(w, http.StatusConflict, "server_build_ineligible", "remote upgrade is unavailable on this Server build")
 		return
 	}
@@ -143,7 +143,7 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusConflict, "upgrade_not_available", "a newer eligible Agent version is not available")
 		return
 	}
-	available := targetForAgent(target, record)
+	available := a.compatibleAgentTarget(target, record)
 	if !available.Supported {
 		writeJobError(w, 409, "bootstrap_required", available.Reason)
 		return

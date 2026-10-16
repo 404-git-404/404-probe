@@ -106,9 +106,10 @@ func dropQualityV2FixtureSchema(t *testing.T, db *sql.DB) {
 	}
 }
 
-// Remove only schema27 before constructing genuine prior-schema fixtures.
+// Remove schema28/27 before constructing genuine prior-schema fixtures.
 func dropQualityRollupFixtureSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
+	dropPublicEgressFixtureSchema(t, db)
 	var exists int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=27`).Scan(&exists); err != nil {
 		t.Fatal(err)
@@ -125,6 +126,29 @@ func dropQualityRollupFixtureSchema(t *testing.T, db *sql.DB) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=27`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Open(latest) fixtures must remove M10 before reconstructing older schemas.
+// Keep this in the shared downgrade chain, including fixtures already below 27.
+func dropPublicEgressFixtureSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	dropTCPMiniFixtureSchema(t, db)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`DROP TABLE IF EXISTS agent_public_egress`,
+		`DELETE FROM schema_migrations WHERE version=28`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 }

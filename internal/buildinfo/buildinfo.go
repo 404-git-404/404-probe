@@ -16,7 +16,9 @@ var (
 
 var canonicalVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
-var releaseVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.([1-9][0-9]*))?$`)
+var releaseVersion = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(beta|rc)\.([1-9][0-9]*))?$`)
+
+const FirstRCSupportVersion = "v1.0.3-rc.1"
 
 type Info struct {
 	Version string `json:"version"`
@@ -102,8 +104,8 @@ func (i Info) UpgradeEligible() bool {
 
 func IsCanonicalVersion(value string) bool { _, ok := parseVersion(value, false); return ok }
 
-func parseVersion(value string, release bool) ([4]uint64, bool) {
-	var result [4]uint64
+func parseVersion(value string, release bool) ([5]uint64, bool) {
+	var result [5]uint64
 	if len(value) > 64 {
 		return result, false
 	}
@@ -122,12 +124,17 @@ func parseVersion(value string, release bool) ([4]uint64, bool) {
 		}
 		result[i-1] = n
 	}
+	result[3] = 2 // beta < rc < stable, followed by the numeric prerelease index.
 	if release && parts[5] != "" {
-		n, err := strconv.ParseUint(parts[5], 10, 64)
+		result[3] = 0
+		if parts[5] == "rc" {
+			result[3] = 1
+		}
+		n, err := strconv.ParseUint(parts[6], 10, 64)
 		if err != nil {
 			return result, false
 		}
-		result[3] = n
+		result[4] = n
 	}
 	return result, true
 }
@@ -154,36 +161,28 @@ func CompareVersions(left, right string) (int, bool) {
 // boundaries must continue using IsCanonicalVersion and UpgradeEligible.
 func IsReleaseVersion(value string) bool { _, ok := parseVersion(value, true); return ok }
 
+func IsRCVersion(value string) bool { v, ok := parseVersion(value, true); return ok && v[3] == 1 }
+
+// Explicit RC operations do not grant the Stable default/automatic permission.
+func (i Info) ExplicitUpgradeEligible() bool {
+	return !i.Dirty && i.Commit != "" && IsReleaseVersion(i.Version)
+}
+
 // CompareReleaseVersions is for explicit installer/Server transitions only.
 // Agent remote upgrades keep the stable-only CompareVersions boundary.
 func CompareReleaseVersions(left, right string) (int, bool) {
-	if !IsReleaseVersion(left) || !IsReleaseVersion(right) {
+	l, lok := parseVersion(left, true)
+	r, rok := parseVersion(right, true)
+	if !lok || !rok {
 		return 0, false
 	}
-	l, lb, lp := strings.Cut(left, "-beta.")
-	r, rb, rp := strings.Cut(right, "-beta.")
-	if comparison, ok := CompareVersions(l, r); !ok || comparison != 0 {
-		return comparison, ok
-	}
-	if !lp && !rp {
-		return 0, true
-	}
-	if !lp {
-		return 1, true
-	}
-	if !rp {
-		return -1, true
-	}
-	lv, le := strconv.ParseUint(lb, 10, 64)
-	rv, re := strconv.ParseUint(rb, 10, 64)
-	if le != nil || re != nil {
-		return 0, false
-	}
-	if lv < rv {
-		return -1, true
-	}
-	if lv > rv {
-		return 1, true
+	for i := range l {
+		if l[i] < r[i] {
+			return -1, true
+		}
+		if l[i] > r[i] {
+			return 1, true
+		}
 	}
 	return 0, true
 }

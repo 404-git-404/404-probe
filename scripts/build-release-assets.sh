@@ -20,10 +20,15 @@ command -v git >/dev/null 2>&1 || {
   printf 'git is required\n' >&2
   exit 1
 }
-[[ "${VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?$ ]] || {
-  printf 'version must be canonical stable or explicit vX.Y.Z-beta.N\n' >&2
+[[ ${#VERSION} -le 64 && "${VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(beta|rc)\.[1-9][0-9]*)?$ ]] || {
+  printf 'version must be canonical stable or explicit vX.Y.Z-beta.N/rc.N\n' >&2
   exit 1
 }
+version_numbers="${VERSION#v}"; version_numbers="${version_numbers/-beta./.}"; version_numbers="${version_numbers/-rc./.}"
+IFS=. read -r -a components <<<"${version_numbers}"
+for component in "${components[@]}"; do
+  [[ ${#component} -lt 20 || ( ${#component} -eq 20 && ! "${component}" > 18446744073709551615 ) ]] || { printf 'release version integer overflow\n' >&2; exit 1; }
+done
 
 cd "${ROOT_DIRECTORY}"
 [[ -z "$(git status --porcelain --untracked-files=all)" ]] || {
@@ -71,7 +76,7 @@ if LC_ALL=C grep -q $'\r' "${installer_path}"; then
   exit 1
 fi
 bash -n "${installer_path}"
-if [[ "${VERSION}" != *-beta.* ]]; then
+if [[ "${VERSION}" != *-* ]]; then
   grep -Fxq "readonly DEFAULT_VERSION=\"${VERSION}\"" "${installer_path}" || {
     printf 'stable installer default does not match release version\n' >&2
     exit 1

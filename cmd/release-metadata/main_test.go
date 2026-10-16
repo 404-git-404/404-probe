@@ -15,7 +15,7 @@ func TestRunGeneratesConsistentReleaseFiles(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		schema  int
-	}{{"v0.8.1", 1}, {"v1.0.1", 1}, {"v1.0.2", 2}} {
+	}{{"v0.8.1", 1}, {"v1.0.1", 1}, {"v1.0.2", 2}, {"v1.0.3-rc.1", 2}} {
 		t.Run(tc.version, func(t *testing.T) {
 			root := t.TempDir()
 			var paths []string
@@ -57,7 +57,11 @@ func TestRunGeneratesConsistentReleaseFiles(t *testing.T) {
 			}
 			metadataLine := fmt.Sprintf("%x  RELEASE-METADATA.json\n", sha256.Sum256(metadata))
 			if tc.schema == 2 {
-				if document.Compatibility == nil || document.Compatibility.MinServerVersion != "v1.0.1" || document.Compatibility.UpgradeProtocol != 2 || !strings.Contains(string(sums), metadataLine) {
+				minimum := "v1.0.1"
+				if tc.version == "v1.0.3-rc.1" {
+					minimum = tc.version
+				}
+				if document.Compatibility == nil || document.Compatibility.MinServerVersion != minimum || document.Compatibility.UpgradeProtocol != 2 || !strings.Contains(string(sums), metadataLine) {
 					t.Fatalf("Stable v1.0.2 compatibility or metadata authentication missing: %+v", document)
 				}
 			} else if document.Compatibility != nil || strings.Contains(string(sums), "RELEASE-METADATA.json") {

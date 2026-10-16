@@ -98,8 +98,8 @@ func (r GoogleStatusResult) Validate() error {
 	if r.Gemini.Region != "" && (r.Gemini.Status != GeminiAvailable || !validUpperRegion(r.Gemini.Region, 3)) {
 		return errors.New("Gemini region is inconsistent with status")
 	}
-	for _, category := range []string{r.YouTube.Error.Category, r.Search.Error.Category, r.SignIn.Error.Category, r.Gemini.Error.Category} {
-		if !oneOf(category, "", "timeout", "network_error", "response_read_error", "response_body_too_large", "redirect_limit", "unexpected_redirect", "invalid_target", "unrecognized_response", "canceled") {
+	for index, category := range []string{r.YouTube.Error.Category, r.Search.Error.Category, r.SignIn.Error.Category, r.Gemini.Error.Category} {
+		if !(index == 0 && YouTubeDiagnosticCategory(category)) && !oneOf(category, "", "timeout", "network_error", "response_read_error", "response_body_too_large", "redirect_limit", "unexpected_redirect", "invalid_target", "unrecognized_response", "canceled") {
 			return errors.New("Google service error category is invalid")
 		}
 	}
@@ -136,4 +136,22 @@ func oneOf(value string, choices ...string) bool {
 		}
 	}
 	return false
+}
+
+// M11 diagnostics use existing JobResult.error_category on the wire, with the
+// original coarse category inside GoogleStatus. Old strict Servers still accept
+// the identical JSON shape/enums. A new Server projects the allowlisted detail
+// into its existing youtube_error TEXT column; no schema/capability change.
+func YouTubeDiagnosticCategory(reason string) bool {
+	return oneOf(reason, "unsafe_address", "dns_error", "tls_error", "consent_page", "challenge_page", "region_conflict", "invalid_region", "invalid_configuration", "missing_evidence", "unexpected_page", "response_truncated", "http_forbidden", "rate_limited", "http_restricted", "http_server_error", "job_expired")
+}
+
+func CompatibleYouTubeCategory(reason string) string {
+	if reason == "dns_error" || reason == "tls_error" {
+		return "network_error"
+	}
+	if YouTubeDiagnosticCategory(reason) {
+		return "unrecognized_response"
+	}
+	return reason
 }

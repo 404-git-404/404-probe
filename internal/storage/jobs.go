@@ -530,7 +530,7 @@ func (s *Store) SubmitJobResult(ctx context.Context, agentID, jobID string, resu
 		return SubmitResultAck{}, ErrLeaseLost
 	}
 	if job.ProbeType == protocol.ProbeTypeGoogleStatus {
-		if err := saveGoogleStatusTx(ctx, tx, agentID, *result.Result.GoogleStatus, receivedAt); err != nil {
+		if err := saveGoogleStatusTx(ctx, tx, agentID, *result.Result.GoogleStatus, receivedAt, result.ErrorCategory); err != nil {
 			return SubmitResultAck{}, err
 		}
 	}

@@ -63,11 +63,13 @@ type webSecurityView struct {
 }
 
 type webGoogleStatusView struct {
-	Supported bool                         `json:"supported"`
-	Pending   bool                         `json:"pending"`
-	Stale     bool                         `json:"stale"`
-	Result    *protocol.GoogleStatusResult `json:"result,omitempty"`
-	CheckedAt *int64                       `json:"checked_at,omitempty"`
+	NextDueAt     *int64                       `json:"next_due_at,omitempty"`
+	UnknownStreak int                          `json:"unknown_streak,omitempty"`
+	Supported     bool                         `json:"supported"`
+	Pending       bool                         `json:"pending"`
+	Stale         bool                         `json:"stale"`
+	Result        *protocol.GoogleStatusResult `json:"result,omitempty"`
+	CheckedAt     *int64                       `json:"checked_at,omitempty"`
 }
 
 type webOutboundsView struct {
@@ -82,34 +84,35 @@ type webOutboundsView struct {
 }
 
 type webAgentStateView struct {
-	Stale           bool     `json:"stale"`
-	Hostname        string   `json:"hostname"`
-	OS              string   `json:"os"`
-	Arch            string   `json:"arch"`
-	Uptime          uint64   `json:"uptime"`
-	CPUPercent      float64  `json:"cpu_percent"`
-	CPUStealPercent *float64 `json:"cpu_steal_percent,omitempty"`
-	CPUCores        uint32   `json:"cpu_cores,omitempty"`
-	Load1           float64  `json:"load1"`
-	Load5           float64  `json:"load5"`
-	Load15          float64  `json:"load15"`
-	RAMUsed         uint64   `json:"ram_used"`
-	RAMTotal        uint64   `json:"ram_total"`
-	RAMPercent      float64  `json:"ram_percent"`
-	SwapUsed        uint64   `json:"swap_used"`
-	SwapTotal       uint64   `json:"swap_total"`
-	SwapPercent     float64  `json:"swap_percent"`
-	DiskUsed        uint64   `json:"disk_used"`
-	DiskTotal       uint64   `json:"disk_total"`
-	DiskPercent     float64  `json:"disk_percent"`
-	DiskReadRate    *float64 `json:"disk_read_rate,omitempty"`
-	DiskWriteRate   *float64 `json:"disk_write_rate,omitempty"`
-	DiskBusyPercent *float64 `json:"disk_busy_percent,omitempty"`
-	RXRate          float64  `json:"rx_rate"`
-	TXRate          float64  `json:"tx_rate"`
-	RXTotal         uint64   `json:"rx_total"`
-	TXTotal         uint64   `json:"tx_total"`
-	CollectedAt     int64    `json:"collected_at"`
+	PublicEgress    webPublicEgress `json:"public_egress"`
+	Stale           bool            `json:"stale"`
+	Hostname        string          `json:"hostname"`
+	OS              string          `json:"os"`
+	Arch            string          `json:"arch"`
+	Uptime          uint64          `json:"uptime"`
+	CPUPercent      float64         `json:"cpu_percent"`
+	CPUStealPercent *float64        `json:"cpu_steal_percent,omitempty"`
+	CPUCores        uint32          `json:"cpu_cores,omitempty"`
+	Load1           float64         `json:"load1"`
+	Load5           float64         `json:"load5"`
+	Load15          float64         `json:"load15"`
+	RAMUsed         uint64          `json:"ram_used"`
+	RAMTotal        uint64          `json:"ram_total"`
+	RAMPercent      float64         `json:"ram_percent"`
+	SwapUsed        uint64          `json:"swap_used"`
+	SwapTotal       uint64          `json:"swap_total"`
+	SwapPercent     float64         `json:"swap_percent"`
+	DiskUsed        uint64          `json:"disk_used"`
+	DiskTotal       uint64          `json:"disk_total"`
+	DiskPercent     float64         `json:"disk_percent"`
+	DiskReadRate    *float64        `json:"disk_read_rate,omitempty"`
+	DiskWriteRate   *float64        `json:"disk_write_rate,omitempty"`
+	DiskBusyPercent *float64        `json:"disk_busy_percent,omitempty"`
+	RXRate          float64         `json:"rx_rate"`
+	TXRate          float64         `json:"tx_rate"`
+	RXTotal         uint64          `json:"rx_total"`
+	TXTotal         uint64          `json:"tx_total"`
+	CollectedAt     int64           `json:"collected_at"`
 }
 
 type webAgentCollectionView struct {
@@ -248,7 +251,7 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		view.Removal = &removalView
 	}
 	if record.State != nil {
-		view.State = newWebAgentStateView(*record.State, record.StateStale)
+		view.State = newWebAgentStateView(*record.State, record.StateStale, a.now())
 		traffic, err := a.store.TrafficTotals(ctx, agentID)
 		if err != nil {
 			return webAgentDetailView{}, err
@@ -291,7 +294,7 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		return webAgentDetailView{}, err
 	}
 	view.GoogleStatus = webGoogleStatusView{Supported: supported, Pending: pending, Stale: record.Agent.Revoked || record.Agent.DisabledAt != nil || !record.Online}
-	google, exists, err := a.store.GetGoogleStatus(ctx, agentID)
+	google, exists, err := a.store.GetGoogleStatusAt(ctx, agentID, a.now())
 	if err != nil {
 		return webAgentDetailView{}, err
 	}
@@ -299,6 +302,13 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		checkedAt := google.CheckedAt
 		view.GoogleStatus.Result = &google.Result
 		view.GoogleStatus.CheckedAt = &checkedAt
+		nextDue := google.NextDueAt
+		view.GoogleStatus.NextDueAt = &nextDue
+		view.GoogleStatus.UnknownStreak = google.UnknownStreak
+		view.GoogleStatus.Stale = view.GoogleStatus.Stale || a.now().UnixMilli() >= google.NextDueAt
+		if yt := google.Result.YouTube; yt.Status != protocol.YouTubeUnknown && !protocol.ValidCountryCode(yt.Region) {
+			view.GoogleStatus.Result.YouTube = protocol.YouTubeResult{Status: protocol.YouTubeUnknown, Error: protocol.GoogleServiceError{Category: "invalid_region"}}
+		}
 	}
 	capability, supported, err := a.store.SecurityCapability(ctx, agentID)
 	if err != nil {
@@ -453,10 +463,15 @@ func (a *App) handleGetWebVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible()})
 }
 
-func newWebAgentStateView(state storage.State, stale bool) *webAgentStateView {
+func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *webAgentStateView {
+	now := state.LastSeen
+	if len(asOf) > 0 {
+		now = asOf[0].UnixMilli()
+	}
 	view := &webAgentStateView{
-		Stale:    stale,
-		Hostname: state.Hostname, OS: state.OS, Arch: state.Arch, Uptime: state.Uptime,
+		PublicEgress: newWebPublicEgress(state.PublicEgress, stale, now),
+		Stale:        stale,
+		Hostname:     state.Hostname, OS: state.OS, Arch: state.Arch, Uptime: state.Uptime,
 		CPUPercent: state.CPUPercent, CPUStealPercent: state.CPUStealPercent, CPUCores: state.CPUCores, Load1: state.Load1, Load5: state.Load5, Load15: state.Load15,
 		RAMUsed: state.RAMUsed, RAMTotal: state.RAMTotal, RAMPercent: state.RAMPercent,
 		SwapUsed: state.SwapUsed, SwapTotal: state.SwapTotal, SwapPercent: state.SwapPercent,

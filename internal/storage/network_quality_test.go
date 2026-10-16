@@ -262,7 +262,18 @@ func TestN2aQuality22MigrationPreservesResourceIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeState, _ := json.Marshal(before.State)
+	// Schema22 has no M10 state. Compare every original resource field exactly;
+	// check the newly introduced optional state separately after migration.
+	legacyStateJSON := func(value *State) []byte {
+		copy := *value
+		copy.PublicEgress = EgressState{}
+		data, err := json.Marshal(copy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	beforeState := legacyStateJSON(before.State)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +324,10 @@ func TestN2aQuality22MigrationPreservesResourceIdentity(t *testing.T) {
 	if err != nil || state.State == nil || state.State.RXBytes != 100 || state.State.CPUPercent != 12 {
 		t.Fatalf("resource lost %+v %v", state, err)
 	}
-	afterState, _ := json.Marshal(state.State)
+	if egress := state.State.PublicEgress; egress.Supported || egress.IPv4.Status != "unknown" || egress.IPv6.Status != "unknown" || egress.IPv4.IP != "" || egress.IPv6.IP != "" {
+		t.Fatalf("schema22 invented M10 support or addresses: %+v", egress)
+	}
+	afterState := legacyStateJSON(state.State)
 	if !bytes.Equal(beforeState, afterState) {
 		t.Fatalf("before/after resource changed: %s / %s", beforeState, afterState)
 	}

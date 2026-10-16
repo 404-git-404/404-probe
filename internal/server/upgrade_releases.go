@@ -150,7 +150,7 @@ func (a *App) releaseTarget(ctx context.Context, version string) (upgradeTarget,
 		return target, errors.New("v1.0.1 Stable requires legacy schema1 metadata")
 	}
 	if (target.Channel == "beta" || requiresNewUpgradeContract(version)) && document.SchemaVersion != 2 {
-		return target, errors.New("Beta requires explicit compatibility metadata")
+		return target, errors.New("pre-release requires explicit compatibility metadata")
 	}
 	if document.SchemaVersion == 2 {
 		sums, err := upgradeFetch(ctx, base+"SHA256SUMS", 256<<10)
@@ -228,9 +228,19 @@ func (a *App) verifyLegacyRelease(ctx context.Context, target upgradeTarget, arc
 	return nil
 }
 func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeTarget {
+	if buildinfo.IsRCVersion(target.Version) && !rcAwareAgent(record) {
+		target.Supported = false
+		target.Reason = "RC需要RC-aware Agent及Updater；旧Stable/Beta不能通过Web直接进入RC"
+		return target
+	}
 	if record.State == nil || !record.State.AgentUpgradeCapable {
 		target.Supported = false
 		target.Reason = "本地 Updater 不可用；需要保留身份配置的原地迁移"
+		return target
+	}
+	if buildinfo.IsRCVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2 {
+		target.Supported = false
+		target.Reason = "当前RC Agent未证明RC-aware Updater能力；不能使用旧v1.0.1桥接替代"
 		return target
 	}
 	if target.RequiredProtocol == 2 && !record.State.AgentUpgradeV2 {
@@ -251,6 +261,23 @@ func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeT
 	if !buildinfo.IsCanonicalVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2 {
 		target.Supported = false
 		target.Reason = "旧 Beta 需要保留身份配置的原地 Stable 迁移入口"
+	}
+	return target
+}
+
+func rcAwareAgent(record storage.AgentSnapshot) bool {
+	if record.State == nil || !record.State.AgentUpgradeV2 {
+		return false
+	}
+	cmp, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, buildinfo.FirstRCSupportVersion)
+	return ok && cmp >= 0
+}
+
+func (a *App) compatibleAgentTarget(target upgradeTarget, record storage.AgentSnapshot) upgradeTarget {
+	target = targetForAgent(target, record)
+	if buildinfo.IsRCVersion(a.buildInfo.Version) && !rcAwareAgent(record) {
+		target.Supported = false
+		target.Reason = "当前RC Server仅对RC-aware Agent/Updater开放显式升级；旧Agent监控通信不受影响"
 	}
 	return target
 }
@@ -275,7 +302,7 @@ func (a *App) handleWebUpgradeTargets(w http.ResponseWriter, r *http.Request) {
 				base.Reason = "版本兼容信息读取失败"
 			}
 		}
-		targets = append(targets, targetForAgent(base, record))
+		targets = append(targets, a.compatibleAgentTarget(base, record))
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
@@ -306,7 +333,7 @@ func (a *App) handleWebUpgradeTargets(w http.ResponseWriter, r *http.Request) {
 					target.Supported = false
 					target.Reason = err.Error()
 				}
-				targets = append(targets, targetForAgent(target, record))
+				targets = append(targets, a.compatibleAgentTarget(target, record))
 			}
 		}
 	}

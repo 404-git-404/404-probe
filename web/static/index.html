@@ -57,7 +57,7 @@
       <label for="upgrade-release">选择目标版本（默认 Stable）</label>
       <select id="upgrade-release" name="release"></select>
       <p id="upgrade-release-reason" role="status"></p>
-      <label id="upgrade-beta-label" hidden><input id="upgrade-beta-confirm" type="checkbox"> 我确认仅将此 Agent 升级到所选 Beta 预发布版本</label>
+      <label id="upgrade-beta-label" hidden><input id="upgrade-beta-confirm" type="checkbox"> 我确认仅将此 Agent 升级到所选预发布版本（Beta / RC）</label>
       <div id="upgrade-agent-error" class="dialog-error hidden" role="alert">升级请求失败，请重试。</div>
       <div class="dialog-actions"><button id="upgrade-agent-cancel" type="button">取消</button><button id="upgrade-agent-confirm" class="primary-action" type="submit">开始升级</button></div>
     </form>
@@ -131,6 +131,7 @@
   <script src="/plan-renewal.js" defer></script>
   <script src="/overview.js" defer></script>
   <script src="/plan-units.js" defer></script>
+  <script src="/youtube-status.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/session.js" defer></script>
 </body>

@@ -149,28 +149,22 @@ function renderGoogleStatus(agent) {
     googleChecked.textContent = '';
     return;
   }
-  const statuses = google.result ? [google.result.youtube?.status] : [];
-  const unknown = statuses.filter(status => !status || status === 'unknown').length;
-  googleState.textContent = google.pending ? '检测中…'
-    : !google.result ? '尚未检测'
-      : google.stale ? '旧结果 · 等待在线后重新核实'
-        : unknown === statuses.length ? '检测失败'
-        : unknown ? '部分结果未知'
-          : '当前结果';
+  const observation=YouTubeStatus.view(agent);
+  googleState.textContent=observation.state;
   if (!google.result) {
     googleValues.textContent = '尚未检测';
     googleChecked.textContent = '';
     return;
   }
   const rows = [
-    ['YouTube', google.result.youtube?.status === 'cn' ? 'CN · 送中' : google.result.youtube?.status === 'not_cn' ? `${google.result.youtube.region || ''}${google.result.youtube.region ? ' · ' : ''}非 CN` : '未知'],
+    ['YouTube', observation.label],
   ];
   for (const [name, value] of rows) {
     const term = document.createElement('dt'); term.textContent = name;
     const description = document.createElement('dd'); description.textContent = value;
     googleValues.append(term, description);
   }
-  googleChecked.textContent = google.checked_at ? `检测时间：${new Date(google.checked_at).toLocaleString()}` : '';
+  googleChecked.textContent = observation.description;
 }
 
 googleRerun.addEventListener('click', async () => {
