@@ -16,7 +16,7 @@ check_banner() {
   }
 }
 unset PROBE_404_VERSION
-check_banner $'Install 404-probe v1.0.2\n\n  1) Server\n  2) Agent'
+check_banner $'Install 404-probe v1.0.3\n\n  1) Server\n  2) Agent'
 printf 'PASS default stable banner\n'
 PROBE_404_VERSION=v1.2.3 check_banner $'Install 404-probe v1.2.3\n\n  1) Server\n  2) Agent'
 printf 'PASS explicit stable banner\n'
@@ -24,7 +24,7 @@ PROBE_404_VERSION=v1.0.1-beta.1 check_banner $'Install 404-probe v1.0.1-beta.1 (
 printf 'PASS beta.1 banner\n'
 PROBE_404_VERSION=v1.0.1-beta.12 check_banner $'Install 404-probe v1.0.1-beta.12 (Pre-release)\n\n  1) Server\n  2) Agent'
 printf 'PASS complete beta ordinal banner\n'
-if (PROBE_404_VERSION=v1.0.1-rc.1 print_install_banner >"${temporary}/output" 2>"${temporary}/error"); then
+if (PROBE_404_VERSION=v1.0.1-rc.0 print_install_banner >"${temporary}/output" 2>"${temporary}/error"); then
   printf 'unvalidated target was displayed\n' >&2
   exit 1
 fi

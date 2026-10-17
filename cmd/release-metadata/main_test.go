@@ -15,7 +15,7 @@ func TestRunGeneratesConsistentReleaseFiles(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		schema  int
-	}{{"v0.8.1", 1}, {"v1.0.1", 1}, {"v1.0.2", 2}, {"v1.0.3-rc.1", 2}} {
+	}{{"v0.8.1", 1}, {"v1.0.1", 1}, {"v1.0.2", 2}, {"v1.0.3", 2}, {"v1.0.3-rc.1", 2}} {
 		t.Run(tc.version, func(t *testing.T) {
 			root := t.TempDir()
 			var paths []string
@@ -62,7 +62,7 @@ func TestRunGeneratesConsistentReleaseFiles(t *testing.T) {
 					minimum = tc.version
 				}
 				if document.Compatibility == nil || document.Compatibility.MinServerVersion != minimum || document.Compatibility.UpgradeProtocol != 2 || !strings.Contains(string(sums), metadataLine) {
-					t.Fatalf("Stable v1.0.2 compatibility or metadata authentication missing: %+v", document)
+					t.Fatalf("Stable compatibility or metadata authentication missing: %+v", document)
 				}
 			} else if document.Compatibility != nil || strings.Contains(string(sums), "RELEASE-METADATA.json") {
 				t.Fatal("legacy schema1 release format changed")

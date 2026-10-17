@@ -15,7 +15,7 @@ case "$1" in
   rev-parse)
     if [[ "$3" == HEAD ]]; then printf '%s\n' "${FIXTURE_HEAD}";
     else printf '%s\n' "${FIXTURE_TAG_COMMIT:-${FIXTURE_HEAD}}"; fi ;;
-  show) printf '#!/usr/bin/env bash\nreadonly DEFAULT_VERSION="%s"\n' "${FIXTURE_INSTALLER_VERSION:-v1.0.2}" ;;
+  show) printf '#!/usr/bin/env bash\nreadonly DEFAULT_VERSION="%s"\n' "${FIXTURE_INSTALLER_VERSION:-v1.0.3}" ;;
   *) exit 69 ;;
 esac
 SH
@@ -37,7 +37,7 @@ check() {
   printf '%s: %s\n' "${name}" "${expected}"
 }
 check 'dirty rejects explicit commit' 'clean git worktree' FIXTURE_DIRTY=' M install.sh' PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
-check 'default still requires tag' 'release tag v1.0.2 does not exist' PROBE_404_RELEASE_COMMIT=
+check 'default still requires tag' 'release tag v1.0.3 does not exist' PROBE_404_RELEASE_COMMIT=
 check 'short commit rejected' 'full clean HEAD commit' PROBE_404_RELEASE_COMMIT=0123456
 check 'wrong commit rejected' 'full clean HEAD commit' PROBE_404_RELEASE_COMMIT=ffffffffffffffffffffffffffffffffffffffff
 check 'conflicting existing tag rejected' 'existing release tag does not match' FIXTURE_TAG=1 FIXTURE_TAG_COMMIT=ffffffffffffffffffffffffffffffffffffffff PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
