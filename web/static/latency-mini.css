@@ -27,4 +27,11 @@
 .agent-card .dv-c .lm-num{font-variant-numeric:tabular-nums;font-weight:400}
 .agent-card .dv-c .lm-num.lm-lowest{font-weight:700}
 .agent-card .dv-c .lm-num.lm-over{color:#c42b32;font-weight:700}
-.agent-card .dv-c .lm-unit{flex:none;color:#70655a;font-size:11px}
+.agent-card .dv-c .lm-top{overflow:hidden;white-space:nowrap}
+.agent-card .dv-c .lm-top>button{flex:none;min-width:0;padding:0 2px}
+.agent-card .dv-c .lm-legend{flex:0 1 auto;min-width:0;gap:2px}
+.agent-card .dv-c .lm-legend button{flex:none;min-width:0;gap:2px;padding:0 1px;font-size:10px}
+.agent-card .dv-c .lm-num:empty{display:none}
+.agent-card .dv-c .lm-top{container-type:inline-size}
+@container (max-width:262px){.agent-card .dv-c .lm-legend .lm-dot{display:none}}
+@container (max-width:234px){.agent-card .dv-c .lm-top,.agent-card .dv-c .lm-top button{font-size:9px}}

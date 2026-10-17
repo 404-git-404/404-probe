@@ -1,4 +1,4 @@
-/* M05: fixed IPv4 RTT history, from the existing Server minute P50/P95 rollup. One fixed piecewise scale for every card. */
+/* M05: fixed IPv4 RTT history, from the existing Server minute P50/P95 rollup. One fixed square-root scale for every card. */
 (function(root){
   'use strict';
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
@@ -31,10 +31,10 @@
     });
     return {now:h.now,points,supported:true};
   }
-  // Fixed ruler: 0-300ms linear over the lower 80% of the height, 300-1000ms linear over the top 20%.
-  // Above 1000ms is off the ruler and is drawn as a dashed run on the top edge.
-  const KNEE=300,CEIL=1000,LOW=.8,DASH='3,2';
-  function ratio(v){return v<=0?0:v<=KNEE?LOW*v/KNEE:v<=CEIL?LOW+(1-LOW)*(v-KNEE)/(CEIL-KNEE):1;}
+  // Fixed ruler: sqrt(v/1000) over 0-1000ms, identical on every card. Above 1000ms is off the ruler and is
+  // drawn as a dashed run on the top edge.
+  const CEIL=1000,DASH='3,2',GRID=[50,100,200,300,500,700,1000];
+  function ratio(v){return v<=0?0:v>=CEIL?1:Math.sqrt(v/CEIL);}
   const median=v=>{const a=[...v].sort((x,y)=>x-y),m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2;};
   // Median of the last five completed minutes; null when fewer than three of them have a usable P50.
   function recent(data){
@@ -72,17 +72,19 @@
       for(const t of selected(c)){const entry=c.cache.get(t.id),points=(entry?.data?.points||[]).filter(p=>p.start>=start&&p.start<=end);rows.push({t,entry,points});for(const p of points)if(p.value!==null)values.push(p.value);}
       const scope=JSON.stringify([c.protocol,[...c.isps],c.hours,c.follow,c.config?.revision,c.config?.region_id]);if(scope!==c.axisScope){c.axisScope=scope;c.axisNeed=0;}
       const alert=c.protocol==='tcp'&&c.tcpEvidence?.state==='alert',measure=c.measure||(c.measure=doc.createElement('canvas').getContext('2d'));
-      const highLabel=CEIL+' ms';measure.font='10px Arial';const need=Math.ceil(measure.measureText(highLabel).width+5+2);
+      const highLabel=String(CEIL);measure.font='9px Arial';const need=Math.ceil(measure.measureText(highLabel).width+5+2);
       c.axisNeed=Math.max(c.axisNeed||0,need);const left=axes?axes.fit(c.id,'C',c.plot,c.axisNeed,()=>{if(!closed&&!c.dead&&c.active)render(c);}):c.axisNeed;
       c.axisLeft=left;c.plot.dataset.axisLeft=String(left);c.plot.dataset.axisRequired=String(need);
       const pw=Math.max(1,w-left),x=v=>left+(v-start)/(end-start)*pw,y=v=>ph-ratio(v)*(ph-2),topY=y(CEIL),mw=pw/((end-start)/MINUTE),ns='http://www.w3.org/2000/svg';
       const svg=doc.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.setAttribute('aria-hidden','true');
       const add=(tag,attrs,text)=>{const n=doc.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,String(v));if(text!=null)n.textContent=text;svg.append(n);return n;};
-      const txt=(x,y,text,anchor='start')=>add('text',{x,y,fill:'#4e5965','font-size':10,'font-family':'Arial,sans-serif','text-anchor':anchor},text);
-      for(const v of [100,200,KNEE])add('path',{d:`M${left} ${y(v).toFixed(2)}H${w}`,fill:'none',stroke:v===KNEE?'#c9b9a6':'#e6ddd1','stroke-width':v===KNEE?.8:.6,'data-grid':v});
+      const txt=(x,y,text,anchor='start',size=10)=>add('text',{x,y,fill:'#4e5965','font-size':size,'font-family':'Arial,sans-serif','text-anchor':anchor},text);
+      for(const v of GRID)add('path',{d:`M${left} ${y(v).toFixed(2)}H${w}`,fill:'none',stroke:'#e6ddd1','stroke-width':.6,'data-grid':v});
       add('path',{d:`M${left} 1V${ph}H${w}`,fill:'none',stroke:'#b9aa99','stroke-width':.6});
-      txt(left-5,9,highLabel,'end').dataset.axisTick=String(CEIL);txt(left-5,y(KNEE)+3,String(KNEE),'end').dataset.axisTick=String(KNEE);txt(left-5,y(100)+3,'100','end').dataset.axisTick='100';
-      if(y(200)-y(KNEE)>=12&&y(100)-y(200)>=12)txt(left-5,y(200)+3,'200','end').dataset.axisTick='200';
+      // Left labels need 10px between baselines: 500 is dropped first, then 300; 100 and 1000 always stay.
+      let labels=[100,300,500,CEIL];const base=v=>Math.max(8,y(v)+3),crowded=l=>l.some((v,i)=>i&&base(l[i-1])-base(v)<10);
+      for(const drop of [500,300])if(crowded(labels))labels=labels.filter(v=>v!==drop);
+      for(const v of labels)txt(left-5,base(v),String(v),'end',9).dataset.axisTick=String(v);
       for(const [i,v]of [start,(start+end)/2,end].entries()){const label=clock(v,false);txt(i===0?left:i===2?w:left+pw/2,h-1,label,i===0?'start':i===2?'end':'middle');}
       if(alert){const mark=txt(w-2,9,'告警','end');mark.setAttribute('fill','#c42b32');mark.setAttribute('font-weight','700');mark.dataset.alert='true';const tip=doc.createElementNS(ns,'title');tip.textContent=`TCP 告警 · ${c.tcpEvidence.coverage||'告警覆盖不足'} · 告警来源日 ${c.tcpEvidence.source_day||'无可证明事件'}`;mark.append(tip);}
       for(const {t,points}of rows){
@@ -110,8 +112,8 @@
       const message=!c.isps.size?'未选择 ISP':inactive(c)?'设备暂停/撤销':!c.config?'等待地区配置':!c.config.supported?'Agent 不支持':!values.length?(c.loading.size?'读取历史…':rows.some(r=>r.entry?.error)?'历史读取失败':'暂无有效 RTT'):rows.some(r=>r.entry?.error)||c.agent.online===false?'旧历史':'';
       if(message)txt(left+pw/2,14,message,'middle');
       if(c.protocol==='tcp'&&(!c.tcpEvidence||c.tcpEvidence.state==='unknown'||c.tcpEvidenceError))txt(left+3,ph-3,'告警覆盖不足');
-      c.plot.replaceChildren(svg);c.plot.dataset.scale='fixed-piecewise';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
-      c.plot.title=`${stamp(start)} — ${stamp(end)} · 一分钟 RTT P50；固定刻度：0–300ms 占 80%，300–1000ms 占 20%，超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${c.tcpEvidence?.coverage||'告警覆盖不足'}；告警来源日 ${c.tcpEvidence?.source_day||'无可证明事件'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
+      c.plot.replaceChildren(svg);c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
+      c.plot.title=`${stamp(start)} — ${stamp(end)} · 一分钟 RTT P50；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${c.tcpEvidence?.coverage||'告警覆盖不足'}；告警来源日 ${c.tcpEvidence?.source_day||'无可证明事件'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
       c.plot.setAttribute('aria-label',c.plot.title+(message?' · '+message:''));
       c.span.textContent=c.hours+'h';c.span.title='当前可视时间跨度：'+c.hours+'小时';c.slider.setAttribute('aria-valuetext',c.hours+'小时');c.now.setAttribute('aria-pressed',String(c.follow));
       for(const [protocol,b]of c.protocols)b.setAttribute('aria-pressed',String(protocol===c.protocol));
@@ -121,11 +123,10 @@
       const lowest=latest.size>1?Math.min(...latest.values()):null;
       for(const [slot,n] of c.nums){
         const on=c.isps.has(slot),v=latest.get(slot);
-        n.textContent=!on?'':v===undefined?'—':number(v);
+        n.textContent=v===undefined?'':number(v);
         n.className='lm-num'+(v!==undefined&&v===lowest?' lm-lowest':'')+(v!==undefined&&v>CEIL?' lm-over':'');
         n.dataset.state=!on?'off':v===undefined?'none':v>CEIL?'over':v===lowest?'lowest':'value';
       }
-      c.unit.textContent=c.isps.size?'ms':'';
     }
     function request(c){
       if(!effective(c))return;
@@ -161,7 +162,7 @@
         c={id:agent.agent_id,agent,node,plot,slider,span,note:output,owner:{},config:null,serial:0,dead:false,active:true,visible:false,nums:new Map(),cache:new Map(),loading:new Set(),protocol:'tcp',isps:new Set(C.slots),hours:1,follow:true,latest:now(),latestServer:null,end:now(),protocols:new Map(),legend:new Map(),drag:null,resize:null};
         node.dataset.latencyAgent=c.id;plot.tabIndex=0;plot.dataset.focusKey='lm-plot';output.id='lm-note-'+c.id;plot.setAttribute('aria-describedby',output.id);
         for(const p of ['tcp','icmp']){const b=btn(p.toUpperCase(),()=>{if(c.protocol===p)return;invalidate(c);c.protocol=p;render(c);request(c);});b.dataset.focusKey='lm-'+p;c.protocols.set(p,b);top.append(b);}
-        for(const slot of C.slots){const b=btn('',()=>{invalidate(c);if(c.isps.has(slot))c.isps.delete(slot);else c.isps.add(slot);render(c);request(c);});const dot=el('span','lm-dot');dot.setAttribute('aria-hidden','true');const num=el('span','lm-num');c.nums.set(slot,num);b.append(dot,el('span','',C.names[slot]),num);b.style.setProperty('--lm-color',colors[slot]);b.setAttribute('aria-label',C.names[slot]+' RTT 曲线');b.dataset.focusKey='lm-'+slot;c.legend.set(slot,b);legend.append(b);}c.unit=el('span','lm-unit');top.append(span,legend,c.unit);
+        for(const slot of C.slots){const b=btn('',()=>{invalidate(c);if(c.isps.has(slot))c.isps.delete(slot);else c.isps.add(slot);render(c);request(c);});const dot=el('span','lm-dot');dot.setAttribute('aria-hidden','true');const num=el('span','lm-num');c.nums.set(slot,num);b.append(dot,el('span','',C.names[slot]),num);b.style.setProperty('--lm-color',colors[slot]);b.setAttribute('aria-label',C.names[slot]+' RTT 曲线');b.dataset.focusKey='lm-'+slot;c.legend.set(slot,b);legend.append(b);}top.append(span,legend);
         slider.type='range';slider.min='1';slider.max='24';slider.step='1';slider.value='24';slider.setAttribute('aria-label','时间范围：左24小时，右1小时');slider.dataset.focusKey='lm-hours';
         slider.addEventListener('input',()=>{const center=c.end-c.hours*HOUR/2;c.hours=25-Number(slider.value);if(!c.follow)c.end=center+c.hours*HOUR/2;clamp(c);c.note.textContent='';render(c);});
         c.now=btn('现在',()=>current(c));c.now.dataset.focusKey='lm-now';bottom.append(el('span','','24h'),slider,el('span','','1h'),c.now);node.append(top,plot,bottom,output);

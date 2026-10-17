@@ -10,8 +10,8 @@ function fixture(protocol='tcp',slot='telecom'){
 }
 const set=(points,i,p50,p95=p50)=>Object.assign(points[i],{count:2,valid_rtts:2,p50_ms:p50,p95_ms:p95,completeness:'complete',config_revision_min:'9',config_revision_max:'9',slot_revision_min:'7',slot_revision_max:'7',categories:{success:2}});
 
-test('fixed piecewise ruler: 0-300ms is the lower 80%, 300-1000ms the top 20%',()=>{
- for(const [v,r]of [[0,0],[150,.4],[300,.8],[650,.9],[1000,1],[1001,1],[60000,1]])assert.ok(Math.abs(L.ratio(v)-r)<1e-12,`${v}`);
+test('fixed square-root ruler: ratio = sqrt(v/1000) up to 1000ms, then clamped',()=>{
+ for(const [v,r]of [[-5,0],[0,0],[100,.316],[250,.5],[1000,1],[1500,1],[60000,1]])assert.ok(Math.abs(L.ratio(v)-r)<.001,`${v}`);
  for(const gone of ['axis','tcpAxis','tcpLevel'])assert.equal(L[gone],undefined);
 });
 test('normalize plots P50 and keeps P95 for the tooltip',()=>{
@@ -59,7 +59,7 @@ class El{
 }
 const fakeDoc={hidden:false,createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
 const IDS={telecom:1,unicom:2,mobile:3};
-async function card({protocol='tcp',series,status={state:'normal',level_ms:2000,now:NOW},id='a'}){
+async function card({height=80,protocol='tcp',series,status={state:'normal',level_ms:2000,now:NOW},id='a'}){
  // series: {slot: points => void}; slots absent from `series` get empty history.
  const histories={};
  for(const proto of ['tcp','icmp'])for(const slot of Object.keys(IDS)){const f=fixture(proto,slot);for(const p of f.points)Object.assign(p,{count:0,valid_rtts:0,p50_ms:null,p95_ms:null,completeness:'no_data'});if(proto===protocol)series[slot]?.(f.points);histories[f.target.id]=f.h;}
@@ -70,26 +70,26 @@ async function card({protocol='tcp',series,status={state:'normal',level_ms:2000,
   const tid=decodeURIComponent(/target_id=([^&]+)/.exec(url)[1]);return histories[tid];};
  const api=L.create({document:fakeDoc,state,interval:()=>0,clear(){},now:()=>NOW,monotonicNow:()=>0,unauthorized(){}});
  const node=api.mount({agent_id:id,online:true});
- const plot=node.all().find(n=>n.className==='lm-plot');plot.rect={width:300,height:80,left:0,top:0,right:300,bottom:80};node.rect={width:300,height:200,left:0,top:0,right:300,bottom:200};globalThis.innerHeight=1000;globalThis.innerWidth=1000;
+ const plot=node.all().find(n=>n.className==='lm-plot');plot.rect={width:300,height,left:0,top:0,right:300,bottom:80};node.rect={width:300,height:200,left:0,top:0,right:300,bottom:200};globalThis.innerHeight=1000;globalThis.innerWidth=1000;
  const flush=async()=>{for(let i=0;i<30;i++){await new Promise(r=>setImmediate(r));api.tick();}};
  api.bindConfig(id,config);api.setVisible(id,true);await flush();
  if(protocol==='icmp'){node.all().find(n=>n.tagName==='button'&&n.textContent==='ICMP').dispatch('click');await flush();}
  const svg=()=>plot.children[0].all();
  const nums=()=>Object.fromEntries(node.all().filter(n=>n.className.startsWith('lm-num')).map((n,i)=>[Object.keys(IDS)[i],n]));
- return {api,node,plot,svg,nums,flush,unit:node.all().find(n=>n.className==='lm-unit')};
+ return {api,node,plot,svg,nums,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
 }
 const solid=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.2');
 const dashed=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-dasharray']);
 const firstY=d=>Number(/^M[\d.]+,([\d.]+)/.exec(d)[1]);
-const yOf=v=>68-Math.min(1,L.ratio(v))*66; // plot height 80 => drawing height 68
+const yOf=(v,ph=68)=>ph-Math.min(1,L.ratio(v))*(ph-2); // plot height 80 => drawing height 68
 const line=(points,from,to,fn)=>{for(let i=from;i<=to;i++)set(points,i,fn(i-from));};
 
 test('curve is drawn from P50, not P95',async()=>{
  const c2=await card({series:{telecom:p=>{line(p,1420,1428,()=>100);for(let i=1420;i<=1428;i++)p[i].p95_ms=3000;}}});
  const d=solid(c2)[0].attributes.d;assert.ok(Math.abs(firstY(d)-yOf(100))<.01,d);
  assert.equal(dashed(c2).length,0,'a P95 of 3000ms must not appear on the curve');
- assert.equal(c2.plot.dataset.scale,'fixed-piecewise');
- assert.match(c2.plot.title,/一分钟 RTT P50；固定刻度：0–300ms 占 80%，300–1000ms 占 20%，超过 1000ms 用顶边虚线表示/);
+ assert.equal(c2.plot.dataset.scale,'fixed-sqrt');
+ assert.match(c2.plot.title,/一分钟 RTT P50；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示/);
 });
 test('the same value has the same y on cards with completely different data ranges',async()=>{
  const a=await card({series:{telecom:p=>line(p,1420,1428,i=>i%2?100:120)}});
@@ -99,9 +99,12 @@ test('the same value has the same y on cards with completely different data rang
  // card b starts with 290 at index 1420 and 100 at 1421: both live on the same ruler.
  assert.ok(Math.abs(yb[0]-yOf(290))<.01);
  const grid=card2=>card2.svg().filter(n=>n.attributes['data-grid']).map(n=>n.attributes['data-grid']+':'+n.attributes.d);
- assert.deepEqual(grid(a),grid(b));assert.deepEqual(grid(a).map(x=>x.split(':')[0]),['100','200','300']);
+ assert.deepEqual(grid(a),grid(b));assert.deepEqual(grid(a).map(x=>x.split(':')[0]),['50','100','200','300','500','700','1000']);
+ for(const g of a.svg().filter(n=>n.attributes['data-grid'])){assert.equal(g.attributes.stroke,'#e6ddd1');assert.equal(g.attributes['stroke-width'],'0.6');}
  const ticks=card2=>card2.svg().filter(n=>n.dataset.axisTick).map(n=>n.dataset.axisTick+n.ownText);
- assert.deepEqual(ticks(a),ticks(b));assert.ok(ticks(a).includes('1000'+'1000 ms')&&ticks(a).includes('300300')&&ticks(a).includes('100100'));
+ assert.deepEqual(ticks(a),ticks(b));assert.deepEqual(ticks(a),['10001000','300300','100100','500500'].sort((x,y)=>ticks(a).indexOf(x)-ticks(a).indexOf(y)));
+ assert.deepEqual([...ticks(a)].sort(),['10001000','100100','300300','500500']);
+ for(const t of a.svg().filter(n=>n.dataset.axisTick))assert.equal(t.attributes['font-size'],'9');
 });
 test('a run above 1000ms is one dashed top-edge segment joined to the solid line',async()=>{
  const c=await card({series:{telecom:p=>{line(p,1420,1423,()=>100);line(p,1424,1428,()=>1500);p[1424].p95_ms=3010;line(p,1429,1432,()=>100);}}});
@@ -126,10 +129,12 @@ test('top numbers: median of the last five minutes, lowest bold, >1000 red, "—
   unicom:p=>{set(p,1434,200);set(p,1438,200);},
   mobile:p=>{[1500,1600,1700,1800,1900].forEach((v,k)=>set(p,1434+k,v));}}});
  const n=c.nums();
- assert.equal(n.telecom.textContent,'140');assert.equal(n.unicom.textContent,'—');assert.equal(n.mobile.textContent,'1700');
+ assert.equal(n.telecom.textContent,'140');assert.equal(n.unicom.textContent,'');assert.equal(n.mobile.textContent,'1700');
  assert.equal(n.telecom.dataset.state,'lowest');assert.match(n.telecom.className,/lm-lowest/);
  assert.equal(n.mobile.dataset.state,'over');assert.match(n.mobile.className,/lm-over/);assert.doesNotMatch(n.mobile.className,/lm-lowest/);
- assert.equal(n.unicom.dataset.state,'none');assert.equal(c.unit.textContent,'ms');
+ assert.equal(n.unicom.dataset.state,'none');
+ for(const b of c.legend)assert.doesNotMatch(b.textContent,/—/);
+ assert.ok(!c.node.all().some(x=>x.className==='lm-unit'||x.textContent==='ms'),'no trailing unit');
  // Panning away from "now" does not change the headline numbers.
  c.plot.dispatch('keydown',{key:'ArrowLeft'});c.plot.dispatch('keydown',{key:'ArrowLeft'});
  assert.equal(c.plot.dataset.end!==String(NOW),true);
@@ -157,7 +162,7 @@ test('TCP alert shows a red 告警 mark with the evidence tooltip; normal hides 
 test('ICMP uses the same fixed scale, ruler and top numbers, and never shows the TCP alert',async()=>{
  const t=await card({series:{telecom:p=>line(p,1420,1428,()=>150)},status:{state:'alert',level_ms:5000,now:NOW}});
  const i=await card({id:'i',protocol:'icmp',series:{telecom:p=>{line(p,1420,1428,()=>150);line(p,1430,1432,()=>2000);}},status:{state:'alert',level_ms:5000,now:NOW}});
- assert.equal(i.plot.dataset.scale,'fixed-piecewise');
+ assert.equal(i.plot.dataset.scale,'fixed-sqrt');
  assert.ok(Math.abs(firstY(solid(i)[0].attributes.d)-firstY(solid(t)[0].attributes.d))<.01);
  assert.ok(Math.abs(firstY(solid(i)[0].attributes.d)-yOf(150))<.01);
  assert.equal(dashed(i).length,1);
@@ -165,4 +170,17 @@ test('ICMP uses the same fixed scale, ruler and top numbers, and never shows the
  assert.deepEqual(ticks(i),ticks(t));
  assert.equal(i.svg().filter(n=>n.dataset.alert==='true').length,0);
  assert.doesNotMatch(i.plot.title,/告警来源日/);
+});
+
+test('left labels: 500 then 300 are dropped when closer than 10px; 100 and 1000 always stay',async()=>{
+ const labels=async height=>(await card({height,series:{telecom:p=>line(p,1420,1428,()=>100)}})).svg().filter(n=>n.dataset.axisTick).map(n=>n.dataset.axisTick).sort((a,b)=>a-b);
+ assert.deepEqual(await labels(80),['100','300','500','1000']);
+ assert.deepEqual(await labels(60),['100','300','1000']);
+ assert.deepEqual(await labels(42),['100','1000']);
+ assert.deepEqual(await labels(20),['100','1000']);
+});
+test('top numbers: four-digit values, no unit, no dash placeholder',async()=>{
+ const c=await card({series:{telecom:p=>line(p,1434,1438,()=>1234),unicom:p=>line(p,1434,1438,()=>1234),mobile:p=>line(p,1434,1438,()=>1234)}});
+ const n=c.nums();for(const slot of Object.keys(n)){assert.equal(n[slot].textContent,'1234');assert.match(n[slot].className,/lm-over/);}
+ assert.equal(c.legend.map(b=>b.textContent).join('|'),'电信1234|联通1234|移动1234');
 });
