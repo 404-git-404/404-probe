@@ -1161,6 +1161,46 @@ function resourceFactsFor(agent) {
     ['DISK',`${prefix}${CardMetrics.size(s.disk_used,false,true)} / ${CardMetrics.size(s.disk_total,false,true)} · 最忙 I/O ${CardMetrics.pct(s.disk_busy_percent)} · 读 ${CardMetrics.size(s.disk_read_rate,true,true)} · 写 ${CardMetrics.size(s.disk_write_rate,true,true)}${suffix(2)}`]];
 }
 
+// Only address families that are currently usable are rendered; hidden ones leave no focusable element behind.
+function createPublicEgress(agentID) {
+  const egress=document.createElement('div');
+  egress.className='public-egress';
+  egress.setAttribute('aria-label','Agent 公网出口');
+  const items=['ipv4','ipv6'].map((family,index)=>{
+    const item=document.createElement('button');item.type='button';item.className='public-egress-item';item.dataset.family=family;
+    item.textContent=index?'V6':'V4';
+    const tip=document.createElement('div');tip.className='public-egress-tip';tip.id=`egress-${agentID}-${family}`;tip.setAttribute('role','tooltip');
+    item.setAttribute('aria-describedby',tip.id);
+    item.addEventListener('click',event=>event.stopPropagation());
+    item.addEventListener('keydown',event=>{event.stopPropagation();if(event.key==='Escape'){item.blur();item.classList.add('tip-dismissed');}});
+    item.addEventListener('blur',()=>item.classList.remove('tip-dismissed'));
+    item.addEventListener('mouseleave',()=>item.classList.remove('tip-dismissed'));
+    item.addEventListener('focus',()=>item.classList.remove('tip-dismissed'));
+    item.addEventListener('mouseenter',()=>item.classList.remove('tip-dismissed'));
+    return {family,item,tip};
+  });
+  function update(agent) {
+    const p=agent.state?.public_egress;
+    const lifecycle=Boolean(!agent.online||agent.disabled_at||agent.revoked||agent.state?.stale);
+    const shown=[];
+    for(const {family,item,tip} of items) {
+      const observation=p?.[family],status=observation?.status||'unknown';
+      const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
+      const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
+      if(!available||stale)continue;
+      const at=new Date(observation.checked_at).toLocaleString();
+      const reason={verified:'已验证'}[observation.reason]||'尚无可靠结果';
+      const history=observation.last_success;
+      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${observation.ip} · ${at} · ${reason}${history?' · 最后成功 '+history.ip+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
+      setCardText(tip,full);item.setAttribute('aria-label',full);
+      item.dataset.status=status;item.dataset.stale='false';
+      shown.push(item,tip);
+    }
+    egress.replaceChildren(...shown);
+  }
+  return {element:egress,update};
+}
+
 function createAgentCard(initialAgent) {
     let agent = initialAgent;
     const state = agent.state || {};
@@ -1187,39 +1227,10 @@ function createAgentCard(initialAgent) {
     logo.setAttribute('aria-hidden', 'true');
     const systemText = document.createElement('span');
     setReadableText(systemText, system.text);
-    const egress = document.createElement('div');
-    egress.className = 'public-egress';
-    egress.setAttribute('aria-label', 'Agent 公网出口');
-    const egressItems = ['ipv4','ipv6'].map((family, index) => {
-      const item=document.createElement('button');item.type='button';item.className='public-egress-item';item.dataset.family=family;
-      item.textContent=index?'V6':'V4';
-      const tip=document.createElement('div');tip.className='public-egress-tip';tip.id=`egress-${agent.agent_id}-${family}`;tip.setAttribute('role','tooltip');
-      item.setAttribute('aria-describedby',tip.id);egress.append(item,tip);
-      item.addEventListener('click',event=>event.stopPropagation());
-      item.addEventListener('keydown',event=>{event.stopPropagation();if(event.key==='Escape'){item.blur();item.classList.add('tip-dismissed');}});
-      item.addEventListener('blur',()=>item.classList.remove('tip-dismissed'));
-      item.addEventListener('mouseleave',()=>item.classList.remove('tip-dismissed'));
-      item.addEventListener('focus',()=>item.classList.remove('tip-dismissed'));
-      item.addEventListener('mouseenter',()=>item.classList.remove('tip-dismissed'));
-      return {family,item,tip};
-    });
-    function updateEgress(agent) {
-      const p=agent.state?.public_egress;
-      const lifecycle=Boolean(!agent.online||agent.disabled_at||agent.revoked||agent.state?.stale);
-      for(const {family,item,tip} of egressItems) {
-        const observation=p?.[family],status=observation?.status||'unknown';
-        const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
-        const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
-        const base=available?'可用 '+observation.ip:status==='unavailable'?'不可用':'未知';
-        const at=observation?.checked_at?new Date(observation.checked_at).toLocaleString():'尚未检测';
-        const reason={not_reported:'旧版不支持或尚未上报',not_checked:'等待异步检测',no_route:'无可用路由',family_unavailable:'系统不支持该地址族',dns:'DNS 失败',tls:'TLS 校验失败',timeout:'请求超时',http_status:'回显服务异常',invalid_response:'回显无效',invalid_report:'可选报告无效',network:'网络检测失败',verified:'已验证'}[observation?.reason]||'尚无可靠结果';
-        const history=observation?.last_success;
-        const full=`${family==='ipv4'?'IPv4':'IPv6'} · ${base} · ${at} · ${reason}${stale?' · 旧数据，不能代表当前可用':''}${lifecycle?' · Agent 离线或暂停':''}${history?' · 最后成功 '+history.ip+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
-        setCardText(tip,full);item.setAttribute('aria-label',full);
-        item.dataset.status=status;item.dataset.stale=String(stale);
-      }
-    }
+    const publicEgress = createPublicEgress(agent.agent_id);
+    const egress = publicEgress.element, updateEgress = publicEgress.update;
     updateEgress(agent);
+    name.append(logo, systemText, egress);
     name.append(logo, systemText, egress);
     const identityText = document.createElement('div');
     identityText.className = 'identity-text';
