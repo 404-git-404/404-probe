@@ -46,7 +46,7 @@ test('recent(): median of the last five completed minutes, skipping null/partial
 
 // ---------- rendering through the real create()/render() with a minimal DOM ----------
 class El{
- constructor(tag,ns){this.tagName=tag;this.namespace=ns;this.children=[];this.attributes={};this.dataset={};this.style={setProperty(){}};this.listeners={};this.className='';this.ownText='';this.isConnected=true;this.hidden=false;}
+ constructor(tag,ns){this.tagName=tag;this.namespace=ns;this.children=[];this.attributes={};this.dataset={};this.style={setProperty(k,v){this[k]=v;}};this.listeners={};this.className='';this.ownText='';this.isConnected=true;this.hidden=false;}
  set textContent(v){this.ownText=String(v);this.children=[];}get textContent(){return this.ownText+this.children.map(c=>c.textContent).join('');}
  append(...c){this.children.push(...c);}replaceChildren(...c){this.ownText='';this.children=c;}
  setAttribute(k,v){this.attributes[k]=String(v);}getAttribute(k){return this.attributes[k];}
@@ -197,4 +197,17 @@ test('the top row never clips its numbers: no overflow/ellipsis on the row, lege
  assert.deepEqual(tiers.map(t=>t[0]),[262,234,200]);
  assert.match(tiers[0][1],/lm-dot\{display:none/);assert.match(tiers[1][1],/lm-name\{display:none\}.*lm-short\{display:inline/);assert.match(tiers[2][1],/lm-span\{display:none/);
  for(const [,body] of tiers)assert.doesNotMatch(body,/lm-num[^{]*\{[^}]*display\s*:\s*none/);
+});
+
+test('every line keeps its curve colour at every width: dot when shown, otherwise the name text is in the curve colour',async()=>{
+ const curve={telecom:'#007d83',unicom:'#8653b1',mobile:'#ae7017'};
+ const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100),unicom:p=>line(p,1420,1428,()=>150),mobile:p=>line(p,1420,1428,()=>200)}});
+ const slots=Object.keys(curve);
+ c.legend.forEach((b,i)=>{assert.equal(b.style['--lm-color'],curve[slots[i]]);assert.ok(b.all().some(x=>x.className==='lm-dot'),'dot element exists');});
+ assert.deepEqual(c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.2').map(n=>n.attributes.stroke).sort(),Object.values(curve).sort());
+ const css=require('node:fs').readFileSync(require.resolve('../web/static/latency-mini.css'),'utf8');
+ // Names (full and one-character) take --lm-color while pressed, with no width condition, so tiers that hide the dot keep the mapping.
+ assert.match(css,/\.lm-legend button\[aria-pressed=true\] :is\(\.lm-name,\.lm-short\)\{color:var\(--lm-color\)\}/);
+ assert.match(css,/\.lm-legend button \.lm-num\{color:#3b3936\}/,'numbers stay body colour');
+ assert.doesNotMatch(css,/@container[^{]*\{[^@]*\.lm-(name|short)\{[^}]*color/,'no tier changes the name colour');
 });
