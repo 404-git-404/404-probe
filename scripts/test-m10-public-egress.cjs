@@ -125,3 +125,27 @@ test('M10 UI: labels appear and disappear on the same card as state changes', ()
   assert.deepEqual(shown(update(card({ipv4: fresh('ipv4', '8.8.8.8'), ipv6: fresh('ipv6', '2001:db8::1')}))), ['V4', 'V6']);
   assert.equal(update({...up, online: false}).children.length, 0);
 });
+
+test('M10 UI: an unchanged set of families keeps its nodes in the DOM and refreshes the tooltip text', () => {
+  const update = render.live();
+  const el = update(card({ipv4: fresh('ipv4', '8.8.8.8')}));
+  let rebuilt = 0;
+  const original = el.replaceChildren.bind(el);
+  el.replaceChildren = (...children) => {rebuilt++; original(...children);};
+  const v4 = el.children[0], tip = el.children[1];
+  update(card({ipv4: fresh('ipv4', '8.8.4.4')}));
+  assert.equal(rebuilt, 0);
+  assert.equal(el.children[0], v4);
+  assert.match(tip.textContent, /8\.8\.4\.4/);
+  assert.match(v4.attributes['aria-label'], /8\.8\.4\.4/);
+  update(card({ipv4: fresh('ipv4', '8.8.4.4'), ipv6: fresh('ipv6', '2001:db8::1')}));
+  assert.equal(rebuilt, 1);
+  assert.equal(el.children[0], v4);
+});
+
+test('M10 UI: the tooltip shows a reason only when it is verified', () => {
+  const text = reason => render(card({ipv4: fresh('ipv4', '8.8.8.8', {reason})})).children[1].textContent;
+  assert.match(text('verified'), /已验证/);
+  assert.doesNotMatch(text('network'), /尚无可靠结果|已验证/);
+  assert.match(text('network'), /8\.8\.8\.8 · .*；Agent/);
+});

@@ -1180,24 +1180,25 @@ function createPublicEgress(agentID) {
     item.addEventListener('mouseenter',()=>item.classList.remove('tip-dismissed'));
     return {family,item,tip};
   });
+  let shownKey=null;
   function update(agent) {
     const p=agent.state?.public_egress;
     const lifecycle=Boolean(!agent.online||agent.disabled_at||agent.revoked||agent.state?.stale);
-    const shown=[];
+    const shown=[],families=[];
     for(const {family,item,tip} of items) {
       const observation=p?.[family],status=observation?.status||'unknown';
       const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
       const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
       if(!available||stale)continue;
       const at=new Date(observation.checked_at).toLocaleString();
-      const reason={verified:'已验证'}[observation.reason]||'尚无可靠结果';
       const history=observation.last_success;
-      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${observation.ip} · ${at} · ${reason}${history?' · 最后成功 '+history.ip+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
+      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${observation.ip} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+history.ip+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
       setCardText(tip,full);item.setAttribute('aria-label',full);
       item.dataset.status=status;item.dataset.stale='false';
-      shown.push(item,tip);
+      shown.push(item,tip);families.push(family);
     }
-    egress.replaceChildren(...shown);
+    const key=families.join();
+    if(key!==shownKey){shownKey=key;egress.replaceChildren(...shown);}
   }
   return {element:egress,update};
 }
@@ -1231,7 +1232,6 @@ function createAgentCard(initialAgent) {
     const publicEgress = createPublicEgress(agent.agent_id);
     const egress = publicEgress.element, updateEgress = publicEgress.update;
     updateEgress(agent);
-    name.append(logo, systemText, egress);
     name.append(logo, systemText, egress);
     const identityText = document.createElement('div');
     identityText.className = 'identity-text';
