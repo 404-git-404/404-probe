@@ -182,5 +182,19 @@ test('left labels: 500 then 300 are dropped when closer than 10px; 100 and 1000 
 test('top numbers: four-digit values, no unit, no dash placeholder',async()=>{
  const c=await card({series:{telecom:p=>line(p,1434,1438,()=>1234),unicom:p=>line(p,1434,1438,()=>1234),mobile:p=>line(p,1434,1438,()=>1234)}});
  const n=c.nums();for(const slot of Object.keys(n)){assert.equal(n[slot].textContent,'1234');assert.match(n[slot].className,/lm-over/);}
- assert.equal(c.legend.map(b=>b.textContent).join('|'),'电信1234|联通1234|移动1234');
+ const part=(b,cls)=>b.all().find(x=>x.className===cls).textContent;
+ assert.deepEqual(c.legend.map(b=>[part(b,'lm-name'),part(b,'lm-short'),b.dataset.x,b.title,b.attributes['aria-label']]),[['电信','电',undefined,'电信','电信 RTT 曲线'],['联通','联',undefined,'联通','联通 RTT 曲线'],['移动','移',undefined,'移动','移动 RTT 曲线']],'short names keep the full name in title and aria-label');
+ assert.deepEqual(c.legend.map(b=>b.all().find(x=>x.className.startsWith('lm-num')).textContent),['1234','1234','1234']);
+});
+
+test('the top row never clips its numbers: no overflow/ellipsis on the row, legend or numbers; narrow tiers only shrink or hide labels',()=>{
+ const css=require('node:fs').readFileSync(require.resolve('../web/static/latency-mini.css'),'utf8');
+ const rules=[...css.matchAll(/([^{}@]+)\{([^{}]*)\}/g)].map(m=>[m[1].trim(),m[2]]);
+ assert.ok(rules.length>20);
+ for(const [selector,body] of rules)if(/\.lm-(top|legend|num|name|short)/.test(selector))assert.doesNotMatch(body,/overflow\s*:\s*(hidden|clip)|text-overflow|line-clamp/,selector);
+ // Concession order inside the container queries: dots, then one-character names and spacing, then the 1h label.
+ const tiers=[...css.matchAll(/@container \(max-width:(\d+)px\)\{(.*)\}\s*$/gm)].map(m=>[Number(m[1]),m[2]]);
+ assert.deepEqual(tiers.map(t=>t[0]),[262,234,200]);
+ assert.match(tiers[0][1],/lm-dot\{display:none/);assert.match(tiers[1][1],/lm-name\{display:none\}.*lm-short\{display:inline/);assert.match(tiers[2][1],/lm-span\{display:none/);
+ for(const [,body] of tiers)assert.doesNotMatch(body,/lm-num[^{]*\{[^}]*display\s*:\s*none/);
 });
