@@ -31,3 +31,26 @@ test('M11: expired work has an expiry timestamp, never a claimed completed netwo
  const view=YouTube.view(agent({status:'unknown',error:{category:'job_expired'}}),now);
  assert.equal(view.label,'未知');assert.match(view.description,/作业到期时间/);assert.match(view.description,/不能据此确认已执行网络检测/);
 });
+test('M11: Premium availability colours only valid results, by the official list',()=>{
+ const premium=(region,extra={},base={})=>YouTube.view({...agent({status:region==='CN'?'cn':'not_cn',region},extra),...base},now);
+ assert.equal(premium('US').premium,'available');assert.equal(premium('US').tone,'observed');
+ assert.equal(premium('PR').premium,'available');
+ for(const region of ['CN','MO','RU']){const v=premium(region);assert.equal(v.premium,'unavailable');assert.match(v.description,/Premium 不可用地区（依据 YouTube 官方名单，核对日期 \d{4}-\d{2}-\d{2}）/);}
+ assert.match(premium('US').description,/Premium 可用地区/);assert.match(premium('US').description,/未验证视频播放或 Premium 解锁/);assert.match(premium('CN').description,/不代表出口 IP 归属/);
+});
+test('M11: stale, offline, pending, unknown and unsupported stay neutral',()=>{
+ const stale=YouTube.view(agent({status:'cn',region:'CN'},{stale:true}),now);
+ assert.equal(stale.label,'过期·CN');assert.equal(stale.premium,null);assert.equal(stale.tone,'stale');assert.doesNotMatch(stale.description,/Premium (不)?可用地区/);
+ const offline=YouTube.view({...agent({status:'not_cn',region:'US'}),online:false},now);assert.equal(offline.premium,null);assert.equal(offline.tone,'stale');
+ assert.equal(YouTube.view(agent({status:'unknown',error:{category:'timeout'}}),now).premium,null);
+ assert.equal(YouTube.view(agent({status:'not_cn',region:'ZZ'}),now).premium,null);
+ assert.equal(YouTube.view(agent({status:'not_cn',region:'US'},{pending:true}),now).premium,null);
+ assert.equal(YouTube.view(agent({status:'not_cn',region:'US'},{supported:false}),now).premium,null);
+});
+test('M11: every Premium list entry is a valid region code',()=>{
+ const source=require('node:fs').readFileSync(require.resolve('../web/static/youtube-status.js'),'utf8');
+ const list=source.match(/premiumRegions=new Set\(`([^`]*)`/)[1].trim().split(/\s+/);
+ assert.equal(new Set(list).size,list.length);
+ for(const code of list)assert.equal(YouTube.view(agent({status:'not_cn',region:code}),now).known,true,code);
+ assert.match(source,/support\.google\.com\/youtube\/answer\/6307365/);
+});

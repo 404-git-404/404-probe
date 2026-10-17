@@ -97,6 +97,7 @@ function renderAgentRuntime(agent) {
   for (const [label, value] of rows) {
     const term = document.createElement('dt'); term.textContent = label;
     const description = document.createElement('dd'); description.textContent = value;
+    if (name === 'YouTube' && observation.premium) description.dataset.premium = observation.premium;
     agentRuntimeValues.append(term, description);
   }
 }

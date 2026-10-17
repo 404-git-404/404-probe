@@ -396,7 +396,7 @@ addEventListener('scroll',positionYouTubeTooltip,{capture:true,passive:true});
 
 function googleCheckItems(agent) {
  const value=YouTubeStatus.view(agent);
- return [['YouTube',value.label,value.tone]];
+ return [['YouTube',value.label,value.tone,value.premium]];
 }
 
 function googleStatusSummary(agent) {
@@ -415,7 +415,7 @@ function googleStatusPanel(agent) {
   const panel = document.createElement('section');
   panel.className = 'google-checks';
   panel.setAttribute('aria-label', 'YouTube 检测结果');
-  for (const [label, value, tone] of googleCheckItems(agent)) {
+  for (const [label, value, tone, premium] of googleCheckItems(agent)) {
     const item = document.createElement('div');
     item.className = 'google-check';
     const name = document.createElement('span');
@@ -423,6 +423,7 @@ function googleStatusPanel(agent) {
     const result = document.createElement('strong');
     result.className = `check-result ${tone}`;
     result.textContent = value;
+    if (premium) result.dataset.premium = premium;
     const brand = document.createElement('span');brand.className='youtube-name';brand.textContent='YouTube';
     const detail=YouTubeStatus.view(agent).description;
     result.tabIndex=0;result.setAttribute('aria-label',detail);
