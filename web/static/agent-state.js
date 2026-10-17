@@ -49,15 +49,7 @@
         if (key === 'agent_id' || key === 'detail_loaded') continue;
         const group = resource(key);
         if (allowed(group)) {
-          let incoming=value;
-          if(key==='state'&&value&&current.state?.public_egress&&value.public_egress) {
-            const old=current.state.public_egress,fresh=value.public_egress;
-            const decimal=v=>typeof v==='string'&&/^(0|[1-9][0-9]*)$/.test(v);
-            const compare=(a,b)=>a.length===b.length?(a===b?0:a>b?1:-1):a.length>b.length?1:-1;
-            if([old.epoch,old.sequence,fresh.epoch,fresh.sequence].every(decimal)
-              &&(compare(old.epoch,fresh.epoch)>0||old.epoch===fresh.epoch&&compare(old.sequence,fresh.sequence)>0)) incoming={...value,public_egress:old};
-          }
-          next[key] = incoming; groups.add(group);
+          next[key] = value; groups.add(group);
         }
       }
       if (!groups.size) return false;

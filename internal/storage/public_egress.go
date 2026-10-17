@@ -11,7 +11,7 @@ import (
 	"404-probe/internal/protocol"
 )
 
-// Decimal revisions remain exact in JavaScript, including epochs above 2^53.
+// Epoch and Sequence are internal ordering state and are never serialized to Web views.
 // Status and validity timestamps are identical in API and SSE; the consumer
 // evaluates expiry and offline lifecycle without changing the base status.
 type EgressState struct {
