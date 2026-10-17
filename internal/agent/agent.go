@@ -123,6 +123,7 @@ type Runner struct {
 	upgradeAPISupported          atomic.Bool
 	upgradeV2ServerSupported     atomic.Bool
 	upgradeV2UpdaterSupported    atomic.Bool
+	upgradeV2ClaimSupported      atomic.Bool
 	interactiveControlSupported  atomic.Bool
 	googleStatusSupported        atomic.Bool
 	securitySupported            atomic.Bool

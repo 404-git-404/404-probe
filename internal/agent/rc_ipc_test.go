@@ -16,7 +16,7 @@ func TestRCHelperNegotiationDoesNotTrustOldV2(t *testing.T) {
 		version     string
 		aware, want bool
 		calls       int
-	}{{"v1.0.3-rc.1", false, false, 2}, {"v1.0.3-rc.1", true, true, 2}, {"v1.0.2", false, true, 1}} {
+	}{{"v1.0.3-rc.1", false, false, 2}, {"v1.0.3-rc.1", true, true, 2}, {"v1.0.2", false, true, 1}, {"v1.0.3", false, false, 2}, {"v1.0.3", true, true, 2}} {
 		t.Run(tc.version+map[bool]string{true: "-new", false: "-old"}[tc.aware], func(t *testing.T) {
 			f, e := os.CreateTemp("", "404-rc-ipc-")
 			if e != nil {
@@ -67,6 +67,10 @@ func TestRCHelperNegotiationDoesNotTrustOldV2(t *testing.T) {
 			r.runUpgradeCycle(context.Background(), upgradeHTTPClient{}, updater.Client{Socket: socket, Timeout: time.Second})
 			if got := r.upgradeV2UpdaterSupported.Load(); got != tc.want {
 				t.Fatal(got, tc.want)
+			}
+			// Claim protocol 2 needs only the plain v2 answer, never the RC proof.
+			if got := r.upgradeV2ClaimSupported.Load(); !got {
+				t.Fatal("claim protocol 2 unavailable with a v2 Updater")
 			}
 			select {
 			case e := <-done:

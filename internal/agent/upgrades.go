@@ -124,6 +124,9 @@ func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, 
 	if r.upgradeV2ServerSupported.Load() || r.config.AgentVersion == "v1.0.1" {
 		response, err := local.Call(ctx, updater.Request{ProtocolVersion: 2, Action: updater.ActionCapabilities})
 		supported := err == nil && response.Accepted && response.Capabilities.UpgradeV2
+		// The claim protocol only needs the plain v2 answer. A v1.0.2 Updater does
+		// not know the RC proof, yet must still be upgradeable to stable v1.0.3.
+		r.upgradeV2ClaimSupported.Store(r.upgradeV2ServerSupported.Load() && supported)
 		if supported && rcVersionAware(r.config.AgentVersion) {
 			proof, e := local.Call(ctx, updater.Request{ProtocolVersion: 2, Action: updater.ActionRCCapabilities})
 			supported = e == nil && proof.Accepted && proof.Capabilities.UpgradeV2
@@ -137,11 +140,12 @@ func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, 
 		}
 	} else {
 		r.upgradeV2UpdaterSupported.Store(false)
+		r.upgradeV2ClaimSupported.Store(false)
 	}
 	if !r.upgradeAPISupported.Load() {
 		return false
 	}
-	if r.upgradeV2ServerSupported.Load() && r.upgradeV2UpdaterSupported.Load() {
+	if r.upgradeV2ClaimSupported.Load() {
 		server.protocol = 2
 	}
 	operation, err := server.claim(ctx)
