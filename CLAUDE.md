@@ -11,7 +11,7 @@ go test ./... -count=1
 ```
 
 - 发布前的测试结果以 Linux 为准。`internal/agent` 的个别用例（如 `TestRCHelperNegotiationDoesNotTrustOldV2`）在 Windows 负载下会偶发超时，v1.0.2 上同样如此。
-- `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-m02-real-chain.cjs` 是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。
+- `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-m02-real-chain.cjs`、`scripts/test-n3-network-quality.cjs`（19 过 4 败，v1.0.3 上相同）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。
 - 文档、说明和提交信息用中文或英文均可，提交信息采用 `type(scope): subject`，作者邮箱用 `305518817+404-git-404@users.noreply.github.com`。
 
 ## 换行（务必保持 LF）
