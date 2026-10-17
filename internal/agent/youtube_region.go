@@ -191,6 +191,10 @@ func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
 // Skip JS strings, templates, comments and nested/dead function bodies. Do not
 // execute JavaScript or scan arbitrary occurrences of country-like strings.
 func youtubeConfigs(script string) ([]map[string]any, error) {
+	return youtubeConfigsAt(script, 0)
+}
+
+func youtubeConfigsAt(script string, level int) ([]map[string]any, error) {
 	var configs []map[string]any
 	depth := 0
 	statement := true
@@ -246,6 +250,24 @@ func youtubeConfigs(script string) ([]map[string]any, error) {
 			continue
 		}
 		if depth == 0 && statement {
+			// Code after a top-level return/throw in an IIFE body is dead.
+			if level > 0 && (youtubeKeyword(script[i:], "return") || youtubeKeyword(script[i:], "throw")) {
+				break
+			}
+			// One level of a directly invoked (function name?(){...})() body is
+			// scanned as top level; other function bodies stay skipped.
+			if level == 0 && c == '(' {
+				if bodyStart, bodyEnd, next, ok := youtubeIIFE(script, i); ok {
+					nested, err := youtubeConfigsAt(script[bodyStart:bodyEnd], level+1)
+					if err != nil {
+						return nil, err
+					}
+					configs = append(configs, nested...)
+					i = next
+					statement = false
+					continue
+				}
+			}
 			start := i
 			for _, prefix := range []string{"ytcfg", "window.ytcfg"} {
 				if !strings.HasPrefix(script[start:], prefix) {
@@ -272,26 +294,24 @@ func youtubeConfigs(script string) ([]map[string]any, error) {
 				if j >= len(script) || script[j] != '(' {
 					continue
 				}
+				paren := j
 				j++
-				d := json.NewDecoder(strings.NewReader(script[j:]))
-				d.UseNumber()
-				value, err := youtubeJSON(d, 0)
+				if object, end, ok := youtubeLiteralCall(script, j); ok {
+					configs = append(configs, object)
+					i = end + 1
+					statement = false
+					break
+				}
+				// Not one strict-JSON object (key/value form, JS literal or an
+				// expression): ignore it only when it cannot carry region keys.
+				end, err := youtubeBalancedEnd(script, paren)
 				if err != nil {
 					return nil, err
 				}
-				object, ok := value.(map[string]any)
-				if !ok {
-					return nil, errors.New("config not an object")
+				if youtubeMentionsRegion(script[paren : end+1]) {
+					return nil, errors.New("non-literal region config")
 				}
-				j += int(d.InputOffset())
-				for j < len(script) && strings.ContainsRune(" \t\r\n", rune(script[j])) {
-					j++
-				}
-				if j >= len(script) || script[j] != ')' {
-					return nil, errors.New("incomplete config call")
-				}
-				configs = append(configs, object)
-				i = j + 1
+				i = end + 1
 				statement = false
 				break
 			}
@@ -391,4 +411,158 @@ func youtubeJSON(d *json.Decoder, depth int) (any, error) {
 		}
 	}
 	return t, nil
+}
+
+func youtubeLiteralCall(script string, j int) (map[string]any, int, bool) {
+	k := j
+	for k < len(script) && strings.ContainsRune(" \t\r\n", rune(script[k])) {
+		k++
+	}
+	if k >= len(script) || script[k] != '{' {
+		return nil, 0, false
+	}
+	d := json.NewDecoder(strings.NewReader(script[j:]))
+	d.UseNumber()
+	value, err := youtubeJSON(d, 0)
+	if err != nil {
+		return nil, 0, false
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, 0, false
+	}
+	j += int(d.InputOffset())
+	for j < len(script) && strings.ContainsRune(" \t\r\n", rune(script[j])) {
+		j++
+	}
+	if j >= len(script) || script[j] != ')' {
+		return nil, 0, false
+	}
+	return object, j, true
+}
+
+func youtubeMentionsRegion(call string) bool {
+	if strings.Contains(call, "INNERTUBE_CONTEXT") || strings.Contains(call, "contentRegion") || strings.Contains(call, `"gl"`) || strings.Contains(call, `'gl'`) {
+		return true
+	}
+	for i := 0; ; {
+		rel := strings.Index(call[i:], "gl")
+		if rel < 0 {
+			return false
+		}
+		i += rel
+		k := i + 2
+		for k < len(call) && strings.ContainsRune(" \t\r\n", rune(call[k])) {
+			k++
+		}
+		if (i == 0 || !youtubeIdent(call[i-1])) && k < len(call) && call[k] == ':' {
+			return true
+		}
+		i += 2
+	}
+}
+
+func youtubeIdent(c byte) bool {
+	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+func youtubeKeyword(s, word string) bool {
+	return strings.HasPrefix(s, word) && (len(s) == len(word) || !youtubeIdent(s[len(word)]))
+}
+
+// Matching close of the bracket at open, skipping strings and comments. A bare
+// slash (regex or division) is ambiguous and rejected rather than guessed.
+func youtubeBalancedEnd(script string, open int) (int, error) {
+	depth := 0
+	for i := open; i < len(script); {
+		c := script[i]
+		switch {
+		case c == '/' && i+1 < len(script) && script[i+1] == '/':
+			end := strings.IndexByte(script[i+2:], '\n')
+			if end < 0 {
+				return 0, errors.New("incomplete config call")
+			}
+			i += end + 3
+			continue
+		case c == '/' && i+1 < len(script) && script[i+1] == '*':
+			end := strings.Index(script[i+2:], "*/")
+			if end < 0 {
+				return 0, errors.New("incomplete script comment")
+			}
+			i += end + 4
+			continue
+		case c == '/':
+			return 0, errors.New("ambiguous script literal")
+		case c == '\'' || c == '"' || c == '`':
+			i++
+			closed := false
+			for i < len(script) {
+				if script[i] == '\\' {
+					i += 2
+					continue
+				}
+				if script[i] == c {
+					i++
+					closed = true
+					break
+				}
+				i++
+			}
+			if !closed {
+				return 0, errors.New("incomplete script string")
+			}
+			continue
+		case c == '(' || c == '[' || c == '{':
+			depth++
+		case c == ')' || c == ']' || c == '}':
+			depth--
+			if depth == 0 {
+				return i, nil
+			}
+		}
+		i++
+	}
+	return 0, errors.New("incomplete config call")
+}
+
+// Recognize only (function [name]() { body })() at a statement start.
+func youtubeIIFE(script string, i int) (int, int, int, bool) {
+	ws := func(k int) int {
+		for k < len(script) && strings.ContainsRune(" \t\r\n", rune(script[k])) {
+			k++
+		}
+		return k
+	}
+	k := ws(i + 1)
+	if !youtubeKeyword(script[k:], "function") {
+		return 0, 0, 0, false
+	}
+	k = ws(k + len("function"))
+	for k < len(script) && youtubeIdent(script[k]) {
+		k++
+	}
+	k = ws(k)
+	if k >= len(script) || script[k] != '(' {
+		return 0, 0, 0, false
+	}
+	k = ws(k + 1)
+	if k >= len(script) || script[k] != ')' {
+		return 0, 0, 0, false
+	}
+	brace := ws(k + 1)
+	if brace >= len(script) || script[brace] != '{' {
+		return 0, 0, 0, false
+	}
+	end, err := youtubeBalancedEnd(script, brace)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	k = ws(end + 1)
+	for _, want := range []byte{')', '(', ')'} {
+		if k >= len(script) || script[k] != want {
+			return 0, 0, 0, false
+		}
+		k = ws(k + 1)
+	}
+	return brace + 1, end, k, true
 }
