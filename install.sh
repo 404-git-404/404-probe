@@ -152,6 +152,9 @@ bootstrap_latest_installer() (
   if [[ -n "${PROBE_404_VERSION:-}" ]]; then
     latest="${PROBE_404_VERSION}"
     release_version "${latest}" || die "explicit target version must be stable or beta.N/rc.N"
+  elif [[ -z "${1:-}" ]] && oneclick_variables_present; then
+    # The panel's command fetches this installer from the Server's own release; keep that version.
+    latest="${DEFAULT_VERSION}"
   else
     effective="$(curl_with_retry \
       --output /dev/null --write-out '%{url_effective}' "https://github.com/${REPOSITORY}/releases/latest")" \
@@ -2303,12 +2306,111 @@ bootstrap_existing_agent() (
   note "404-probe Agent v0.8 bootstrap completed; identity, credential, configuration, and epoch state were preserved."
 )
 
+# One-click (non-interactive) Agent installation. The panel's command sets PROBE_404_ROLE=agent,
+# PROBE_404_SERVER, PROBE_404_ENROLL_TOKEN (or PROBE_404_ENROLL_TOKEN_FILE) and PROBE_404_AGENT_NAME.
+# The values live in plain shell variables (never exported) and the token is dropped from the
+# environment as soon as it is read; it is only ever sent to the Server on curl's stdin.
+ONECLICK_SERVER=""
+ONECLICK_TOKEN=""
+ONECLICK_NAME=""
+
+oneclick_variables_present() {
+  local name
+  for name in PROBE_404_ROLE PROBE_404_SERVER PROBE_404_ENROLL_TOKEN PROBE_404_ENROLL_TOKEN_FILE PROBE_404_AGENT_NAME; do
+    [[ -z "${!name+x}" ]] || return 0
+  done
+  return 1
+}
+
+# Returns 1 when no one-click variable is set (interactive install); exits on partial or unsupported input.
+oneclick_agent_requested() {
+  oneclick_variables_present || return 1
+  if [[ "${PROBE_404_ROLE:-}" == server ]]; then
+    die "the Server role cannot be installed non-interactively; run the installer interactively for a Server"
+  fi
+  local -a missing=()
+  [[ "${PROBE_404_ROLE:-}" == agent ]] || missing+=("PROBE_404_ROLE=agent")
+  [[ -n "${PROBE_404_SERVER:-}" ]] || missing+=(PROBE_404_SERVER)
+  [[ -n "${PROBE_404_ENROLL_TOKEN:-}" || -n "${PROBE_404_ENROLL_TOKEN_FILE:-}" ]] || missing+=("PROBE_404_ENROLL_TOKEN (or PROBE_404_ENROLL_TOKEN_FILE)")
+  [[ -n "${PROBE_404_AGENT_NAME:-}" ]] || missing+=(PROBE_404_AGENT_NAME)
+  if (( ${#missing[@]} != 0 )); then
+    local joined
+    joined="$(printf '%s, ' "${missing[@]}")"
+    die "incomplete non-interactive Agent install; missing or invalid: ${joined%, }"
+  fi
+  [[ -z "${PROBE_404_ENROLL_TOKEN:-}" || -z "${PROBE_404_ENROLL_TOKEN_FILE:-}" ]] \
+    || die "provide only one of PROBE_404_ENROLL_TOKEN and PROBE_404_ENROLL_TOKEN_FILE"
+  return 0
+}
+
+valid_oneclick_agent_name() {
+  local name="$1"
+  [[ -n "${name}" && "${#name}" -le 128 && "${name}" != *[[:cntrl:]]* && "${name}" != [[:space:]]* && "${name}" != *[[:space:]] ]]
+}
+
+# Reads and validates the one-click inputs into the ONECLICK_* variables and clears them from the environment.
+oneclick_load_inputs() {
+  local token="${PROBE_404_ENROLL_TOKEN:-}" token_file="${PROBE_404_ENROLL_TOKEN_FILE:-}"
+  ONECLICK_SERVER="${PROBE_404_SERVER}"
+  ONECLICK_NAME="${PROBE_404_AGENT_NAME}"
+  unset PROBE_404_ENROLL_TOKEN PROBE_404_ENROLL_TOKEN_FILE
+  if [[ -n "${token_file}" ]]; then
+    [[ -f "${token_file}" && ! -L "${token_file}" && -r "${token_file}" ]] || die "PROBE_404_ENROLL_TOKEN_FILE must be a readable regular file"
+    (( $(stat -c '%s' "${token_file}") <= 256 )) || die "the enrollment token file is too large"
+    IFS= read -r token <"${token_file}" || [[ -n "${token}" ]] || die "the enrollment token file is empty"
+  fi
+  [[ "${token}" =~ ^[A-Za-z0-9_-]{43}$ ]] || die "the enrollment token is not in the expected format"
+  ONECLICK_TOKEN="${token}"
+  token=""
+  valid_agent_server_url "${ONECLICK_SERVER}" \
+    || die "PROBE_404_SERVER must be an HTTPS origin, or loopback HTTP, without credentials, path, query, or fragment"
+  ONECLICK_SERVER="${ONECLICK_SERVER%/}"
+  valid_oneclick_agent_name "${ONECLICK_NAME}" || die "PROBE_404_AGENT_NAME must be 1-128 characters without control characters or surrounding spaces"
+}
+
+# Exchanges the registration token for the new Agent's identity and credential. The token travels
+# only on curl's stdin. Prints "<agent_id>\n<agent_token>"; the token is consumed even if later steps fail.
+oneclick_redeem_token() {
+  local name_json="${ONECLICK_NAME//\\/\\\\}" response status body code message
+  name_json="${name_json//\"/\\\"}"
+  response="$(printf '{"token":"%s","name":"%s"}' "${ONECLICK_TOKEN}" "${name_json}" | \
+    curl --silent --show-error --connect-timeout 10 --max-time 30 --request POST \
+      --header 'Content-Type: application/json' --data-binary @- --write-out $'\n%{http_code}' \
+      "${ONECLICK_SERVER}/api/v1/agent/enroll")" || die "could not reach the Server to register this Agent"
+  unset ONECLICK_TOKEN
+  ONECLICK_TOKEN=""
+  status="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  if [[ "${status}" == 200 ]]; then
+    local agent_id agent_token
+    [[ "${body}" =~ \"agent_id\":\"([0-9a-f]{32})\" ]] || die "the Server returned an unexpected registration response"
+    agent_id="${BASH_REMATCH[1]}"
+    [[ "${body}" =~ \"agent_token\":\"([A-Za-z0-9_-]{43})\" ]] || die "the Server returned an unexpected registration response"
+    agent_token="${BASH_REMATCH[1]}"
+    printf '%s\n%s\n' "${agent_id}" "${agent_token}"
+    return 0
+  fi
+  code=""
+  [[ "${body}" =~ \"code\":\"([a-z_]+)\" ]] && code="${BASH_REMATCH[1]}"
+  case "${code}" in
+    enrollment_used) message="this registration token was already used; generate a new command in the panel" ;;
+    enrollment_expired) message="this registration token has expired (tokens last 30 minutes); generate a new command in the panel" ;;
+    enrollment_revoked) message="this registration token was revoked; generate a new command in the panel" ;;
+    enrollment_invalid) message="the Server does not recognise this registration token" ;;
+    enrollment_name_mismatch) message="PROBE_404_AGENT_NAME does not match the name the token was generated for" ;;
+    *) message="the Server refused the registration (HTTP ${status:-unknown})" ;;
+  esac
+  die "Agent registration failed: ${message}"
+}
+
 install_agent() {
   ! openrc_role_residue agent || die "OpenRC Agent already exists; Alpine automatic upgrade is deferred to v1.1"
   ! server_residue_exists \
     || die "a Server installation or stale Server residue exists; run the current official uninstall server command before switching roles"
   if [[ -e "${AGENT_UNIT}" || -e "${CONFIG_DIRECTORY}/agent.env" || -e "${AGENT_BINARY}" \
     || -e "${AGENT_REMOVAL_WORKER_UNIT}" || -e "${AGENT_REMOVAL_FINALIZER_UNIT}" || -e "${AGENT_REMOVAL_WORKER_BINARY}" ]]; then
+    [[ -z "${ONECLICK_SERVER}" ]] \
+      || die "a 404-probe Agent is already installed on this machine; refusing the one-click install (upgrade it from the panel or with the existing upgrade flow). The registration token was not used"
     [[ -e "${AGENT_UNIT}" && -e "${CONFIG_DIRECTORY}/agent.env" && -e "${AGENT_BINARY}" ]] \
       || die "conflicting partial Agent installation found; no files were changed"
     bootstrap_existing_agent
@@ -2320,20 +2422,30 @@ install_agent() {
   [[ ! -e "${AGENT_BINARY}" ]] || die "${AGENT_BINARY} already exists; refusing to overwrite it"
 
   local server_url="${1:-}" enrollment credentials agent_id agent_token insecure_option permissions country_code
-  if [[ -z "${server_url}" ]]; then
-    printf 'Server URL: ' >/dev/tty
-    IFS= read -r server_url </dev/tty
+  if [[ -n "${ONECLICK_SERVER}" ]]; then
+    server_url="${ONECLICK_SERVER}"
+    credentials="$(oneclick_redeem_token)" || exit 1
+    ONECLICK_TOKEN=""
+    agent_id="${credentials%%$'\n'*}"
+    agent_token="${credentials#*$'\n'}"
+    unset credentials
+    note "This Agent was registered with the Server as \"${ONECLICK_NAME}\"."
+  else
+    if [[ -z "${server_url}" ]]; then
+      printf 'Server URL: ' >/dev/tty
+      IFS= read -r server_url </dev/tty
+    fi
+    valid_agent_server_url "${server_url}" \
+      || die "Server URL must be an HTTPS origin, or loopback HTTP, without credentials, path, query, or fragment"
+    server_url="${server_url%/}"
+    printf 'Enrollment value: ' >/dev/tty
+    IFS= read -r -s enrollment </dev/tty
+    printf '\n' >/dev/tty
+    credentials="$(decode_enrollment_token "${enrollment}")"
+    agent_id="${credentials%%$'\n'*}"
+    agent_token="${credentials#*$'\n'}"
+    unset enrollment credentials
   fi
-  valid_agent_server_url "${server_url}" \
-    || die "Server URL must be an HTTPS origin, or loopback HTTP, without credentials, path, query, or fragment"
-  server_url="${server_url%/}"
-  printf 'Enrollment value: ' >/dev/tty
-  IFS= read -r -s enrollment </dev/tty
-  printf '\n' >/dev/tty
-  credentials="$(decode_enrollment_token "${enrollment}")"
-  agent_id="${credentials%%$'\n'*}"
-  agent_token="${credentials#*$'\n'}"
-  unset enrollment credentials
   verify_agent_authentication "${server_url}" "${agent_token}"
 
   begin_install_transaction agent
@@ -2426,6 +2538,17 @@ PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"
   note "404-probe Agent is installed, running, and authenticated to the Server."
   if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then rc-service 404-probe-agent status || true
   else systemctl --no-pager --full status 404-probe-agent.service || true; fi
+}
+
+# Non-interactive Agent install: never reads /dev/tty. The token is only redeemed once every local
+# precondition that can be checked up front has passed.
+install_agent_oneclick() {
+  require_root_linux_systemd
+  oneclick_load_inputs
+  ! server_residue_exists || die "a Server installation or stale Server residue exists; this machine cannot also become an Agent"
+  ! agent_residue_exists \
+    || die "a 404-probe Agent (or its leftovers) is already installed on this machine; refusing the one-click install. Upgrade it from the panel, or run the uninstall command first. The registration token was not used"
+  install_agent ""
 }
 
 install_agent_command() {
@@ -3493,6 +3616,9 @@ main() {
   reject_deferred_command_on_host "${1:-}"
   require_root_linux_systemd
   case "${1:-}" in setup-security) reject_openrc_deferred setup-security ;; esac
+  # A one-click request is validated before anything is downloaded; a partial one fails here.
+  local oneclick=0
+  if [[ -z "${1:-}" ]] && oneclick_agent_requested; then oneclick=1; fi
   if [[ -z "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" && -z "${PROBE_404_INSTALLER_BOOTSTRAPPED:-}" ]]; then
     bootstrap_latest_installer "$@"
     exit $?
@@ -3526,7 +3652,11 @@ main() {
       usage
       ;;
     "")
-      install_or_upgrade
+      if (( oneclick != 0 )); then
+        install_agent_oneclick
+      else
+        install_or_upgrade
+      fi
       ;;
     *)
       usage >&2
