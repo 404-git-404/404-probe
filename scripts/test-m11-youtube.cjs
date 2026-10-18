@@ -11,7 +11,7 @@ test('M11: a page region makes no playback, entitlement or IP geolocation claim'
  }
 });
 test('M11: latest unknown cannot expose a current region or green normal tone',()=>{
- for(const category of ['consent_page','challenge_page','region_conflict','timeout','rate_limited','tls_error']){
+ for(const category of ['challenge_page','region_conflict','timeout','rate_limited','tls_error']){
   const view=YouTube.view(agent({status:'unknown',error:{category}}),now);assert.equal(view.label,'未知');assert.equal(view.known,false);assert.equal(view.tone,'unknown');assert.ok(view.reason.length>0);
  }
  assert.equal(YouTube.view(agent({status:'not_cn',region:'ZZ'}),now).known,false);
@@ -53,4 +53,33 @@ test('M11: every Premium list entry is a valid region code',()=>{
  assert.equal(new Set(list).size,list.length);
  for(const code of list)assert.equal(YouTube.view(agent({status:'not_cn',region:code}),now).known,true,code);
  assert.match(source,/support\.google\.com\/youtube\/answer\/6307365/);
+});
+
+test('L2: an EU consent page shows a green 地区 EU with Premium available and the explanation',()=>{
+ const view=YouTube.view(agent({status:'unknown',error:{category:'consent_page'}}),now);
+ assert.equal(view.label,'地区 EU');assert.equal(view.tone,'observed');assert.equal(view.premium,'available');
+ assert.equal(view.known,false,'no country is claimed');
+ assert.ok(view.description.includes('遇到欧盟隐私同意页，具体国家未知；欧盟/欧洲经济区、英国、瑞士均在 Premium 可用名单内'));
+ assert.doesNotMatch(view.description,/Premium 不可用地区/);
+ assert.match(view.description,/不代表出口 IP 归属/);
+});
+test('L2: a consent page that is stale, offline, pending, unsupported or not yet checked stays neutral',()=>{
+ const consent={status:'unknown',error:{category:'consent_page'}};
+ for(const view of [YouTube.view(agent(consent,{stale:true}),now),YouTube.view({...agent(consent),online:false},now),YouTube.view({...agent(consent),disabled_at:1},now),YouTube.view(agent(consent,{next_due_at:now-1}),now)]){
+  assert.equal(view.tone,'stale');assert.equal(view.premium,null);assert.match(view.label,/^(旧|过期)·未知$/);
+ }
+ for(const extra of [{pending:true},{supported:false},{result:null}]){
+  const view=YouTube.view(agent(consent,extra),now);assert.notEqual(view.label,'地区 EU');assert.equal(view.premium,null);
+ }
+});
+test('L2: other unknown categories never turn green, and a real region still wins over consent wording',()=>{
+ for(const category of ['challenge_page','invalid_configuration','missing_evidence','unexpected_page','timeout','unrecognized_response']){
+  const view=YouTube.view(agent({status:'unknown',error:{category}}),now);assert.equal(view.label,'未知');assert.equal(view.premium,null);assert.equal(view.tone,'unknown');
+ }
+ const view=YouTube.view(agent({status:'not_cn',region:'IT',error:{category:'consent_page'}}),now);assert.equal(view.label,'地区 IT');
+});
+test('L2: the card and the history page both take the label and premium colour from view()',()=>{
+ const fs=require('node:fs'),read=f=>fs.readFileSync(require.resolve('../web/static/'+f),'utf8');
+ assert.ok(read('app.js').includes('YouTubeStatus.view(agent)')&&read('app.js').includes('value.label,value.tone,value.premium'));
+ assert.ok(read('history.js').includes('observation.premium'));
 });
