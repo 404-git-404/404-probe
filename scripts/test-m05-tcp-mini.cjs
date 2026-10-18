@@ -4,44 +4,44 @@ const M=60000,NOW=1792080030000,FIRST=Math.floor(NOW/M)*M-1439*M;
 const LAST=1439; // in-progress minute (end = NOW)
 function fixture(protocol='tcp',slot='telecom'){
  const target={id:`t-${protocol}-${slot}`,slot,family:'ipv4',protocol,region:'test',slot_revision:'7',status:'active'};
- const points=Array.from({length:1440},(_,i)=>({start:FIRST+i*M,end:Math.min(FIRST+(i+1)*M,NOW),count:0,valid_rtts:0,not_executed:0,sent:0,received:0,p50_ms:null,p95_ms:null,completeness:'no_data',execution_coverage:'unverified',categories:{}}));
- for(let i=1430;i<1436;i++)Object.assign(points[i],{count:2,valid_rtts:2,p50_ms:30+i-1430,p95_ms:40+i-1430,completeness:'complete',config_revision_min:'9',config_revision_max:'9',slot_revision_min:'7',slot_revision_max:'7',categories:{success:2}});
+ const points=Array.from({length:1440},(_,i)=>({start:FIRST+i*M,end:Math.min(FIRST+(i+1)*M,NOW),count:0,valid_rtts:0,not_executed:0,sent:0,received:0,p50_ms:null,p50_5m_ms:null,p95_ms:null,completeness:'no_data',execution_coverage:'unverified',categories:{}}));
+ for(let i=1430;i<1436;i++)Object.assign(points[i],{count:2,valid_rtts:2,p50_ms:30+i-1430,p50_5m_ms:20+i-1430,p95_ms:40+i-1430,completeness:'complete',config_revision_min:'9',config_revision_max:'9',slot_revision_min:'7',slot_revision_max:'7',categories:{success:2}});
  const h={target,view:'1day',resolution_ms:M,now:NOW,window_start:FIRST,algorithm:'weighted-grid-rtt-adjacent-v3',histogram_version:1,grid_ms:.25,percentile_max_error_ms:.125,groups:[{semantics:'staged_probe_v2',metric:protocol==='tcp'?'pure_connect':'echo_rtt',points}]};return {target,h,points};
 }
-const set=(points,i,p50,p95=p50)=>Object.assign(points[i],{count:2,valid_rtts:2,p50_ms:p50,p95_ms:p95,completeness:'complete',config_revision_min:'9',config_revision_max:'9',slot_revision_min:'7',slot_revision_max:'7',categories:{success:2}});
+const set=(points,i,five,p95=five,own=five)=>Object.assign(points[i],{count:2,valid_rtts:2,p50_5m_ms:five,p50_ms:own,p95_ms:p95,completeness:'complete',config_revision_min:'9',config_revision_max:'9',slot_revision_min:'7',slot_revision_max:'7',categories:{success:2}});
 
 test('fixed square-root ruler: ratio = sqrt(v/1000) up to 1000ms, then clamped',()=>{
  for(const [v,r]of [[-5,0],[0,0],[100,.316],[250,.5],[1000,1],[1500,1],[60000,1]])assert.ok(Math.abs(L.ratio(v)-r)<.001,`${v}`);
  for(const gone of ['axis','tcpAxis','tcpLevel'])assert.equal(L[gone],undefined);
 });
-test('normalize plots P50 and keeps P95 for the tooltip',()=>{
- const {h,target}=fixture();const p=L.normalize(h,target).points[1430];assert.equal(p.value,30);assert.equal(p.p95,40);
+test('normalize plots the 5-minute P50 and keeps the minute P50 and P95 for the tooltip',()=>{
+ const {h,target}=fixture();const p=L.normalize(h,target).points[1430];assert.equal(p.value,20);assert.equal(p.p50,30);assert.equal(p.p95,40);
 });
-test('p50_ms is validated like p95_ms',()=>{
- const {h,target,points}=fixture();points[1430].p50_ms=-1;assert.throws(()=>L.normalize(h,target));points[1430].p50_ms=Infinity;assert.throws(()=>L.normalize(h,target));points[1430].p50_ms='3';assert.throws(()=>L.normalize(h,target));delete points[1430].p50_ms;assert.throws(()=>L.normalize(h,target));points[1430].p50_ms=null;assert.equal(L.normalize(h,target).points[1430].value,null);
+test('p50_5m_ms and p50_ms are validated like p95_ms',()=>{
+ for(const key of ['p50_5m_ms','p50_ms']){const {h,target,points}=fixture();for(const bad of [-1,Infinity,'3'])assert.throws(()=>{points[1430][key]=bad;L.normalize(h,target);});delete points[1430][key];assert.throws(()=>L.normalize(h,target));points[1430][key]=null;L.normalize(h,target);}
+ {const {h,target,points}=fixture();points[1430].p50_5m_ms=null;const p=L.normalize(h,target).points[1430];assert.equal(p.value,null);assert.match(p.reason,/5 分钟窗口内有效 RTT 不足/);}
 });
 test('TCP known_gap retains only valid identity-safe P50, with original categories',()=>{
- const {h,target,points}=fixture();Object.assign(points[1432],{execution_coverage:'known_gap',not_executed:1,completeness:'partial',categories:{success:1,timeout:1}});let p=L.normalize(h,target).points[1432];assert.equal(p.value,32);assert.equal(p.partial,true);assert.equal(p.valid,2);assert.equal(p.count,2);assert.equal(p.notExecuted,1);assert.deepEqual(p.categories,{success:1,timeout:1});
+ const {h,target,points}=fixture();Object.assign(points[1432],{execution_coverage:'known_gap',not_executed:1,completeness:'partial',categories:{success:1,timeout:1}});let p=L.normalize(h,target).points[1432];assert.equal(p.value,22);assert.equal(p.partial,true);assert.equal(p.valid,2);assert.equal(p.count,2);assert.equal(p.notExecuted,1);assert.deepEqual(p.categories,{success:1,timeout:1});
  points[1432].config_revision_min='8';assert.equal(L.normalize(h,target).points[1432].value,null);points[1432].config_revision_min='9';points[1432].slot_revision_max='8';assert.equal(L.normalize(h,target).points[1432].value,null);points[1432].slot_revision_max='7';points[1432].valid_rtts=0;assert.equal(L.normalize(h,target).points[1432].value,null);
 });
 test('success plus failure, null, unexecuted, partial zero and sub-ms retain truthful P50',()=>{
- const {h,target,points}=fixture();Object.assign(points[1430],{valid_rtts:1,p50_ms:.4,p95_ms:.4,categories:{success:1,timeout:1}});Object.assign(points[1431],{execution_coverage:'known_gap',p50_ms:0,p95_ms:0});Object.assign(points[1432],{p50_ms:null,p95_ms:null,valid_rtts:0,categories:{timeout:2}});Object.assign(points[1433],{p50_ms:null,p95_ms:null,valid_rtts:0,not_executed:2,execution_coverage:'known_gap'});const n=L.normalize(h,target);assert.equal(n.points[1430].value,.4);assert.equal(n.points[1431].value,0);assert.equal(n.points[1431].partial,true);assert.equal(n.points[1432].value,null);assert.equal(n.points[1433].value,null);
+ const {h,target,points}=fixture();Object.assign(points[1430],{valid_rtts:1,p50_5m_ms:.4,p95_ms:.4,categories:{success:1,timeout:1}});Object.assign(points[1431],{execution_coverage:'known_gap',p50_5m_ms:0,p95_ms:0});Object.assign(points[1432],{p50_5m_ms:null,p95_ms:null,valid_rtts:0,categories:{timeout:2}});Object.assign(points[1433],{p50_5m_ms:null,p95_ms:null,valid_rtts:0,not_executed:2,execution_coverage:'known_gap'});const n=L.normalize(h,target);assert.equal(n.points[1430].value,.4);assert.equal(n.points[1431].value,0);assert.equal(n.points[1431].partial,true);assert.equal(n.points[1432].value,null);assert.equal(n.points[1433].value,null);
 });
 test('old semantics and mismatched API remain rejected',()=>{
  const {h,target}=fixture();h.groups[0].semantics='single_probe_v1';assert.equal(L.normalize(h,target).supported,false);h.target={...target,family:'ipv6'};assert.throws(()=>L.normalize(h,target));h.target=target;h.algorithm='unknown';assert.throws(()=>L.normalize(h,target));
 });
 test('ICMP preserves the known_gap mask and has no partial field',()=>{
- const {h,target,points}=fixture('icmp');points[1431].execution_coverage='known_gap';const n=L.normalize(h,target);assert.equal(n.points[1431].value,null);assert.equal(Object.hasOwn(n.points[1430],'partial'),false);assert.equal(n.points[1430].value,30);
+ const {h,target,points}=fixture('icmp');points[1431].execution_coverage='known_gap';const n=L.normalize(h,target);assert.equal(n.points[1431].value,null);assert.equal(Object.hasOwn(n.points[1430],'partial'),false);assert.equal(n.points[1430].value,20);
 });
-test('recent(): median of the last five completed minutes, skipping null/partial/in-progress, "—" below three',()=>{
- const run=(values,extra={})=>{const {h,target,points}=fixture();for(const p of points)Object.assign(p,{p50_ms:null,p95_ms:null,valid_rtts:0,count:0,completeness:'no_data'});for(const [i,v]of values)set(points,i,v);extra.fn?.(points);return L.recent(L.normalize(h,target));};
- assert.equal(run([[1434,100],[1435,120],[1436,140],[1437,160],[1438,180],[LAST,9999]]),140);
- assert.equal(run([[1434,100],[1435,300],[1436,140],[1437,160],[1438,180]]),160);
- assert.equal(run([[1435,100],[1436,200],[1437,300],[1438,400]]),250,'even count averages the middle pair');
- assert.equal(run([[1434,100],[1436,140],[1438,180]]),140,'three usable of five is enough');
- assert.equal(run([[1434,100],[1436,140]]),null,'two usable values');
- assert.equal(run([[1434,100],[1435,120],[1436,140],[1437,160],[1438,180]],{fn:p=>{Object.assign(p[1436],{execution_coverage:'known_gap',completeness:'partial'});Object.assign(p[1437],{p50_ms:null,p95_ms:null,valid_rtts:0});Object.assign(p[1435],{p50_ms:null,p95_ms:null,valid_rtts:0});}}),null,'partial and null minutes are skipped');
- assert.equal(run([[1420,100],[1421,100],[1422,100]]),null,'only the last five minutes count');
+test('recent(): the 5-minute P50 of the latest completed minute; null when that minute has none, is partial, or is still open',()=>{
+ const run=(values,extra={})=>{const {h,target,points}=fixture();for(const p of points)Object.assign(p,{p50_ms:null,p50_5m_ms:null,p95_ms:null,valid_rtts:0,count:0,completeness:'no_data'});for(const [i,v]of values)set(points,i,v);extra.fn?.(points);return L.recent(L.normalize(h,target));};
+ assert.equal(run([[1434,100],[1435,120],[1436,140],[1437,160],[1438,180],[LAST,9999]]),180,'latest completed minute, not the open one');
+ assert.equal(run([[1438,172]],{fn:p=>Object.assign(p[1438],{p50_ms:1575})}),172,'not the minute P50');
+ assert.equal(run([[1436,140],[1437,160]]),null,'latest completed minute (1438) has no value: name only, no look-back');
+ assert.equal(run([[1437,160],[1438,180]],{fn:p=>Object.assign(p[1438],{execution_coverage:'known_gap',completeness:'partial'})}),null,'partial minute');
+ assert.equal(run([[1438,180]],{fn:p=>Object.assign(p[1438],{p50_5m_ms:null})}),null);
+ assert.equal(run([[LAST,50]]),null);
 });
 
 // ---------- rendering through the real create()/render() with a minimal DOM ----------
@@ -84,12 +84,12 @@ const firstY=d=>Number(/^M[\d.]+,([\d.]+)/.exec(d)[1]);
 const yOf=(v,ph=68)=>ph-Math.min(1,L.ratio(v))*(ph-2); // plot height 80 => drawing height 68
 const line=(points,from,to,fn)=>{for(let i=from;i<=to;i++)set(points,i,fn(i-from));};
 
-test('curve is drawn from P50, not P95',async()=>{
- const c2=await card({series:{telecom:p=>{line(p,1420,1428,()=>100);for(let i=1420;i<=1428;i++)p[i].p95_ms=3000;}}});
+test('curve is drawn from the 5-minute P50, not the minute P50 or P95',async()=>{
+ const c2=await card({series:{telecom:p=>{line(p,1420,1428,()=>100);for(let i=1420;i<=1428;i++){p[i].p95_ms=3000;p[i].p50_ms=2500;}}}});
  const d=solid(c2)[0].attributes.d;assert.ok(Math.abs(firstY(d)-yOf(100))<.01,d);
  assert.equal(dashed(c2).length,0,'a P95 of 3000ms must not appear on the curve');
  assert.equal(c2.plot.dataset.scale,'fixed-sqrt');
- assert.match(c2.plot.title,/一分钟 RTT P50；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示/);
+ assert.match(c2.plot.title,/5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示/);
 });
 test('the same value has the same y on cards with completely different data ranges',async()=>{
  const a=await card({series:{telecom:p=>line(p,1420,1428,i=>i%2?100:120)}});
@@ -115,19 +115,19 @@ test('a run above 1000ms is one dashed top-edge segment joined to the solid line
  assert.equal(c.svg().filter(n=>n.tagName==='text'&&/越界/.test(n.ownText)).length,0,'the old ▲历史越界 label is gone');
 });
 test('a single minute above 1000ms is a short dashed mark with the real values on hover',async()=>{
- const c=await card({series:{telecom:p=>{set(p,1435,1830,3010);}}});
+ const c=await card({series:{telecom:p=>{set(p,1435,1830,3010,1575);}}});
  const d=dashed(c);assert.equal(d.length,1);assert.equal(d[0].attributes['data-minutes'],'1');
  const m=/^M([\d.]+),2H([\d.]+)$/.exec(d[0].attributes.d);assert.ok(Number(m[2])-Number(m[1])>=3);
  const left=Number(c.plot.dataset.axisLeft),start=Number(c.plot.dataset.start),end=Number(c.plot.dataset.end),epoch=FIRST+1435*M+1000;
  c.plot.dispatch('pointermove',{pointerType:'mouse',pointerId:1,clientX:left+(epoch-start)/(end-start)*(300-left)});
  const note=c.node.all().find(n=>n.tagName==='output').textContent;
- assert.match(note,/电信：.*\nP50 1830ms · P95 3010ms · 超出刻度/);
+ assert.match(note,/电信：.*\n5 分钟 P50 1830ms · 本分钟 P50 1575ms · 本分钟 P95 3010ms · 超出刻度 · 有效 RTT 2 \/ 观测 2/);
 });
-test('top numbers: median of the last five minutes, lowest bold, >1000 red, "—" below three values',async()=>{
+test('top numbers: latest completed minute 5-minute P50, lowest bold, >1000 red, name only when missing',async()=>{
  const c=await card({series:{
-  telecom:p=>{[100,120,140,160,180].forEach((v,k)=>set(p,1434+k,v));set(p,LAST,9999);},
-  unicom:p=>{set(p,1434,200);set(p,1438,200);},
-  mobile:p=>{[1500,1600,1700,1800,1900].forEach((v,k)=>set(p,1434+k,v));}}});
+  telecom:p=>{set(p,1437,90);set(p,1438,140,3000,1575);set(p,LAST,9999);},
+  unicom:p=>{set(p,1436,200);set(p,1437,200);},
+  mobile:p=>{set(p,1438,1700);}}});
  const n=c.nums();
  assert.equal(n.telecom.textContent,'140');assert.equal(n.unicom.textContent,'');assert.equal(n.mobile.textContent,'1700');
  assert.equal(n.telecom.dataset.state,'lowest');assert.match(n.telecom.className,/lm-lowest/);
@@ -141,7 +141,7 @@ test('top numbers: median of the last five minutes, lowest bold, >1000 red, "—
  assert.equal(c.nums().telecom.textContent,'140');
 });
 test('a lone value is not marked lowest; deselecting a line clears its number',async()=>{
- const c=await card({series:{telecom:p=>[100,120,140,160,180].forEach((v,k)=>set(p,1434+k,v))}});
+ const c=await card({series:{telecom:p=>set(p,1438,140)}});
  let n=c.nums();assert.equal(n.telecom.textContent,'140');assert.doesNotMatch(n.telecom.className,/lm-lowest/);
  const button=c.node.all().find(x=>x.tagName==='button'&&x.textContent.startsWith('联通'));button.dispatch('click');await c.flush();
  assert.equal(c.nums().unicom.textContent,'');

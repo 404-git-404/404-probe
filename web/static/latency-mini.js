@@ -1,4 +1,4 @@
-/* M05: fixed IPv4 RTT history, from the existing Server minute P50/P95 rollup. One fixed square-root scale for every card. */
+/* M05: fixed IPv4 RTT history, from the existing Server minute P50/P95 and 5-minute rolling P50 rollup. One fixed square-root scale for every card. */
 (function(root){
   'use strict';
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
@@ -20,13 +20,14 @@
     const points=g.points.map((p,i)=>{
       const start=h.window_start+i*MINUTE,end=Math.min(start+MINUTE,h.now);
       if(!p||p.start!==start||p.end!==end||!integer(p.count)||!integer(p.valid_rtts)||!integer(p.not_executed)||!integer(p.sent)||!integer(p.received)||p.received>p.sent||
-        !(p.p50_ms===null||finite(p.p50_ms)&&p.p50_ms>=0)||!(p.p95_ms===null||finite(p.p95_ms)&&p.p95_ms>=0)||!['complete','partial','no_data'].includes(p.completeness)||!['known_gap','unverified'].includes(p.execution_coverage))fail();
+        !(p.p50_5m_ms===null||finite(p.p50_5m_ms)&&p.p50_5m_ms>=0)||!(p.p50_ms===null||finite(p.p50_ms)&&p.p50_ms>=0)||!(p.p95_ms===null||finite(p.p95_ms)&&p.p95_ms>=0)||!['complete','partial','no_data'].includes(p.completeness)||!['known_gap','unverified'].includes(p.execution_coverage))fail();
       const mixed=p.count>0&&(p.config_revision_min!==p.config_revision_max||p.slot_revision_min!==p.slot_revision_max||p.slot_revision_min!==t.slot_revision);
       const reason=p.execution_coverage==='known_gap'?'缺测/未执行':mixed?'配置/槽位边界':!p.valid_rtts?'无有效 RTT':p.completeness==='no_data'?'无观测':'';
       // Partial ICMP uses ONLY actually replied Echo RTTs. No loss-to-RTT conversion.
-      const partial=t.protocol==='tcp'&&p.execution_coverage==='known_gap'&&!mixed&&p.valid_rtts>0&&p.count>0&&end>start&&p.completeness!=='no_data'&&finite(p.p50_ms);
-      const value=(!reason||partial)&&p.count>0&&end>start&&finite(p.p50_ms)?p.p50_ms:null;
-      return {start,end,value,p95:finite(p.p95_ms)?p.p95_ms:null,reason,...(t.protocol==='tcp'?{partial}:{}),valid:p.valid_rtts,count:p.count,notExecuted:p.not_executed,sent:p.sent,received:p.received,
+      const partial=t.protocol==='tcp'&&p.execution_coverage==='known_gap'&&!mixed&&p.valid_rtts>0&&p.count>0&&end>start&&p.completeness!=='no_data'&&finite(p.p50_5m_ms);
+      const value=(!reason||partial)&&p.count>0&&end>start&&finite(p.p50_5m_ms)?p.p50_5m_ms:null;
+      const shown=value===null&&!reason&&p.valid_rtts>0&&p.count>0?'5 分钟窗口内有效 RTT 不足 3 个':reason;
+      return {start,end,value,p50:finite(p.p50_ms)?p.p50_ms:null,p95:finite(p.p95_ms)?p.p95_ms:null,reason:shown,...(t.protocol==='tcp'?{partial}:{}),valid:p.valid_rtts,count:p.count,notExecuted:p.not_executed,sent:p.sent,received:p.received,
         completeness:p.completeness,provisional:!!p.provisional,config:[p.config_revision_min,p.config_revision_max],slot:[p.slot_revision_min,p.slot_revision_max],categories:p.categories||{}};
     });
     return {now:h.now,points,supported:true};
@@ -35,14 +36,14 @@
   // drawn as a dashed run on the top edge.
   const CEIL=1000,DASH='3,2',GRID=[50,100,200,300,500,700,1000];
   function ratio(v){return v<=0?0:v>=CEIL?1:Math.sqrt(v/CEIL);}
-  const median=v=>{const a=[...v].sort((x,y)=>x-y),m=a.length>>1;return a.length%2?a[m]:(a[m-1]+a[m])/2;};
-  // Median of the last five completed minutes; null when fewer than three of them have a usable P50.
+  // Headline number: the 5-minute rolling P50 of the latest completed minute; null (name only) when that minute has none.
   function recent(data){
-    const done=(data?.points||[]).filter(p=>p.end-p.start===MINUTE).slice(-5);
-    const usable=done.filter(p=>p.value!==null&&!p.partial).map(p=>p.value);
-    return usable.length<3?null:median(usable);
+    const last=(data?.points||[]).filter(p=>p.end-p.start===MINUTE).at(-1);
+    return last&&last.value!==null&&!last.partial?last.value:null;
   }
   const plain=v=>String(Number(v.toFixed(3)));
+  const ms=v=>v===null?'—':plain(v)+'ms';
+  const figures=p=>`5 分钟 P50 ${ms(p.value)} · 本分钟 P50 ${ms(p.p50)} · 本分钟 P95 ${ms(p.p95)}`;
   function create({document:doc=root.document,coordinator=null,axes=null,state=root.AgentState,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Observer=root.IntersectionObserver,Resize=root.ResizeObserver,
     interval=root.setInterval,clear=root.clearInterval,now=()=>Date.now(),monotonicNow=()=>root.performance?.now?.()??Date.now()}={}){
@@ -59,10 +60,10 @@
     function view(c){if(c.follow)c.end=c.latest;else clamp(c);return [c.end-c.hours*HOUR,c.end];}
     function invalidate(c,clearData=false){axes?.release(c.id,'C');c.serial++;c.loading.clear();queue.release(c.owner);c.drag=null;c.note.textContent='';if(clearData)c.cache.clear();}
     function note(c,epoch){
-      const parts=[`${stamp(view(c)[0])} — ${stamp(c.end)} · ${c.follow?'跟随现在':'历史位置'}\n一分钟 RTT P50（悬停同时给出 P95）· ${c.protocol==='tcp'?'纯 Connect，不含 DNS':'Echo Reply RTT，仅实际回包'} · 量化误差≤0.125ms`];
+      const parts=[`${stamp(view(c)[0])} — ${stamp(c.end)} · ${c.follow?'跟随现在':'历史位置'}\n5 分钟滑动 P50（每分钟一个点；悬停同时给出本分钟 P50/P95）· ${c.protocol==='tcp'?'纯 Connect，不含 DNS':'Echo Reply RTT，仅实际回包'} · 量化误差≤0.125ms`];
       for(const t of selected(c)){
         const entry=c.cache.get(t.id),p=entry?.data?.points.find(p=>epoch>=p.start&&epoch<Math.max(p.start+1,p.end));
-        parts.push(`${C.names[t.slot]}：${p?`${stamp(p.start)} — ${stamp(p.end)}\n${p.value===null?p.reason||'无有效 RTT':'P50 '+plain(p.value)+'ms · P95 '+(p.p95===null?'—':plain(p.p95)+'ms')+(p.value>CEIL?' · 超出刻度':'')}${p.partial?' · 存在有效 RTT，但该分钟覆盖不完整':''} · 有效 RTT ${p.valid} / 观测 ${p.count} · ${p.completeness}${p.provisional?' · 未最终封存':''}\n${c.protocol==='icmp'?`完整窗口分母：发送 ${p.sent} / 回包 ${p.received} · 丢包 ${p.sent?((p.sent-p.received)/p.sent*100).toFixed(1)+'%':'分母未知'} · `:''}未执行 ${p.notExecuted} · 配置 ${p.config.join('—')} / 槽位 ${p.slot.join('—')}\n分类 ${JSON.stringify(p.categories)}`:entry?.error||(!t.id?'没有匹配目标':!entry?.data?.supported?'无 staged_probe_v2 历史':'此时间无桶')}${entry?.error?' · 读取失败，旧历史':''}${c.agent.online===false?' · 离线历史':''}${t.status==='paused'?' · 检测暂停':''}`);
+        parts.push(`${C.names[t.slot]}：${p?`${stamp(p.start)} — ${stamp(p.end)}\n${p.value===null?p.reason||'无有效 RTT':figures(p)+(p.value>CEIL?' · 超出刻度':'')}${p.partial?' · 存在有效 RTT，但该分钟覆盖不完整':''} · 有效 RTT ${p.valid} / 观测 ${p.count} · ${p.completeness}${p.provisional?' · 未最终封存':''}\n${c.protocol==='icmp'?`完整窗口分母：发送 ${p.sent} / 回包 ${p.received} · 丢包 ${p.sent?((p.sent-p.received)/p.sent*100).toFixed(1)+'%':'分母未知'} · `:''}未执行 ${p.notExecuted} · 配置 ${p.config.join('—')} / 槽位 ${p.slot.join('—')}\n分类 ${JSON.stringify(p.categories)}`:entry?.error||(!t.id?'没有匹配目标':!entry?.data?.supported?'无 staged_probe_v2 历史':'此时间无桶')}${entry?.error?' · 读取失败，旧历史':''}${c.agent.online===false?' · 离线历史':''}${t.status==='paused'?' · 检测暂停':''}`);
       }
       c.note.textContent=parts.join('\n');
     }
@@ -92,7 +93,7 @@
         // Minutes above the ruler are one dashed run on the top edge; the solid line joins it from, and back to, the scale.
         const flush=()=>{if(!run)return;const x1=x(run.first.start),x2=x(run.last.start)+Math.max(mw,3);
           const dash=add('path',{d:`M${x1.toFixed(2)},${topY}H${x2.toFixed(2)}`,fill:'none',stroke:color,'stroke-width':1.4,'stroke-dasharray':DASH,'data-boundary':'above-scale','data-start':run.first.start,'data-minutes':run.n});
-          const tip=doc.createElementNS(ns,'title');tip.textContent=run.n===1?`${name} ${stamp(run.first.start)} · P50 ${plain(run.first.value)}ms · P95 ${run.first.p95===null?'—':plain(run.first.p95)+'ms'} · 超出刻度`:`${name} ${stamp(run.first.start)} — ${stamp(run.last.end)} · ${run.n} 分钟超出刻度，最高 P50 ${plain(run.max)}ms`;dash.append(tip);run=null;};
+          const tip=doc.createElementNS(ns,'title');tip.textContent=run.n===1?`${name} ${stamp(run.first.start)} · ${figures(run.first)} · 超出刻度`:`${name} ${stamp(run.first.start)} — ${stamp(run.last.end)} · ${run.n} 分钟超出刻度，最高 P50 ${plain(run.max)}ms`;dash.append(tip);run=null;};
         for(let i=0;i<points.length;i++){const p=points[i];
           if(p.value===null){flush();prev=null;continue;}
           const over=p.value>CEIL,consec=prev&&p.start-prev.start===MINUTE;
@@ -113,7 +114,7 @@
       if(message)txt(left+pw/2,14,message,'middle');
       if(c.protocol==='tcp'&&(!c.tcpEvidence||c.tcpEvidence.state==='unknown'||c.tcpEvidenceError))txt(left+3,ph-3,'告警覆盖不足');
       c.plot.replaceChildren(svg);c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
-      c.plot.title=`${stamp(start)} — ${stamp(end)} · 一分钟 RTT P50；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${c.tcpEvidence?.coverage||'告警覆盖不足'}；告警来源日 ${c.tcpEvidence?.source_day||'无可证明事件'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
+      c.plot.title=`${stamp(start)} — ${stamp(end)} · 5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${c.tcpEvidence?.coverage||'告警覆盖不足'}；告警来源日 ${c.tcpEvidence?.source_day||'无可证明事件'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
       c.plot.setAttribute('aria-label',c.plot.title+(message?' · '+message:''));
       c.span.textContent=c.hours+'h';c.span.title='当前可视时间跨度：'+c.hours+'小时';c.slider.setAttribute('aria-valuetext',c.hours+'小时');c.now.setAttribute('aria-pressed',String(c.follow));
       for(const [protocol,b]of c.protocols)b.setAttribute('aria-pressed',String(protocol===c.protocol));
