@@ -137,7 +137,12 @@ func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
 	for _, s := range scripts {
 		configs, err := youtubeConfigs(s)
 		if err != nil {
-			return unknown("invalid_configuration")
+			// Only a script that carries ytcfg and region-related fields can make the page untrustworthy;
+			// an unrelated ytcfg script that this strict reader cannot parse is simply not evidence.
+			if strings.Contains(s, "ytcfg") && youtubeMentionsRegion(s) {
+				return unknown("invalid_configuration")
+			}
+			continue
 		}
 		for _, config := range configs {
 			if raw, ok := config["INNERTUBE_CONTEXT_GL"]; ok {

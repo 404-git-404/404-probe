@@ -44,7 +44,14 @@ func TestYouTubeRegionRealPageShapes(t *testing.T) {
 		{"assigned", ytPage(`var f=(function(){ytcfg.set({"INNERTUBE_CONTEXT_GL":"CN"});})();`), "", "missing_evidence"},
 		{"boot vs top conflict", ytPage(ytBoot(good), `ytcfg.set({"INNERTUBE_CONTEXT_GL":"US"})`), "", "region_conflict"},
 		{"boot dup key", ytPage(ytBoot(`{"INNERTUBE_CONTEXT_GL":"US","INNERTUBE_CONTEXT_GL":"CN"}`)), "", "invalid_configuration"},
-		{"division in kv", ytPage(ytBoot(good), `ytcfg.set("w",window.innerWidth/2)`), "", "invalid_configuration"},
+		// A ytcfg script this reader cannot parse but that has nothing to do with the region no longer ruins the page.
+		{"division in kv, region elsewhere", ytPage(ytBoot(good), `ytcfg.set("w",window.innerWidth/2)`), "MY", ""},
+		{"unrelated unparseable script alone", ytPage(`ytcfg.set("w",window.innerWidth/2)`), "", "missing_evidence"},
+		{"unrelated unterminated comment", ytPage(ytBoot(good), `ytcfg.set("a",1); /* never closed`), "MY", ""},
+		{"unrelated ambiguous regex", ytPage(ytBoot(good), `ytcfg.set("a",1); x = /abc`), "MY", ""},
+		// ... while a region-bearing ytcfg script that cannot be read still invalidates it.
+		{"region-bearing division", ytPage(ytBoot(good), `ytcfg.set("INNERTUBE_CONTEXT_GL",window.w/2)`), "", "invalid_configuration"},
+		{"region-bearing unterminated comment", ytPage(ytBoot(good), `ytcfg.set({"gl":"CN"}); /* never closed`), "", "invalid_configuration"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := parseYouTube(htmlResponse(200, googleTargets[0].url, tc.body))
@@ -61,6 +68,9 @@ func TestYouTubeRegionSanitizedRealPages(t *testing.T) {
 		status       protocol.YouTubeStatus
 	}{
 		{"premium-my.html", "MY", protocol.YouTubeNotCN},
+		// Real EU responses, reached only by following the consent redirect (which the Agent never does).
+		{"premium-de.html", "DE", protocol.YouTubeNotCN},
+		{"premium-it-from-nl-host.html", "IT", protocol.YouTubeNotCN},
 		{"premium-us-a.html", "US", protocol.YouTubeNotCN},
 		// Contains an unrelated www.google.cn ad URL; it must never become CN.
 		{"premium-us-b-google-cn-ad.html", "US", protocol.YouTubeNotCN},

@@ -283,3 +283,30 @@ func TestM11HTTPSRedirectAndAddressPolicy(t *testing.T) {
 		})
 	}
 }
+
+// The redirect every anonymous request from the EU test hosts received: /premium -> 302 to the consent
+// host with a long query. The Agent must stop there, report consent_page and never visit the consent host.
+func TestYouTubeEURedirectToConsentHostIsConsentPage(t *testing.T) {
+	var hosts []string
+	f, calls := m11HTTPS(t, func(w http.ResponseWriter, r *http.Request) {
+		hosts = append(hosts, r.Host+r.URL.Path)
+		w.Header().Set("Set-Cookie", "SOCS=x; Path=/; Secure")
+		w.Header().Set("Location", "https://consent.youtube.com/m?continue=https%3A%2F%2Fwww.youtube.com%2Fpremium%3Fcbrd%3D1&gl=DE&m=0&pc=yt&cm=2&hl=en&src=1")
+		w.WriteHeader(302)
+	})
+	e, err := m11Execute(context.Background(), f)
+	if err != nil || e.Success || e.ErrorCategory != "youtube_consent_page" || calls.Load() != 1 {
+		t.Fatal(e, err, calls.Load())
+	}
+	youtube := e.Result.GoogleStatus.YouTube
+	if youtube.Status != protocol.YouTubeUnknown || youtube.Region != "" {
+		t.Fatalf("a consent page carries no region: %+v", youtube)
+	}
+	if len(hosts) != 1 || !strings.HasSuffix(hosts[0], "/premium") {
+		t.Fatalf("unexpected requests: %v", hosts)
+	}
+	// Nothing from the consent URL (its gl= country hint included) may leak into the result.
+	if youtube.SentToChina != nil {
+		t.Fatalf("%+v", youtube)
+	}
+}
