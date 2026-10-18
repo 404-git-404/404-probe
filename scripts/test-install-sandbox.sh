@@ -25,9 +25,10 @@ systemctl() { printf 'systemctl %s\n' "$*" >>"${CALLS}"; case "$1" in start) [[ 
 # Trials: each case names the directive keys that "fail" when present in a trial.
 FAIL_KEYS=""
 TRIALS="${temporary}/trials"
-sandbox_trial() {
+trial_ok() { # directives...
   local directive key
-  printf '%s\n' "$*" >>"${TRIALS}"
+  printf '%s
+' "$*" >>"${TRIALS}"
   for directive in "$@"; do
     key="${directive%%=*}"
     [[ " ${FAIL_KEYS} " != *" ${key} "* ]] || return 1
@@ -41,10 +42,23 @@ sandbox_trial() {
   fi
   return 0
 }
+BATCHES="${temporary}/batches"
+sandbox_trial_batch() {
+  local index entry
+  SANDBOX_BATCH_RESULT=()
+  printf 'batch of %s
+' "${#SANDBOX_BATCH[@]}" >>"${BATCHES}"
+  for index in "${!SANDBOX_BATCH[@]}"; do
+    mapfile -t entry <<<"${SANDBOX_BATCH[index]}"
+    if trial_ok "${entry[@]}"; then SANDBOX_BATCH_RESULT[index]=0; else SANDBOX_BATCH_RESULT[index]=1; fi
+  done
+}
+NET_RAW_BOUND=1
+sandbox_net_raw_in_bounding_set() { (( NET_RAW_BOUND == 1 )); }
 getent() { if [[ "$1" == passwd && "$2" == nobody ]]; then echo "nobody:x:65534:65534::/:/usr/sbin/nologin"; return 0; fi; command getent "$@"; }
 sandbox_virtualization() { printf 'podman'; }
 
-run_probe() { SANDBOX_REMOVED=""; FAIL_KEYS="$1"; FAIL_COMBO="${2:-}"; : >"${TRIALS}"; sandbox_probe; }
+run_probe() { SANDBOX_REMOVED=""; FAIL_KEYS="$1"; FAIL_COMBO="${2:-}"; NET_RAW_BOUND=1; : >"${TRIALS}"; : >"${BATCHES}"; sandbox_probe; }
 unit_text() { # generator output with the current SANDBOX_REMOVED
   render_agent_unit ""
 }
@@ -61,7 +75,8 @@ has() { grep -Fxq -- "$2" "$1"; }
 # ---- 1. full hardening works: the units are exactly what the installer always generated ----------------
 run_probe ""
 [[ -z "${SANDBOX_REMOVED}" ]]
-[[ "$(wc -l <"${TRIALS}")" -le 3 ]] || { printf 'a fully working machine should need only the full-set trials\n' >&2; exit 1; }
+[[ "$(wc -l <"${BATCHES}")" -eq 1 ]] || { printf 'a fully working machine should need a single batch (one systemd reload)
+' >&2; exit 1; }
 all_units
 cp -r "${temporary}/units" "${temporary}/units-full"
 sandbox_filter_saved="$(declare -f sandbox_filter)"
@@ -131,6 +146,14 @@ has "${temporary}/units/404-probe-security-collect.service" 'AmbientCapabilities
 description="$(sandbox_describe)"
 [[ "${description}" == *"ICMP"*"unavailable"* && "${description}" != *"Omitted systemd directives"* ]]
 printf 'PASS CAP_NET_RAW is dropped alone and ICMP is announced as unavailable\n'
+
+# ---- 6b. CAP_NET_RAW is accepted by systemd but outside the bounding set (Podman default): treated as unavailable
+SANDBOX_REMOVED=""; FAIL_KEYS=""; FAIL_COMBO=""; NET_RAW_BOUND=0; : >"${TRIALS}"; : >"${BATCHES}"; sandbox_probe
+[[ "${SANDBOX_REMOVED}" == "NET_RAW" ]]
+! grep -q "CAP_NET_RAW" "${TRIALS}"
+NET_RAW_BOUND=1
+printf 'PASS a CAP_NET_RAW outside the bounding set is dropped without a trial
+'
 
 # ---- 7. description and recorded configuration ---------------------------------------------------------------
 run_probe "${podman_fail} NET_RAW"

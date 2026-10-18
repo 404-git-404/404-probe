@@ -1817,39 +1817,88 @@ SANDBOX_REMOVED=""
 SANDBOX_PROBE_UNIT="404-probe-sandbox-probe.service"
 SECURITY_COLLECTOR_STATE="ok"
 
-# Starts a transient unit with the given directives; success means it ran /bin/true to completion.
-# (A unit file in /run/systemd/system is used because systemd-run needs a D-Bus system bus, which
-# containers often lack.) Tests replace this function.
-sandbox_trial() {
-  local path="/run/systemd/system/${SANDBOX_PROBE_UNIT}" rc=1
-  { printf '[Unit]\nDescription=404-probe sandbox probe (removed automatically)\n\n[Service]\nType=oneshot\nExecStart=/bin/true\nTimeoutStartSec=20\n'; printf '%s\n' "$@"; } >"${path}" || return 1
-  if systemctl daemon-reload >/dev/null 2>&1 && timeout 40 systemctl start "${SANDBOX_PROBE_UNIT}" >/dev/null 2>&1 \
-    && [[ "$(systemctl show -p Result --value "${SANDBOX_PROBE_UNIT}" 2>/dev/null)" == success ]]; then
-    rc=0
+# Starts one transient unit per entry of SANDBOX_BATCH (each entry is a newline-separated list of unit
+# directives) and records in SANDBOX_BATCH_RESULT[i] whether it ran /bin/true to completion (0) or not (1).
+# All units are loaded with a single daemon-reload: in containers a reload takes seconds, so one reload
+# per trial would make the probe take minutes. (A unit file in /run/systemd/system is used because
+# systemd-run needs a D-Bus system bus, which containers often lack.) Tests replace this function.
+SANDBOX_BATCH=()
+SANDBOX_BATCH_RESULT=()
+sandbox_trial_batch() {
+  local index name directory="/run/systemd/system"
+  SANDBOX_BATCH_RESULT=()
+  for index in "${!SANDBOX_BATCH[@]}"; do
+    name="404-probe-sandbox-probe-${index}.service"
+    printf '[Unit]\nDescription=404-probe sandbox probe (removed automatically)\n\n[Service]\nType=oneshot\nExecStart=/bin/true\nTimeoutStartSec=20\n%s\n' \
+      "${SANDBOX_BATCH[index]}" >"${directory}/${name}" || return 1
+    SANDBOX_BATCH_RESULT[index]=1
+  done
+  if systemctl daemon-reload >/dev/null 2>&1; then
+    for index in "${!SANDBOX_BATCH[@]}"; do
+      name="404-probe-sandbox-probe-${index}.service"
+      if timeout 40 systemctl start "${name}" >/dev/null 2>&1 \
+        && [[ "$(systemctl show -p Result --value "${name}" 2>/dev/null)" == success ]]; then
+        SANDBOX_BATCH_RESULT[index]=0
+      fi
+      systemctl stop "${name}" >/dev/null 2>&1 || true
+      systemctl reset-failed "${name}" >/dev/null 2>&1 || true
+    done
   fi
-  systemctl stop "${SANDBOX_PROBE_UNIT}" >/dev/null 2>&1 || true
-  systemctl reset-failed "${SANDBOX_PROBE_UNIT}" >/dev/null 2>&1 || true
-  rm -f -- "${path}"
+  for index in "${!SANDBOX_BATCH[@]}"; do rm -f -- "${directory}/404-probe-sandbox-probe-${index}.service"; done
   systemctl daemon-reload >/dev/null 2>&1 || true
-  return "${rc}"
+}
+
+# One trial: success means a unit with exactly these directives ran to completion.
+sandbox_trial() {
+  local list
+  list="$(IFS=$'\n'; printf '%s' "$*")"
+  SANDBOX_BATCH=("${list}")
+  sandbox_trial_batch
+  [[ "${SANDBOX_BATCH_RESULT[0]:-1}" == 0 ]]
+}
+
+# CAP_NET_RAW can only be granted to a service if it is still in this environment's bounding set
+# (Podman, for example, drops it by default; systemd accepts the directive but the Agent then cannot ping).
+sandbox_net_raw_in_bounding_set() {
+  local bounding
+  bounding="$(awk '/^CapBnd:/ {print $2}' /proc/self/status 2>/dev/null)"
+  [[ "${bounding}" =~ ^[0-9a-fA-F]+$ ]] && (( (0x${bounding} >> 13) & 1 ))
 }
 
 # Fills SANDBOX_REMOVED. Exits before any registration if even the minimal hardening cannot run.
 sandbox_probe() {
-  local option key ambient_user=""
-  local -a base=(User=root UMask=0077 NoNewPrivileges=true) kept=() namespace_keys=(PrivateTmp PrivateNetwork ProtectSystem ProtectHome ProtectControlGroups)
+  local option key index ambient_user="" index_net_raw=-1 list net_raw_ok=1
+  local -a base=(User=root UMask=0077 NoNewPrivileges=true) kept=() first_batch=() namespace_keys=(PrivateTmp PrivateNetwork ProtectSystem ProtectHome ProtectControlGroups)
   local -a all=(PrivateTmp=true PrivateNetwork=true ProtectSystem=strict ProtectHome=true ProtectKernelTunables=true ProtectKernelModules=true
     ProtectKernelLogs=true ProtectControlGroups=true RestrictSUIDSGID=true LockPersonality=true MemoryDenyWriteExecute=true
     "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
+  local -a rest=(ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal)
   SANDBOX_REMOVED=""
-  sandbox_trial "${base[@]}" \
+  # Phase 1, one reload: the minimal set, the full set, every directive on its own, and CAP_NET_RAW.
+  SANDBOX_BATCH=()
+  list="$(printf '%s\n' "${base[@]}")"; SANDBOX_BATCH+=("${list}")                                    # 0: minimal
+  list="$(printf '%s\n' "${base[@]}" "${all[@]}" "${rest[@]}")"; SANDBOX_BATCH+=("${list}")           # 1: full
+  for option in "${all[@]}"; do list="$(printf '%s\n' "${base[@]}" "${option}")"; SANDBOX_BATCH+=("${list}"); done  # 2..: each alone
+  getent passwd nobody >/dev/null 2>&1 && ambient_user=nobody
+  if [[ -n "${ambient_user}" ]] && sandbox_net_raw_in_bounding_set; then
+    index_net_raw=${#SANDBOX_BATCH[@]}
+    list="$(printf '%s\n' "User=${ambient_user}" UMask=0077 NoNewPrivileges=true CapabilityBoundingSet=CAP_NET_RAW AmbientCapabilities=CAP_NET_RAW)"
+    SANDBOX_BATCH+=("${list}")
+  fi
+  sandbox_trial_batch
+  # Keep this batch's answers: the follow-up trials below reuse SANDBOX_BATCH_RESULT.
+  first_batch=("${SANDBOX_BATCH_RESULT[@]}")
+  if (( index_net_raw >= 0 )) && [[ "${first_batch[index_net_raw]:-1}" == 0 ]]; then net_raw_ok=0; fi
+  [[ "${first_batch[0]:-1}" == 0 ]] \
     || die "systemd cannot start even a minimally hardened service on this machine; nothing was installed and no registration token was used"
-  if ! sandbox_trial "${base[@]}" "${all[@]}" ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal; then
+  if [[ "${first_batch[1]:-1}" != 0 ]]; then
+    index=2
     for option in "${all[@]}"; do
       key="${option%%=*}"
-      if sandbox_trial "${base[@]}" "${option}"; then kept+=("${option}"); else SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }${key}"; fi
+      if [[ "${first_batch[index]:-1}" == 0 ]]; then kept+=("${option}"); else SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }${key}"; fi
+      index=$((index + 1))
     done
-    if ! sandbox_trial "${base[@]}" "${kept[@]}" ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal; then
+    if ! sandbox_trial "${base[@]}" "${kept[@]}" "${rest[@]}"; then
       # Each directive works alone but not together: drop everything that needs a mount or network namespace.
       for key in "${namespace_keys[@]}"; do
         [[ " ${SANDBOX_REMOVED} " == *" ${key} "* ]] || SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }${key}"
@@ -1859,15 +1908,12 @@ sandbox_probe() {
         key="${option%%=*}"
         [[ " ${SANDBOX_REMOVED} " == *" ${key} "* ]] || kept+=("${option}")
       done
-      sandbox_trial "${base[@]}" "${kept[@]}" ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal \
+      sandbox_trial "${base[@]}" "${kept[@]}" "${rest[@]}" \
         || die "no usable systemd hardening set was found on this machine; nothing was installed and no registration token was used"
     fi
   fi
   # ICMP: the Agent service is granted CAP_NET_RAW as a non-root user.
-  getent passwd nobody >/dev/null 2>&1 && ambient_user=nobody
-  if [[ -z "${ambient_user}" ]] || ! sandbox_trial "User=${ambient_user}" UMask=0077 NoNewPrivileges=true CapabilityBoundingSet=CAP_NET_RAW AmbientCapabilities=CAP_NET_RAW; then
-    SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }NET_RAW"
-  fi
+  if (( net_raw_ok != 0 )); then SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }NET_RAW"; fi
 }
 
 # Keeps a unit text as is, minus the directives that this machine cannot run. With nothing removed the
