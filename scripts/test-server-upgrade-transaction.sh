@@ -39,6 +39,7 @@ stat() {
 systemctl() {
   printf '%s\n' "$*" >>"${systemctl_log}"
   if [[ "$1" == is-active ]]; then return 1; fi
+  if [[ "$1" == start && -n "${START_HOOK:-}" ]]; then eval "${START_HOOK}"; fi
   return 0
 }
 # Recovery tests simulate the five-second health check; its real behaviour is tested separately below.
@@ -190,6 +191,25 @@ restore_server_upgrade || { printf 'legacy v0.9.1 recovery failed\n' >&2; exit 1
 [[ "$(<"${INSTALL_HELPER}")" == old-helper ]] || { printf 'legacy recovery changed the helper\n' >&2; exit 1; }
 
 
+# --- #3: a recovery that started the old Server (which wrote to the database) and was then interrupted or
+# failed its health check must be retryable. In backup-complete nothing used to be copied back, so the retry
+# compared the now-modified files with the backup and could never succeed.
+make_backup
+printf 'old-database' >"${SERVER_DATABASE}"
+printf 'old-binary' >"${SERVER_BINARY}"
+printf 'old-helper' >"${INSTALL_HELPER}"
+rm -f -- "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
+write_server_upgrade_state backup-complete 1 1 v0.9.1
+START_HOOK='printf "-written-by-old-server" >>"${SERVER_DATABASE}"; printf wal >"${SERVER_DATABASE}-wal"; printf shm >"${SERVER_DATABASE}-shm"'
+READINESS_FAIL=1
+if restore_server_upgrade 2>/dev/null; then printf 'recovery with a failing health check unexpectedly succeeded\n' >&2; exit 1; fi
+[[ -f "${SERVER_UPGRADE_STATE}" ]] || { printf 'pending state was cleared after a failed health check\n' >&2; exit 1; }
+START_HOOK=""
+READINESS_FAIL=0
+restore_server_upgrade || { printf 'REPRODUCED #3: backup-complete recovery cannot be retried after the old Server wrote the database\n' >&2; exit 1; }
+[[ "$(<"${SERVER_DATABASE}")" == old-database && ! -e "${SERVER_DATABASE}-wal" && ! -e "${SERVER_DATABASE}-shm" ]] || { printf 'retry did not restore the database files\n' >&2; exit 1; }
+[[ ! -e "${SERVER_UPGRADE_STATE}" ]] || { printf 'pending state survived the retried recovery\n' >&2; exit 1; }
+
 # --- verify_server_stable_readiness: shared by recovery and the normal upgrade ---------------------
 # A real process is started from a copy of sleep installed as SERVER_BINARY so that /proc/<pid>/exe,
 # the executable path and its hash are genuine. systemctl and curl are driven from small state files.
@@ -253,6 +273,161 @@ rm -f -- "${SERVER_BINARY}" "${SERVER_UNIT}" "${server_unit}"
 candidate_block="$(sed -n '/write_server_upgrade_state candidate-started/,/systemctl enable 404-probe-server.service >\/dev\/null || die "could not restore enabled state"/p' "${root}/install.sh")"
 grep -q 'verify_server_stable_readiness || die' <<<"${candidate_block}" || { printf 'normal upgrade does not run the stability check after candidate-started\n' >&2; exit 1; }
 ! grep -q 'readlink -f "/proc/${pid}/exe"' <<<"${candidate_block}" || { printf 'normal upgrade still has the one-shot PID check\n' >&2; exit 1; }
+
+# --- restore_server_upgrade must be repeatable after an interruption at ANY step --------------------------
+# cp, mv, rm, sync, systemctl and the database check are wrapped; the Nth call of the chosen command inside
+# restore_server_upgrade fails (cp-partial leaves half a copy behind). After one or two interrupted attempts a
+# clean retry must give the same end state as an uninterrupted recovery.
+sweep_state="${temporary}/sweep-state"
+mkdir -p "${sweep_state}"
+real_systemctl_simple="$(declare -f systemctl)"
+real_sync="$(declare -f sync)"
+real_runuser="$(declare -f runuser)"
+INJECT_ARMED=0; INJECT_CMD=""; INJECT_N=0; INJECT_COUNT=0; INJECT_HIT=0
+inject_point() {
+  [[ "${INJECT_ARMED}" == 1 && "${INJECT_CMD%-partial}" == "$1" ]] || return 0
+  INJECT_COUNT=$((INJECT_COUNT + 1))
+  if (( INJECT_COUNT == INJECT_N )); then INJECT_HIT=1; return 1; fi
+  return 0
+}
+cp() {
+  if ! inject_point cp; then
+    if [[ "${INJECT_CMD}" == cp-partial ]]; then
+      local source="${*: -2:1}" destination="${*: -1}"
+      [[ -f "${source}" ]] && head -c "$(( $(command stat -c %s -- "${source}") / 2 ))" -- "${source}" >"${destination}"
+    fi
+    return 1
+  fi
+  command cp "$@"
+}
+mv() { inject_point mv || return 1; command mv "$@"; }
+rm() { inject_point rm || return 1; command rm "$@"; }
+sync() { inject_point sync || return 1; command sync "$@"; }
+eval "${real_runuser/runuser ()/base_runuser ()}"
+runuser() { inject_point runuser || return 1; base_runuser "$@"; }
+systemctl() {
+  case "$1" in
+    stop|start|enable|disable) inject_point systemctl || return 1 ;;
+  esac
+  printf '%s\n' "$*" >>"${systemctl_log}"
+  case "$1" in
+    stop) printf inactive >"${sweep_state}/active" ;;
+    start) printf active >"${sweep_state}/active" ;;
+    enable) printf enabled >"${sweep_state}/enabled" ;;
+    disable) printf disabled >"${sweep_state}/enabled" ;;
+    is-active) local state; state="$(<"${sweep_state}/active")"; [[ "${2:-}" == --quiet ]] || printf '%s\n' "${state}"; [[ "${state}" == active ]]; return ;;
+  esac
+  return 0
+}
+
+tree_digest() { (cd "$1" && find . -type f | sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(sha256sum "$f" | awk '{print $1}')"; done); }
+
+# $1 phase, $2 active(0/1), $3 enabled(0/1), $4 wal(0/1): live files as left by the failed upgrade
+sweep_setup() {
+  local phase="$1" active="$2" enabled="$3" wal="$4"
+  command rm -rf -- "${SERVER_UPGRADE_BACKUP}"
+  make_backup
+  if (( wal != 0 )); then
+    printf 'old-wal' >"${SERVER_UPGRADE_BACKUP}/database/404-probe.db-wal"
+    printf 'old-shm' >"${SERVER_UPGRADE_BACKUP}/database/404-probe.db-shm"
+    create_server_upgrade_backup_manifest "${SERVER_UPGRADE_BACKUP}"
+  fi
+  command rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" "${SERVER_BINARY}" "${INSTALL_HELPER}"
+  command rm -f -- "${state_directory}"/*.restore "${server_binary}.restore" "${install_helper}.restore"
+  case "${phase}" in
+    backup-complete) # nothing replaced yet, but an earlier recovery attempt already ran the old Server
+      printf 'old-database' >"${SERVER_DATABASE}"; printf 'old-binary' >"${SERVER_BINARY}"; printf 'old-helper' >"${INSTALL_HELPER}"
+      printf 'grown-by-old-server' >>"${SERVER_DATABASE}"; printf 'new-wal' >"${SERVER_DATABASE}-wal"; printf 'new-shm' >"${SERVER_DATABASE}-shm" ;;
+    *)
+      printf 'new-database' >"${SERVER_DATABASE}"; printf 'new-binary' >"${SERVER_BINARY}"; printf 'new-helper' >"${INSTALL_HELPER}" ;;
+  esac
+  printf '%s' "$([[ ${active} == 1 ]] && echo active || echo inactive)" >"${sweep_state}/active"
+  printf '%s' "$([[ ${enabled} == 1 ]] && echo enabled || echo disabled)" >"${sweep_state}/enabled"
+  command rm -f -- "${SERVER_UPGRADE_STATE}"
+  write_server_upgrade_state "${phase}" "${active}" "${enabled}" v0.9.1
+  : >"${systemctl_log}"
+}
+
+sweep_assert_recovered() { # label active enabled wal
+  local label="$1" active="$2" enabled="$3" wal="$4" leftovers
+  [[ "$(<"${SERVER_DATABASE}")" == old-database ]] || { printf '%s: database not restored\n' "${label}" >&2; exit 1; }
+  if (( wal != 0 )); then
+    [[ "$(<"${SERVER_DATABASE}-wal")" == old-wal && "$(<"${SERVER_DATABASE}-shm")" == old-shm ]] || { printf '%s: WAL/SHM not restored\n' "${label}" >&2; exit 1; }
+  else
+    [[ ! -e "${SERVER_DATABASE}-wal" && ! -e "${SERVER_DATABASE}-shm" ]] || { printf '%s: stale WAL/SHM left behind\n' "${label}" >&2; exit 1; }
+  fi
+  [[ "$(<"${SERVER_BINARY}")" == old-binary && "$(<"${INSTALL_HELPER}")" == old-helper ]] || { printf '%s: binary/helper not restored\n' "${label}" >&2; exit 1; }
+  leftovers="$(find "${temporary}/usr" "${temporary}/var" -name '*.restore*' 2>/dev/null)"
+  [[ -z "${leftovers}" ]] || { printf '%s: leftover files: %s\n' "${label}" "${leftovers}" >&2; exit 1; }
+  [[ ! -e "${SERVER_UPGRADE_STATE}" && ! -e "${SERVER_UPGRADE_STATE}.new" ]] || { printf '%s: pending state not cleared\n' "${label}" >&2; exit 1; }
+  [[ "$(tree_digest "${SERVER_UPGRADE_BACKUP}")" == "${sweep_backup_digest}" ]] || { printf '%s: backup directory changed\n' "${label}" >&2; exit 1; }
+  [[ "$(<"${sweep_state}/active")" == "$([[ ${active} == 1 ]] && echo active || echo inactive)" ]] || { printf '%s: wrong active state\n' "${label}" >&2; exit 1; }
+  [[ "$(<"${sweep_state}/enabled")" == "$([[ ${enabled} == 1 ]] && echo enabled || echo disabled)" ]] || { printf '%s: wrong enabled state\n' "${label}" >&2; exit 1; }
+}
+
+run_restore_with() { # command n -> status of one armed restore attempt
+  INJECT_CMD="$1"; INJECT_N="$2"; INJECT_COUNT=0; INJECT_HIT=0; INJECT_ARMED=1
+  local status=0
+  restore_server_upgrade >/dev/null 2>&1 || status=$?
+  INJECT_ARMED=0
+  return "${status}"
+}
+
+sweep_cases=0
+sweep() { # phase active enabled wal
+  local phase="$1" active="$2" enabled="$3" wal="$4" command n label second
+  for command in cp cp-partial mv rm sync systemctl runuser; do
+    for n in $(seq 1 60); do
+      label="${phase} active=${active} enabled=${enabled} wal=${wal} ${command}#${n}"
+      sweep_setup "${phase}" "${active}" "${enabled}" "${wal}"
+      sweep_backup_digest="$(tree_digest "${SERVER_UPGRADE_BACKUP}")"
+      if run_restore_with "${command}" "${n}"; then
+        # Either no Nth call exists (the command is exhausted) or the failure hit a step whose errors are ignored by
+        # design (stopping an already stopped Server). Either way the end state must be the complete recovery.
+        sweep_assert_recovered "${label} (uninterrupted)" "${active}" "${enabled}" "${wal}"
+        [[ "${INJECT_HIT}" == 1 ]] || break
+        sweep_cases=$((sweep_cases + 1))
+        continue
+      fi
+      [[ "${INJECT_HIT}" == 1 ]] || { printf '%s: recovery failed without an injected failure\n' "${label}" >&2; exit 1; }
+      # Clearing the pending state is the commit point: once it is gone only disposable candidate/staging files
+      # may remain, and the recovered end state must already be complete.
+      if [[ ! -e "${SERVER_UPGRADE_STATE}" ]]; then
+        sweep_assert_recovered "${label} (interrupted after the commit point)" "${active}" "${enabled}" "${wal}"
+        sweep_cases=$((sweep_cases + 1))
+        continue
+      fi
+      # A second interruption, earlier or at the same point, then the clean retry.
+      second=$(( n > 1 ? n - 1 : 1 ))
+      if run_restore_with "${command}" "${second}"; then
+        # Call numbers shift once files are already restored; that attempt simply completed the recovery.
+        sweep_assert_recovered "${label} (second attempt completed)" "${active}" "${enabled}" "${wal}"
+        sweep_cases=$((sweep_cases + 1))
+        continue
+      fi
+      if [[ ! -e "${SERVER_UPGRADE_STATE}" ]]; then
+        sweep_assert_recovered "${label} (second attempt interrupted after the commit point)" "${active}" "${enabled}" "${wal}"
+        sweep_cases=$((sweep_cases + 1))
+        continue
+      fi
+      restore_server_upgrade >/dev/null 2>&1 || { printf '%s: clean retry after two interruptions failed\n' "${label}" >&2; exit 1; }
+      sweep_assert_recovered "${label}" "${active}" "${enabled}" "${wal}"
+      sweep_cases=$((sweep_cases + 1))
+    done
+  done
+}
+for phase in backup-complete migration-started binary-replaced candidate-started helper-replaced; do
+  sweep "${phase}" 1 1 0
+done
+sweep backup-complete 1 1 1
+sweep migration-started 1 1 1
+sweep backup-complete 0 0 0
+sweep helper-replaced 0 1 0
+printf 'restore interruption sweep: %s injected interruptions each recovered by a retry\n' "${sweep_cases}"
+unset -f cp mv rm runuser base_runuser
+eval "${real_systemctl_simple}"
+eval "${real_sync}"
+eval "${real_runuser}"
 
 fixture_directory="${temporary}/release-fixture"
 fake_bin="${temporary}/fake-bin"

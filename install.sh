@@ -2835,9 +2835,33 @@ verify_server_stable_readiness() {
   done
 }
 
+# Copy the Server database files and binary back from the verified backup. Safe to repeat after any
+# interruption: everything is staged as .restore files first, leftovers of an earlier attempt are discarded,
+# and the live names only change through rm of stale sidecars and atomic mv.
+restore_server_files_from_backup() {
+  local backup="$1" file restore_temporary
+  rm -f -- "${STATE_DIRECTORY}/404-probe.db.restore" "${STATE_DIRECTORY}/404-probe.db-wal.restore" \
+    "${STATE_DIRECTORY}/404-probe.db-shm.restore" "${SERVER_BINARY}.restore" || return 1
+  while IFS= read -r file; do
+    cp -a -- "${backup}/database/${file}" "${STATE_DIRECTORY}/${file}.restore" || return 1
+  done <"${backup}/database-files"
+  sync -f "${STATE_DIRECTORY}" || return 1
+  # Remove every live database file first so that no WAL/SHM written by a newer or restarted Server can pair
+  # with the restored database, then move the staged files into place.
+  rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" || return 1
+  while IFS= read -r file; do
+    mv -f -- "${STATE_DIRECTORY}/${file}.restore" "${STATE_DIRECTORY}/${file}" || return 1
+  done <"${backup}/database-files"
+  restore_temporary="${SERVER_BINARY}.restore"
+  cp -a -- "${backup}/server-binary" "${restore_temporary}" || return 1
+  mv -f -- "${restore_temporary}" "${SERVER_BINARY}" || return 1
+  sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" || return 1
+  sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" || return 1
+}
+
 restore_server_upgrade() {
   reject_openrc_deferred Server-upgrade-recovery
-  local phase active enabled target restore_temporary helper_restore_temporary helper_state legacy_backup=0
+  local phase active enabled target helper_restore_temporary helper_state legacy_backup=0
   [[ -f "${SERVER_UPGRADE_STATE}" && ! -L "${SERVER_UPGRADE_STATE}" ]] || return 1
   phase="$(server_upgrade_state_value phase)" || return 1
   active="$(server_upgrade_state_value original_active)" || return 1
@@ -2861,23 +2885,17 @@ restore_server_upgrade() {
           printf '404-probe installer: backup is incomplete; leaving the Server stopped and preserving recovery files\n' >&2
           return 1
         }
-      if [[ "${phase}" == "migration-started" || "${phase}" == "binary-replaced" || "${phase}" == "candidate-started" || "${phase}" == "helper-replaced" ]]; then
-        rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" || return 1
-        while IFS= read -r file; do
-          cp -a -- "${SERVER_UPGRADE_BACKUP}/database/${file}" "${STATE_DIRECTORY}/${file}" || return 1
-        done <"${SERVER_UPGRADE_BACKUP}/database-files"
-        restore_temporary="${SERVER_BINARY}.restore"
-        cp -a -- "${SERVER_UPGRADE_BACKUP}/server-binary" "${restore_temporary}" || return 1
-        mv -f -- "${restore_temporary}" "${SERVER_BINARY}" || return 1
-        sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" || return 1
-        sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" || return 1
-      fi
+      # Every phase restores from the verified backup. backup-complete used to skip this and only compared the
+      # live files, but a recovery that already started the old Server (which writes WAL/SHM) and then failed or
+      # was interrupted leaves files that no longer match, and the retry could never succeed.
+      restore_server_files_from_backup "${SERVER_UPGRADE_BACKUP}" || return 1
       verify_restored_server_files "${SERVER_UPGRADE_BACKUP}" || {
         printf '404-probe installer: restored Server/database files do not match the protected backup; recovery remains pending\n' >&2
         return 1
       }
       if (( legacy_backup == 0 )); then
         helper_state="$(<"${SERVER_UPGRADE_BACKUP}/helper-state")" || return 1
+        rm -f -- "${INSTALL_HELPER}.restore" || return 1
         if [[ "${helper_state}" == 1 ]]; then
           helper_restore_temporary="${INSTALL_HELPER}.restore"
           cp -a -- "${SERVER_UPGRADE_BACKUP}/install-helper" "${helper_restore_temporary}" || return 1
