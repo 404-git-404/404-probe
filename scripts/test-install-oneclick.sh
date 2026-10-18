@@ -69,15 +69,15 @@ done
 oneclick_load_inputs
 [[ -z "${PROBE_404_ENROLL_TOKEN+x}" && -z "${PROBE_404_ENROLL_TOKEN_FILE+x}" ]]
 [[ "${ONECLICK_NAME}" == 'web 1' && "${ONECLICK_SERVER}" == https://probe.example.com ]]
-! env | grep -Fq "${token}"
+! env | grep -Fq -- "${token}"
 printf 'PASS complete variables are loaded without a terminal and the token leaves the environment\n'
 
 # 5. Redeeming sends the token only on stdin and prints only the credentials.
 respond 200 "${success}"
 credentials="$(oneclick_redeem_token)"
 [[ "${credentials}" == "${agent_id}"$'\n'"${agent_token}" ]]
-grep -Fq "${token}" "${temporary}/curl.stdin"
-! grep -Fq "${token}" "${temporary}/curl.argv"
+grep -Fq -- "${token}" "${temporary}/curl.stdin"
+! grep -Fq -- "${token}" "${temporary}/curl.argv"
 grep -Fq 'https://probe.example.com/api/v1/agent/enroll' "${temporary}/curl.argv"
 printf 'PASS the token goes to the Server on stdin, never in argv\n'
 

@@ -43,10 +43,10 @@ for answers in "1|" "|"; do
   generated="$(tr -d '\n' <"${temporary}/stdin")"
   [[ "${generated}" =~ ^[A-Za-z0-9_-]{43}$ ]] || { printf 'bad generated password: %s\n' "${generated}" >&2; exit 1; }
   [[ "$(cat "${temporary}/argv")" == 'web password-hash' ]]
-  grep -Fq "${generated}" "${temporary}/screen"
+  grep -Fq -- "${generated}" "${temporary}/screen"
   grep -Fq 'cannot be shown again' "${temporary}/screen"
-  ! grep -Fq "${generated}" "${temporary}/argv"
-  ! grep -Fq "${generated}" "${temporary}/hash" "${temporary}/error"
+  ! grep -Fq -- "${generated}" "${temporary}/argv"
+  ! grep -Fq -- "${generated}" "${temporary}/hash" "${temporary}/error"
   printf 'PASS choice "%s" generates a 43-character password sent over stdin only\n' "${choice}"
 done
 
@@ -60,7 +60,7 @@ printf 'PASS generated passwords differ\n'
 good='correct horse battery'
 run_case 2 "${good}" "${good}"
 [[ "$(cat "${temporary}/stdin")" == "${good}" && "$(cat "${temporary}/argv")" == 'web password-hash' ]]
-! grep -Fq "${good}" "${temporary}/screen"
+! grep -Fq -- "${good}" "${temporary}/screen"
 printf 'PASS own password accepted\n'
 
 # Too short (15 characters) is rejected and the prompt repeats; then a good one is taken.
