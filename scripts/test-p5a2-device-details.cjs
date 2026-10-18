@@ -31,10 +31,11 @@ function fixture(fetch){const {doc,dialog,Element}=dom(),agents=new Map([[id,{ag
  return{doc,dialog,Element,agents,queue,details,requests,plots,pane,released:()=>released,restored:()=>restored,close(){details.shutdown();queue.close();}};
 }
 test('OS1b actual security pane distinguishes platform unavailable from setup and other statuses',()=>{
- const f=fixture();try{for(const [status,reason,label]of [['unavailable','platform_unsupported','此平台暂不支持（v1.1）'],['unavailable','setup_required','需要配置'],['failed','platform_unsupported','采集失败']]){
+ const f=fixture();try{for(const [status,reason,label]of [['unavailable','platform_unsupported','此平台暂不支持（v1.1）'],['unavailable','setup_required','需要配置'],['failed','platform_unsupported','采集失败'],['unavailable','sandbox_unavailable','不可用：systemd 沙箱不可用'],['unavailable','collector_start_failed','不可用：本地安全采集服务启动失败']]){
   f.agents.get(id).security={supported:true,status,reason};f.details.open(id,'security');f.details.update(f.agents.get(id));
   const text=f.dialog.querySelector('#details-pane-security').all().map(n=>n.textContent).join(' ');assert.ok(text.includes(label),text);
   if(reason==='platform_unsupported'&&status==='unavailable'){assert.ok(!text.includes('需要配置'));assert.ok(!text.includes('0 条'));}
+  if(status==='unavailable'&&/^(sandbox_unavailable|collector_start_failed)$/.test(reason)){assert.ok(!text.includes('需要配置')&&!text.includes('尚未加载')&&!text.includes(reason),text);}
  }assert.equal(f.requests.length,0);}finally{f.close();}
 });
 

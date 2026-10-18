@@ -56,8 +56,10 @@
       if(!security){pane.append(el('p','','安全资料尚未加载'),button('读取设备资料',()=>hydrate(current)));return;}
       if(!security.supported){pane.append(el('p','','当前 Agent 不支持安全观察（需要 v0.9 Agent）'));return;}
       const labels={unavailable:'需要配置',no_data:'等待首次本地审计',complete:'完整',partial:'部分结果',failed:'采集失败'};
-      const statusLabel=security.status==='unavailable'&&security.reason==='platform_unsupported'?'此平台暂不支持（v1.1）':labels[security.status]||security.status;
-      pane.append(el('p','',`${statusLabel}${security.stale?' · 旧数据':''}${security.reason?' · '+security.reason:''}`),el('p','details-note',`资料更新：${security.updated_at?new Date(security.updated_at).toLocaleString():'未知'} · 仅展示当前观察，不触发扫描`));
+      const unavailableReasons={sandbox_unavailable:'systemd 沙箱不可用（容器或受限环境），安全观察无法运行',collector_start_failed:'本地安全采集服务启动失败'};
+      const unavailableText=security.status==='unavailable'?unavailableReasons[security.reason]:'';
+      const statusLabel=unavailableText?`不可用：${unavailableText}`:security.status==='unavailable'&&security.reason==='platform_unsupported'?'此平台暂不支持（v1.1）':labels[security.status]||security.status;
+      pane.append(el('p','',`${statusLabel}${security.stale?' · 旧数据':''}${security.reason&&!unavailableText?' · '+security.reason:''}`),el('p','details-note',`资料更新：${security.updated_at?new Date(security.updated_at).toLocaleString():'未知'} · 仅展示当前观察，不触发扫描`));
       const batch=security.current;if(!batch){pane.append(el('p','','暂无当前观察'));return;}
       pane.append(el('p','',`实际审计窗口：${new Date(batch.window_start).toLocaleString()} — ${new Date(batch.window_end).toLocaleString()} · ${batch.total_events} 条观察 · ${batch.tracked_sources} 个来源${security.delivery_gap?' · delivery gap（上次接收 '+new Date(security.previous_collected_at).toLocaleString()+'）':''}`));
       for(const source of (batch.sources||[]).slice(0,256)){const row=el('div','details-security-source');row.append(el('code','',source.ip),el('strong','',(source.classifications||[]).slice(0,16).join(' + ')),el('span','',`${source.count} 次 · ${new Date(source.first_seen).toLocaleString()} — ${new Date(source.last_seen).toLocaleString()}`));pane.append(row);}

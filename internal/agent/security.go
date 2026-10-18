@@ -52,6 +52,17 @@ func (r *Runner) uploadSecurity(ctx context.Context) {
 		}
 		return
 	}
+	// The installer leaves this marker when the local collector cannot run on this machine (for example
+	// systemd sandboxing is unavailable in a container). The Agent itself works; say so instead of "setup required".
+	if reason := r.securityCollectorUnavailableReason(); reason != "" {
+		submission := protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, Status: protocol.SecurityStatusUnavailable, Reason: reason}
+		if err := r.postSecurity(ctx, submission); err != nil && ctx.Err() == nil {
+			// A Server that predates these reasons rejects them; fall back to the one it knows.
+			submission.Reason = "setup_required"
+			r.postSecurity(ctx, submission)
+		}
+		return
+	}
 	files, err := os.ReadDir(r.config.SecurityExportDir)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		r.postSecurity(ctx, protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, Status: protocol.SecurityStatusUnavailable, Reason: "setup_required"})
@@ -232,4 +243,24 @@ func (r *Runner) writeSecurityAcknowledgements(acks map[string]bool, lastCollect
 		return err
 	}
 	return os.Rename(name, r.config.SecurityAckPath)
+}
+
+const securityCollectorUnavailableMarker = "collector-unavailable"
+
+// securityCollectorUnavailableReason returns a validated reason from the installer's marker file, or "".
+func (r *Runner) securityCollectorUnavailableReason() string {
+	file, err := os.Open(filepath.Join(r.config.SecurityExportDir, securityCollectorUnavailableMarker))
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 128))
+	if err != nil {
+		return ""
+	}
+	switch reason := strings.TrimSpace(string(data)); reason {
+	case "sandbox_unavailable", "collector_start_failed":
+		return reason
+	}
+	return ""
 }

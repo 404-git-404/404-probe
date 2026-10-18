@@ -219,8 +219,10 @@ function renderSecurity(agent) {
 	  return;
 	}
 	const labels = {unavailable: 'Setup required', no_data: '等待首次本地审计', complete: '完整', partial: '部分结果', failed: '采集失败'};
-	const statusLabel = security.status === 'unavailable' && security.reason === 'platform_unsupported' ? '此平台暂不支持（v1.1）' : labels[security.status] || security.status;
-	securityState.textContent = `${statusLabel}${security.stale ? ' · stale' : ''}${security.reason ? ` · ${security.reason}` : ''}`;
+	const unavailableReasons = {sandbox_unavailable: 'systemd 沙箱不可用（容器或受限环境），安全观察无法运行', collector_start_failed: '本地安全采集服务启动失败'};
+	const unavailableText = security.status === 'unavailable' ? unavailableReasons[security.reason] : '';
+	const statusLabel = unavailableText ? `不可用：${unavailableText}` : security.status === 'unavailable' && security.reason === 'platform_unsupported' ? '此平台暂不支持（v1.1）' : labels[security.status] || security.status;
+	securityState.textContent = `${statusLabel}${security.stale ? ' · stale' : ''}${security.reason && !unavailableText ? ` · ${security.reason}` : ''}`;
 	const batch = security.current;
 	if (!batch) {
 	  securityWindow.textContent = '';

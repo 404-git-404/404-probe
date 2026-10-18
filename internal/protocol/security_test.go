@@ -109,3 +109,16 @@ func cloneSecurityBatch(batch *SecurityBatch) *SecurityBatch {
 	}
 	return &copyValue
 }
+
+func TestSecurityUnavailableAcceptsTheCollectorSandboxReasons(t *testing.T) {
+	for _, reason := range []string{"sandbox_unavailable", "collector_start_failed"} {
+		submission := SecuritySubmission{ProtocolVersion: SecurityProtocolVersion, AgentEpoch: 1, SessionID: "s", Status: SecurityStatusUnavailable, Reason: reason}
+		if err := submission.Validate(); err != nil {
+			t.Fatalf("%s: %v", reason, err)
+		}
+	}
+	bad := SecuritySubmission{ProtocolVersion: SecurityProtocolVersion, AgentEpoch: 1, SessionID: "s", Status: SecurityStatusUnavailable, Reason: "made_up_reason"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("an unknown reason was accepted")
+	}
+}

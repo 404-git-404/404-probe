@@ -228,7 +228,8 @@ func validSecurityReason(reason string) bool {
 		"cursor_invalid_recent_24h", "journal_timeout", "journal_read_failed", "journalctl_unavailable",
 		"input_limit", "line_size_limit", "malformed_or_untrusted_lines", "source_limit",
 		"source_output_limit", "missing_cursor", "outbox_gap", "no_journal_entries",
-		"missing_message", "invalid_reality_entry":
+		"missing_message", "invalid_reality_entry",
+		"sandbox_unavailable", "collector_start_failed":
 		return true
 	default:
 		return false

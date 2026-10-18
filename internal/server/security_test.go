@@ -88,3 +88,41 @@ func TestSecurityEndpointBodyLimitAndMethod(t *testing.T) {
 		t.Fatalf("method status=%d", response.Code)
 	}
 }
+
+func TestSecurityUnavailableForTheCollectorSandboxIsStoredAndShownWithItsReason(t *testing.T) {
+	app, store, agentID, token := testApp(t)
+	defer store.Close()
+	now := time.Now().Truncate(time.Second)
+	app.now = func() time.Time { return now }
+	report := reportFor(agentID, 1)
+	report.CollectedAt = now.UnixMilli()
+	if response := postReport(t, app, token, report); response.Code != http.StatusOK {
+		t.Fatalf("report status=%d", response.Code)
+	}
+	for _, reason := range []string{"sandbox_unavailable", "collector_start_failed"} {
+		submission := protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: 1, SessionID: "session", Status: protocol.SecurityStatusUnavailable, Reason: reason}
+		body, _ := json.Marshal(submission)
+		if response := postSecurityRequest(app, token, body); response.Code != http.StatusOK {
+			t.Fatalf("%s: status=%d body=%s", reason, response.Code, response.Body.String())
+		}
+		response := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/agents/"+agentID)
+		var view struct {
+			Security struct {
+				Supported bool   `json:"supported"`
+				Status    string `json:"status"`
+				Reason    string `json:"reason"`
+			} `json:"security"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		if !view.Security.Supported || view.Security.Status != "unavailable" || view.Security.Reason != reason {
+			t.Fatalf("%s: security view=%+v body=%s", reason, view.Security, response.Body.String())
+		}
+	}
+	bad := protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: 1, SessionID: "session", Status: protocol.SecurityStatusUnavailable, Reason: "not_a_reason"}
+	body, _ := json.Marshal(bad)
+	if response := postSecurityRequest(app, token, body); response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown reason status=%d", response.Code)
+	}
+}

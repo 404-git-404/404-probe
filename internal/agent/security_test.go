@@ -151,3 +151,64 @@ func TestReadSecurityBatchRejectsTrailingData(t *testing.T) {
 		t.Fatal("accepted trailing security export data")
 	}
 }
+
+func securityMarkerRunner(t *testing.T, marker string, handler http.HandlerFunc) (*Runner, *httptest.Server) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	export := filepath.Join(t.TempDir(), "export")
+	if err := os.Mkdir(export, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if marker != "" {
+		if err := os.WriteFile(filepath.Join(export, "collector-unavailable"), []byte(marker), 0640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &Runner{config: Config{ServerURL: server.URL, Token: "token", SecurityExportDir: export, SecurityAckPath: filepath.Join(t.TempDir(), "acks.json")}, client: server.Client(), epoch: 2, sessionID: "s"}, server
+}
+
+func TestSecurityUploaderReportsUnavailableWithTheInstallersReason(t *testing.T) {
+	for _, reason := range []string{"sandbox_unavailable", "collector_start_failed"} {
+		var got protocol.SecuritySubmission
+		runner, _ := securityMarkerRunner(t, reason+"\n", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_ = json.NewEncoder(w).Encode(protocol.SecurityResponse{Accepted: true})
+		})
+		runner.uploadSecurity(context.Background())
+		if got.Status != protocol.SecurityStatusUnavailable || got.Reason != reason || got.Batch != nil {
+			t.Fatalf("%s: %+v", reason, got)
+		}
+		if err := got.Validate(); err != nil {
+			t.Fatalf("%s: %v", reason, err)
+		}
+	}
+}
+
+func TestSecurityUploaderFallsBackToSetupRequiredForOlderServersAndIgnoresJunkMarkers(t *testing.T) {
+	var reasons []string
+	runner, _ := securityMarkerRunner(t, "sandbox_unavailable", func(w http.ResponseWriter, r *http.Request) {
+		var s protocol.SecuritySubmission
+		_ = json.NewDecoder(r.Body).Decode(&s)
+		reasons = append(reasons, s.Reason)
+		if s.Reason != "setup_required" {
+			http.Error(w, "invalid security status", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(protocol.SecurityResponse{Accepted: true})
+	})
+	runner.uploadSecurity(context.Background())
+	if len(reasons) != 2 || reasons[0] != "sandbox_unavailable" || reasons[1] != "setup_required" {
+		t.Fatalf("reasons=%v", reasons)
+	}
+	// A marker with unknown content is not trusted: the normal path (no batches yet) runs instead.
+	var got protocol.SecuritySubmission
+	junk, _ := securityMarkerRunner(t, "<script>alert(1)</script>", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(protocol.SecurityResponse{Accepted: true})
+	})
+	junk.uploadSecurity(context.Background())
+	if got.Reason != "awaiting_first_collection" || got.Status != protocol.SecurityStatusNoData {
+		t.Fatalf("junk marker changed the report: %+v", got)
+	}
+}
