@@ -120,7 +120,7 @@ func qualityValidateConfig(c protocol.QualityConfig) error {
 				return errors.New("unsupported active quality lane")
 			}
 		}
-		if !c.Enabled || (t.Family == "ipv6" && !c.IPv6) || t.Source != "manual" && t.Source != "catalog" {
+		if !c.Enabled || (t.Family == "ipv6" && !c.IPv6) || t.Source != "catalog" {
 			return errors.New("unauthorized quality target")
 		}
 		if len(t.ID) != 32 {

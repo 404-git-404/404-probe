@@ -85,7 +85,7 @@ func TestA1RealRunnerV2TCPFamiliesStoreAndUnavailableICMP(t *testing.T) {
 				if p == "icmp" {
 					selectedPort = 0
 				}
-				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "manual", Protocol: p, Host: host, Port: selectedPort}, Family: f, Enabled: true})
+				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: p, Host: host, Port: selectedPort}, Family: f, Enabled: true})
 			}
 		}
 	}

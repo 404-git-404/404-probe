@@ -91,7 +91,7 @@ func (s QualitySample) ValidateDetails(now time.Time, t QualityTarget) string {
 		return "invalid"
 	}
 	switch d.ErrorCode {
-	case "", "dns_error", "dns_timeout", "no_address", "timeout", "refused", "network_error", "permission_denied", "unsupported", "canceled", "icmp_error", "clock_error", "short_write":
+	case "", "dns_error", "dns_timeout", "no_address", "timeout", "refused", "network_error", "permission_denied", "unsupported", "canceled", "icmp_error", "clock_error", "short_write", "unsafe_address":
 	default:
 		return "invalid"
 	}
@@ -105,7 +105,7 @@ func (s QualitySample) ValidateDetails(now time.Time, t QualityTarget) string {
 		if d.ConnectMS != nil && d.DNSMS+*d.ConnectMS > s.DurationMS+1 {
 			return "invalid"
 		}
-		if !d.ProbeComplete && s.Outcome != "canceled" && s.Outcome != "permission_denied" && s.Outcome != "unsupported" && s.Outcome != "not_run" && s.Outcome != "invalid_config" && s.Outcome != "network_error" {
+		if !d.ProbeComplete && s.Outcome != "canceled" && s.Outcome != "permission_denied" && s.Outcome != "unsupported" && s.Outcome != "not_run" && s.Outcome != "invalid_config" && s.Outcome != "network_error" && s.Outcome != "unsafe_address" {
 			return "invalid"
 		}
 		if d.ConnectComplete && !d.ProbeComplete || d.ConnectAttempted && (d.DNSOutcome != "success" && d.DNSOutcome != "literal") {

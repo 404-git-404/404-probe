@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"golang.org/x/net/icmp"
 	"io"
 	"net"
@@ -29,7 +30,7 @@ func qualityCategory(category string) string {
 		return "refused"
 	case "unsupported_address_family":
 		return "unsupported"
-	case "dns_error", "timeout", "canceled", "permission_denied", "invalid_config", "unsupported", "refused":
+	case "dns_error", "timeout", "canceled", "permission_denied", "invalid_config", "unsupported", "refused", "unsafe_address":
 		return category
 	default:
 		return "network_error"
@@ -46,11 +47,18 @@ func (e *TCPExecutor) qualityProbe(ctx context.Context, t protocol.QualityTarget
 	}
 	dial := e.dialContext
 	if dial == nil {
-		dial = (&net.Dialer{}).DialContext
+		dial = qualityDefaultDial()
+	}
+	// Quality targets come from the catalog; a literal address that is not public is never dialed.
+	if literal, parseErr := netip.ParseAddr(t.Host); parseErr == nil && !qualityAddressPolicy(literal) {
+		return qualityProbeResult{outcome: "unsafe_address"}
 	}
 	start := time.Now()
 	connection, err := dial(ctx, network, net.JoinHostPort(t.Host, strconv.Itoa(t.Port)))
 	if err != nil {
+		if errors.Is(err, errUnsafeQualityAddress) {
+			return qualityProbeResult{outcome: "unsafe_address"}
+		}
 		category, _ := classifyTCPProbeError(ctx, err)
 		return qualityProbeResult{outcome: qualityCategory(category)}
 	}
@@ -94,6 +102,9 @@ func (e *ICMPExecutor) qualityProbe(ctx context.Context, t protocol.QualityTarge
 	}
 	if !address.IsValid() || familyForIP(address) != family {
 		return out
+	}
+	if !qualityAddressPolicy(address) {
+		return qualityProbeResult{outcome: "unsafe_address"}
 	}
 	out.ip = address.Unmap().String()
 	if ctx.Err() != nil {

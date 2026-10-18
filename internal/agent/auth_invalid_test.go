@@ -355,7 +355,7 @@ func TestF1InvalidAuthCancelsRunningJobAndQualityProbe(t *testing.T) {
 			return Execution{}, ctx.Err()
 		}}
 		cfg := protocol.QualityConfig{Version: 1, Revision: "1", Supported: true, Enabled: true, IntervalMS: 30000, JitterPercent: 20, TimeoutMS: 5000,
-			Targets: []protocol.QualityTarget{{ID: strings.Repeat("a", 32), Slot: "telecom", Family: "ipv4", SlotRevision: "1", Source: "manual", Protocol: "tcp", Host: "1.1.1.1", Port: 443, Status: "active"}}}
+			Targets: []protocol.QualityTarget{{ID: strings.Repeat("a", 32), Slot: "telecom", Family: "ipv4", SlotRevision: "1", Source: "catalog", Protocol: "tcp", Host: "1.1.1.1", Port: 443, Status: "active"}}}
 		r.quality.random = func() float64 { return 0 }
 		r.quality.allowed = true
 		if !r.quality.install(cfg) {

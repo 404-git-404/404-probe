@@ -22,7 +22,7 @@ import (
 )
 
 func n2bTarget() protocol.QualityTarget {
-	return protocol.QualityTarget{ID: strings.Repeat("a", 32), Slot: "telecom", Family: "ipv4", SlotRevision: "1", Source: "manual", Protocol: "tcp", Host: "127.0.0.1", Port: 80, Status: "active"}
+	return protocol.QualityTarget{ID: strings.Repeat("a", 32), Slot: "telecom", Family: "ipv4", SlotRevision: "1", Source: "catalog", Protocol: "tcp", Host: "127.0.0.1", Port: 80, Status: "active"}
 }
 func n2bConfig() protocol.QualityConfig {
 	return protocol.QualityConfig{Version: 1, Revision: "1", Supported: true, Enabled: true, IntervalMS: 30000, JitterPercent: 20, TimeoutMS: 5000, Targets: []protocol.QualityTarget{n2bTarget()}}

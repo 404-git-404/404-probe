@@ -89,6 +89,13 @@ func (e *TCPExecutor) qualityStagedProbe(ctx context.Context, t protocol.Quality
 		out.details = d.Encode()
 		return out
 	}
+	if !qualityAddressPolicy(ip) {
+		out.outcome = "unsafe_address"
+		d.ErrorStage = "local"
+		d.ErrorCode = "unsafe_address"
+		out.details = d.Encode()
+		return out
+	}
 	out.ip = ip.String()
 	if ctx.Err() != nil {
 		out.outcome = "canceled"
@@ -99,7 +106,7 @@ func (e *TCPExecutor) qualityStagedProbe(ctx context.Context, t protocol.Quality
 	}
 	dial := e.dialContext
 	if dial == nil {
-		dial = (&net.Dialer{}).DialContext
+		dial = qualityDefaultDial()
 	}
 	network := "tcp4"
 	if t.Family == "ipv6" {
@@ -206,6 +213,10 @@ func (e *ICMPExecutor) qualityStagedProbe(ctx context.Context, t protocol.Qualit
 	if err != nil {
 		out.outcome = qualityDNSFailure(&d)
 		d.ProbeComplete = false
+		return out
+	}
+	if !qualityAddressPolicy(ip) {
+		fail("local", "unsafe_address")
 		return out
 	}
 	out.ip = ip.String()

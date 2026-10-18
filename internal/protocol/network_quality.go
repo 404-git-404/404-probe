@@ -60,7 +60,7 @@ type QualityConfigUpdate struct {
 }
 
 type QualityTarget struct {
-	// Host/Port on unavailable manual entries preserve saved input only;
+	// Targets come from the embedded catalog only. Host/Port are empty for a slot that is not set;
 	// they are not executable endpoints without a target ID/authorization.
 	ID              string `json:"id,omitempty"`
 	Slot            string `json:"slot"`
@@ -197,7 +197,7 @@ func (s QualitySample) Validate(now time.Time, target QualityTarget) string {
 		if s.LatencyMS == nil || s.ResolvedIP == "" || *s.LatencyMS > s.DurationMS+1 {
 			return "invalid"
 		}
-	case "timeout", "dns_error", "refused", "network_error", "invalid_config", "unsupported", "permission_denied", "canceled", "not_run":
+	case "timeout", "dns_error", "refused", "network_error", "invalid_config", "unsupported", "permission_denied", "canceled", "not_run", "unsafe_address":
 		if s.LatencyMS != nil {
 			return "invalid"
 		}
@@ -215,7 +215,7 @@ func (s QualitySample) Validate(now time.Time, target QualityTarget) string {
 		if s.Outcome != "success" && s.Received != 0 {
 			return "invalid"
 		}
-		if (s.Outcome == "dns_error" || s.Outcome == "permission_denied" || s.Outcome == "unsupported" || s.Outcome == "invalid_config" || s.Outcome == "not_run") && s.Sent != 0 {
+		if (s.Outcome == "dns_error" || s.Outcome == "permission_denied" || s.Outcome == "unsupported" || s.Outcome == "invalid_config" || s.Outcome == "not_run" || s.Outcome == "unsafe_address") && s.Sent != 0 {
 			return "invalid"
 		}
 		if s.Outcome == "refused" {
