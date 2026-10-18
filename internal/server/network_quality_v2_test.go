@@ -64,7 +64,7 @@ func TestA1QualityV2HTTPNegotiationUnifiedRegionAndAuth(t *testing.T) {
 				if p == "icmp" {
 					port = 0
 				}
-				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "manual", Protocol: p, Host: host, Port: port}, Family: family, Enabled: true})
+				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: p, Host: host, Port: port}, Family: family, Enabled: true})
 			}
 		}
 	}

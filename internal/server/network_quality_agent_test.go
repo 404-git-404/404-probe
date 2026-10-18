@@ -28,9 +28,9 @@ func TestN2bAgentConfigFallbackBudgetSessionAndBarriers(t *testing.T) {
 			}
 			choices := []protocol.QualityChoice{}
 			for _, slot := range []string{"telecom", "unicom", "mobile"} {
-				choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "manual", Protocol: "tcp", Host: strings.Repeat("&", 253), Port: 65535})
+				choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: "tcp", Host: strings.Repeat("&", 253), Port: 65535})
 			}
-			if _, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, Choices: choices}, resolveQualityTarget, a.now()); err != nil {
+			if _, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, Choices: choices}, qualityResolver, a.now()); err != nil {
 				t.Fatal(err)
 			}
 			report.Sequence = 2

@@ -77,7 +77,7 @@ func TestM09CardWindowAndSavedChoices(t *testing.T) {
 		t.Fatal(card, e)
 	}
 	for _, lane := range card.CardLanes {
-		if lane.Source != "manual" || lane.Host != "127.0.0.1" || !lane.Enabled {
+		if lane.Source != "catalog" || lane.Host != "127.0.0.1" || !lane.Enabled {
 			t.Fatal("saved choices changed", lane)
 		}
 	}

@@ -19,9 +19,6 @@ func resolveQualityTargetV2(c protocol.QualityChoice, family string) (protocol.Q
 		return protocol.QualityTarget{}, storage.ErrQualityInvalid
 	}
 	region := c.Region
-	if c.Source == "manual" {
-		c.Region = ""
-	}
 	target, err := resolveQualityTarget(c, family)
 	target.Region = region
 	return target, err
@@ -51,7 +48,7 @@ func (a *App) handleQualityConfigV2(w http.ResponseWriter, r *http.Request) {
 			writeJobError(w, 400, "invalid_request", "invalid quality v2 config JSON")
 			return
 		}
-		config, err = a.store.UpdateQualityConfigV2(r.Context(), r.PathValue("agent_id"), request, resolveQualityTargetV2, a.now())
+		config, err = a.store.UpdateQualityConfigV2(r.Context(), r.PathValue("agent_id"), request, qualityResolverV2, a.now())
 	}
 	if err != nil {
 		qualityHTTPError(w, err)

@@ -10,10 +10,8 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strconv"
-	"strings"
 )
 
 //go:embed quality_catalog.json
@@ -53,6 +51,12 @@ func loadQualityCatalog() qualityCatalog {
 	return catalog
 }
 
+// The resolvers are variables only so that tests can point catalog slots at loopback servers.
+var (
+	qualityResolver   = resolveQualityTarget
+	qualityResolverV2 = resolveQualityTargetV2
+)
+
 func resolveQualityTarget(c protocol.QualityChoice, family string) (protocol.QualityTarget, error) {
 	t := protocol.QualityTarget{}
 	if c.Source == "catalog" {
@@ -84,28 +88,6 @@ func resolveQualityTarget(c protocol.QualityChoice, family string) (protocol.Qua
 		}
 		if !found {
 			return t, storage.ErrQualityInvalid
-		}
-	} else if c.Source == "manual" {
-		if c.Region != "" || c.Host == "" || strings.ContainsAny(c.Host, " /\\\x00\r\n\t") || (c.Protocol == "tcp" && (c.Port < 1 || c.Port > 65535)) || (c.Protocol == "icmp" && c.Port != 0) {
-			return t, storage.ErrQualityInvalid
-		}
-		t.Host = strings.ToLower(c.Host)
-		t.Port = c.Port
-		probe := protocol.ProbeConfig{}
-		kind := protocol.ProbeTypeTCPConnect
-		if c.Protocol == "icmp" {
-			kind = protocol.ProbeTypeICMPPing
-			probe.ICMPPing = &protocol.ICMPPingConfig{Target: t.Host, Count: 1}
-		} else {
-			probe.TCPConnect = &protocol.TCPConnectConfig{Host: t.Host, Port: t.Port}
-		}
-		if err := probe.Validate(kind); err != nil {
-			return t, storage.ErrQualityInvalid
-		}
-		if ip, err := netip.ParseAddr(t.Host); err == nil {
-			if (family == "ipv4") != ip.Unmap().Is4() {
-				return protocol.QualityTarget{}, nil
-			}
 		}
 	} else {
 		return t, storage.ErrQualityInvalid
@@ -197,7 +179,7 @@ func (a *App) handleQualityConfig(w http.ResponseWriter, r *http.Request) {
 			writeJobError(w, 400, "invalid_request", "invalid config JSON")
 			return
 		}
-		config, err = a.store.UpdateQualityConfig(ctx, r.PathValue("agent_id"), request, resolveQualityTarget, a.now())
+		config, err = a.store.UpdateQualityConfig(ctx, r.PathValue("agent_id"), request, qualityResolver, a.now())
 	}
 	if err != nil {
 		qualityHTTPError(w, err)

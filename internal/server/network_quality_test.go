@@ -30,7 +30,7 @@ func qualityWebRequest(t *testing.T, a *App, method, path, body string) *httptes
 }
 func qualityServerConfig(t *testing.T, a *App, id string) protocol.QualityConfig {
 	t.Helper()
-	body := `{"expected_revision":"0","enabled":true,"ipv6":false,"choices":[{"slot":"telecom","source":"manual","protocol":"tcp","host":"127.0.0.1","port":80},{"slot":"unicom","source":"manual","protocol":"tcp","host":"127.0.0.1","port":80},{"slot":"mobile","source":"manual","protocol":"tcp","host":"127.0.0.1","port":80}]}`
+	body := `{"expected_revision":"0","enabled":true,"ipv6":false,"choices":[{"slot":"telecom","source":"catalog","protocol":"tcp","host":"127.0.0.1","port":80},{"slot":"unicom","source":"catalog","protocol":"tcp","host":"127.0.0.1","port":80},{"slot":"mobile","source":"catalog","protocol":"tcp","host":"127.0.0.1","port":80}]}`
 	w := qualityWebRequest(t, a, http.MethodPut, webAgentPathPrefix+id+"/network-quality/config", body)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
@@ -135,9 +135,9 @@ func TestN2aQualityHTTPBodyAndResponseBudgets(t *testing.T) {
 	longHost := strings.Repeat("a", 200) + ".invalid"
 	choices := []protocol.QualityChoice{}
 	for _, slot := range []string{"telecom", "unicom", "mobile"} {
-		choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "manual", Protocol: "tcp", Host: longHost, Port: 65535})
+		choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: "tcp", Host: longHost, Port: 65535})
 	}
-	cfg, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, Choices: choices}, resolveQualityTarget, a.now())
+	cfg, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, Choices: choices}, qualityResolver, a.now())
 	if err != nil || len(cfg.Targets) != 6 {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestN2aQualityHTTPBodyAndResponseBudgets(t *testing.T) {
 	for i := range choices {
 		choices[i].Host = strings.Repeat("&", 253)
 	}
-	oversized, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, IPv6: true, Choices: choices}, resolveQualityTarget, a.now())
+	oversized, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, IPv6: true, Choices: choices}, qualityResolver, a.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestN2aQualityHTTPBodyAndResponseBudgets(t *testing.T) {
 				if err != nil || target.Host != "" {
 					t.Fatal("missing ISP guessed")
 				}
-				missing, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: oversized.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: slot, Source: "catalog", Protocol: "tcp", Region: region.ID}}}, resolveQualityTarget, a.now())
+				missing, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: oversized.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: slot, Source: "catalog", Protocol: "tcp", Region: region.ID}}}, qualityResolver, a.now())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -183,73 +183,6 @@ func TestN2aQualityHTTPBodyAndResponseBudgets(t *testing.T) {
 		}
 	}
 	t.Fatal("missing catalog fixture absent")
-}
-
-func TestN2aQualityUnavailableManualConfigRoundTrip(t *testing.T) {
-	a, s, id, _ := testApp(t)
-	defer s.Close()
-	defer a.Shutdown()
-	path := webAgentPathPrefix + id + "/network-quality/config"
-	for _, kind := range []string{"tcp", "icmp"} {
-		t.Run(kind, func(t *testing.T) {
-			read := func(method, body string) protocol.QualityConfig {
-				t.Helper()
-				w := qualityWebRequest(t, a, method, path, body)
-				if w.Code != 200 {
-					t.Fatal(w.Code, w.Body.String())
-				}
-				var cfg protocol.QualityConfig
-				if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-					t.Fatal(err)
-				}
-				return cfg
-			}
-			before := read("GET", "")
-			port := 443
-			if kind == "icmp" {
-				port = 0
-			}
-			update := protocol.QualityConfigUpdate{ExpectedRevision: before.Revision, Enabled: true, IPv6: false,
-				Choices: []protocol.QualityChoice{{Slot: "telecom", Source: "manual", Protocol: kind, Host: "::1", Port: port}}}
-			encoded, _ := json.Marshal(update)
-			saved := read("PUT", string(encoded))
-			check := func(cfg protocol.QualityConfig) protocol.QualityTarget {
-				t.Helper()
-				if cfg.IPv6 || len(cfg.Targets) != 3 {
-					t.Fatal("disabled family leaked", cfg)
-				}
-				for _, target := range cfg.Targets {
-					if target.Slot == "telecom" {
-						if target.Family != "ipv4" || target.Status != "unavailable" || target.ID != "" || target.EndpointVersion != "" || target.Source != "manual" || target.Protocol != kind || target.Host != "::1" || target.Port != port {
-							t.Fatal("saved input lost or made executable", target)
-						}
-						return target
-					}
-					if target.Source != "catalog" || target.Host != "" || target.Port != 0 {
-						t.Fatal("catalog missing endpoint guessed", target)
-					}
-				}
-				t.Fatal("manual slot absent")
-				return protocol.QualityTarget{}
-			}
-			check(saved)
-			got := read("GET", "")
-			manual := check(got)
-			update.ExpectedRevision = got.Revision
-			update.Choices[0] = protocol.QualityChoice{Slot: manual.Slot, Source: manual.Source, Protocol: manual.Protocol, Host: manual.Host, Port: manual.Port}
-			encoded, _ = json.Marshal(update)
-			repeated := read("PUT", string(encoded))
-			check(repeated)
-			if repeated.Revision != saved.Revision {
-				t.Fatal("same input changed revision", saved.Revision, repeated.Revision)
-			}
-			storeConfig, err := s.GetQualityConfig(context.Background(), id)
-			if err != nil {
-				t.Fatal(err)
-			}
-			check(storeConfig)
-		})
-	}
 }
 
 func TestN2aQualityRealHTTPFiveSecondSlowBodies(t *testing.T) {

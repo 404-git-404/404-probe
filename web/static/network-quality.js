@@ -22,7 +22,7 @@
       catalogPending=read('catalog',catalogOwner,'/api/v1/web/network-quality/catalog').then(value=>{catalog=value.regions||[];return catalog;}).finally(()=>{catalogPending=null;});
       return catalogPending;
     }
-    const label=t=>`${t?.source==='manual'?'自定义':catalog?.find(r=>r.id===t?.region)?.label||'未选择'}${C.names[t?.slot]||''}`;
+    const label=t=>`${catalog?.find(r=>r.id===t?.region)?.label||'未选择'}${C.names[t?.slot]||''}`;
     const geometryVisible=card=>{const r=card.node.getBoundingClientRect();return card.node.isConnected&&r.bottom>0&&r.top<(root.innerHeight||0)&&r.right>0&&r.left<(root.innerWidth||0);};
     function fallbackVisibility(){if(!observer&&!doc.hidden)for(const card of cards.values())setVisible(card,geometryVisible(card));}
     function setVisible(card,value) {
@@ -202,7 +202,6 @@
     }
     function changedPanel(){if(panel){panel.dirty=true;panel.guard=false;panel.message='有未保存更改';}}
     function availability(choice) {
-      if(choice.source==='manual')return '手填地址仅保存输入，不推断地址族或 ICMP 可达性';
       const region=catalog?.find(r=>r.id===choice.region);
       return !choice.region?'未选择地区':!region?'目录待加载/地区未知':
         `${region.available?.[choice.slot]?.ipv4?'V4 有目录端点':'V4 暂无节点'}${panel.draft.ipv6?' · '+(region.available?.[choice.slot]?.ipv6?'V6 有目录端点':'V6 暂无节点'):''}（目录不是连通性证明）`;
@@ -229,26 +228,18 @@
         p.region=el('select');p.region.dataset.nqField='all-region';
         for(const event of ['input','change'])p.region.addEventListener(event,()=>{syncRegion(p);renderPanel();});
         p.region.addEventListener('blur',()=>renderPanel());
-        form.append(field('三网共用地区（自定义目标保留）',p.region));
+        form.append(field('三网共用地区',p.region));
         p.searchInput=el('input');p.searchInput.type='search';p.searchInput.placeholder='搜索省/市';p.searchInput.dataset.nqField='search';
         p.searchInput.addEventListener('input',()=>{p.search=p.searchInput.value;renderPanel();});form.append(field('本地地区搜索',p.searchInput));
-        form.append(el('small','nq-muted','选择地区不隐式改写自定义 Host/Port；每条地址族/协议按已保存开关独立启用。'));
+        form.append(el('small','nq-muted','每条地址族/协议按已保存开关独立启用。'));
         p.lanes=new Map();
         for(const lane of p.draft.choices){
           const key=`${lane.slot}-${lane.family}-${lane.protocol}`,choice=()=>p.draft.choices.find(c=>`${c.slot}-${c.family}-${c.protocol}`===key);
           const group=el('fieldset','nq-choice');group.append(el('legend','',`${C.names[lane.slot]} ${lane.family==='ipv4'?'IPv4':'IPv6'} ${lane.protocol.toUpperCase()}`));
           const enabled=el('input');enabled.type='checkbox';enabled.dataset.nqField=key+'-enabled';
           enabled.addEventListener('change',()=>{choice().enabled=enabled.checked;changedPanel();});group.append(field('启用此通道',enabled));
-          const source=select([['catalog','地区目录'],['manual','自定义 Host/Port']],lane.source,value=>{choice().source=value;changedPanel();renderPanel();});source.dataset.nqField=key+'-source';group.append(field('目标来源',source));
-          const host=el('input');host.placeholder='主机名或 IP';host.dataset.nqField=key+'-host';
-          host.addEventListener('input',()=>{choice().host=host.value;changedPanel();});const hostField=field('Host',host);group.append(hostField);
-          let port=null,portField=null;
-          if(lane.protocol==='tcp'){
-            port=el('input');port.type='number';port.min='1';port.max='65535';port.dataset.nqField=key+'-port';
-            port.addEventListener('input',()=>{choice().port=Number(port.value);changedPanel();});portField=field('TCP Port',port);group.append(portField);
-          }
           const note=el('small','nq-muted');group.append(note);form.append(group);
-          p.lanes.set(key,{enabled,source,host,hostField,port,portField,note});
+          p.lanes.set(key,{enabled,note});
         }
         p.recovery=el('div');p.recoveryStatus=el('p','nq-status');p.reload=button('重新读取可信配置',()=>{p.recovered=false;loadConfig(p.card,true);});
         p.rebase=button('采用最新版本，保留草稿',()=>{p.base=p.card.config.revision;p.conflict=false;p.uncertain=false;p.message='已采用最新版本，请核对后明确保存';renderPanel();});
@@ -269,11 +260,8 @@
       }
       value(p.region,p.draft.region);value(p.searchInput,p.search);
       for(const c of p.draft.choices){
-        const v=p.lanes.get(`${c.slot}-${c.family}-${c.protocol}`);v.enabled.checked=c.enabled;value(v.source,c.source);value(v.host,c.host);
-        if(v.port)value(v.port,String(c.port));v.hostField.hidden=c.source!=='manual';if(v.portField)v.portField.hidden=c.source!=='manual';
-        // Hidden custom inputs must not participate in native catalog-form validation.
-        v.host.disabled=c.source!=='manual';if(v.port)v.port.disabled=c.source!=='manual';
-        v.note.hidden=c.source==='manual';v.note.textContent=availability({...c,region:p.draft.region});
+        const v=p.lanes.get(`${c.slot}-${c.family}-${c.protocol}`);v.enabled.checked=c.enabled;
+        v.note.textContent=availability({...c,region:p.draft.region});
       }
       p.recovery.hidden=!(p.conflict||p.uncertain);p.rebase.hidden=!(p.recovered&&p.card.config);
       p.recoveryStatus.textContent=p.conflict?'配置版本已变化；草稿保留，未自动覆盖或重试保存。':'保存结果不确定；草稿和最后可信配置保留，请先重新读取。';

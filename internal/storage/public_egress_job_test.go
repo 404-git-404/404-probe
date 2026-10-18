@@ -107,7 +107,7 @@ func TestPublicEgressMigrationLeavesExistingAgentsDisabled(t *testing.T) {
 	for _, statement := range []string{
 		`DROP INDEX idx_probe_jobs_one_pending_public_egress`,
 		`DROP TABLE agent_public_egress_control`,
-		`DELETE FROM schema_migrations WHERE version=30`,
+		`DELETE FROM schema_migrations WHERE version>=30`,
 	} {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
@@ -121,7 +121,7 @@ func TestPublicEgressMigrationLeavesExistingAgentsDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if version, err := store.SchemaVersion(ctx); err != nil || version != 30 {
+	if version, err := store.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema=%d err=%v", version, err)
 	}
 	if control := egressControl(t, store, agentID, at); control.Enabled || control.Supported {

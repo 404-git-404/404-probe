@@ -130,10 +130,6 @@ func qualityLaneChoicesTx(ctx context.Context, tx *sql.Tx, id string, choices []
 			}
 			l.Source = t.Source
 			l.Region = t.Region
-			if t.Source == "manual" {
-				l.Host = t.Host
-				l.Port = t.Port
-			}
 		}
 		lanes = append(lanes, l)
 	}

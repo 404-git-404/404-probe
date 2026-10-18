@@ -124,14 +124,6 @@ func qualityConfigTx(ctx context.Context, tx *sql.Tx, id string, versions ...int
 		if l, ok := factByKey[slot+"/"+family+"/"+proto]; ok {
 			t.Source = l.Source
 			t.Region = l.Region
-			if l.Source == "manual" {
-				t.Host = l.Host
-				t.Port = l.Port
-			}
-		}
-		if !payload.Valid && choice.Protocol == proto && choice.Source == "manual" {
-			t.Host = choice.Host
-			t.Port = choice.Port
 		}
 		if payload.Valid {
 			if err := json.Unmarshal([]byte(payload.String), &t); err != nil {
@@ -249,7 +241,7 @@ func (s *Store) UpdateQualityConfig(ctx context.Context, id string, update proto
 				index = i
 			}
 		}
-		if index < 0 || seen[c.Slot] || len(c.Region) > 120 || len(c.Host) > 253 || (c.Protocol != "tcp" && c.Protocol != "icmp") || (c.Source != "catalog" && c.Source != "manual") {
+		if index < 0 || seen[c.Slot] || len(c.Region) > 120 || len(c.Host) > 253 || (c.Protocol != "tcp" && c.Protocol != "icmp") || c.Source != "catalog" {
 			return protocol.QualityConfig{}, ErrQualityInvalid
 		}
 		seen[c.Slot] = true

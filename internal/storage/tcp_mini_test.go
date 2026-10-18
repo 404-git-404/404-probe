@@ -258,7 +258,7 @@ func TestTCPMiniDSTProofAndInitialization(t *testing.T) {
 }
 func dropPublicEgressControlFixtureSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	for _, q := range []string{`DROP INDEX IF EXISTS idx_probe_jobs_one_pending_public_egress`, `DROP TABLE IF EXISTS agent_public_egress_control`, `DELETE FROM schema_migrations WHERE version=30`} {
+	for _, q := range []string{`DELETE FROM schema_migrations WHERE version=31`, `DROP INDEX IF EXISTS idx_probe_jobs_one_pending_public_egress`, `DROP TABLE IF EXISTS agent_public_egress_control`, `DELETE FROM schema_migrations WHERE version=30`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}

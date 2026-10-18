@@ -96,19 +96,17 @@
   function draft(config) {
     return {enabled:!!config.enabled,ipv6:!!config.ipv6,choices:slots.map(slot=>{
       const t=(config.targets||[]).find(t=>t.slot===slot&&t.family==='ipv4')||(config.targets||[]).find(t=>t.slot===slot)||{};
-      return {slot,source:t.source||'catalog',region:t.region||'',protocol:t.protocol||'tcp',host:t.source==='manual'?t.host||'':'',port:t.source==='manual'?t.port||0:0};
+      return {slot,source:'catalog',region:t.region||'',protocol:t.protocol||'tcp'};
     })};
   }
   function chooseRegion(value,slot,region) {
     const out=structuredClone(value);
-    for(const choice of out.choices) if(slot==='all'||choice.slot===slot) Object.assign(choice,{source:'catalog',region,host:'',port:0});
+    for(const choice of out.choices) if(slot==='all'||choice.slot===slot) Object.assign(choice,{source:'catalog',region});
     return out;
   }
   function payload(value,revision) {
     if(typeof revision!=='string') throw Error('配置版本缺失，不能保存');
-    return {expected_revision:revision,enabled:value.enabled,ipv6:value.ipv6,choices:value.choices.map(c=>
-      c.source==='manual'?{slot:c.slot,source:c.source,protocol:c.protocol,host:c.host.trim(),port:c.protocol==='icmp'?0:c.port}:
-        {slot:c.slot,source:'catalog',protocol:c.protocol,region:c.region})};
+    return {expected_revision:revision,enabled:value.enabled,ipv6:value.ipv6,choices:value.choices.map(c=>({slot:c.slot,source:'catalog',protocol:c.protocol,region:c.region}))};
   }
   const historyKey = (agent,target,family,hours) => JSON.stringify(['history',agent,target,family,hours]);
   function ratio(stats,protocol) {
@@ -143,15 +141,14 @@
   function laneDraft(config) {
     return {enabled:!!config.enabled,ipv6:!!config.ipv6,region:config.region_id||'',choices:slots.flatMap(slot=>['ipv4','ipv6'].flatMap(family=>['tcp','icmp'].map(protocol=>{
       const lane=(config.card_lanes||[]).find(t=>t.slot===slot&&t.family===family&&t.protocol===protocol);
-      return lane?{...lane,host:lane.host||'',port:lane.port||0}:{slot,family,protocol,enabled:false,source:'catalog',region:config.region_id||'',host:'',port:0};
+      return lane?{slot,family,protocol,enabled:!!lane.enabled,source:'catalog',region:lane.region||config.region_id||''}:{slot,family,protocol,enabled:false,source:'catalog',region:config.region_id||''};
     })))};
   }
   function lanePayload(value,revision) {
     if(typeof revision!=='string')throw Error('配置版本缺失');
     if(!value.region&&value.enabled)throw Error('请选择三网共用地区');
     return {expected_revision:revision,enabled:value.enabled,ipv6:value.ipv6,region_id:value.region,lanes:value.choices.map(c=>({
-      slot:c.slot,family:c.family,protocol:c.protocol,enabled:!!c.enabled,source:c.source,region:value.region,
-      ...(c.source==='manual'?{host:c.host.trim(),port:c.protocol==='tcp'?c.port:0}:{})
+      slot:c.slot,family:c.family,protocol:c.protocol,enabled:!!c.enabled,source:'catalog',region:value.region
     }))};
   }
   function cardGroup(h,target) {

@@ -35,12 +35,29 @@ test('historical completed colors survive global stale/offline/request failure',
  for(const old of [true,false]) {C.cardCurrent(h,target,{old});assert.deepEqual(C.cardPoints(h,target).map(p=>C.cardBlock(p,target)),before);}
  assert.equal(before.length,12);
 });
-test('saved per-protocol/family manual targets and disabled flags survive unified region',()=>{
- const manual={slot:'telecom',family:'ipv6',protocol:'icmp',enabled:false,source:'manual',host:'::1',port:0,region:'a'};
- const draft=C.laneDraft({enabled:true,ipv6:true,region_id:'a',card_lanes:[manual]});draft.region='b';
+test('saved per-protocol/family disabled flags survive unified region; only catalog lanes exist',()=>{
+ const saved={slot:'telecom',family:'ipv6',protocol:'icmp',enabled:false,source:'catalog',region:'a'};
+ const draft=C.laneDraft({enabled:true,ipv6:true,region_id:'a',card_lanes:[saved]});draft.region='b';
  const out=C.lanePayload(draft,'9007199254740993');assert.equal(out.lanes.length,12);assert.equal(out.expected_revision,'9007199254740993');
- assert.deepEqual(out.lanes.find(l=>l.slot==='telecom'&&l.family==='ipv6'&&l.protocol==='icmp'),{...manual,region:'b'});
- assert(out.lanes.filter(l=>l.source==='catalog').every(l=>!l.enabled));
+ assert.deepEqual(out.lanes.find(l=>l.slot==='telecom'&&l.family==='ipv6'&&l.protocol==='icmp'),{...saved,region:'b'});
+ assert(out.lanes.every(l=>l.source==='catalog'&&!('host' in l)&&!('port' in l)));
+});
+test('a legacy hand-entered lane is read as an ordinary catalog lane: no host, no port, never sent back',()=>{
+ const legacy={slot:'telecom',family:'ipv4',protocol:'tcp',enabled:true,source:'manual',host:'203.0.113.8',port:443,region:'a'};
+ const draft=C.laneDraft({enabled:true,ipv6:false,region_id:'a',card_lanes:[legacy]});
+ const lane=draft.choices.find(l=>l.slot==='telecom'&&l.family==='ipv4'&&l.protocol==='tcp');
+ assert.equal(lane.source,'catalog');assert.ok(!('host' in lane)&&!('port' in lane));
+ const sent=JSON.stringify(C.lanePayload(draft,'1'));assert.ok(!sent.includes('203.0.113.8')&&!sent.includes('manual')&&!sent.includes('443'));
+ const v1=C.draft({targets:[{slot:'telecom',family:'ipv4',protocol:'tcp',source:'manual',host:'203.0.113.8',port:443}]});
+ assert.deepEqual(v1.choices[0],{slot:'telecom',source:'catalog',region:'',protocol:'tcp'});
+ assert.deepEqual(C.payload(v1,'1').choices[0],{slot:'telecom',source:'catalog',protocol:'tcp',region:''});
+});
+test('no hand-entered address UI code or text is left in the quality panel',()=>{
+ const fs=require('node:fs');
+ for(const file of ['network-quality.js','network-quality-core.js']){
+  const text=fs.readFileSync(require.resolve('../web/static/'+file),'utf8');
+  assert.doesNotMatch(text,/manual|手填|自定义|Host\/Port|TCP Port|主机名或 IP/,file);
+ }
 });
 test('v3 detail ratios use exact Connect denominator; probe attempts remain separate',()=>{
  const r=C.ratio({connect_attempts:4,connect_successes:3,probe_attempts:6,probe_successes:3},'tcp');assert.equal(r.value,25);assert.equal(r.fraction,'1 / 4');

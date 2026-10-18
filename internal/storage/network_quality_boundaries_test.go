@@ -17,7 +17,7 @@ func TestN2aQualityQuotasReuseAndCounterBoundary(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 509; i++ {
 		var err error
-		cfg, err = s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "manual", Protocol: "tcp", Host: fmt.Sprintf("fixture-%d.invalid", i), Port: 80}}}, qualityTestResolver, now.Add(time.Duration(i)*time.Millisecond))
+		cfg, err = s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "catalog", Protocol: "tcp", Host: fmt.Sprintf("fixture-%d.invalid", i), Port: 80}}}, qualityTestResolver, now.Add(time.Duration(i)*time.Millisecond))
 		if err != nil {
 			t.Fatalf("target churn %d %v", i, err)
 		}
@@ -27,11 +27,11 @@ func TestN2aQualityQuotasReuseAndCounterBoundary(t *testing.T) {
 	if targetCount != 512 {
 		t.Fatal(targetCount)
 	}
-	_, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "manual", Protocol: "tcp", Host: "one-more.invalid", Port: 80}}}, qualityTestResolver, now.Add(time.Second))
+	_, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "catalog", Protocol: "tcp", Host: "one-more.invalid", Port: 80}}}, qualityTestResolver, now.Add(time.Second))
 	if !errors.Is(err, ErrQualityQuota) {
 		t.Fatal("513 target accepted", err)
 	}
-	cfg, err = s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "manual", Protocol: "tcp", Host: "127.0.0.1", Port: 80}}}, qualityTestResolver, now.Add(time.Second))
+	cfg, err = s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "catalog", Protocol: "tcp", Host: "127.0.0.1", Port: 80}}}, qualityTestResolver, now.Add(time.Second))
 	if err != nil {
 		t.Fatal("reusable identity blocked", err)
 	}
@@ -64,7 +64,7 @@ func TestN2aQualityQuotasReuseAndCounterBoundary(t *testing.T) {
 func TestN2aQualityICMPOriginalPacketsGapsAndRemoval(t *testing.T) {
 	s, id, cfg, now := qualityFixture(t, ":memory:")
 	ctx := context.Background()
-	cfg, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: "1", Enabled: true, Choices: []protocol.QualityChoice{{Slot: "telecom", Source: "manual", Protocol: "icmp", Host: "127.0.0.1", Port: 0}}}, qualityTestResolver, now.Add(-time.Minute))
+	cfg, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: "1", Enabled: true, Choices: []protocol.QualityChoice{{Slot: "telecom", Source: "catalog", Protocol: "icmp", Host: "127.0.0.1", Port: 0}}}, qualityTestResolver, now.Add(-time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

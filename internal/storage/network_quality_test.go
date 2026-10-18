@@ -34,7 +34,7 @@ func qualityFixture(t *testing.T, path string) (*Store, string, protocol.Quality
 	}
 	choices := []protocol.QualityChoice{}
 	for _, slot := range []string{"telecom", "unicom", "mobile"} {
-		choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "manual", Protocol: "tcp", Host: "127.0.0.1", Port: 80})
+		choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: "tcp", Host: "127.0.0.1", Port: 80})
 	}
 	cfg, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, Choices: choices}, qualityTestResolver, now.Add(-4*time.Hour))
 	if err != nil {
@@ -108,7 +108,7 @@ func TestN2aQualityCASIntervalsPartialDedupAndReturn(t *testing.T) {
 		t.Fatal("conflict accepted")
 	}
 	oldCU := qualitySample(cu, cfg.Revision, 3, now.Add(-time.Second), 15, "success")
-	updated, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "manual", Protocol: "tcp", Host: "127.0.0.2", Port: 80}}}, qualityTestResolver, now)
+	updated, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "catalog", Protocol: "tcp", Host: "127.0.0.2", Port: 80}}}, qualityTestResolver, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestN2aQualityCASIntervalsPartialDedupAndReturn(t *testing.T) {
 	if err != nil || !old.Stale || old.Latest == nil {
 		t.Fatalf("old history %+v %v", old, err)
 	}
-	back, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: updated.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "manual", Protocol: "tcp", Host: "127.0.0.1", Port: 80}}}, qualityTestResolver, now.Add(time.Second))
+	back, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: updated.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "catalog", Protocol: "tcp", Host: "127.0.0.1", Port: 80}}}, qualityTestResolver, now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestN2aQualityRetentionCountersAndCascade(t *testing.T) {
 	ctx := context.Background()
 	cu := qualityTarget(t, cfg, "unicom")
 	qualitySave(t, s, id, now, qualitySample(cu, "1", 1, now.Add(-time.Second), 3, "success"))
-	_, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: "1", Enabled: false, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "manual", Protocol: "tcp", Host: "127.0.0.2", Port: 80}}}, qualityTestResolver, now)
+	_, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: "1", Enabled: false, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "catalog", Protocol: "tcp", Host: "127.0.0.2", Port: 80}}}, qualityTestResolver, now)
 	if err != nil {
 		t.Fatal(err)
 	}

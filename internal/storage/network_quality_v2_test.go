@@ -42,7 +42,7 @@ func a1LaneConfig(rev string) protocol.QualityV2ConfigUpdate {
 				if p == "tcp" {
 					port = 80
 				}
-				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: s, Source: "manual", Protocol: p, Host: "127.0.0.1", Port: port}, Family: f, Enabled: true})
+				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: s, Source: "catalog", Protocol: p, Host: "127.0.0.1", Port: port}, Family: f, Enabled: true})
 			}
 		}
 	}
@@ -281,7 +281,7 @@ func TestA1Migration25MixedProtocolsPreservesRowsAndRollback(t *testing.T) {
 		t.Run(fault, func(t *testing.T) {
 			s, id, cfg, now := qualityFixture(t, ":memory:")
 			ctx := context.Background()
-			cfg, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, IPv6: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "manual", Protocol: "icmp", Host: "127.0.0.1"}}}, qualityTestResolver, now.Add(-time.Hour))
+			cfg, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, IPv6: true, Choices: []protocol.QualityChoice{{Slot: "unicom", Source: "catalog", Protocol: "icmp", Host: "127.0.0.1"}}}, qualityTestResolver, now.Add(-time.Hour))
 			if err != nil {
 				t.Fatal(err)
 			}

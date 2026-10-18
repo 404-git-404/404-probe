@@ -67,10 +67,10 @@ test('N3 production adapters: zero != no denominator; latest failure/stale/pause
  assert.equal(C.current(history(t,{latest_failure:{started_at:1800000,outcome:'timeout'}}),t).text,'最近失败');assert.equal(C.current(history(t),{...t,status:'paused'}).text,'已暂停');
  assert.match(C.blockText({...stats,start:60000,end:120000,in_progress:true,gap:true},'tcp'),/未最终封存.*缺测/);
 });
-test('N3 production draft mode has no side effect, independent region and manual protocol retain exact string revision',()=>{
+test('N3 production draft mode has no side effect, independent region and catalog protocol retain exact string revision',()=>{
  const d=C.draft(config()),s=C.chooseRegion(d,'unicom','上海');assert.equal(s.choices[0].region,'北京');assert.equal(s.choices[2].region,'北京');assert.equal(d.choices[1].region,'北京');
  assert.ok(C.chooseRegion(s,'all','上海').choices.every(c=>c.region==='上海'));
- s.choices[0]={slot:'telecom',source:'manual',protocol:'icmp',host:'203.0.113.8',port:443};assert.equal(C.payload(s,revision).choices[0].port,0);assert.equal(C.payload(s,revision).expected_revision,revision);
+ s.choices[0]={slot:'telecom',source:'catalog',protocol:'icmp',region:'北京'};assert.ok(!('port' in C.payload(s,revision).choices[0]));assert.equal(C.payload(s,revision).expected_revision,revision);
 });
 test('N3 actual plot adapter sorts unique real seconds, equal length finite/null and gap null',()=>{
  const adapted=C.columns([{...stats,start:120000,end:180000,gap:false},{...stats,start:0,end:60000,gap:true},{...stats,start:120000,end:180000},{...stats,start:60000,end:120000,p95_ms:Infinity}], 'tcp','latency');
@@ -165,15 +165,15 @@ test('N3 actual CAS409 performs one PUT, reads latest but protects draft until e
  assert.equal(f.writes.length,1);assert.equal(s.base,revision);assert.equal(s.draft.enabled,false);assert.equal(s.conflict,true);
  f.ui.tick();await flush();assert.equal(f.writes.length,1);f.byText(f.panel(),'采用最新版本，保留草稿').click();assert.equal(f.ui.snapshot().panel.base,'9223372036854775807');assert.equal(f.ui.snapshot().panel.draft.enabled,false);f.ui.close();
 });
-test('M09 manual Host/Port callbacks preserve other lanes and ICMP writes zero port',async()=>{
+test('M09 the lane form has no source/Host/Port controls and saves catalog lanes only',async()=>{
  const f=fixture();f.visible();await flush();f.node.querySelector('[data-focus-key="nq-region"]').click();await flush();
+ for(const kind of ['source','host','port'])assert.ok(!f.panel().querySelector(`[data-nq-field="unicom-ipv4-icmp-${kind}"]`),kind);
  const before=structuredClone(f.ui.snapshot().panel.draft.choices);
- let input=f.panel().querySelector('[data-nq-field="unicom-ipv4-icmp-source"]');input.value='manual';input.dispatch('change');
- input=f.panel().querySelector('[data-nq-field="unicom-ipv4-icmp-host"]');input.value='203.0.113.8';input.dispatch('input');
+ const box=f.panel().querySelector('[data-nq-field="unicom-ipv4-icmp-enabled"]');box.checked=!box.checked;box.dispatch('change');
  f.panel().querySelector('form').dispatch('submit');await flush();
  const lane=f.writes[0].lanes.find(c=>c.slot==='unicom'&&c.family==='ipv4'&&c.protocol==='icmp');
- assert.deepEqual(lane,{slot:'unicom',family:'ipv4',protocol:'icmp',source:'manual',enabled:true,region:'北京',host:'203.0.113.8',port:0});
- for(const c of before.filter(c=>!(c.slot==='unicom'&&c.family==='ipv4'&&c.protocol==='icmp'))){const saved=f.writes[0].lanes.find(l=>l.slot===c.slot&&l.family===c.family&&l.protocol===c.protocol);assert.equal(saved.enabled,c.enabled);assert.equal(saved.source,c.source);}
+ assert.deepEqual(lane,{slot:'unicom',family:'ipv4',protocol:'icmp',source:'catalog',enabled:!before.find(c=>c.slot==='unicom'&&c.family==='ipv4'&&c.protocol==='icmp').enabled,region:'北京'});
+ assert.ok(f.writes[0].lanes.every(l=>l.source==='catalog'&&!('host' in l)&&!('port' in l)));
  f.ui.close();
 });
 test('N3 actual unsupported/disabled V6 has no automatic enable, PUT or family fallback',async()=>{

@@ -90,10 +90,10 @@ func TestTCPMiniChromiumRealAPI(t *testing.T) {
 				if p == "icmp" {
 					port = 0
 				}
-				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "manual", Protocol: p, Host: "127.0.0.1", Port: port}, Family: "ipv4", Enabled: true})
+				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: p, Host: "127.0.0.1", Port: port}, Family: "ipv4", Enabled: true})
 			}
 		}
-		c, e := s.UpdateQualityConfigV2(ctx, id, u, resolveQualityTargetV2, start.Add(-6*time.Hour))
+		c, e := s.UpdateQualityConfigV2(ctx, id, u, qualityResolverV2, start.Add(-6*time.Hour))
 		if e != nil {
 			t.Fatal(e)
 		}
