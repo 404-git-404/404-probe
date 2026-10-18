@@ -31,6 +31,22 @@ for component in "${components[@]}"; do
 done
 
 cd "${ROOT_DIRECTORY}"
+
+# The compiler must be the one go.mod pins. GOTOOLCHAIN=local (or an old go that cannot
+# switch) silently builds with whatever go is on PATH, which is how v1.0.2/v1.0.3 got go1.26.5.
+expected_go="$(sed -n 's/^toolchain go\([0-9][0-9.]*\)[[:space:]]*$/\1/p' go.mod | head -n 1)"
+[[ -n "${expected_go}" ]] || {
+  printf 'go.mod has no "toolchain goX.Y.Z" line to check the compiler against\n' >&2
+  exit 1
+}
+actual_go="$(go version | awk '{print $3}')"
+actual_go="${actual_go#go}"
+[[ "${actual_go}" == "${expected_go}" ]] || {
+  printf 'wrong Go compiler: "go version" reports go%s but go.mod requires go%s\n' "${actual_go}" "${expected_go}" >&2
+  printf 'Do not set GOTOOLCHAIN=local; keep it at its default so go switches to the go.mod toolchain.\n' >&2
+  exit 1
+}
+
 [[ -z "$(git status --porcelain --untracked-files=all)" ]] || {
   printf 'release builds require a clean git worktree\n' >&2
   exit 1
@@ -63,9 +79,25 @@ else
   }
 fi
 
+# A failed build must not leave half-finished assets behind: remove the output directory if this
+# run created it, otherwise only the files this run wrote into it.
+output_created=0
+written_files=()
+cleanup_failed_build() {
+  local status=$?
+  [[ ${status} -ne 0 ]] || return 0
+  if [[ ${output_created} -eq 1 && -n "${OUTPUT_DIRECTORY}" && "${OUTPUT_DIRECTORY}" != / ]]; then
+    rm -rf -- "${OUTPUT_DIRECTORY}"
+  elif [[ ${#written_files[@]} -gt 0 ]]; then
+    rm -f -- "${written_files[@]}"
+  fi
+}
+trap cleanup_failed_build EXIT
+[[ -e "${OUTPUT_DIRECTORY}" ]] || output_created=1
 mkdir -p "${OUTPUT_DIRECTORY}"
 
 installer_path="${OUTPUT_DIRECTORY}/install.sh"
+written_files+=("${installer_path}")
 git show "${tag_commit}:install.sh" >"${installer_path}"
 [[ -s "${installer_path}" ]] || {
   printf 'tagged installer is empty\n' >&2
@@ -91,15 +123,22 @@ for architecture in amd64 arm64; do
     printf 'Building %s\n' "${asset}"
     CGO_ENABLED=0 GOOS=linux GOARCH="${architecture}" \
       go build -trimpath -ldflags="-w -X 404-probe/internal/buildinfo.Version=${VERSION} -X 404-probe/internal/buildinfo.Commit=${head_commit}" -o "${OUTPUT_DIRECTORY}/${asset}" "${package}"
+    written_files+=("${OUTPUT_DIRECTORY}/${asset}")
     metadata="$(go version -m "${OUTPUT_DIRECTORY}/${asset}")"
-    grep -Fq "vcs.revision=${head_commit}" <<<"${metadata}" || {
-      printf '%s does not contain the expected VCS revision\n' "${asset}" >&2
+    first_line="$(head -n 1 <<<"${metadata}")"
+    [[ "${first_line##*: }" == "go${expected_go}" ]] || {
+      printf '%s was built with %s, expected go%s\n' "${asset}" "${first_line##*: }" "${expected_go}" >&2
       exit 1
     }
-    if ! grep -Fq 'vcs.modified=false' <<<"${metadata}"; then
-      printf '%s does not prove an unmodified worktree\n' "${asset}" >&2
+    # head_commit equals PROBE_404_RELEASE_COMMIT when that is set (checked above).
+    grep -Eq "[[:space:]]vcs\.revision=${head_commit}\$" <<<"${metadata}" || {
+      printf '%s does not contain the expected VCS revision %s\n' "${asset}" "${head_commit}" >&2
       exit 1
-    fi
+    }
+    grep -Eq '[[:space:]]vcs\.modified=false$' <<<"${metadata}" || {
+      printf '%s does not prove an unmodified worktree (vcs.modified is not false)\n' "${asset}" >&2
+      exit 1
+    }
     asset_paths+=("${OUTPUT_DIRECTORY}/${asset}")
   done
 done

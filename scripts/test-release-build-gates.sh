@@ -19,14 +19,33 @@ case "$1" in
   *) exit 69 ;;
 esac
 SH
+# Mock go: "go version" reports FIXTURE_GO_VERSION; "go build" either stops at the compiler gate
+# (default) or, with FIXTURE_ELF_MODE=1, writes an empty file that "go version -m" describes using
+# FIXTURE_ELF_GO / FIXTURE_ELF_REVISION / FIXTURE_ELF_MODIFIED; "go run" marks the metadata step.
 cat >"${temporary}/bin/go" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' 'COMPILE_GATE_REACHED'
-exit 71
+case "$1" in
+  version)
+    if [[ "${2:-}" == -m ]]; then
+      printf '%s: go%s\n\tpath\t404-probe/cmd/mock\n\tbuild\tvcs.revision=%s\n\tbuild\tvcs.modified=%s\n' \
+        "$3" "${FIXTURE_ELF_GO:-${FIXTURE_EXPECTED_GO}}" "${FIXTURE_ELF_REVISION:-${FIXTURE_HEAD}}" "${FIXTURE_ELF_MODIFIED:-false}"
+    else
+      printf 'go version go%s linux/amd64\n' "${FIXTURE_GO_VERSION:-${FIXTURE_EXPECTED_GO}}"
+    fi ;;
+  build)
+    if [[ "${FIXTURE_ELF_MODE:-0}" != 1 ]]; then printf '%s\n' 'COMPILE_GATE_REACHED'; exit 71; fi
+    while [[ $# -gt 0 ]]; do [[ "$1" == -o ]] && { : >"$2"; break; }; shift; done ;;
+  run) printf '%s\n' 'METADATA_GATE_REACHED'; exit 72 ;;
+  *) exit 69 ;;
+esac
 SH
 chmod 0700 "${temporary}/bin/git" "${temporary}/bin/go"
 export PATH="${temporary}/bin:${PATH}"
 export FIXTURE_HEAD=0123456789abcdef0123456789abcdef01234567
+# The expected compiler is whatever go.mod pins; nothing here hard-codes a version.
+FIXTURE_EXPECTED_GO="$(sed -n 's/^toolchain go\([0-9][0-9.]*\)[[:space:]]*$/\1/p' "${root}/go.mod" | head -n 1)"
+[[ -n "${FIXTURE_EXPECTED_GO}" ]] || { printf 'go.mod has no toolchain line\n' >&2; exit 1; }
+export FIXTURE_EXPECTED_GO
 export PROBE_404_RELEASE_OUTPUT="${temporary}/assets"
 check() {
   local name="$1" expected="$2"; shift 2
@@ -54,4 +73,25 @@ for version in v1.0.3-rc.0 v1.0.3-rc.01 v1.0.3-rc.18446744073709551616; do
   if env PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}" bash "${root}/scripts/build-release-assets.sh" "${version}" >"${temporary}/result" 2>&1; then exit 1; fi
   if grep -Fq COMPILE_GATE_REACHED "${temporary}/result"; then cat "${temporary}/result"; exit 1; fi
 done
+
+# --- Go toolchain and ELF build-info gates -------------------------------------------------------
+gate() { # name, expected text, env...
+  rm -rf -- "${PROBE_404_RELEASE_OUTPUT}"
+  check "$@"
+}
+gate 'compiler other than the go.mod toolchain is rejected before any build' 'wrong Go compiler' FIXTURE_GO_VERSION=1.26.5 PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+grep -Fq "reports go1.26.5 but go.mod requires go${FIXTURE_EXPECTED_GO}" "${temporary}/result" || { cat "${temporary}/result"; exit 1; }
+grep -Fq 'GOTOOLCHAIN=local' "${temporary}/result" || { cat "${temporary}/result"; exit 1; }
+[[ ! -e "${PROBE_404_RELEASE_OUTPUT}" ]] || { printf 'a rejected compiler left an output directory\n' >&2; exit 1; }
+gate 'GOTOOLCHAIN=local style older compiler is rejected too' 'wrong Go compiler' FIXTURE_GO_VERSION=1.20.0 GOTOOLCHAIN=local PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+gate 'ELF built with the wrong Go version is rejected' "was built with go1.26.5, expected go${FIXTURE_EXPECTED_GO}" FIXTURE_ELF_MODE=1 FIXTURE_ELF_GO=1.26.5 PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+[[ ! -e "${PROBE_404_RELEASE_OUTPUT}" ]] || { printf 'a failed build left its output directory\n' >&2; exit 1; }
+gate 'ELF with vcs.modified=true is rejected' 'vcs.modified is not false' FIXTURE_ELF_MODE=1 FIXTURE_ELF_MODIFIED=true PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+[[ ! -e "${PROBE_404_RELEASE_OUTPUT}" ]] || { printf 'a failed build left its output directory\n' >&2; exit 1; }
+gate 'ELF with another vcs.revision is rejected' 'expected VCS revision' FIXTURE_ELF_MODE=1 FIXTURE_ELF_REVISION=ffffffffffffffffffffffffffffffffffffffff PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+gate 'ELFs with the right compiler, revision and vcs.modified=false pass the build-info gates' METADATA_GATE_REACHED FIXTURE_ELF_MODE=1 PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+# A pre-existing output directory is not deleted; only what this run wrote is removed.
+rm -rf -- "${PROBE_404_RELEASE_OUTPUT}"; mkdir -p "${PROBE_404_RELEASE_OUTPUT}"; printf keep >"${PROBE_404_RELEASE_OUTPUT}/keep.txt"
+check 'failed build in an existing directory keeps unrelated files' 'vcs.modified is not false' FIXTURE_ELF_MODE=1 FIXTURE_ELF_MODIFIED=true PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
+[[ -f "${PROBE_404_RELEASE_OUTPUT}/keep.txt" && ! -e "${PROBE_404_RELEASE_OUTPUT}/install.sh" ]] || { ls -la "${PROBE_404_RELEASE_OUTPUT}"; exit 1; }
 printf 'Release build gate tests passed (mock compiler; not a release build).\n'

@@ -36,7 +36,7 @@ go test ./... -count=1
 
    共 7 个文件：4 个 ELF（linux amd64/arm64 × server/agent）、`install.sh`、`RELEASE-METADATA.json`、`SHA256SUMS`。逐个核对 `vcs.revision`、`vcs.modified=false` 和 SHA256，并按字节确认三个文本文件都是 LF。
 
-   **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只有保持默认（auto）时 go 才会切到 `go.mod` 里 `toolchain` 行指定的 go1.26.8（已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。构建前先在仓库目录里运行 `go version`，构建后用 `go version -m <二进制>` 核对每个 ELF 的第一行是 `go1.26.8`。v1.0.1 是 go1.26.8 编的，v1.0.2 和 v1.0.3 的二进制是 go1.26.5 编的（构建时设了 `GOTOOLCHAIN=local`），下个版本要改回来。
+   **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
 5. **推送顺序（每一步推送都先让维护者确认）：**
    1. 把发布分支快进推到远端（v1.0.1/v1.0.2/v1.0.3 都是 `codex/v1.0.1-m01`）。
