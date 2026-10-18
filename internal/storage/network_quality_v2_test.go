@@ -446,3 +446,42 @@ func a1Rows(t *testing.T, s *Store, table string, columns []string) string {
 	sort.Strings(data)
 	return strings.Join(data, "\n")
 }
+
+// An Agent that cannot grant CAP_NET_RAW (a container without it) declares its ICMP lanes unsupported:
+// the card configuration says so, ICMP targets are "unavailable" and TCP keeps working.
+func TestICMPUnavailableLanesAreReportedWhileTCPStaysActive(t *testing.T) {
+	s, id, old, now := qualityFixture(t, ":memory:")
+	ctx := context.Background()
+	caps := a1Capabilities()
+	for i := range caps.Lanes {
+		if caps.Lanes[i].Protocol == "icmp" {
+			caps.Lanes[i].Supported = false
+			caps.Lanes[i].Reason = "unsupported"
+		}
+	}
+	a1Report(t, s, id, 2, now, caps, "debian 13")
+	if _, err := s.UpdateQualityConfigV2(ctx, id, a1LaneConfig(old.Revision), qualityTestResolver, now); err != nil {
+		t.Fatal(err)
+	}
+	card, err := s.QualityCardConfiguration(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !card.Supported || card.State != "ready" || card.Capabilities == nil {
+		t.Fatalf("card config: supported=%v state=%s caps=%+v", card.Supported, card.State, card.Capabilities)
+	}
+	for _, lane := range card.Capabilities.Lanes {
+		want := lane.Protocol == "tcp"
+		if lane.Supported != want {
+			t.Fatalf("lane %s/%s supported=%v want %v", lane.Family, lane.Protocol, lane.Supported, want)
+		}
+	}
+	for _, target := range card.Targets {
+		switch {
+		case target.Protocol == "icmp" && target.Status != "unavailable":
+			t.Fatalf("ICMP target %s/%s is %s, want unavailable", target.Slot, target.Family, target.Status)
+		case target.Protocol == "tcp" && target.Status != "active":
+			t.Fatalf("TCP target %s/%s is %s, want active", target.Slot, target.Family, target.Status)
+		}
+	}
+}

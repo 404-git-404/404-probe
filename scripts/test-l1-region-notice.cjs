@@ -45,5 +45,33 @@ test('L1: both views take the message from the one shared decision', () => {
   assert.match(mini, /notice\?\.key==='region'\?notice\.text:!c\.isps\.size\?'未选择 ISP'/);
   assert.doesNotMatch(mini, /!c\.config\.supported\?'Agent 不支持'/, 'the mini curve no longer maps "not supported" itself');
   assert.match(squares, /C\.configNotice\(card\.config\)/);
-  assert.match(squares, /notice\?\.key==='region'\?notice:C\.cardCurrent/);
+  assert.match(squares, /notice\?\.key==='region'\?notice:lane\|\|C\.cardCurrent/);
+});
+
+test('M4: an ICMP lane the Agent cannot run reads 不可用（当前环境无 ICMP 权限） while TCP is untouched', () => {
+  const lane = (protocol, supported, reason) => ({family: 'ipv4', protocol, supported, ...(reason ? {reason} : {})});
+  const config = {supported: true, state: 'ready', enabled: true, capabilities: {lanes: [lane('tcp', true), lane('icmp', false, 'unsupported'), {family: 'ipv6', protocol: 'icmp', supported: false, reason: 'unsupported'}]}};
+  const icmp = C.laneNotice(config, 'ipv4', 'icmp');
+  assert.equal(icmp.text, '不可用');
+  assert.equal(icmp.detail, '不可用（当前环境无 ICMP 权限）');
+  assert.equal(C.laneNotice(config, 'ipv4', 'tcp'), null);
+  assert.equal(C.laneNotice(config, 'ipv6', 'icmp').detail, '不可用（当前环境无 ICMP 权限）');
+  assert.equal(C.laneNotice({capabilities: {lanes: [lane('icmp', true)]}}, 'ipv4', 'icmp'), null);
+  assert.equal(C.laneNotice({supported: true}, 'ipv4', 'icmp'), null);
+  assert.equal(C.laneNotice(null, 'ipv4', 'icmp'), null);
+  assert.match(C.laneNotice({capabilities: {lanes: [lane('icmp', false, 'platform_excluded')]}}, 'ipv4', 'icmp').detail, /平台不支持/);
+  assert.match(C.laneNotice({capabilities: {lanes: [lane('tcp', false, 'unsupported')]}}, 'ipv4', 'tcp').detail, /TCP/);
+  const mini = fs.readFileSync(require.resolve('../web/static/latency-mini.js'), 'utf8');
+  const squares = fs.readFileSync(require.resolve('../web/static/network-quality.js'), 'utf8');
+  assert.ok(mini.includes("C.laneNotice(c.config,'ipv4',c.protocol)"));
+  assert.ok(mini.includes('notice?notice.text:lane?lane.detail:!values.length'));
+  assert.ok(squares.includes('C.laneNotice(card.config,card.family,target.protocol)'));
+});
+
+test('M3: both pages show an unavailable security audit with its reason, not as setup required', () => {
+  for (const file of ['history.js', 'device-details.js']) {
+    const text = fs.readFileSync(require.resolve('../web/static/' + file), 'utf8');
+    assert.ok(text.includes('sandbox_unavailable') && text.includes('collector_start_failed'), file);
+    assert.ok(text.includes('不可用：') && text.includes('unavailableText'), file);
+  }
 });

@@ -143,7 +143,7 @@
         text(view.label,C.names[key]);view.label.title=`${label(tcp)} · TCP/ICMP 各自 target`;
         for(const [target,metric,strip,kind] of [[tcp,view.latency,view.latencyStrip,'latency'],[icmp,view.ratio,view.ratioStrip,'ratio']]) {
           const cached=card.data.get(target.id),h=cached?.value,old=disabled||!!cached?.error||card.agent.online===false||!!card.agent.state?.stale;
-          const notice=C.configNotice(card.config),display=notice?.key==='region'?notice:C.cardCurrent(h,target,{old,revision:card.config?.revision,elapsed:cached?now()-cached.updated:0});
+          const notice=C.configNotice(card.config),lane=C.laneNotice(card.config,card.family,target.protocol),display=notice?.key==='region'?notice:lane||C.cardCurrent(h,target,{old,revision:card.config?.revision,elapsed:cached?now()-cached.updated:0});
           text(metric,display.text);metric.title=display.detail;metric.setAttribute('aria-label',`${C.names[key]} ${target.protocol.toUpperCase()} ${display.text}；${display.detail}`);metric.disabled=!target.id;
           if(history?.card===card&&history.target.id===target.id)history.trigger=metric;
           // Freshness is a current-probe property, never a historical palette mask.
