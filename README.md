@@ -94,6 +94,16 @@ sudo 404-probe-install enroll singapore-01
 
 For an Agent, run the same installer and enter only the Server URL and the enrollment value. Agent names remain server-authoritative. Non-loopback connections require HTTPS. An enrollment value packages the Agent's permanent credential; it is shown once, but it is not a single-use bootstrap token. Paste it only into the installer's hidden prompt and clear any clipboard copy after use.
 
+### One-click Agent install
+
+In the panel choose "添加 Agent" → "一键安装", enter the Agent name, and copy the generated command. The registration token inside it is single-use, valid for 30 minutes, bound to that name, stored only as a hash, and can be revoked in the dialog until it is used. The command is shown once and cannot be displayed again after the dialog closes. It is only offered when the Server is a verified release build (not a development or dirty build). The installer then runs without a terminal:
+
+```bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/<version>/install.sh | sudo env PROBE_404_ROLE=agent PROBE_404_SERVER=<origin> PROBE_404_ENROLL_TOKEN=<token> PROBE_404_AGENT_NAME=<name> bash
+```
+
+`PROBE_404_ENROLL_TOKEN_FILE=<path>` may replace `PROBE_404_ENROLL_TOKEN`. Supplying only some of the variables is an error (the missing ones are listed), `PROBE_404_ROLE=server` is rejected because a Server must be installed interactively, and a machine that already has an Agent is refused before the token is used. Note that a command typed after `sudo env` is visible in the process list while it runs, which is why the token is short-lived and single-use. The manual flow (an enrollment value pasted into a hidden prompt) is unchanged.
+
 ## Build and test
 
 ```bash
