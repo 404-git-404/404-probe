@@ -152,7 +152,7 @@ bootstrap_latest_installer() (
   if [[ -n "${PROBE_404_VERSION:-}" ]]; then
     latest="${PROBE_404_VERSION}"
     release_version "${latest}" || die "explicit target version must be stable or beta.N/rc.N"
-  elif [[ -z "${1:-}" ]] && oneclick_variables_present; then
+  elif [[ -z "${1:-}" && -n "${PROBE_404_ROLE:-}${PROBE_404_ENROLL_TOKEN:-}${PROBE_404_ENROLL_TOKEN_FILE:-}" ]]; then
     # The panel's command fetches this installer from the Server's own release; keep that version.
     latest="${DEFAULT_VERSION}"
   else
