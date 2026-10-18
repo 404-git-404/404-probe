@@ -4,7 +4,7 @@
   const resource = key => ({
     name: 'name', revoked: 'lifecycle', disabled_at: 'lifecycle', created_at: 'lifecycle',
     country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country',
-    plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google',
+    plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', public_egress_check: 'egress',
     security: 'security', management: 'management', traffic: 'traffic', removal: 'removal',
   })[key] || 'runtime';
   const fullEvent = value => ['created_at', 'revoked', 'management', 'outbounds', 'google_status', 'security', 'plan']
@@ -69,7 +69,7 @@
       const e = entry(id), token = {id, entry: e, lifetime: e.lifetime, start: e.revision, context,
         versions: new Map(e.versions), reads: new Map(), groups};
       // Per-resource latest invocation; an upgrade read cannot invalidate detail fields.
-      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','security','management','traffic','removal'];
+      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','egress','security','management','traffic','removal'];
       for (const group of all) {
         const next = (e.reads.get(group) || 0) + 1;
         e.reads.set(group, next); token.reads.set(group, next);

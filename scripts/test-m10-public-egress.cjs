@@ -149,3 +149,97 @@ test('M10 UI: the tooltip shows a reason only when it is verified', () => {
   assert.doesNotMatch(text('network'), /尚无可靠结果|已验证/);
   assert.match(text('network'), /8\.8\.8\.8 · .*；Agent/);
 });
+
+// ---------- detail page: switch and "check now" button ----------
+const PublicEgressCheck = require('../web/static/public-egress-check.js');
+const T0 = 1800000000000;
+const panelAgent = (check = {}, extra = {}) => ({
+  agent_id: 'a', online: true,
+  public_egress_check: {enabled: true, supported: true, pending: false, server_now: T0, ...check},
+  state: {public_egress: {ipv4: {status: 'unknown', checked_at: 0}, ipv6: {status: 'unknown', checked_at: 0}}},
+  ...extra,
+});
+
+test('M10 panel: off by default shows 未启用 and nothing can be triggered', () => {
+  const view = PublicEgressCheck.view(panelAgent({enabled: false}), T0);
+  assert.equal(view.state, 'off');
+  assert.equal(view.enabled, false);
+  assert.equal(view.note, '未启用');
+  assert.equal(view.buttonDisabled, true);
+  assert.equal(view.switchDisabled, false);
+  assert.deepEqual(view.lines, ['公网 IP 检测：未启用']);
+  assert.equal(PublicEgressCheck.view({agent_id: 'a', online: true}, T0).state, 'off', 'an agent without the field is off');
+});
+
+test('M10 panel: ready when on, online, idle and out of cooldown', () => {
+  const view = PublicEgressCheck.view(panelAgent({next_check_at: T0 + 3600000}), T0);
+  assert.equal(view.state, 'ready');
+  assert.equal(view.buttonDisabled, false);
+  assert.equal(view.buttonLabel, '立即检测');
+  assert.equal(view.note, '');
+  assert.equal(view.enabled, true);
+  assert.match(view.lines.join('\n'), /下次检测：/);
+});
+
+test('M10 panel: cooling down shows when the next check is possible, in local HH:MM', () => {
+  const until = T0 + 5 * 3600000;
+  const view = PublicEgressCheck.view(panelAgent({cooldown_until: until}), T0);
+  assert.equal(view.state, 'cooldown');
+  assert.equal(view.buttonDisabled, true);
+  assert.equal(view.note, `可在 ${PublicEgressCheck.clock(until, T0)} 后再次检测`);
+  assert.match(view.note, /\d{2}:\d{2}/);
+  // A cooldown that has ended no longer blocks the button.
+  assert.equal(PublicEgressCheck.view(panelAgent({cooldown_until: T0 - 1}), T0).state, 'ready');
+});
+
+test('M10 panel: a check in flight shows 检测中, ahead of the cooldown', () => {
+  const view = PublicEgressCheck.view(panelAgent({pending: true, cooldown_until: T0 + 1000}), T0);
+  assert.equal(view.state, 'pending');
+  assert.equal(view.note, '检测中');
+  assert.equal(view.buttonLabel, '检测中…');
+  assert.equal(view.buttonDisabled, true);
+});
+
+test('M10 panel: an old Agent is unsupported, while the switch and any legacy result stay usable', () => {
+  const agent = panelAgent({supported: false}, {state: {public_egress: {ipv4: {status: 'available', ip: '8.8.8.8', checked_at: T0 - 1000, valid_until: T0 + 1000000}, ipv6: {status: 'unknown', checked_at: 0}}}});
+  const view = PublicEgressCheck.view(agent, T0);
+  assert.equal(view.state, 'unsupported');
+  assert.equal(view.note, 'Agent 版本不支持，升级 Agent 后可用');
+  assert.equal(view.buttonDisabled, true);
+  assert.equal(view.switchDisabled, false);
+  assert.match(view.lines.join('\n'), /IPv4：8\.8\.8\.8/);
+});
+
+test('M10 panel: offline, paused and revoked Agents', () => {
+  const offline = PublicEgressCheck.view(panelAgent({}, {online: false}), T0);
+  assert.equal(offline.state, 'offline'); assert.equal(offline.note, 'Agent 离线'); assert.equal(offline.buttonDisabled, true);
+  const paused = PublicEgressCheck.view(panelAgent({}, {disabled_at: T0 - 5}), T0);
+  assert.equal(paused.state, 'paused'); assert.equal(paused.note, 'Agent 已暂停'); assert.equal(paused.buttonDisabled, true);
+  const revoked = PublicEgressCheck.view(panelAgent({}, {revoked: true}), T0);
+  assert.equal(revoked.state, 'revoked'); assert.equal(revoked.buttonDisabled, true); assert.equal(revoked.switchDisabled, true);
+});
+
+test('M10 panel: results, last check and next check are shown only while enabled', () => {
+  const fresh = {status: 'available', ip: '8.8.8.8', checked_at: T0 - 60000, valid_until: T0 + 86400000, stale: false};
+  const agent = panelAgent({next_check_at: T0 + 604800000}, {state: {public_egress: {ipv4: fresh, ipv6: {status: 'unavailable', checked_at: T0 - 60000, valid_until: T0 + 1}}}});
+  const text = PublicEgressCheck.view(agent, T0).lines.join('\n');
+  assert.match(text, /公网 IP 检测：已启用/);
+  assert.match(text, /IPv4：8\.8\.8\.8/);
+  assert.match(text, /IPv6：不可用/);
+  assert.match(text, /上次检测：/);
+  assert.match(text, /下次检测：/);
+  const stale = panelAgent({}, {state: {public_egress: {ipv4: {...fresh, stale: true}, ipv6: {status: 'unknown', checked_at: 0}}}});
+  assert.match(PublicEgressCheck.view(stale, T0).lines.join('\n'), /IPv4：旧数据 8\.8\.8\.8/);
+  assert.match(PublicEgressCheck.view(stale, T0).lines.join('\n'), /IPv6：尚未检测/);
+  assert.doesNotMatch(PublicEgressCheck.view(panelAgent({enabled: false}), T0).lines.join('\n'), /IPv4/);
+});
+
+test('M10 panel: the page wires the switch and the button to the two endpoints with the CSRF token', () => {
+  const history = fs.readFileSync(require.resolve('../web/static/history.js'), 'utf8');
+  const html = fs.readFileSync(require.resolve('../web/static/history.html'), 'utf8');
+  for (const id of ['public-egress-switch', 'public-egress-check', 'public-egress-note', 'public-egress-lines']) assert.ok(html.includes(`id="${id}"`), id);
+  assert.ok(html.includes('src="/public-egress-check.js"'));
+  assert.ok(history.includes("'/public-egress'") && history.includes("'/public-egress/check'"));
+  assert.ok(history.includes("'X-CSRF-Token': mutationCSRFToken"));
+  assert.ok(history.includes('JSON.stringify({enabled: wanted})'));
+});

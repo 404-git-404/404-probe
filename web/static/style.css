@@ -158,3 +158,4 @@ body :is(.agent-dialog,.login-card,.selector-popover,.plan-drawer,.device-detail
 #upgrade-release:disabled{color:#6d675e;background:#e9e3d9;border-color:#a69b8d}
 .tone-dot.unknown{background:#756c62}
 #google-status-values dd[data-premium]{display:inline-block;padding:0 6px;border-radius:4px;color:#fff}#google-status-values dd[data-premium="available"]{background:#2f8f5b}#google-status-values dd[data-premium="unavailable"]{background:#c62828}
+.public-egress-detail{grid-column:1/-1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}.public-egress-detail h2{font-size:14px;margin:0}.public-egress-detail p{color:var(--muted)}.public-egress-switch{display:inline-flex;align-items:center;gap:8px;margin:8px 0}#public-egress-lines div{padding:2px 0}#public-egress-feedback{color:var(--red)}
