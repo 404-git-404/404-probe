@@ -18,6 +18,10 @@ func TestM10PersistenceOrderingHistoryAndLegacy(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "m10.db")
 	s, id, _ := testStore(t, file)
 	now := time.Now()
+	// Telemetry from a v1.0.3 Agent is only accepted while the detection is switched on.
+	if _, err := s.SetPublicEgressEnabled(ctx, id, true, now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	r := validReport(id, 1, "s1", "boot", 1, 10, 20)
 	r.CollectedAt = now.UnixMilli()
 	r.PublicEgress = &protocol.PublicEgress{Version: 1, IPv4: m10Success("ipv4", "8.8.8.8", r.CollectedAt), IPv6: m10Success("ipv6", "2606:4700::1111", r.CollectedAt)}

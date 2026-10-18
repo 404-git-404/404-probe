@@ -256,8 +256,17 @@ func TestTCPMiniDSTProofAndInitialization(t *testing.T) {
 		t.Log(v, tcpMiniLevel(v))
 	}
 }
+func dropPublicEgressControlFixtureSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, q := range []string{`DROP INDEX IF EXISTS idx_probe_jobs_one_pending_public_egress`, `DROP TABLE IF EXISTS agent_public_egress_control`, `DELETE FROM schema_migrations WHERE version=30`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 func dropTCPMiniFixtureSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
+	dropPublicEgressControlFixtureSchema(t, db)
 	for _, q := range []string{`DROP TABLE IF EXISTS tcp_mini_high`, `DROP TABLE IF EXISTS tcp_mini_state`, `DELETE FROM schema_migrations WHERE version=29`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
@@ -277,7 +286,7 @@ func TestTCPMiniMigration28AndBackfill(t *testing.T) {
 	}
 	defer s.Close()
 	v, err := s.SchemaVersion(context.Background())
-	if err != nil || v != 29 {
+	if err != nil || v != currentSchemaVersion {
 		t.Fatal(v, err)
 	}
 	if err = s.MaintainTCPMini(context.Background(), now); err != nil {

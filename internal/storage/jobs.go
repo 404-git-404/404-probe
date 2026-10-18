@@ -534,6 +534,11 @@ func (s *Store) SubmitJobResult(ctx context.Context, agentID, jobID string, resu
 			return SubmitResultAck{}, err
 		}
 	}
+	if job.ProbeType == protocol.ProbeTypePublicEgress {
+		if err := savePublicEgressResultTx(ctx, tx, agentID, *result.Result.PublicEgress, receivedAt); err != nil {
+			return SubmitResultAck{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return SubmitResultAck{}, err
 	}

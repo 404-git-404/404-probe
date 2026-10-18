@@ -15,12 +15,14 @@ import (
 // Status and validity timestamps are identical in API and SSE; the consumer
 // evaluates expiry and offline lifecycle without changing the base status.
 type EgressState struct {
-	Version   int                        `json:"version"`
-	Supported bool                       `json:"supported"`
-	Epoch     string                     `json:"epoch"`
-	Sequence  string                     `json:"sequence"`
-	IPv4      protocol.EgressObservation `json:"ipv4"`
-	IPv6      protocol.EgressObservation `json:"ipv6"`
+	Version   int    `json:"version"`
+	Supported bool   `json:"supported"`
+	Epoch     string `json:"epoch"`
+	Sequence  string `json:"sequence"`
+	// Source is "job" for a Server-dispatched check and empty for telemetry attached by a v1.0.3 Agent.
+	Source string                     `json:"source,omitempty"`
+	IPv4   protocol.EgressObservation `json:"ipv4"`
+	IPv6   protocol.EgressObservation `json:"ipv6"`
 }
 
 func migratePublicEgressTx(ctx context.Context, tx *sql.Tx) error {
@@ -35,7 +37,24 @@ func migratePublicEgressTx(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+func blankEgressState() EgressState {
+	return EgressState{Version: 1, IPv4: protocol.UnknownEgress("ipv4", "not_reported"), IPv6: protocol.UnknownEgress("ipv6", "not_reported")}
+}
+
+func publicEgressEnabledTx(ctx context.Context, tx *sql.Tx, agentID string) (bool, error) {
+	var enabled int
+	err := tx.QueryRowContext(ctx, `SELECT enabled FROM agent_public_egress_control WHERE agent_id=?`, agentID).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return enabled == 1, err
+}
+
 func mergePublicEgress(previous, current State, r protocol.Report, received time.Time) EgressState {
+	// A current Agent no longer attaches telemetry: what its jobs stored stays untouched.
+	if r.PublicEgress == nil && previous.PublicEgress.Version == 1 && previous.PublicEgress.Source == "job" {
+		return previous.PublicEgress
+	}
 	p := EgressState{Version: 1, Supported: r.PublicEgress != nil, Epoch: strconv.FormatUint(r.Epoch, 10), Sequence: strconv.FormatUint(r.Sequence, 10), IPv4: protocol.UnknownEgress("ipv4", "not_reported"), IPv6: protocol.UnknownEgress("ipv6", "not_reported")}
 	if r.PublicEgress != nil {
 		if r.PublicEgress.Version == 1 {
@@ -72,8 +91,17 @@ func writePublicEgressTx(ctx context.Context, tx *sql.Tx, s State) error {
 	return err
 }
 
+// readPublicEgressTx is what views see: nothing while the detection is switched off.
 func readPublicEgressTx(ctx context.Context, tx *sql.Tx, id string) (EgressState, error) {
-	p := EgressState{Version: 1, IPv4: protocol.UnknownEgress("ipv4", "not_reported"), IPv6: protocol.UnknownEgress("ipv6", "not_reported")}
+	enabled, err := publicEgressEnabledTx(ctx, tx, id)
+	if err != nil || !enabled {
+		return blankEgressState(), err
+	}
+	return readStoredEgressTx(ctx, tx, id)
+}
+
+func readStoredEgressTx(ctx context.Context, tx *sql.Tx, id string) (EgressState, error) {
+	p := blankEgressState()
 	var raw string
 	err := tx.QueryRowContext(ctx, `SELECT payload FROM agent_public_egress WHERE agent_id=?`, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -86,8 +114,8 @@ func readPublicEgressTx(ctx context.Context, tx *sql.Tx, id string) (EgressState
 	if len(raw) <= 4096 && json.Unmarshal([]byte(raw), &saved) == nil && saved.Version == 1 {
 		// Persisted data is validated too; corrupt optional data cannot make
 		// the complete Agent detail unavailable.
-		saved.IPv4 = protocol.NormalizeEgress(saved.IPv4, "ipv4", time.Now().UnixMilli(), time.Now().UnixMilli())
-		saved.IPv6 = protocol.NormalizeEgress(saved.IPv6, "ipv6", time.Now().UnixMilli(), time.Now().UnixMilli())
+		saved.IPv4 = protocol.NormalizeStoredEgress(saved.IPv4, "ipv4", time.Now().UnixMilli(), time.Now().UnixMilli())
+		saved.IPv6 = protocol.NormalizeStoredEgress(saved.IPv6, "ipv6", time.Now().UnixMilli(), time.Now().UnixMilli())
 		return saved, nil
 	}
 	return p, nil

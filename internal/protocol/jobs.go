@@ -31,11 +31,12 @@ const (
 	ProbeTypeHTTP           ProbeType = "http"
 	ProbeTypeSelectorSwitch ProbeType = "singbox_selector_switch"
 	ProbeTypeGoogleStatus   ProbeType = "google_status"
+	ProbeTypePublicEgress   ProbeType = "public_egress"
 )
 
 func (p ProbeType) Validate() error {
 	switch p {
-	case ProbeTypeICMPPing, ProbeTypeTCPConnect, ProbeTypeHTTP, ProbeTypeSelectorSwitch, ProbeTypeGoogleStatus:
+	case ProbeTypeICMPPing, ProbeTypeTCPConnect, ProbeTypeHTTP, ProbeTypeSelectorSwitch, ProbeTypeGoogleStatus, ProbeTypePublicEgress:
 		return nil
 	default:
 		return fmt.Errorf("unknown probe type %q", p)
@@ -75,6 +76,7 @@ type ProbeConfig struct {
 	HTTP           *HTTPConfig
 	SelectorSwitch *SelectorSwitchConfig
 	GoogleStatus   *GoogleStatusConfig
+	PublicEgress   *PublicEgressConfig
 }
 
 func (c ProbeConfig) Type() (ProbeType, error) {
@@ -94,6 +96,9 @@ func (c ProbeConfig) Type() (ProbeType, error) {
 	}
 	if c.GoogleStatus != nil {
 		probeType, count = ProbeTypeGoogleStatus, count+1
+	}
+	if c.PublicEgress != nil {
+		probeType, count = ProbeTypePublicEgress, count+1
 	}
 	if count != 1 {
 		return "", errors.New("probe config must contain exactly one typed config")
@@ -135,7 +140,7 @@ func (c ProbeConfig) Validate(probeType ProbeType) error {
 		if err := validateOutboundName(c.SelectorSwitch.Choice); err != nil {
 			return fmt.Errorf("choice: %w", err)
 		}
-	case ProbeTypeGoogleStatus:
+	case ProbeTypeGoogleStatus, ProbeTypePublicEgress:
 	default:
 		return fmt.Errorf("unknown probe type %q", probeType)
 	}
@@ -178,6 +183,14 @@ func DecodeProbeConfig(probeType ProbeType, data []byte) (ProbeConfig, error) {
 			return ProbeConfig{}, err
 		}
 		config.GoogleStatus = &value
+	case ProbeTypePublicEgress:
+		// The job carries no parameters: any field is rejected by the strict decoder and the
+		// destinations are compiled into the Agent.
+		var value PublicEgressConfig
+		if err := decodeStrict(data, &value); err != nil {
+			return ProbeConfig{}, err
+		}
+		config.PublicEgress = &value
 	}
 	if err := config.Validate(probeType); err != nil {
 		return ProbeConfig{}, err
@@ -200,6 +213,8 @@ func MarshalProbeConfig(probeType ProbeType, config ProbeConfig) ([]byte, error)
 		return json.Marshal(config.SelectorSwitch)
 	case ProbeTypeGoogleStatus:
 		return json.Marshal(config.GoogleStatus)
+	case ProbeTypePublicEgress:
+		return json.Marshal(config.PublicEgress)
 	default:
 		return nil, fmt.Errorf("unknown probe type %q", probeType)
 	}
@@ -222,8 +237,8 @@ func (r ClaimRequest) Validate() error {
 	if !validIdentifier(r.SessionID, 128) {
 		return errors.New("session_id is required and must be at most 128 bytes")
 	}
-	if len(r.SupportedProbeTypes) == 0 || len(r.SupportedProbeTypes) > 5 {
-		return errors.New("supported_probe_types must contain between 1 and 5 values")
+	if len(r.SupportedProbeTypes) == 0 || len(r.SupportedProbeTypes) > 6 {
+		return errors.New("supported_probe_types must contain between 1 and 6 values")
 	}
 	seen := make(map[ProbeType]struct{}, len(r.SupportedProbeTypes))
 	for _, probeType := range r.SupportedProbeTypes {
@@ -376,6 +391,7 @@ type ProbeResult struct {
 	HTTP           *HTTPResult
 	SelectorSwitch *SelectorSwitchResult
 	GoogleStatus   *GoogleStatusResult
+	PublicEgress   *PublicEgressResult
 }
 
 func (r ProbeResult) Type() (ProbeType, error) {
@@ -395,6 +411,9 @@ func (r ProbeResult) Type() (ProbeType, error) {
 	}
 	if r.GoogleStatus != nil {
 		probeType, count = ProbeTypeGoogleStatus, count+1
+	}
+	if r.PublicEgress != nil {
+		probeType, count = ProbeTypePublicEgress, count+1
 	}
 	if count != 1 {
 		return "", errors.New("probe result must contain exactly one typed payload")
@@ -450,6 +469,8 @@ func (r ProbeResult) Validate(probeType ProbeType) error {
 		}
 	case ProbeTypeGoogleStatus:
 		return r.GoogleStatus.Validate()
+	case ProbeTypePublicEgress:
+		return r.PublicEgress.Validate()
 	default:
 		return fmt.Errorf("unknown probe type %q", probeType)
 	}
@@ -492,6 +513,12 @@ func DecodeProbeResult(probeType ProbeType, data []byte) (ProbeResult, error) {
 			return ProbeResult{}, err
 		}
 		result.GoogleStatus = &value
+	case ProbeTypePublicEgress:
+		var value PublicEgressResult
+		if err := decodeStrict(data, &value); err != nil {
+			return ProbeResult{}, err
+		}
+		result.PublicEgress = &value
 	}
 	if err := result.Validate(probeType); err != nil {
 		return ProbeResult{}, err
@@ -515,6 +542,8 @@ func MarshalProbeResult(probeType ProbeType, result ProbeResult) ([]byte, error)
 		return json.Marshal(normalized.SelectorSwitch)
 	case ProbeTypeGoogleStatus:
 		return json.Marshal(normalized.GoogleStatus)
+	case ProbeTypePublicEgress:
+		return json.Marshal(normalized.PublicEgress)
 	default:
 		return nil, fmt.Errorf("unknown probe type %q", probeType)
 	}

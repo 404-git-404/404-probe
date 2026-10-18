@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"time"
 )
@@ -32,6 +33,67 @@ type EgressObservation struct {
 
 const EgressSuccessTTL = 45 * time.Minute
 const EgressFailureTTL = 5 * time.Minute
+
+// A job-based check is repeated every seven days; a result stays valid for one day more.
+const EgressJobInterval = 7 * 24 * time.Hour
+const EgressJobSuccessTTL = 8 * 24 * time.Hour
+
+// PublicEgressConfig is the whole job: it has no fields, the destinations (api.ipify.org and
+// api6.ipify.org) are compiled into the Agent and nothing in a job can change them.
+type PublicEgressConfig struct{}
+
+// PublicEgressResult is what the Agent returns for a public_egress job. Only the family, status, IP
+// and reason matter: the Server stamps the check time and validity itself, so Agent clocks and
+// requested lifetimes are never trusted.
+type PublicEgressResult struct {
+	IPv4 EgressObservation `json:"ipv4"`
+	IPv6 EgressObservation `json:"ipv6"`
+}
+
+func (r PublicEgressResult) Validate() error {
+	for _, item := range []struct {
+		family string
+		value  EgressObservation
+	}{{"ipv4", r.IPv4}, {"ipv6", r.IPv6}} {
+		if err := validateJobEgressObservation(item.value, item.family); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateJobEgressObservation(o EgressObservation, family string) error {
+	if o.Family != family || o.CheckedAt < 0 || o.ValidUntil < 0 || o.LastSuccess != nil {
+		return errors.New("public egress observation is invalid")
+	}
+	switch o.Status {
+	case "available":
+		if !PublicEgressIP(o.IP, family) || o.Reason != "verified" {
+			return errors.New("available public egress requires a verified public address")
+		}
+	case "unavailable":
+		if o.IP != "" || (o.Reason != "no_route" && o.Reason != "family_unavailable") {
+			return errors.New("unavailable public egress is invalid")
+		}
+	case "unknown":
+		if o.IP != "" {
+			return errors.New("unknown public egress must not carry an address")
+		}
+		switch o.Reason {
+		case "dns", "tls", "timeout", "http_status", "invalid_response", "network":
+		default:
+			return errors.New("unknown public egress reason is invalid")
+		}
+	default:
+		return errors.New("public egress status is invalid")
+	}
+	return nil
+}
+
+// Succeeded reports whether at least one family has a verified address.
+func (r PublicEgressResult) Succeeded() bool {
+	return r.IPv4.Status == "available" || r.IPv6.Status == "available"
+}
 
 func UnknownEgress(family, reason string) EgressObservation {
 	return EgressObservation{Family: family, Status: "unknown", Reason: reason}
@@ -103,6 +165,15 @@ func PublicEgressIP(text, family string) bool {
 // NormalizeEgress isolates all optional errors and bounds times against the
 // accepted report/server clocks. Stale successes remain explicitly timestamped.
 func NormalizeEgress(o EgressObservation, family string, collected, received int64) EgressObservation {
+	return normalizeEgress(o, family, collected, received, EgressSuccessTTL)
+}
+
+// NormalizeStoredEgress also accepts the longer validity the Server gives to job-based checks.
+func NormalizeStoredEgress(o EgressObservation, family string, collected, received int64) EgressObservation {
+	return normalizeEgress(o, family, collected, received, EgressJobSuccessTTL)
+}
+
+func normalizeEgress(o EgressObservation, family string, collected, received int64, successTTL time.Duration) EgressObservation {
 	bad := func() EgressObservation { return UnknownEgress(family, "invalid_report") }
 	if o.Family != family || o.CheckedAt < 0 || o.CheckedAt > collected+60000 || o.CheckedAt > received+60000 {
 		return bad()
@@ -116,7 +187,7 @@ func NormalizeEgress(o EgressObservation, family string, collected, received int
 		if !PublicEgressIP(o.IP, family) || o.CheckedAt == 0 || o.Reason != "verified" {
 			return bad()
 		}
-		maxTTL = EgressSuccessTTL
+		maxTTL = successTTL
 		o.LastSuccess = &EgressSuccess{IP: o.IP, CheckedAt: o.CheckedAt}
 	case "unavailable":
 		if o.IP != "" || o.CheckedAt == 0 || (o.Reason != "no_route" && o.Reason != "family_unavailable") {

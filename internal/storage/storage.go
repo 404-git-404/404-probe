@@ -19,7 +19,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 29
+const currentSchemaVersion = 30
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -848,6 +848,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 29: %w", err)
 		}
 	}
+	if version < 30 {
+		if err := migratePublicEgressControlTx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 30: %w", err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1194,9 +1199,19 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	if err != nil {
 		return State{}, false, "", err
 	}
-	state.PublicEgress = mergePublicEgress(previous, state, r, received)
-	if err := writePublicEgressTx(ctx, tx, state); err != nil {
+	// Public egress is opt-in per Agent. While it is off, whatever a v1.0.3 Agent still attaches is
+	// dropped (neither stored nor shown) and stored job data is left as it is.
+	egressEnabled, err := publicEgressEnabledTx(ctx, tx, authenticatedID)
+	if err != nil {
 		return State{}, false, "", err
+	}
+	if egressEnabled {
+		state.PublicEgress = mergePublicEgress(previous, state, r, received)
+		if err := writePublicEgressTx(ctx, tx, state); err != nil {
+			return State{}, false, "", err
+		}
+	} else {
+		state.PublicEgress = blankEgressState()
 	}
 	if err := writeStateTx(ctx, tx, state); err != nil {
 		return State{}, false, "", err
@@ -1217,6 +1232,9 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 			return State{}, false, "", err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM agent_security_capabilities WHERE agent_id=?`, authenticatedID); err != nil {
+			return State{}, false, "", err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_public_egress_control SET supported=0 WHERE agent_id=?`, authenticatedID); err != nil {
 			return State{}, false, "", err
 		}
 	}

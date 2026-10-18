@@ -198,6 +198,7 @@ type ReportCapabilities struct {
 	AgentUpgrade          bool `json:"agent_upgrade,omitempty"`
 	InteractiveControl    bool `json:"interactive_control,omitempty"`
 	GoogleStatus          bool `json:"google_status,omitempty"`
+	PublicEgressJob       bool `json:"public_egress_job,omitempty"`
 	Security              bool `json:"security,omitempty"`
 	ManagementReport      bool `json:"management_capabilities_report,omitempty"`
 	NetworkCountersReport bool `json:"network_counters_report,omitempty"`
