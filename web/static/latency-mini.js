@@ -110,7 +110,7 @@
         }
         flush();if(d.includes('L'))add('path',{d,fill:'none',stroke:color,'stroke-width':1.2});
       }
-      const message=!c.isps.size?'未选择 ISP':inactive(c)?'设备暂停/撤销':!c.config?'等待地区配置':!c.config.supported?'Agent 不支持':!values.length?(c.loading.size?'读取历史…':rows.some(r=>r.entry?.error)?'历史读取失败':'暂无有效 RTT'):rows.some(r=>r.entry?.error)||c.agent.online===false?'旧历史':'';
+      const notice=C.configNotice(c.config),message=notice?.key==='region'?notice.text:!c.isps.size?'未选择 ISP':inactive(c)?'设备暂停/撤销':notice?notice.text:!values.length?(c.loading.size?'读取历史…':rows.some(r=>r.entry?.error)?'历史读取失败':'暂无有效 RTT'):rows.some(r=>r.entry?.error)||c.agent.online===false?'旧历史':'';
       if(message)txt(left+pw/2,14,message,'middle');
       if(c.protocol==='tcp'&&(!c.tcpEvidence||c.tcpEvidence.state==='unknown'||c.tcpEvidenceError))txt(left+3,ph-3,'告警覆盖不足');
       c.plot.replaceChildren(svg);c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);

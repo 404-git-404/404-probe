@@ -143,7 +143,7 @@
         text(view.label,C.names[key]);view.label.title=`${label(tcp)} · TCP/ICMP 各自 target`;
         for(const [target,metric,strip,kind] of [[tcp,view.latency,view.latencyStrip,'latency'],[icmp,view.ratio,view.ratioStrip,'ratio']]) {
           const cached=card.data.get(target.id),h=cached?.value,old=disabled||!!cached?.error||card.agent.online===false||!!card.agent.state?.stale;
-          const display=C.cardCurrent(h,target,{old,revision:card.config?.revision,elapsed:cached?now()-cached.updated:0});
+          const notice=C.configNotice(card.config),display=notice?.key==='region'?notice:C.cardCurrent(h,target,{old,revision:card.config?.revision,elapsed:cached?now()-cached.updated:0});
           text(metric,display.text);metric.title=display.detail;metric.setAttribute('aria-label',`${C.names[key]} ${target.protocol.toUpperCase()} ${display.text}；${display.detail}`);metric.disabled=!target.id;
           if(history?.card===card&&history.target.id===target.id)history.trigger=metric;
           // Freshness is a current-probe property, never a historical palette mask.
@@ -152,7 +152,7 @@
         text(view.note,'最近1小时：12×5分钟；TCP历史为Connect P95，右侧为最新完整三Echo丢包。');
       }
       for(const [key,view]of card.rows)if(!live.has(key)){view.node.remove();card.rows.delete(key);}
-      let reason=card.error||(!card.config?'配置尚未读取':!card.config.supported?'Agent 尚未支持网络质量':!card.config.enabled?'检测已暂停':card.family==='ipv6'&&!card.config.ipv6?'V6 检测未启用':'');
+      let reason=card.error||(!card.config?'配置尚未读取':C.configNotice(card.config)?.key==='region'?'未选择地区':!card.config.supported?'Agent 尚未支持网络质量':!card.config.enabled?'检测已暂停':card.family==='ipv6'&&!card.config.ipv6?'V6 检测未启用':'');
       if(card.agent.revoked||card.agent.disabled_at)reason='设备已撤销/暂停，当前数据不可用';
       card.reason.hidden=!reason;if(card.reason.textContent!==reason)card.reason.textContent=reason;
       card.title.querySelector('.nq-subtitle').textContent='TCP 延迟 | ICMP 丢包';

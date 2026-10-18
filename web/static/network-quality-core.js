@@ -155,6 +155,14 @@
     const metric=target?.protocol==='tcp'?'pure_connect':'echo_rtt';
     return h?.current?.find(g=>g.semantics==='staged_probe_v2'&&g.metric===metric);
   }
+  // Why a card has nothing to measure, decided from the Server's card config alone. "Not selected" is
+  // a configuration state (the Agent is fine); "unsupported" is only for an Agent without the capability.
+  function configNotice(config) {
+    if(!config)return {key:'waiting',text:'等待地区配置'};
+    if(config.state==='region_selection_required')return {key:'region',text:'未选择地区',detail:'尚未选择地区；选择地区后才会开始检测'};
+    if(config.supported!==true)return {key:'unsupported',text:'Agent 不支持',detail:'Agent 没有上报 staged_probe_v2 网络质量能力'};
+    return null;
+  }
   function cardCurrent(h,target,{old=false,revision,elapsed=0}={}) {
     const g=cardGroup(h,target),s=g?.latest_probe,d=s?.details;
     if(target?.status==='not_scheduled_legacy'||target?.status==='unsupported')return {text:'不支持',detail:`目标状态 ${target.status}；Agent 不支持 staged_probe_v2；不使用旧 DNS-inclusive 语义`};
@@ -193,6 +201,6 @@
     const text=`${time(block.start)} — ${time(block.end)}${block.end<block.start+300000?' · 当前未完成桶':''}\n${target.protocol.toUpperCase()} · ${target.family} · target ${target.id||'无'}\n${target.protocol==='tcp'?`纯 Connect P95 ${ms(block.p95_ms)}（量化误差≤0.125ms）；有效 RTT ${block.valid_rtts||0}`:`丢包 ${percent(loss)}；发送 ${block.sent||0} / 接收 ${block.received||0}`}\n样本 ${block.count||0} · ${reason||'未知'} · 未执行 ${block.not_executed||0}\n配置 ${block.config_revision_min||'无'}–${block.config_revision_max||'无'} / 槽位 ${block.slot_revision_min||'无'}–${block.slot_revision_max||'无'}\n分类 ${JSON.stringify(block.categories||{})}`;
     return {tone,text,mark:tone==='neutral'?'·':tone==='loss'?'!':block.completeness==='partial'?'·':''};
   }
-  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,draft,chooseRegion,payload,historyKey,ratio,current,blockText,columns,laneDraft,lanePayload,cardGroup,cardCurrent,cardPoints,cardBlock};
+  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,draft,chooseRegion,payload,historyKey,ratio,current,blockText,columns,laneDraft,lanePayload,cardGroup,configNotice,cardCurrent,cardPoints,cardBlock};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);
