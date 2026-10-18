@@ -15,7 +15,7 @@ curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.3/ins
 
 无参数入口在新主机显示角色菜单（选择 Server），在已有 Server 上直接进入升级确认；不要追加 `server` 参数。在 root SSH 中可省略 `sudo`，使用 `curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.3/install.sh | PROBE_404_VERSION=v1.0.3 bash`。
 
-Server 新装需输入公开 HTTPS 地址与 Web 管理员密码；反向代理或 Cloudflare Tunnel 由你自行配置，安装器不管理 Tunnel。Agent 新装先在 Server 创建 Agent，复制显示一次的 enrollment 值，然后在 Agent 主机的隐藏提示中粘贴；不要把凭据放进命令、URL 或历史记录。
+Server 新装需输入公开 HTTPS 地址并设置 Web 管理员密码（默认由安装器生成 43 个字符的随机密码，在终端显示一次，请立即保存；也可以选择自己输入，至少 16 个字符）；反向代理或 Cloudflare Tunnel 由你自行配置，安装器不管理 Tunnel。Agent 新装先在 Server 创建 Agent，复制显示一次的 enrollment 值，然后在 Agent 主机的隐藏提示中粘贴；不要把凭据放进命令、URL 或历史记录。
 
 **现有受支持 Server 升级（包括 v0.9.3/v1.0.0/v1.0.1/v1.0.2）：**在 Server 主机运行上面的同一命令，确认目标 v1.0.3。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。数据库迁移到 schema 29（27→28→29）（包含旧库历史的有界恢复回填）；迁移后恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。
 
@@ -86,7 +86,7 @@ origin.
 curl -fsSL https://raw.githubusercontent.com/404-git-404/404-probe/main/install.sh | sudo bash
 ```
 
-For a Server, enter its public Web URL (for example, `https://probe.example.com`) and set the Web administrator password. The installer exposes `http://127.0.0.1:8080` as cloudflared's local origin, but 404-probe does not provision or manage Cloudflare Tunnel; Tunnel configuration remains external. Create each Agent's shown-once enrollment value on the Server:
+For a Server, enter its public Web URL (for example, `https://probe.example.com`) and set the Web administrator password: by default the installer generates a random 43-character password, shows it once on the terminal (save it immediately; it cannot be shown again), or you can enter your own of at least 16 characters. The installer exposes `http://127.0.0.1:8080` as cloudflared's local origin, but 404-probe does not provision or manage Cloudflare Tunnel; Tunnel configuration remains external. Create each Agent's shown-once enrollment value on the Server:
 
 ```bash
 sudo 404-probe-install enroll singapore-01
@@ -187,7 +187,7 @@ Revoking an Agent preserves its telemetry, schedules, jobs, results, and upgrade
 
 ## Configure Web authentication
 
-The Web UI and its read APIs are disabled unless an independent administrator password hash and public origin are configured. Generate an Argon2id hash at an interactive terminal; the command reads the password without echoing it and writes only the hash to stdout:
+The Web UI and its read APIs are disabled unless an independent administrator password hash and public origin are configured. Generate an Argon2id hash with a new password of at least 16 characters (existing hash files keep working). On a terminal the command asks twice without echoing; with piped stdin it reads one line. It writes only the hash to stdout:
 
 ```bash
 install -d -m 700 "$PWD/run/server"
@@ -196,7 +196,7 @@ umask 077
 chmod 600 "$PWD/run/server/web-password.hash"
 ```
 
-The browser receives only an opaque `HttpOnly`, `Secure`, `SameSite=Strict` session cookie. Web sessions expire after 30 minutes idle or 12 hours total and are invalidated by logout or Server restart. The password hash and session boundary are independent from the Control token: never put a Control token in browser storage, JavaScript, HTML, a URL, or a Web request.
+The browser receives only an opaque `HttpOnly`, `Secure`, `SameSite=Strict` session cookie. Web sessions expire after 30 minutes idle or 12 hours total and are invalidated by logout or Server restart. There is no login lockout: a wrong password never blocks later attempts (so nobody can lock the administrator out behind a tunnel or proxy). Brute force is limited by the strong password and by at most 2 concurrent password-hash checks; a request that finds both slots busy gets `429` with `Retry-After: 1` and no hashing is done. The password hash and session boundary are independent from the Control token: never put a Control token in browser storage, JavaScript, HTML, a URL, or a Web request.
 
 Production deployments must provide an exact HTTPS origin and terminate TLS at the public edge. Bind the Server to loopback when a reverse proxy is used. Plain HTTP Web login requires both an explicit exception and a loopback public origin and is only for local development.
 

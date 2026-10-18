@@ -1457,6 +1457,56 @@ generate_token() {
   head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'
 }
 
+run_web_password_hasher() { "${SERVER_BINARY}" web password-hash; }
+tty_write() { printf '%s' "$1" >/dev/tty; }
+tty_read() { IFS= read -r "$1" </dev/tty; }
+tty_read_secret() { IFS= read -r -s "$1" </dev/tty; }
+
+# Prints the Argon2id hash for the Web administrator password. The password only ever travels on
+# the hasher's stdin (never an argument or environment variable) and is never written to a file.
+obtain_web_password_hash() {
+  local choice password confirmation hash attempt acknowledge
+  tty_write $'Web administrator password:\n  [1] Generate a random password (default)\n  [2] Enter my own (at least 16 characters)\nChoice [1]: '
+  tty_read choice
+  choice="${choice:-1}"
+  case "${choice}" in
+    1)
+      password="$(generate_token)"
+      [[ "${#password}" -eq 43 ]] || die "could not generate the Web administrator password"
+      hash="$(printf '%s\n' "${password}" | run_web_password_hasher)" || die "Web password setup failed"
+      tty_write $'\nYour administrator password (shown only once, save it now; it cannot be shown again):\n\n  '"${password}"$'\n\nPress Enter after you have saved it. '
+      tty_read acknowledge
+      tty_write $'\n'
+      ;;
+    2)
+      hash=""
+      for attempt in 1 2 3; do
+        tty_write 'Password: '
+        tty_read_secret password
+        tty_write $'\n'
+        if (( ${#password} < 16 )); then
+          tty_write $'The password must be at least 16 characters.\n'
+          continue
+        fi
+        tty_write 'Confirm password: '
+        tty_read_secret confirmation
+        tty_write $'\n'
+        if [[ "${password}" != "${confirmation}" ]]; then
+          tty_write $'The passwords do not match.\n'
+          continue
+        fi
+        hash="$(printf '%s\n' "${password}" | run_web_password_hasher)" || die "Web password setup failed"
+        break
+      done
+      [[ -n "${hash}" ]] || die "Web password setup failed: no valid password was entered"
+      ;;
+    *) die "Choose 1 or 2 for the Web administrator password" ;;
+  esac
+  unset password confirmation
+  [[ -n "${hash}" ]] || die "Web password setup returned an empty hash"
+  printf '%s\n' "${hash}"
+}
+
 prompt_web_origin() {
   local value
   printf 'Web public origin [http://127.0.0.1:8080]: ' >/dev/tty
@@ -1611,7 +1661,7 @@ install_server() {
     done
     (( suffix_matches_origin != 0 )) || die "At least one domain suffix must contain the configured Web public origin host"
   fi
-  note "Set the Web administrator password. The password hasher reads it without echoing it."
+  note "Next you will set the Web administrator password."
 
   begin_install_transaction server
   create_service_user
@@ -1632,9 +1682,7 @@ install_server() {
         || die "could not register Web domain suffix ${suffix}"
     done
   fi
-  if ! web_password_hash="$("${SERVER_BINARY}" web password-hash </dev/tty)"; then
-    die "Web password setup failed"
-  fi
+  web_password_hash="$(obtain_web_password_hash)" || die "Web password setup failed"
   [[ -n "${web_password_hash}" ]] || die "Web password setup returned an empty hash"
   control_token="$(generate_token)"
   [[ "${#control_token}" -eq 43 ]] || die "could not generate the Control token"
