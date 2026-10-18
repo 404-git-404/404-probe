@@ -56,11 +56,11 @@ func (l *fixedAgentRemovalLauncher) Prepare() error {
 		return errors.New("Agent removal preparation requires root")
 	}
 	unit, err := readFixedRootRegular(l.unitPath, 64<<10)
-	if err != nil || !bytes.Equal(unit, []byte(removalWorkerUnitContents)) {
+	if err != nil || !removalUnitMatches(unit, removalWorkerUnitContents) {
 		return errors.New("fixed Agent removal worker unit is unavailable")
 	}
 	finalizer, err := readFixedRootRegular(l.finalizerPath, 64<<10)
-	if err != nil || !bytes.Equal(finalizer, []byte(removalFinalizerUnitContents)) {
+	if err != nil || !removalUnitMatches(finalizer, removalFinalizerUnitContents) {
 		return errors.New("fixed Agent removal finalizer unit is unavailable")
 	}
 	if _, err := readFixedRootRegular(l.helperPath, 1<<20); err != nil {
@@ -79,11 +79,11 @@ func (l *fixedAgentRemovalLauncher) Prepare() error {
 
 func (l *fixedAgentRemovalLauncher) SupportsRemoteRemoval() bool {
 	unit, err := readFixedRootRegular(l.unitPath, 64<<10)
-	if err != nil || !bytes.Equal(unit, []byte(removalWorkerUnitContents)) {
+	if err != nil || !removalUnitMatches(unit, removalWorkerUnitContents) {
 		return false
 	}
 	finalizer, err := readFixedRootRegular(l.finalizerPath, 64<<10)
-	if err != nil || !bytes.Equal(finalizer, []byte(removalFinalizerUnitContents)) {
+	if err != nil || !removalUnitMatches(finalizer, removalFinalizerUnitContents) {
 		return false
 	}
 	if _, err := readFixedRootRegular(l.workerBinary, 128<<20); err != nil {
@@ -403,10 +403,10 @@ func finalizeFixedAgentRemoval(paths *fixedAgentRemovalLauncher, state removalRe
 	if err := preflightRemovalStateDirectory(removalStateDirectory); err != nil {
 		return err
 	}
-	if data, err := readFixedRootRegular(paths.unitPath, 64<<10); err != nil || !bytes.Equal(data, []byte(removalWorkerUnitContents)) {
+	if data, err := readFixedRootRegular(paths.unitPath, 64<<10); err != nil || !removalUnitMatches(data, removalWorkerUnitContents) {
 		return errors.New("refusing to remove an unrecognized Agent removal worker unit")
 	}
-	if data, err := readFixedRootRegular(paths.finalizerPath, 64<<10); err != nil || !bytes.Equal(data, []byte(removalFinalizerUnitContents)) {
+	if data, err := readFixedRootRegular(paths.finalizerPath, 64<<10); err != nil || !removalUnitMatches(data, removalFinalizerUnitContents) {
 		return errors.New("refusing to remove an unrecognized Agent removal finalizer unit")
 	}
 	if err := removeAgentUpdaterState(); err != nil {
@@ -441,7 +441,7 @@ func recoverFinalizationTail(paths *fixedAgentRemovalLauncher) error {
 		return err
 	}
 	if data, err := readFixedRootRegular(paths.unitPath, 64<<10); err == nil {
-		if !bytes.Equal(data, []byte(removalWorkerUnitContents)) {
+		if !removalUnitMatches(data, removalWorkerUnitContents) {
 			return errors.New("refusing to remove an unrecognized Agent removal worker unit")
 		}
 		if err := runSystemctl(context.Background(), "disable", paths.unitName); err != nil {
@@ -454,7 +454,7 @@ func recoverFinalizationTail(paths *fixedAgentRemovalLauncher) error {
 		return err
 	}
 	if data, err := readFixedRootRegular(paths.finalizerPath, 64<<10); err == nil {
-		if !bytes.Equal(data, []byte(removalFinalizerUnitContents)) {
+		if !removalUnitMatches(data, removalFinalizerUnitContents) {
 			return errors.New("refusing to remove an unrecognized Agent removal finalizer unit")
 		}
 		if err := runSystemctl(context.Background(), "disable", paths.finalizerName); err != nil {

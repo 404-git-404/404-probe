@@ -787,6 +787,9 @@ rollback_install_transaction() {
     exit "${status}"
   fi
   printf '\n404-probe installer: installation failed; rolling back new artifacts...\n' >&2
+  if [[ "${ONECLICK_REDEEMED:-0}" == 1 ]]; then
+    printf '404-probe installer: the registration token was already used by this attempt; generate a new command in the panel (token 已被使用，请在面板重新生成命令).\n' >&2
+  fi
   if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then
     if [[ -n "${INSTALL_TRANSACTION_UNIT}" ]]; then openrc_stop "${INSTALL_TRANSACTION_ROLE}"; fi
     for (( index=${#INSTALL_TRANSACTION_PATHS[@]}-1; index>=0; index-- )); do rm -f -- "${INSTALL_TRANSACTION_PATHS[index]}"; done
@@ -1342,7 +1345,7 @@ uninstall() {
   rm -f -- "${unit_path}"
   rm -f -- "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
-    rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
+    rm -f -- "${CONFIG_DIRECTORY}/agent.env" "${CONFIG_DIRECTORY}/sandbox.conf" \
       "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${SELECTOR_ORDER_FILE}" \
 	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
@@ -1801,9 +1804,146 @@ verify_agent_authentication() {
     || die "Agent authentication verification failed (expected HTTP 415 after authentication, received ${status_code:-no response})"
 }
 
+SANDBOX_CONFIG="${CONFIG_DIRECTORY}/sandbox.conf"
+# Sandbox adaptation for the Agent's systemd units (systemd only; OpenRC has no such options).
+#
+# Containers (for example Podman) and some hardened hosts cannot start units that use certain
+# sandbox directives. Rather than guess, the installer measures it before anything is registered or
+# installed: it starts throw-away transient units with the full hardening set and, if that fails,
+# with each directive on its own. Directives that do not work are left out of every unit the
+# installer generates (SANDBOX_REMOVED); everything else stays exactly as before. The result is
+# recorded in ${CONFIG_DIRECTORY}/sandbox.conf and every path that rewrites units uses it again.
+SANDBOX_REMOVED=""
+SANDBOX_PROBE_UNIT="404-probe-sandbox-probe.service"
+SECURITY_COLLECTOR_STATE="ok"
+
+# Starts a transient unit with the given directives; success means it ran /bin/true to completion.
+# (A unit file in /run/systemd/system is used because systemd-run needs a D-Bus system bus, which
+# containers often lack.) Tests replace this function.
+sandbox_trial() {
+  local path="/run/systemd/system/${SANDBOX_PROBE_UNIT}" rc=1
+  { printf '[Unit]\nDescription=404-probe sandbox probe (removed automatically)\n\n[Service]\nType=oneshot\nExecStart=/bin/true\nTimeoutStartSec=20\n'; printf '%s\n' "$@"; } >"${path}" || return 1
+  if systemctl daemon-reload >/dev/null 2>&1 && timeout 40 systemctl start "${SANDBOX_PROBE_UNIT}" >/dev/null 2>&1 \
+    && [[ "$(systemctl show -p Result --value "${SANDBOX_PROBE_UNIT}" 2>/dev/null)" == success ]]; then
+    rc=0
+  fi
+  systemctl stop "${SANDBOX_PROBE_UNIT}" >/dev/null 2>&1 || true
+  systemctl reset-failed "${SANDBOX_PROBE_UNIT}" >/dev/null 2>&1 || true
+  rm -f -- "${path}"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  return "${rc}"
+}
+
+# Fills SANDBOX_REMOVED. Exits before any registration if even the minimal hardening cannot run.
+sandbox_probe() {
+  local option key ambient_user=""
+  local -a base=(User=root UMask=0077 NoNewPrivileges=true) kept=() namespace_keys=(PrivateTmp PrivateNetwork ProtectSystem ProtectHome ProtectControlGroups)
+  local -a all=(PrivateTmp=true PrivateNetwork=true ProtectSystem=strict ProtectHome=true ProtectKernelTunables=true ProtectKernelModules=true
+    ProtectKernelLogs=true ProtectControlGroups=true RestrictSUIDSGID=true LockPersonality=true MemoryDenyWriteExecute=true
+    "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
+  SANDBOX_REMOVED=""
+  sandbox_trial "${base[@]}" \
+    || die "systemd cannot start even a minimally hardened service on this machine; nothing was installed and no registration token was used"
+  if ! sandbox_trial "${base[@]}" "${all[@]}" ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal; then
+    for option in "${all[@]}"; do
+      key="${option%%=*}"
+      if sandbox_trial "${base[@]}" "${option}"; then kept+=("${option}"); else SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }${key}"; fi
+    done
+    if ! sandbox_trial "${base[@]}" "${kept[@]}" ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal; then
+      # Each directive works alone but not together: drop everything that needs a mount or network namespace.
+      for key in "${namespace_keys[@]}"; do
+        [[ " ${SANDBOX_REMOVED} " == *" ${key} "* ]] || SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }${key}"
+      done
+      kept=()
+      for option in "${all[@]}"; do
+        key="${option%%=*}"
+        [[ " ${SANDBOX_REMOVED} " == *" ${key} "* ]] || kept+=("${option}")
+      done
+      sandbox_trial "${base[@]}" "${kept[@]}" ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal \
+        || die "no usable systemd hardening set was found on this machine; nothing was installed and no registration token was used"
+    fi
+  fi
+  # ICMP: the Agent service is granted CAP_NET_RAW as a non-root user.
+  getent passwd nobody >/dev/null 2>&1 && ambient_user=nobody
+  if [[ -z "${ambient_user}" ]] || ! sandbox_trial "User=${ambient_user}" UMask=0077 NoNewPrivileges=true CapabilityBoundingSet=CAP_NET_RAW AmbientCapabilities=CAP_NET_RAW; then
+    SANDBOX_REMOVED+="${SANDBOX_REMOVED:+ }NET_RAW"
+  fi
+}
+
+# Keeps a unit text as is, minus the directives that this machine cannot run. With nothing removed the
+# text passes through byte for byte.
+sandbox_filter() {
+  awk -v removed="${SANDBOX_REMOVED}" '
+    BEGIN { n = split(removed, a, " "); for (i = 1; i <= n; i++) r[a[i]] = 1 }
+    {
+      key = $0; sub(/=.*/, "", key)
+      if (("NET_RAW" in r) && ($0 == "CapabilityBoundingSet=CAP_NET_RAW" || $0 == "AmbientCapabilities=CAP_NET_RAW")) next
+      if (key != "NET_RAW" && (key in r)) next
+      print $0
+    }'
+}
+
+sandbox_virtualization() { systemd-detect-virt 2>/dev/null || true; }
+
+sandbox_describe() {
+  local removed="${SANDBOX_REMOVED// NET_RAW/}"
+  removed="${removed#NET_RAW}"; removed="${removed# }"
+  if [[ -n "${removed}" ]]; then
+    printf '检测到容器环境或沙箱受限，已使用精简加固。(Container or restricted sandbox detected: reduced hardening in use.)\n  Virtualization: %s\n  Omitted systemd directives: %s\n' "$(sandbox_virtualization)" "${removed}"
+  fi
+  if [[ " ${SANDBOX_REMOVED} " == *" NET_RAW "* ]]; then
+    printf '  CAP_NET_RAW cannot be granted here; ICMP checks will be reported as unavailable (TCP is unaffected).\n'
+  fi
+}
+
+sandbox_write_config() {
+  local content mode=full
+  [[ -z "${SANDBOX_REMOVED}" ]] || mode=reduced
+  content="# Written by the 404-probe installer; used again whenever the Agent's systemd units are rewritten.
+PROBE_404_SANDBOX_MODE=${mode}
+PROBE_404_SANDBOX_REMOVED=\"${SANDBOX_REMOVED}\"
+PROBE_404_SANDBOX_VIRT=\"$(sandbox_virtualization)\"
+PROBE_404_SECURITY_COLLECTOR=\"${SECURITY_COLLECTOR_STATE}\""
+  install -d -m 0750 -o root -g "${SERVICE_USER}" "${CONFIG_DIRECTORY}" 2>/dev/null || true
+  printf '%s\n' "${content}" >"${SANDBOX_CONFIG}.tmp" && chmod 0644 "${SANDBOX_CONFIG}.tmp" && mv -f -- "${SANDBOX_CONFIG}.tmp" "${SANDBOX_CONFIG}"
+}
+
+# Measures the machine, reports the outcome and (when the config directory already exists) records it.
+# Runs before anything is registered or installed. No-op for OpenRC.
+sandbox_prepare() {
+  [[ "${INSTALL_INIT:-systemd}" != openrc ]] || return 0
+  sandbox_probe
+  local description
+  description="$(sandbox_describe)"
+  [[ -z "${description}" ]] || note "${description}"
+}
+
+# Starts the security collector once; if that is impossible here, the Agent is still installed: the
+# timer stays off and the reason is left for the Agent to report as "unavailable".
+security_collector_activate() {
+  local status result reason
+  if systemctl start 404-probe-security-collect.service >/dev/null 2>&1; then
+    systemctl enable --now 404-probe-security-collect.timer
+    rm -f -- "${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"
+    SECURITY_COLLECTOR_STATE="ok"
+    return 0
+  fi
+  status="$(systemctl show -p ExecMainStatus --value 404-probe-security-collect.service 2>/dev/null || true)"
+  result="$(systemctl show -p Result --value 404-probe-security-collect.service 2>/dev/null || true)"
+  if [[ "${status}" =~ ^[0-9]+$ ]] && (( status >= 200 && status <= 243 )); then reason="sandbox_unavailable"
+  else reason="collector_start_failed"; fi
+  systemctl disable --now 404-probe-security-collect.timer >/dev/null 2>&1 || true
+  systemctl reset-failed 404-probe-security-collect.service >/dev/null 2>&1 || true
+  printf '%s\n' "${reason}" >"${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"
+  chown root:"${SERVICE_USER}" "${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"
+  chmod 0640 "${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"
+  SECURITY_COLLECTOR_STATE="unavailable:${reason}"
+  note "The local security audit could not be started here (${reason}, exit status ${status:-unknown}, ${result:-unknown}); its timer is off and the Agent will report it as unavailable. The Agent itself is installed and unaffected."
+}
+
 install_agent_updater_unit() {
   install -d -m 0700 -o root -g root "${AGENT_UPDATER_STATE}"
-  cat >"${AGENT_UPDATER_UNIT}" <<EOF
+  sandbox_filter >"${AGENT_UPDATER_UNIT}" <<EOF
 [Unit]
 Description=404-probe restricted Agent updater
 After=network-online.target
@@ -1841,7 +1981,7 @@ EOF
 
 install_agent_removal_worker_unit() {
   local expected
-  expected="$(cat <<'UNIT'
+  expected="$(sandbox_filter <<'UNIT'
 [Unit]
 Description=404-probe Agent removal receipt worker
 After=network-online.target
@@ -1889,7 +2029,7 @@ UNIT
 
 install_agent_removal_finalizer_unit() {
   local expected
-  expected="$(cat <<'UNIT'
+  expected="$(sandbox_filter <<'UNIT'
 [Unit]
 Description=404-probe fixed local Agent removal finalizer
 After=local-fs.target
@@ -1937,7 +2077,7 @@ UNIT
 
 render_agent_unit() {
   local insecure_option="$1"
-  cat <<EOF
+  sandbox_filter <<EOF
 [Unit]
 Description=404-probe Agent
 After=network-online.target 404-probe-agent-updater.service
@@ -1977,7 +2117,7 @@ install_security_collector() {
   install -d -m 0750 -o root -g "${SERVICE_USER}" "${SECURITY_STATE_DIRECTORY}"
   install -d -m 0700 -o root -g root "${SECURITY_STATE_DIRECTORY}/private" "${SECURITY_STATE_DIRECTORY}/private/outbox"
   install -d -m 0750 -o root -g "${SERVICE_USER}" "${SECURITY_EXPORT_DIRECTORY}"
-  cat >"${SECURITY_SERVICE_UNIT}" <<EOF
+  sandbox_filter >"${SECURITY_SERVICE_UNIT}" <<EOF
 [Unit]
 Description=404-probe local sing-box security audit
 After=systemd-journald.service
@@ -2074,6 +2214,7 @@ setup_security_existing() (
   grep -Fq "ReadWritePaths=${SECURITY_EXPORT_DIRECTORY}" "${AGENT_UNIT}" \
     && die "existing Agent unit grants write access to the security export"
 
+  sandbox_prepare
   systemctl is-active --quiet 404-probe-agent.service && agent_was_active=1
   systemctl is-active --quiet 404-probe-security-collect.timer && timer_was_active=1
   systemctl is-enabled --quiet 404-probe-security-collect.timer && timer_was_enabled=1
@@ -2127,6 +2268,7 @@ setup_security_existing() (
   mv -f -- "${environment_candidate}" "${CONFIG_DIRECTORY}/agent.env"
   mv -f -- "${unit_candidate}" "${AGENT_UNIT}"
   mv -f -- "${helper_candidate}" "${INSTALL_HELPER}"
+  sandbox_write_config
   install_security_collector
   systemctl daemon-reload
   systemctl start 404-probe-security-collect.service
@@ -2260,6 +2402,7 @@ bootstrap_existing_agent() (
   [[ ! -e "${AGENT_REMOVAL_WORKER_UNIT}" && ! -e "${AGENT_REMOVAL_FINALIZER_UNIT}" \
     && ! -e "${AGENT_REMOVAL_WORKER_BINARY}" ]] \
     || die "existing Agent removal worker residue is partial or unmanaged; no files were changed"
+  sandbox_prepare
   grep -Fxq "User=${SERVICE_USER}" "${AGENT_UNIT}" \
     && grep -Fq "ExecStart=${AGENT_BINARY} " "${AGENT_UNIT}" \
     && grep -Fxq "EnvironmentFile=${CONFIG_DIRECTORY}/agent.env" "${AGENT_UNIT}" \
@@ -2285,6 +2428,7 @@ bootstrap_existing_agent() (
   mv -f -- "${candidate}" "${AGENT_BINARY}"
   insecure_option=""
   [[ "${server_url}" != http://* ]] || insecure_option=" --allow-insecure-http"
+  [[ "${INSTALL_INIT:-systemd}" == openrc ]] || sandbox_write_config
   render_agent_unit "${insecure_option}" >"${AGENT_UNIT}"
   chmod 0644 "${AGENT_UNIT}"
   install_agent_updater_unit
@@ -2313,6 +2457,7 @@ bootstrap_existing_agent() (
 ONECLICK_SERVER=""
 ONECLICK_TOKEN=""
 ONECLICK_NAME=""
+ONECLICK_REDEEMED=0
 
 oneclick_variables_present() {
   local name
@@ -2428,12 +2573,15 @@ install_agent() {
   [[ ! -e "${STATE_DIRECTORY}/agent.epoch" && ! -e "${STATE_DIRECTORY}/agent.epoch.lock" ]] \
     || die "existing Agent state was found; refusing to alter it"
   [[ ! -e "${AGENT_BINARY}" ]] || die "${AGENT_BINARY} already exists; refusing to overwrite it"
+  # Environment checks come first: nothing is registered (no token spent) unless this machine can run the units.
+  sandbox_prepare
 
   local server_url="${1:-}" enrollment credentials agent_id agent_token insecure_option permissions country_code
   if [[ -n "${ONECLICK_SERVER}" ]]; then
     server_url="${ONECLICK_SERVER}"
     credentials="$(oneclick_redeem_token)" || exit 1
     ONECLICK_TOKEN=""
+    ONECLICK_REDEEMED=1
     agent_id="${credentials%%$'\n'*}"
     agent_token="${credentials#*$'\n'}"
     unset credentials
@@ -2464,6 +2612,10 @@ install_agent() {
     track_install_path "${INSTALL_HELPER}"
   fi
   install_local_helper
+  if [[ "${INSTALL_INIT:-systemd}" != openrc ]]; then
+    track_install_path "${SANDBOX_CONFIG}"
+    sandbox_write_config
+  fi
   track_install_path "${AGENT_BINARY}"
   download_binary agent "${AGENT_BINARY}"
 	country_code=""
@@ -2531,8 +2683,9 @@ PROBE_404_SECURITY_ACKS=${STATE_DIRECTORY}/agent.security-acks.json"
 	install_agent_removal_finalizer_unit
 	install_security_collector
   systemctl daemon-reload
-	systemctl start 404-probe-security-collect.service
-	systemctl enable --now 404-probe-security-collect.timer
+	# A collector that cannot start here (for example in a container) must not stop the Agent from installing.
+	security_collector_activate
+	sandbox_write_config
   systemctl enable --now 404-probe-agent-updater.service
   wait_for_service 404-probe-agent-updater.service
   systemctl enable --now 404-probe-agent.service
@@ -2690,7 +2843,7 @@ uninstall_role() {
   rm -f -- "${unit_path}"
   rm -f -- "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
-    rm -f -- "${CONFIG_DIRECTORY}/agent.env" \
+    rm -f -- "${CONFIG_DIRECTORY}/agent.env" "${CONFIG_DIRECTORY}/sandbox.conf" \
       "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" \
       "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
 	  "${SECURITY_SERVICE_UNIT}" "${SECURITY_TIMER_UNIT}" \
@@ -3563,6 +3716,7 @@ upgrade_old_beta_agent() (
   done
   [[ "$(stat -c '%a' "${AGENT_BINARY}")" == 755 && "$(stat -c '%a' "${AGENT_UNIT}")" == 644 ]] || die "Agent binary/unit permissions are unsafe"
   [[ -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}")" == "root:${SERVICE_USER}:750" && -f "${CONFIG_DIRECTORY}/agent.env" && ! -L "${CONFIG_DIRECTORY}/agent.env" && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}/agent.env")" == "${SERVICE_USER}:${SERVICE_USER}:400" ]] || die "existing Agent configuration permissions are unsafe"
+  sandbox_prepare
   if [[ -e "${AGENT_UPDATER_UNIT}" ]]; then
     [[ -f "${AGENT_UPDATER_UNIT}" && ! -L "${AGENT_UPDATER_UNIT}" && "$(stat -c '%U:%a' "${AGENT_UPDATER_UNIT}")" == root:644 ]] || die "unsafe Updater unit"
     grep -Fxq "ExecStart=${AGENT_BINARY} updater" "${AGENT_UPDATER_UNIT}" || die "unsupported Updater unit"
@@ -3604,7 +3758,7 @@ upgrade_old_beta_agent() (
     wait_local_migration_updater_stopped || die "old Updater did not actually stop or has a pending job"
   fi
   "${candidate}" updater migrate-legacy || die "migration did not commit; rerun this command to recover the original identity"
-  if (( repair_updater != 0 )); then install_agent_updater_unit; systemctl daemon-reload; systemctl enable --now 404-probe-agent-updater.service; else systemctl start 404-probe-agent-updater.service; fi
+  if (( repair_updater != 0 )); then sandbox_write_config; install_agent_updater_unit; systemctl daemon-reload; systemctl enable --now 404-probe-agent-updater.service; else systemctl start 404-probe-agent-updater.service; fi
   wait_local_migration_process 404-probe-agent-updater.service || die "actual Stable Updater startup could not be confirmed"
   wait_local_migration_process 404-probe-agent.service || die "actual Stable Agent startup could not be confirmed"
   version_json="$("${AGENT_BINARY}" version --json)"
