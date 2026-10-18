@@ -18,6 +18,8 @@ type QualityRollupPoint struct {
 	SlotMin     string `json:"slot_revision_min"`
 	SlotMax     string `json:"slot_revision_max"`
 	QualityStatsV2
+	// P50FiveMin is the median over the five minute buckets ending at this point (see qualityFiveMinuteP50).
+	P50FiveMin *float64 `json:"p50_5m_ms"`
 }
 type QualityRollupGroup struct {
 	Semantics string               `json:"semantics"`
@@ -94,6 +96,7 @@ func (s *Store) qualityRollupWindow(ctx context.Context, id, targetID, view stri
 		}
 		group := QualityRollupGroup{Semantics: sem, Metric: qualityMetric(out.Target.Protocol, sem), Points: make([]QualityRollupPoint, 0, n)}
 		merged := qualityNewBucket()
+		var window []qualityBucketData // the last five minute buckets, current last
 		for i := 0; i < n; i++ {
 			start := out.WindowStart + int64(i)*out.ResolutionMS
 			end := min(start+out.ResolutionMS, out.Now)
@@ -114,11 +117,19 @@ func (s *Store) qualityRollupWindow(ctx context.Context, id, targetID, view stri
 				}
 			}
 			qualityMergeBucket(&merged, b)
+			if out.ResolutionMS == 60000 {
+				if window = append(window, b); len(window) > 5 {
+					window = window[1:]
+				}
+			}
 			stats := qualityBucketStats(b)
 			if !complete && stats.Count > 0 {
 				stats.Completeness = "partial"
 			}
-			group.Points = append(group.Points, QualityRollupPoint{start, end, !complete || out.Now < start+out.ResolutionMS+int64(6*time.Hour/time.Millisecond), qualityRevisionString(b.ConfigMin), qualityRevisionString(b.ConfigMax), qualityRevisionString(b.SlotMin), qualityRevisionString(b.SlotMax), stats})
+			group.Points = append(group.Points, QualityRollupPoint{start, end, !complete || out.Now < start+out.ResolutionMS+int64(6*time.Hour/time.Millisecond), qualityRevisionString(b.ConfigMin), qualityRevisionString(b.ConfigMax), qualityRevisionString(b.SlotMin), qualityRevisionString(b.SlotMax), stats, nil})
+			if out.ResolutionMS == 60000 {
+				group.Points[len(group.Points)-1].P50FiveMin = qualityFiveMinuteP50(window)
+			}
 		}
 		group.Window = qualityBucketStats(merged)
 		if !complete && group.Window.Count > 0 {

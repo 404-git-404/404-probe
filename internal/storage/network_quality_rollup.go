@@ -270,26 +270,7 @@ func qualityBucketStats(b qualityBucketData) QualityStatsV2 {
 		s.ExecutionCoverage = "known_gap"
 	}
 	if s.ValidRTTs > 0 {
-		bins := make([]int, 0, len(b.Histogram))
-		for k := range b.Histogram {
-			bins = append(bins, int(k))
-		}
-		sort.Ints(bins)
-		at := func(rank int) float64 {
-			for _, k := range bins {
-				n := int(b.Histogram[uint16(k)])
-				if rank < n {
-					return float64(k) * QualityHistogramGridMS
-				}
-				rank -= n
-			}
-			return 0
-		}
-		q := func(p float64) float64 {
-			x := float64(s.ValidRTTs-1) * p
-			i := int(x)
-			return at(i) + (at(min(i+1, s.ValidRTTs-1))-at(i))*(x-float64(i))
-		}
+		q := func(p float64) float64 { return qualityHistogramQuantile(b.Histogram, s.ValidRTTs, p) }
 		a, c := q(.5), q(.95)
 		d := c - a
 		s.P50 = &a
@@ -568,4 +549,53 @@ func qualityRollupTx(ctx context.Context, tx *sql.Tx, id string, epoch int64, se
 		return err
 	}
 	return qualityEdgeTx(ctx, tx, f, next, 1, false)
+}
+
+// qualityHistogramQuantile reads a percentile from a minute histogram: n is the number of valid RTTs, bins are
+// grid indexes (QualityHistogramGridMS), and neighbouring ranks are interpolated as (n-1)*p.
+func qualityHistogramQuantile(hist map[uint16]uint32, n int, p float64) float64 {
+	bins := make([]int, 0, len(hist))
+	for k := range hist {
+		bins = append(bins, int(k))
+	}
+	sort.Ints(bins)
+	at := func(rank int) float64 {
+		for _, k := range bins {
+			c := int(hist[uint16(k)])
+			if rank < c {
+				return float64(k) * QualityHistogramGridMS
+			}
+			rank -= c
+		}
+		return 0
+	}
+	x := float64(n-1) * p
+	i := int(x)
+	return at(i) + (at(min(i+1, n-1))-at(i))*(x-float64(i))
+}
+
+// qualityFiveMinuteP50 merges the minute histograms of the window ending at the current minute and returns their
+// median. Only minutes with valid RTTs that sit in the same config and slot revision as the current one take part.
+// It is null when the current minute has no valid RTT, is mixed, or the merge holds fewer than three RTTs, so gaps
+// stay gaps. window holds the current minute last.
+func qualityFiveMinuteP50(window []qualityBucketData) *float64 {
+	cur := window[len(window)-1]
+	if cur.Stats.ValidRTTs == 0 || cur.ConfigMin != cur.ConfigMax || cur.SlotMin != cur.SlotMax {
+		return nil
+	}
+	merged, n := map[uint16]uint32{}, 0
+	for _, b := range window {
+		if b.Stats.ValidRTTs == 0 || b.ConfigMin != cur.ConfigMin || b.ConfigMax != cur.ConfigMin || b.SlotMin != cur.SlotMin || b.SlotMax != cur.SlotMin {
+			continue
+		}
+		for k, v := range b.Histogram {
+			merged[k] += v
+		}
+		n += b.Stats.ValidRTTs
+	}
+	if n < 3 {
+		return nil
+	}
+	v := qualityHistogramQuantile(merged, n, .5)
+	return &v
 }
