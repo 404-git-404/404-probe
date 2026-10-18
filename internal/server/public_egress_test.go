@@ -49,6 +49,9 @@ func TestM10AcceptedReportSQLiteAPIAndSSEAgree(t *testing.T) {
 		t.Fatal("subscription")
 	}
 	defer a.hub.unsubscribe(ch)
+	if _, err := s.SetPublicEgressEnabled(context.Background(), id, true, now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	r := reportFor(id, 1)
 	r.PublicEgress = &protocol.PublicEgress{Version: 1, IPv4: protocol.EgressObservation{Family: "ipv4", Status: "available", IP: "8.8.8.8", CheckedAt: now.UnixMilli(), ValidUntil: now.Add(protocol.EgressSuccessTTL).UnixMilli(), Reason: "verified"}, IPv6: protocol.EgressObservation{Family: "ipv6", Status: "unavailable", CheckedAt: now.UnixMilli(), ValidUntil: now.Add(protocol.EgressFailureTTL).UnixMilli(), Reason: "no_route"}}
 	if got := postReport(t, a, token, r); got.Code != 200 {

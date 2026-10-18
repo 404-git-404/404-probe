@@ -33,17 +33,18 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
-	CountryCode   string                         `json:"country_code,omitempty"`
-	CountrySource string                         `json:"country_source,omitempty"`
-	Management    webManagementView              `json:"management"`
-	CountryLookup *webAgentCountryCodeLookupView `json:"country_code_lookup_operation,omitempty"`
-	Removal       *webAgentRemovalOperationView  `json:"removal,omitempty"`
-	State         *webAgentStateView             `json:"state"`
-	Traffic       *storage.TrafficTotals         `json:"traffic,omitempty"`
-	Outbounds     webOutboundsView               `json:"outbounds"`
-	GoogleStatus  webGoogleStatusView            `json:"google_status"`
-	Security      webSecurityView                `json:"security"`
-	Plan          *storage.AgentPlan             `json:"plan,omitempty"`
+	CountryCode       string                         `json:"country_code,omitempty"`
+	CountrySource     string                         `json:"country_source,omitempty"`
+	Management        webManagementView              `json:"management"`
+	CountryLookup     *webAgentCountryCodeLookupView `json:"country_code_lookup_operation,omitempty"`
+	Removal           *webAgentRemovalOperationView  `json:"removal,omitempty"`
+	State             *webAgentStateView             `json:"state"`
+	Traffic           *storage.TrafficTotals         `json:"traffic,omitempty"`
+	Outbounds         webOutboundsView               `json:"outbounds"`
+	GoogleStatus      webGoogleStatusView            `json:"google_status"`
+	PublicEgressCheck webPublicEgressCheckView       `json:"public_egress_check"`
+	Security          webSecurityView                `json:"security"`
+	Plan              *storage.AgentPlan             `json:"plan,omitempty"`
 }
 
 type webManagementView struct {
@@ -310,6 +311,11 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 			view.GoogleStatus.Result.YouTube = protocol.YouTubeResult{Status: protocol.YouTubeUnknown, Error: protocol.GoogleServiceError{Category: "invalid_region"}}
 		}
 	}
+	egressControl, err := a.store.GetPublicEgressControl(ctx, agentID, a.now())
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	view.PublicEgressCheck = newWebPublicEgressCheckView(egressControl, a.now().UnixMilli())
 	capability, supported, err := a.store.SecurityCapability(ctx, agentID)
 	if err != nil {
 		return webAgentDetailView{}, err

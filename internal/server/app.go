@@ -268,7 +268,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishReportedState(state, owner, received)
 	}
-	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{PublicEgressReport: true, AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
+	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{PublicEgressReport: true, AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, PublicEgressJob: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
 	response.Capabilities.NetworkQuality = true
 	response.Capabilities.NetworkQualityV2 = r.Header.Get(protocol.QualityVersionHeader) == "2" || report.NetworkQualityV2 != nil
 	response.Capabilities.NetworkQualityStaged = r.Header.Get(protocol.QualitySemanticsHeader) == protocol.QualityStagedSemantics || report.NetworkQualityV2 != nil && report.NetworkQualityV2.Semantics == protocol.QualityStagedSemantics
@@ -309,6 +309,30 @@ func (a *App) handleClaimJob(w http.ResponseWriter, r *http.Request) {
 		if probeType == protocol.ProbeTypeGoogleStatus {
 			googleCapable = true
 			break
+		}
+	}
+	egressCapable := false
+	for _, probeType := range request.SupportedProbeTypes {
+		if probeType == protocol.ProbeTypePublicEgress {
+			egressCapable = true
+			break
+		}
+	}
+	negotiatedEgress, err := a.store.NegotiatePublicEgressCapability(r.Context(), agentID, egressCapable, request.AgentEpoch, request.SessionID, a.now())
+	if err != nil {
+		a.logger.Error("record public egress capability", "agent_id", agentID, "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not claim job")
+		return
+	}
+	if negotiatedEgress && egressCapable && currentAgent.Online {
+		created, err := a.store.EnsurePublicEgressJob(r.Context(), agentID, request.AgentEpoch, request.SessionID, a.now())
+		if err != nil {
+			a.logger.Error("schedule public egress check", "agent_id", agentID, "error", err)
+			writeJobError(w, http.StatusInternalServerError, "internal_error", "could not claim job")
+			return
+		}
+		if created {
+			_ = a.publishAgentDetail(r.Context(), agentID)
 		}
 	}
 	negotiated, err := a.store.NegotiateGoogleStatusCapability(r.Context(), agentID, googleCapable, request.AgentEpoch, request.SessionID, a.now())
@@ -384,7 +408,7 @@ func (a *App) handleJobResult(w http.ResponseWriter, r *http.Request) {
 		a.writeResultError(w, agentID, err)
 		return
 	}
-	if job.ProbeType == protocol.ProbeTypeGoogleStatus && !ack.Duplicate {
+	if (job.ProbeType == protocol.ProbeTypeGoogleStatus || job.ProbeType == protocol.ProbeTypePublicEgress) && !ack.Duplicate {
 		if err := a.publishAgentDetail(r.Context(), agentID); err != nil {
 			a.logger.Warn("publish Google Status Web event", "agent_id", agentID, "error", err)
 		}

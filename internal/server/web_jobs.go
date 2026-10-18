@@ -78,6 +78,7 @@ type webJobMeasurementView struct {
 	ICMPPing       *webICMPPingMeasurementView       `json:"icmp_ping,omitempty"`
 	SelectorSwitch *webSelectorSwitchMeasurementView `json:"selector_switch,omitempty"`
 	GoogleStatus   *protocol.GoogleStatusResult      `json:"google_status,omitempty"`
+	PublicEgress   *protocol.PublicEgressResult      `json:"public_egress,omitempty"`
 }
 
 type webSelectorSwitchMeasurementView struct {
@@ -316,6 +317,9 @@ func newWebJobMeasurementView(probeType protocol.ProbeType, measurement protocol
 	case protocol.ProbeTypeGoogleStatus:
 		value := *measurement.GoogleStatus
 		return webJobMeasurementView{GoogleStatus: &value}, nil
+	case protocol.ProbeTypePublicEgress:
+		value := *measurement.PublicEgress
+		return webJobMeasurementView{PublicEgress: &value}, nil
 	default:
 		return webJobMeasurementView{}, fmt.Errorf("unknown probe type %q", probeType)
 	}
