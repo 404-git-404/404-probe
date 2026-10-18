@@ -30,7 +30,7 @@ func TestM09CardWindowAndSavedChoices(t *testing.T) {
 		first := now.UnixMilli()/300000*300000 - 11*300000
 		for i := 0; i < 12; i++ {
 			at := time.UnixMilli(first + int64(i)*300000 + 10000)
-			if i == 11 || at.After(now.Add(-3 * time.Second)) {
+			if i == 11 || at.After(now.Add(-3*time.Second)) {
 				at = now.Add(-3 * time.Second)
 			}
 			var sample protocol.QualitySample
