@@ -28,8 +28,33 @@
     </details>
     <div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="grid agent-grid" aria-live="polite"></section><p class="status-legend"><span class="tone-dot healthy"></span>正常 <span class="tone-dot warning"></span>注意 / 接近阈值 <span class="tone-dot critical"></span>异常 / 已到期 <span class="tone-dot unknown"></span>未知 / 旧结果</p></main>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
-    <div id="add-agent-create">
+    <div id="add-agent-choice">
       <h2 id="add-agent-title">添加 Agent</h2>
+      <p>选择安装方式。一键安装生成一条一次性命令，手动安装沿用 enrollment value。</p>
+      <div class="dialog-actions enroll-choices"><button id="add-agent-choose-oneclick" class="primary-action" type="button">一键安装</button><button id="add-agent-choose-manual" type="button">手动安装</button></div>
+      <p id="add-agent-oneclick-reason" class="install-note hidden" role="status"></p>
+      <div class="dialog-actions"><button id="add-agent-choice-cancel" type="button">取消</button></div>
+    </div>
+    <div id="oneclick-pane" class="hidden">
+      <h2>一键安装 Agent</h2>
+      <p>输入 Agent 名称，生成一条 30 分钟内有效、只能使用一次的安装命令。</p>
+      <form id="oneclick-form" autocomplete="off">
+        <label for="oneclick-name">名称</label>
+        <input id="oneclick-name" name="name" type="text" maxlength="128" required>
+        <div id="oneclick-error" class="dialog-error hidden" role="alert">生成失败，请重试。</div>
+        <div class="dialog-actions"><button id="oneclick-back" type="button">返回</button><button id="oneclick-submit" class="primary-action" type="submit">生成命令</button></div>
+      </form>
+    </div>
+    <div id="oneclick-result" class="hidden">
+      <h2>安装命令已生成</h2>
+      <p class="secret-warning">命令含一次性注册 token，仅显示这一次；关闭对话框后无法再次查看，需要时请重新生成。</p>
+      <div class="copy-block secret-value"><code id="oneclick-command"></code><button id="oneclick-copy" type="button">复制命令</button></div>
+      <p class="install-note"><span id="oneclick-countdown" role="timer"></span>。在目标 Linux 主机上以 root 执行，机器需要能访问 GitHub 和本 Server。</p>
+      <p id="oneclick-status" class="install-note" role="status"></p>
+      <div class="dialog-actions"><button id="oneclick-revoke" class="danger-action" type="button">作废</button><button id="oneclick-done" class="primary-action" type="button">关闭</button></div>
+    </div>
+    <div id="add-agent-create" class="hidden">
+      <h2>手动安装</h2>
       <p>创建现有 404-probe Agent 身份并生成安全安装信息。</p>
       <form id="add-agent-form" autocomplete="off">
         <label for="add-agent-name">名称</label>
@@ -133,6 +158,7 @@
   <script src="/plan-units.js" defer></script>
   <script src="/youtube-status.js" defer></script>
   <script src="/public-egress-check.js" defer></script>
+  <script src="/agent-enrollment.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/session.js" defer></script>
 </body>

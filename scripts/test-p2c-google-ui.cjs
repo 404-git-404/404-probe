@@ -40,7 +40,8 @@ function page(file) {
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/overview.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/plan-units.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/youtube-status.js'),'utf8'),sandbox);
-  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/public-egress-check.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/public-egress-check.js'),'utf8'),sandbox)
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/agent-enrollment.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static',file),'utf8'),sandbox);
   return {nodes,run:(code,input)=>{sandbox.input=input;return vm.runInContext(code,sandbox);}};
 }

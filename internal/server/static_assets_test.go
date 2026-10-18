@@ -375,7 +375,7 @@ func TestStaticAssetsStartupOnlyAndPerAppIsolation(t *testing.T) {
 		}
 	}
 	t.Logf("startup directory: legacy=%d immutable=%d page aliases=%d retained bytes=%d", len(b.legacy), len(b.immutable), len(b.pages), retained)
-	if len(b.legacy) != 322 || retained > 3<<20 {
+	if len(b.legacy) != 323 || retained > 3<<20 {
 		t.Fatal("unexpected resource footprint")
 	}
 }

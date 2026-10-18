@@ -227,23 +227,44 @@ upgradeAgentForm.addEventListener('submit', async event => {
   }
 });
 
+// One-click install: the dialog first asks how to install; the command it shows is never kept after closing.
+const enrollmentDialog = AgentEnrollment.createController({
+  els: {
+    choice: document.querySelector('#add-agent-choice'), manual: addAgentCreate, manualResult: addAgentResult,
+    oneclick: document.querySelector('#oneclick-pane'), oneclickResult: document.querySelector('#oneclick-result'),
+    chooseOneClick: document.querySelector('#add-agent-choose-oneclick'), chooseManual: document.querySelector('#add-agent-choose-manual'),
+    reason: document.querySelector('#add-agent-oneclick-reason'), form: document.querySelector('#oneclick-form'),
+    name: document.querySelector('#oneclick-name'), error: document.querySelector('#oneclick-error'), submit: document.querySelector('#oneclick-submit'),
+    oneclickBack: document.querySelector('#oneclick-back'), command: document.querySelector('#oneclick-command'),
+    copy: document.querySelector('#oneclick-copy'), countdown: document.querySelector('#oneclick-countdown'),
+    status: document.querySelector('#oneclick-status'), revoke: document.querySelector('#oneclick-revoke'),
+  },
+  csrf: () => mutationCSRFToken,
+  available: () => Boolean(serverBuild.upgrade_eligible),
+  unavailableReason: () => '此 Server 是开发构建或无法校验的构建，没有对应的正式 release，无法使用一键安装；请使用手动安装。',
+  unauthorized: () => location.assign('/login'),
+});
+
 function clearEnrollmentDialog() {
   createdInstallCommand.textContent = '';
 	copyInstallCommand.disabled = true;
   createdEnrollment.textContent = '';
   addAgentForm.reset();
   addAgentError.classList.add('hidden');
-  addAgentCreate.classList.remove('hidden');
-  addAgentResult.classList.add('hidden');
   addAgentSubmit.disabled = false;
+  enrollmentDialog.reset();
 }
 
 addAgentButton.addEventListener('click', () => {
   clearEnrollmentDialog();
   addAgentDialog.showModal();
-  addAgentName.focus();
+  document.querySelector('#add-agent-choose-oneclick').focus();
 });
 
+document.querySelector('#add-agent-choice-cancel').addEventListener('click', () => addAgentDialog.close());
+document.querySelector('#oneclick-done').addEventListener('click', () => addAgentDialog.close());
+document.querySelector('#add-agent-choose-manual').addEventListener('click', () => addAgentName.focus());
+document.querySelector('#add-agent-choose-oneclick').addEventListener('click', () => document.querySelector('#oneclick-name').focus());
 document.querySelector('#add-agent-cancel').addEventListener('click', () => addAgentDialog.close());
 document.querySelector('#add-agent-done').addEventListener('click', () => addAgentDialog.close());
 addAgentDialog.addEventListener('close', clearEnrollmentDialog);
