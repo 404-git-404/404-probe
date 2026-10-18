@@ -71,7 +71,12 @@ go test ./... -count=1
 
 使用规则：
 - 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；安装系统软件、改防火墙、重启机器要先问。
-- 安装器的角色选择、管理员密码、注册 token 都从 `/dev/tty` 读取。**密码和 token 由维护者自己输入**，不要代填。注册 token 用 `404-probe-install enroll <名字>` 在 Server 上生成，写到 Server 上权限 600 的文件里，不在对话中明文显示。
+- 安装器的角色选择和管理员密码从 `/dev/tty` 读取。管理员密码由维护者自己输入，不要代填。交互安装 Agent 时粘贴的 enrollment value（`404-probe-install enroll <名字>` 生成，是 Agent 的永久凭据）同样由维护者自己输入，不在对话中明文显示。
+- 注册 token：在 CLAUDE.local.md 列出的测试 Server 上，Claude Code 可以自己用 `404-probe-install oneclick-token <名称>` 生成，用于一键安装和注册验证；绝不用于任何正式环境。
+  - 它生成与面板相同的一次性 token（30 分钟、绑定名称、计入"同时最多 10 条未使用"的上限），不能用 `enroll`：`enroll` 给的是 Agent 的永久凭据，不能用于一键安装（`PROBE_404_ENROLL_TOKEN` 要求 43 个字符的注册 token）。
+  - token 只存在权限 600 的文件里：命令把它写到 `/root/oneclick-token-<名称>.token`（`--output <绝对路径>` 可改），终端只输出文件路径、名称和过期时间，不打印 token。在 Server 上生成后，用 `scp` 拷到目标测试机（同样 600），通过 `PROBE_404_ENROLL_TOKEN_FILE` 交给安装器。
+  - 不在对话、提交、文档或日志里明文出现。
+  - 安装结束后（无论成功失败），删除 Server 和目标机上的 token 文件。
 - Server 只监听 `127.0.0.1:8080`；Agent 用 HTTP 回环地址接入时，通过 `ssh -R 18080:127.0.0.1:8080` 反向隧道（Web 页面用 `ssh -L 8080:127.0.0.1:8080` 本地转发），Agent 的 `--server` 填 `http://127.0.0.1:18080`。这只是测试用法，线上应使用 HTTPS 地址。验证结束后要关闭隧道。
 - 不要把主机名之外的连接信息（IP、密钥）、密码、token 写进仓库、说明、文档或提交。第三方页面的原始抓取（例如 YouTube 页面）只保留脱敏后的最小样本，使用后删除原始文件。
 - Alpine 只支持 Agent，不提供 Server 和自动升级；新装前先确认 OpenRC 已完整启动，工具为 GNU 版本；不要把产物放在 `/tmp`（tmpfs 占内存）。
