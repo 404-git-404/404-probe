@@ -197,6 +197,8 @@ Usage:
   404-probe-install selector-order <absolute-sing-box-config.json>
   404-probe-install upgrade-agent   migrate old Beta, or repair missing Stable Updater in place
   404-probe-install enroll <name>   create one Agent enrollment token
+  404-probe-install oneclick-token <name> [--output <absolute-path>]
+                                    test machines: one-click registration token into a root-only file
   404-probe-install uninstall <server|agent> [--confirm-delete-data]
 
 Uninstall permanently removes the selected role's services, binaries,
@@ -950,7 +952,7 @@ server_residue_exists() {
   return 1
 }
 usage() {
-  printf 'Usage: 404-probe-install enroll <name> | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data] | recover-agent-removal\n'
+  printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data] | recover-agent-removal\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
@@ -1122,6 +1124,50 @@ enroll() {
   printf 'Enrollment token (shown once; store it securely):\n%s%s\n' "${ENROLLMENT_PREFIX}" "${payload}"
   printf '\nPaste this value only at the hidden Agent installer prompt.\n'
   unset payload
+}
+run_server_enroll_token() { runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" agent enroll-token "$1" --db "${SERVER_DATABASE}"; }
+
+# Test machines only: creates a one-click registration token (the kind the panel's install command carries:
+# single use, 30 minutes, bound to the name, counted in the pending limit) and writes it to a root-only
+# file. The token is never printed; only the file path, the name and the expiry are.
+oneclick_token() {
+  local name="" output_path="" result token expires sanitized
+  while (( $# > 0 )); do
+    case "$1" in
+      --output)
+        [[ $# -ge 2 ]] || die "--output needs an absolute file path"
+        output_path="$2"
+        shift 2
+        ;;
+      -*) die "usage: 404-probe-install oneclick-token <agent-name> [--output /absolute/path]" ;;
+      *)
+        [[ -z "${name}" ]] || die "usage: 404-probe-install oneclick-token <agent-name> [--output /absolute/path]"
+        name="$1"
+        shift
+        ;;
+    esac
+  done
+  [[ -n "${name}" ]] || die "usage: 404-probe-install oneclick-token <agent-name> [--output /absolute/path]"
+  [[ "${#name}" -le 128 && "${name}" != *[[:cntrl:]]* && "${name}" != [[:space:]]* && "${name}" != *[[:space:]] ]] \
+    || die "Agent name must be 1-128 characters without control characters or surrounding spaces"
+  [[ -x "${SERVER_BINARY}" && -f "${SERVER_DATABASE}" && -f "$(business_unit server)" ]] \
+    || die "a local 404-probe Server installation was not found"
+  if [[ -z "${output_path}" ]]; then
+    sanitized="$(printf '%s' "${name}" | tr -c 'A-Za-z0-9._-' '_')"
+    output_path="/root/oneclick-token-${sanitized}.token"
+  fi
+  [[ "${output_path}" == /* ]] || die "--output must be an absolute path"
+  [[ -d "$(dirname "${output_path}")" ]] || die "the directory for the token file does not exist"
+  [[ ! -e "${output_path}" && ! -L "${output_path}" ]] || die "${output_path} already exists; refusing to overwrite it"
+  result="$(run_server_enroll_token "${name}")" || die "could not create the registration token"
+  token="$(printf '%s\n' "${result}" | sed -n 's/^Token: //p')"
+  expires="$(printf '%s\n' "${result}" | sed -n 's/^Expires: //p')"
+  unset result
+  [[ "${token}" =~ ^[A-Za-z0-9_-]{43}$ && -n "${expires}" ]] || die "the Server returned an unexpected registration token"
+  ( umask 077; set -o noclobber; printf '%s\n' "${token}" >"${output_path}" ) || die "could not write the token file"
+  unset token
+  chown root:root "${output_path}" && chmod 600 "${output_path}" || die "could not secure the token file"
+  printf 'Token file: %s\nName: %s\nExpires: %s\n' "${output_path}" "${name}" "${expires}"
 }
 server_origin() {
   local count
@@ -1411,6 +1457,7 @@ case "${1:-}" in setup-security|finalize-agent-removal-account|recover-agent-rem
 case "${1:-}" in
   -h|--help|help) usage ;;
   enroll) shift; enroll "$@" ;;
+  oneclick-token) shift; oneclick_token "$@" ;;
   domains) shift; domains "$@" ;;
   selector-order) shift; selector_order "$@" ;;
   setup-security) shift; setup_security "$@" ;;
@@ -2765,6 +2812,51 @@ install_agent_command() {
   install_agent "$2"
 }
 
+run_server_enroll_token() { runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" agent enroll-token "$1" --db "${SERVER_DATABASE}"; }
+
+# Test machines only: creates a one-click registration token (the kind the panel's install command carries:
+# single use, 30 minutes, bound to the name, counted in the pending limit) and writes it to a root-only
+# file. The token is never printed; only the file path, the name and the expiry are.
+oneclick_token() {
+  local name="" output_path="" result token expires sanitized
+  while (( $# > 0 )); do
+    case "$1" in
+      --output)
+        [[ $# -ge 2 ]] || die "--output needs an absolute file path"
+        output_path="$2"
+        shift 2
+        ;;
+      -*) die "usage: 404-probe-install oneclick-token <agent-name> [--output /absolute/path]" ;;
+      *)
+        [[ -z "${name}" ]] || die "usage: 404-probe-install oneclick-token <agent-name> [--output /absolute/path]"
+        name="$1"
+        shift
+        ;;
+    esac
+  done
+  [[ -n "${name}" ]] || die "usage: 404-probe-install oneclick-token <agent-name> [--output /absolute/path]"
+  [[ "${#name}" -le 128 && "${name}" != *[[:cntrl:]]* && "${name}" != [[:space:]]* && "${name}" != *[[:space:]] ]] \
+    || die "Agent name must be 1-128 characters without control characters or surrounding spaces"
+  [[ -x "${SERVER_BINARY}" && -f "${SERVER_DATABASE}" && -f "$(business_unit server)" ]] \
+    || die "a local 404-probe Server installation was not found"
+  if [[ -z "${output_path}" ]]; then
+    sanitized="$(printf '%s' "${name}" | tr -c 'A-Za-z0-9._-' '_')"
+    output_path="/root/oneclick-token-${sanitized}.token"
+  fi
+  [[ "${output_path}" == /* ]] || die "--output must be an absolute path"
+  [[ -d "$(dirname "${output_path}")" ]] || die "the directory for the token file does not exist"
+  [[ ! -e "${output_path}" && ! -L "${output_path}" ]] || die "${output_path} already exists; refusing to overwrite it"
+  result="$(run_server_enroll_token "${name}")" || die "could not create the registration token"
+  token="$(printf '%s\n' "${result}" | sed -n 's/^Token: //p')"
+  expires="$(printf '%s\n' "${result}" | sed -n 's/^Expires: //p')"
+  unset result
+  [[ "${token}" =~ ^[A-Za-z0-9_-]{43}$ && -n "${expires}" ]] || die "the Server returned an unexpected registration token"
+  ( umask 077; set -o noclobber; printf '%s\n' "${token}" >"${output_path}" ) || die "could not write the token file"
+  unset token
+  chown root:root "${output_path}" && chmod 600 "${output_path}" || die "could not secure the token file"
+  printf 'Token file: %s\nName: %s\nExpires: %s\n' "${output_path}" "${name}" "${expires}"
+}
+
 enroll_agent() {
   require_root_linux_systemd
   [[ $# -eq 1 ]] || die "usage: 404-probe-install enroll <agent-name>"
@@ -3844,6 +3936,10 @@ main() {
     enroll)
       shift
       enroll_agent "$@"
+      ;;
+    oneclick-token)
+      shift
+      oneclick_token "$@"
       ;;
     setup-security)
       shift

@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -418,6 +419,10 @@ func agentCommand(args []string) error {
 		}
 		fmt.Printf("Agent ID: %s\nToken: %s\n\nSave this token now; the server stores only its SHA-256 hash.\n", id, plain)
 		return nil
+	case "enroll-token":
+		// A one-click registration token (what the panel's install command carries), for test machines:
+		// the installer's oneclick-token command stores it in a root-only file instead of printing it.
+		return agentEnrollToken(ctx, store, value, time.Now(), os.Stdout)
 	case "list":
 		agents, err := store.ListAgents(ctx)
 		if err != nil {
@@ -1100,4 +1105,29 @@ func openStore(path string) (*storage.Store, error) {
 		}
 	}
 	return store, nil
+}
+
+// agentEnrollToken creates a single-use 30-minute registration token bound to name, counted in the same
+// limit as the panel's. It prints the token on stdout (the installer captures it and writes a file).
+func agentEnrollToken(ctx context.Context, store *storage.Store, name string, now time.Time, output io.Writer) error {
+	if name == "" || len(name) > 128 || !utf8.ValidString(name) || strings.TrimSpace(name) != name || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return errors.New("Agent name must be 1-128 characters without control characters or surrounding spaces")
+	}
+	id, err := auth.NewID()
+	if err != nil {
+		return err
+	}
+	plain, hash, err := auth.NewToken()
+	if err != nil {
+		return err
+	}
+	expires, err := store.CreateAgentEnrollmentToken(ctx, id, name, hash, now)
+	if errors.Is(err, storage.ErrEnrollmentLimit) {
+		return fmt.Errorf("there are already %d unused install commands; use or revoke one, or wait for them to expire", storage.MaxPendingEnrollmentTokens)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(output, "Token: %s%cExpires: %s%cEnrollment ID: %s%c", plain, 10, expires.UTC().Format(time.RFC3339), 10, id, 10)
+	return err
 }

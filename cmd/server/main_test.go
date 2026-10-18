@@ -1001,3 +1001,60 @@ func TestWebPasswordHashReadsStdinAndRequiresSixteenCharacters(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentEnrollTokenCountsInTheLimitAndRedeems(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Unix(1_800_000_000, 0)
+	var first string
+	for i := 0; i < storage.MaxPendingEnrollmentTokens; i++ {
+		var out bytes.Buffer
+		if err := agentEnrollToken(ctx, store, "name-"+strings.Repeat("x", i), now, &out); err != nil {
+			t.Fatalf("token %d: %v", i+1, err)
+		}
+		fields := strings.Fields(out.String())
+		if len(fields) < 6 || fields[0] != "Token:" || len(fields[1]) != 43 || fields[2] != "Expires:" || fields[3] != now.Add(storage.EnrollmentTokenTTL).UTC().Format(time.RFC3339) {
+			t.Fatalf("unexpected output %q", out.String())
+		}
+		if i == 0 {
+			first = fields[1]
+		}
+	}
+	err = agentEnrollToken(ctx, store, "one-too-many", now, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "already 10 unused") {
+		t.Fatalf("11th token err=%v", err)
+	}
+	// The token is the panel's kind: it registers an Agent once, bound to its name.
+	agentID, agentHash := strings.Repeat("a", 32), []byte("hash")
+	if err := store.RedeemAgentEnrollmentToken(ctx, auth.Hash(first), "wrong-name", agentID, agentHash, now); err == nil {
+		t.Fatal("redeemed under another name")
+	}
+	if err := store.RedeemAgentEnrollmentToken(ctx, auth.Hash(first), "name-", agentID, agentHash, now); err != nil {
+		t.Fatalf("redeem: %v", err)
+	}
+	if err := agentEnrollToken(ctx, store, "after-redeem", now, io.Discard); err != nil {
+		t.Fatalf("a redeemed token must free a slot: %v", err)
+	}
+}
+
+func TestAgentEnrollTokenRejectsBadNames(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, name := range []string{"", " lead", "trail ", "tab" + string(rune(9)) + "x", "nl" + string(rune(10)) + "x", strings.Repeat("n", 129), string([]byte{0xff, 0xfe})} {
+		var out bytes.Buffer
+		if err := agentEnrollToken(ctx, store, name, time.Now(), &out); err == nil || out.Len() != 0 {
+			t.Fatalf("name %q accepted (output %q, err %v)", name, out.String(), err)
+		}
+	}
+	if err := agentEnrollToken(ctx, store, "東京 node 1", time.Now(), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
