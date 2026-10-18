@@ -17,7 +17,7 @@ go test ./... -count=1
 ## 换行（务必保持 LF）
 
 - 仓库内文件一律 LF，由 `.gitattributes` 强制；本地设置 `core.autocrlf=false`。`install.sh`、`SHA256SUMS`、`RELEASE-METADATA.json` 含回车符会导致发布校验失败，构建脚本会拒绝含 CR 的 `install.sh`。
-- 例外：`README.md` 和 `web/static/jobs.js` 自 v1.0.2 前就是 CRLF，`jobs.js` 被嵌入发布二进制，改它会改变产物字节，需要单独的改动统一。
+- 仓库内所有文本文件一律 LF，没有例外（`README.md` 和 `web/static/jobs.js` 已在 v1.0.4 统一为 LF）。
 - 在 Windows 上不要用默认配置的 `git archive` 打包去做测试，会转成 CRLF；用 `git -c core.autocrlf=false archive`。
 - 检查换行请按字节（例如 Python 统计 `b'\r'`），不要依赖 Git Bash 的 `grep -c $'\r'`，它会给出假数字。
 
