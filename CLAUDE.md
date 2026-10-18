@@ -11,7 +11,8 @@ go test ./... -count=1
 ```
 
 - 发布前的测试结果以 Linux 为准。`internal/agent` 的个别用例（如 `TestRCHelperNegotiationDoesNotTrustOldV2`）在 Windows 负载下会偶发超时，v1.0.2 上同样如此。
-- `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-m02-real-chain.cjs`、`scripts/test-n3-network-quality.cjs`（19 过 4 败，v1.0.3 上相同）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。
+- `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-m02-real-chain.cjs`、`scripts/test-n3-network-quality.cjs`（19 过 4 败，v1.0.3 上相同）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。`scripts/test-p4b2-traffic-chart.cjs`（8 过 7 败）和 `scripts/test-p5a2-device-details.cjs`（3 败）同样是基线失败，v1.0.3 上相同。
+- `scripts/test-agent-upgrade-systemd.sh` 是为 v0.9.3→v1.0.0 迁移写的（Server、Agent 和资产版本都固定为 v1.0.0），目前跑不了。v1.0.4 用正式发布后的 Web 升级真机验证代替；脚本参数化放到 v1.0.5。
 - 文档、说明和提交信息用中文或英文均可，提交信息采用 `type(scope): subject`，作者邮箱用 `305518817+404-git-404@users.noreply.github.com`。
 
 ## 换行（务必保持 LF）
@@ -61,11 +62,12 @@ go test ./... -count=1
 
 ## 测试机
 
-共 5 台测试机，具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
+共 8 台测试机，具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
 
 - 1 台 Debian 12，作 Server。
 - 2 台 Debian Agent（Debian 12 和 Debian 13）。
 - 2 台 Alpine 3.24 Agent（OpenRC）：一台 128 MiB 内存（arm64，cgroup 限制，用来验证内存是否稳定），另一台 512 MiB（SSH 经常超时，已决定不再尝试）。
+- 3 台 Debian 13（DE、FR、NL），都是 Podman 容器（`systemd-detect-virt` 输出 `podman`），用于欧盟 YouTube 检测和容器环境兼容测试。容器里没有 D-Bus 系统总线（`systemd-run` 不可用），systemd 沙箱选项和 CAP_NET_RAW 也受限，安装器的沙箱探测（`sandbox_probe`）在这里才有意义。
 
 使用规则：
 - 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；安装系统软件、改防火墙、重启机器要先问。
