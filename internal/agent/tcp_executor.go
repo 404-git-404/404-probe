@@ -136,10 +136,11 @@ type ProbeExecutor struct {
 	tcp    Executor
 	icmp   Executor
 	google Executor
+	egress Executor
 }
 
 func NewProbeExecutor() *ProbeExecutor {
-	return &ProbeExecutor{http: NewHTTPExecutor(), tcp: NewTCPExecutor(), icmp: NewICMPExecutor(), google: NewGoogleStatusExecutor()}
+	return &ProbeExecutor{http: NewHTTPExecutor(), tcp: NewTCPExecutor(), icmp: NewICMPExecutor(), google: NewGoogleStatusExecutor(), egress: NewPublicEgressExecutor()}
 }
 
 func (e *ProbeExecutor) SupportedProbeTypes() []protocol.ProbeType {
@@ -151,6 +152,8 @@ func (e *ProbeExecutor) SupportedProbeTypes() []protocol.ProbeType {
 }
 
 func (e *ProbeExecutor) SupportsGoogleStatus() bool { return e != nil && e.google != nil }
+
+func (e *ProbeExecutor) SupportsPublicEgress() bool { return e != nil && e.egress != nil }
 
 func (e *ProbeExecutor) Execute(ctx context.Context, job protocol.Job) (Execution, error) {
 	switch job.ProbeType {
@@ -165,6 +168,11 @@ func (e *ProbeExecutor) Execute(ctx context.Context, job protocol.Job) (Executio
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	case protocol.ProbeTypeGoogleStatus:
 		return e.google.Execute(ctx, job)
+	case protocol.ProbeTypePublicEgress:
+		if e.egress == nil {
+			return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
+		}
+		return e.egress.Execute(ctx, job)
 	default:
 		return Execution{}, fmt.Errorf("%w: %s", ErrUnsupportedProbeType, job.ProbeType)
 	}

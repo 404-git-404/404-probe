@@ -40,6 +40,7 @@ type Executor interface {
 }
 
 type googleStatusCapability interface{ SupportsGoogleStatus() bool }
+type publicEgressCapability interface{ SupportsPublicEgress() bool }
 
 // UnsupportedExecutor advertises no capabilities and returns a stable error
 // if called directly.
@@ -192,13 +193,13 @@ func (r *Runner) runJobWorker(ctx context.Context) {
 	baseCapabilities := append([]protocol.ProbeType(nil), r.executor.SupportedProbeTypes()...)
 	filtered := baseCapabilities[:0]
 	for _, capability := range baseCapabilities {
-		if capability != protocol.ProbeTypeGoogleStatus {
+		if capability != protocol.ProbeTypeGoogleStatus && capability != protocol.ProbeTypePublicEgress {
 			filtered = append(filtered, capability)
 		}
 	}
 	baseCapabilities = filtered
 	capabilities := append([]protocol.ProbeType(nil), baseCapabilities...)
-	if len(capabilities) == 0 && !r.clashIntegrationEnabled() && !r.googleStatusAvailable {
+	if len(capabilities) == 0 && !r.clashIntegrationEnabled() && !r.googleStatusAvailable && !r.publicEgressAvailable {
 		r.logger.Info("job worker disabled; executor has no supported probe types")
 		<-ctx.Done()
 		return
@@ -216,6 +217,10 @@ func (r *Runner) runJobWorker(ctx context.Context) {
 		}
 		if r.googleStatusAvailable && r.googleStatusSupported.Load() {
 			cycleCapabilities = append(cycleCapabilities, protocol.ProbeTypeGoogleStatus)
+		}
+		// Only a Server that advertised the job type is told this Agent can run it.
+		if r.publicEgressAvailable && r.publicEgressSupported.Load() {
+			cycleCapabilities = append(cycleCapabilities, protocol.ProbeTypePublicEgress)
 		}
 		claimed := false
 		if len(cycleCapabilities) != 0 {
@@ -426,6 +431,9 @@ func emptyProbeResult(job protocol.Job) protocol.ProbeResult {
 			SignIn:  protocol.GoogleSignInResult{Status: protocol.GoogleSignInUnknown},
 			Gemini:  protocol.GeminiResult{Status: protocol.GeminiUnknown},
 		}}
+	case protocol.ProbeTypePublicEgress:
+		return protocol.ProbeResult{PublicEgress: &protocol.PublicEgressResult{
+			IPv4: protocol.UnknownEgress("ipv4", "network"), IPv6: protocol.UnknownEgress("ipv6", "network")}}
 	default:
 		return protocol.ProbeResult{}
 	}

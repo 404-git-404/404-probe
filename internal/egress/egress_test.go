@@ -10,12 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
-
-	"404-probe/internal/protocol"
 )
 
 func controlledChecker(t *testing.T, family string, handler http.HandlerFunc) *Checker {
@@ -164,50 +161,5 @@ func TestM10UnavailableNeedsProof(t *testing.T) {
 	}
 	if !routeTableEmpty("Iface Destination Gateway Flags\n", "ipv4") || routeTableEmpty("garbage", "ipv4") || routeTableEmpty(strings.Repeat("0", 32)+" 00 "+strings.Repeat("0", 32)+" 00 "+strings.Repeat("0", 32)+" 00000001 00000000 00000000 00000001 eth0", "ipv6") {
 		t.Fatal("route parser")
-	}
-}
-
-func TestM10MonitorNegotiationCancellationAndBounds(t *testing.T) {
-	m := NewMonitor()
-	started := make(chan struct{}, 4)
-	var calls atomic.Int32
-	m.check = func(ctx context.Context, f string) protocol.EgressObservation {
-		calls.Add(1)
-		started <- struct{}{}
-		<-ctx.Done()
-		return protocol.UnknownEgress(f, "network")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { m.Run(ctx); close(done) }()
-	if m.Snapshot() != nil {
-		t.Fatal("unnegotiated snapshot")
-	}
-	time.Sleep(20 * time.Millisecond)
-	if calls.Load() != 0 {
-		t.Fatal("unnegotiated network")
-	}
-	m.SetSupported(true)
-	for range 2 {
-		select {
-		case <-started:
-		case <-time.After(time.Second):
-			t.Fatal("workers did not start")
-		}
-	}
-	m.SetSupported(false)
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("cancellation leak")
-	}
-	if calls.Load() != 2 || m.Snapshot() != nil {
-		t.Fatal("unbounded or retained capability")
-	}
-	for n, want := range []time.Duration{30 * time.Minute, time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
-		if retryDelay(n) != want {
-			t.Fatal("retry bounds")
-		}
 	}
 }

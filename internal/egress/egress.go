@@ -8,13 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -178,139 +176,4 @@ func routeTableEmpty(data, family string) bool {
 		return false
 	}
 	return true
-}
-
-// Monitor owns two observations and at most two in-flight checks. Negotiation
-// wakes workers; reports only copy the cache and never perform network I/O.
-type Monitor struct {
-	mu        sync.Mutex
-	supported bool
-	values    [2]protocol.EgressObservation
-	wake      [2]chan struct{}
-	cancel    [2]context.CancelFunc
-	check     func(context.Context, string) protocol.EgressObservation
-}
-
-func NewMonitor() *Monitor {
-	c := NewChecker()
-	return &Monitor{values: [2]protocol.EgressObservation{protocol.UnknownEgress("ipv4", "not_checked"), protocol.UnknownEgress("ipv6", "not_checked")}, wake: [2]chan struct{}{make(chan struct{}, 1), make(chan struct{}, 1)}, check: c.Check}
-}
-
-func (m *Monitor) SetSupported(value bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.supported == value {
-		return
-	}
-	m.supported = value
-	for i := range m.wake {
-		if !value && m.cancel[i] != nil {
-			m.cancel[i]()
-		}
-		select {
-		case m.wake[i] <- struct{}{}:
-		default:
-		}
-	}
-}
-
-func (m *Monitor) Snapshot() *protocol.PublicEgress {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.supported {
-		return nil
-	}
-	p := &protocol.PublicEgress{Version: 1, IPv4: m.values[0], IPv6: m.values[1]}
-	return p
-}
-
-func retryDelay(failures int) time.Duration {
-	switch failures {
-	case 0:
-		return 30 * time.Minute
-	case 1:
-		return time.Minute
-	case 2:
-		return 5 * time.Minute
-	case 3:
-		return 15 * time.Minute
-	default:
-		return 30 * time.Minute
-	}
-}
-
-func (m *Monitor) Run(ctx context.Context) {
-	var wg sync.WaitGroup
-	for i, family := range []string{"ipv4", "ipv6"} {
-		wg.Add(1)
-		go func(i int, family string) { defer wg.Done(); m.runFamily(ctx, i, family) }(i, family)
-	}
-	wg.Wait()
-}
-
-func (m *Monitor) runFamily(ctx context.Context, i int, family string) {
-	timer := time.NewTimer(time.Hour)
-	timer.Stop()
-	select {
-	case m.wake[i] <- struct{}{}:
-	default:
-	}
-	defer timer.Stop()
-	failures := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-m.wake[i]:
-		case <-timer.C:
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		m.mu.Lock()
-		active := m.supported
-		m.mu.Unlock()
-		if !active {
-			continue
-		}
-		probeCtx, cancel := context.WithCancel(ctx)
-		m.mu.Lock()
-		m.cancel[i] = cancel
-		active = m.supported
-		m.mu.Unlock()
-		if !active {
-			cancel()
-			continue
-		}
-		v := m.check(probeCtx, family)
-		completed := probeCtx.Err() == nil
-		cancel()
-		m.mu.Lock()
-		m.cancel[i] = nil
-		if completed && ctx.Err() == nil && m.supported {
-			old := m.values[i].LastSuccess
-			if v.LastSuccess == nil {
-				v.LastSuccess = old
-			}
-			m.values[i] = v
-		}
-		m.mu.Unlock()
-		if ctx.Err() != nil {
-			return
-		}
-		if v.Status == "available" {
-			failures = 0
-		} else if failures < 4 {
-			failures++
-		}
-		delay := retryDelay(failures)
-		delay = delay - delay/10 + time.Duration(rand.Int64N(int64(delay/5)+1))
-		timer.Reset(delay)
-	}
 }
