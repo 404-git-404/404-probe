@@ -121,7 +121,7 @@ func TestEnrollmentTokenPendingLimitAndCleanup(t *testing.T) {
 	s, _, _ := testStore(t, filepath.Join(t.TempDir(), "e.db"))
 	defer s.Close()
 	now := time.Unix(1_800_000_000, 0)
-	for i := 0; i < maxPendingEnrollmentTokens; i++ {
+	for i := 0; i < MaxPendingEnrollmentTokens; i++ {
 		newEnrollmentToken(t, s, "n", now)
 	}
 	id, _ := auth.NewID()

@@ -159,10 +159,10 @@ test('K2 dialog: errors keep the form usable; unavailable builds and limits get 
   assert.equal(h.els.error.textContent, '无法使用一键安装');
   assert.equal(h.els.submit.disabled, false);
   assert.deepEqual(visible(h.els), ['oneclick']);
-  const limited = harness({respond: () => ({status: 429, ok: false, json: async () => ({error: {code: 'enrollment_limit'}})})});
+  const limited = harness({respond: () => ({status: 429, ok: false, json: async () => ({error: {code: 'enrollment_pending_limit'}})})});
   await limited.els.chooseOneClick.fire('click');
   assert.equal(await limited.controller.submit(), false);
-  assert.match(limited.els.error.textContent, /过多/);
+  assert.equal(limited.els.error.textContent, '已有 10 条未使用的安装命令，请先使用或作废其中一条，或等它们过期（30 分钟）。');
   const broken = harness({respond: () => { throw new Error('network'); }});
   await broken.els.chooseOneClick.fire('click');
   assert.equal(await broken.controller.submit(), false);
@@ -211,4 +211,51 @@ test('K2 dialog: the page wires the dialog, nothing is persisted, and the manual
   assert.doesNotMatch(COMMAND, /sudo|env/);
   assert.doesNotMatch(module_, /localStorage|sessionStorage|document\.cookie|indexedDB/);
   assert.match(html, /<p class="install-note">在目标 Linux 主机执行命令，然后在隐藏提示中粘贴下面的 enrollment value/, 'the manual instructions are unchanged');
+});
+
+test('N1: every failure reason has its own text; only a truly unknown one is generic', async () => {
+  const cases = [
+    [429, 'enrollment_pending_limit', /已有 10 条未使用的安装命令.*30 分钟/],
+    [400, 'invalid_request', /名称无效/],
+    [413, 'request_too_large', /名称无效/],
+    [403, 'forbidden', /请求被拒绝/],
+    [415, 'invalid_content_type', /请求被拒绝/],
+    [500, 'internal_error', /Server 内部错误/],
+    [502, '', /Server 内部错误/],
+    [409, 'install_unavailable', /无法使用一键安装/],
+    [429, '', /请求过于频繁/],
+  ];
+  for (const [status, code, pattern] of cases) {
+    const h = harness({respond: () => ({status, ok: false, json: async () => (code ? {error: {code, message: '此构建无法使用一键安装'}} : {})})});
+    await h.els.chooseOneClick.fire('click');
+    h.els.name.value = 'x';
+    assert.equal(await h.controller.submit(), false);
+    assert.match(h.els.error.textContent, pattern, status + ' ' + code);
+    assert.doesNotMatch(h.els.error.textContent, /^生成失败/);
+    assert.equal(h.els.submit.disabled, false);
+  }
+  // 401 also returns to the login page.
+  const expired = harness({respond: () => ({status: 401, ok: false, json: async () => ({error: {code: 'unauthorized'}})})});
+  await expired.els.chooseOneClick.fire('click');
+  await expired.controller.submit();
+  assert.equal(expired.unauthorized, 1);
+  // A page without a CSRF token explains it instead of staying silent.
+  const anonymous = harness({csrf: ''});
+  await anonymous.els.chooseOneClick.fire('click');
+  assert.equal(await anonymous.controller.submit(), false);
+  assert.match(anonymous.els.error.textContent, /未登录或登录已过期/);
+  assert.ok(!anonymous.els.error.hidden);
+  // Network failure and a truly unknown error.
+  const offline = harness({respond: () => { throw new TypeError('Failed to fetch'); }});
+  await offline.els.chooseOneClick.fire('click');
+  await offline.controller.submit();
+  assert.match(offline.els.error.textContent, /无法连接到 Server/);
+  const odd = harness({respond: () => ({status: 418, ok: false, json: async () => ({error: {code: 'something_new'}})})});
+  await odd.els.chooseOneClick.fire('click');
+  await odd.controller.submit();
+  assert.equal(odd.els.error.textContent, '生成失败，请重试。');
+  const broken = harness({respond: () => { throw new Error('boom'); }});
+  await broken.els.chooseOneClick.fire('click');
+  await broken.controller.submit();
+  assert.equal(broken.els.error.textContent, '生成失败，请重试。');
 });

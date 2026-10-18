@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"404-probe/internal/buildinfo"
+	"404-probe/internal/storage"
 )
 
 func postEnrollmentAPI(t *testing.T, app *App, path, body string, configure func(*http.Request, *webSession)) *httptest.ResponseRecorder {
@@ -269,4 +271,54 @@ func TestOneClickCommandAssignmentsSurviveRealShellParsing(t *testing.T) {
 			t.Fatalf("name %q: got %q want %q", name, out, want)
 		}
 	}
+}
+
+func TestOneClickPendingLimitIsTenAndFreesUpOnRevokeOrRedeem(t *testing.T) {
+	app, _ := oneClickApp(t)
+	if storage.MaxPendingEnrollmentTokens != 10 {
+		t.Fatalf("limit=%d, want 10", storage.MaxPendingEnrollmentTokens)
+	}
+	type issued struct {
+		view  webAgentEnrollmentTokenView
+		token string
+		name  string
+	}
+	var all []issued
+	for i := 1; i <= 10; i++ {
+		name := fmt.Sprintf("pending-%d", i)
+		view, token := createOneClick(t, app, name)
+		all = append(all, issued{view, token, name})
+	}
+	// The 11th is refused with its own error code, a clear message and no new token.
+	response := postEnrollmentAPI(t, app, "/api/v1/web/agent-enrollments", `{"name":"pending-11"}`, nil)
+	if response.Code != http.StatusTooManyRequests || jobErrorCode(t, response) != "enrollment_pending_limit" {
+		t.Fatalf("11th status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "10 unused") {
+		t.Fatalf("message does not name the limit: %s", response.Body.String())
+	}
+	// Revoking one frees a slot ...
+	if revoke := postEnrollmentAPI(t, app, "/api/v1/web/agent-enrollments/"+all[0].view.EnrollmentID+"/revoke", `{}`, nil); revoke.Code != http.StatusOK {
+		t.Fatalf("revoke status=%d", revoke.Code)
+	}
+	createOneClick(t, app, "after-revoke")
+	if response := postEnrollmentAPI(t, app, "/api/v1/web/agent-enrollments", `{"name":"again"}`, nil); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("limit not enforced again: %d", response.Code)
+	}
+	// ... and so does redeeming one.
+	if enrolled := agentEnrollCall(app, all[1].token, all[1].name); enrolled.Code != http.StatusOK {
+		t.Fatalf("redeem status=%d body=%s", enrolled.Code, enrolled.Body.String())
+	}
+	createOneClick(t, app, "after-redeem")
+}
+
+func TestOneClickPendingLimitIgnoresExpiredTokens(t *testing.T) {
+	app, _ := oneClickApp(t)
+	now := time.Unix(1_800_000_000, 0)
+	app.now = func() time.Time { return now }
+	for i := 0; i < storage.MaxPendingEnrollmentTokens; i++ {
+		createOneClick(t, app, fmt.Sprintf("old-%d", i))
+	}
+	now = now.Add(storage.EnrollmentTokenTTL)
+	createOneClick(t, app, "fresh-after-expiry")
 }

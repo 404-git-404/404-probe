@@ -15,6 +15,24 @@
     try{const body=await response.json();return body&&body.error?body.error:{};}catch(error){return {};}
   }
 
+  // One specific reason per error code; only a truly unknown failure gets the generic text.
+  function createErrorText(status,error){
+    switch(error&&error.code){
+      case 'enrollment_pending_limit':return '已有 10 条未使用的安装命令，请先使用或作废其中一条，或等它们过期（30 分钟）。';
+      case 'install_unavailable':return error.message||'此 Server 构建无法使用一键安装，请使用手动安装。';
+      case 'invalid_request':case 'request_too_large':return '名称无效：需要 1–128 个字符，不能包含控制字符，开头和结尾不能是空格。';
+      case 'unauthorized':return '未登录或登录已过期，请刷新页面并重新登录。';
+      case 'forbidden':case 'invalid_content_type':case 'invalid_query':return '请求被拒绝（页面可能已过期），请刷新页面后重试。';
+      case 'internal_error':return 'Server 内部错误，请稍后重试。';
+    }
+    if(status===401)return '未登录或登录已过期，请刷新页面并重新登录。';
+    if(status===403)return '请求被拒绝（页面可能已过期），请刷新页面后重试。';
+    if(status===413)return '名称无效：需要 1–128 个字符，不能包含控制字符，开头和结尾不能是空格。';
+    if(status===429)return '请求过于频繁，请稍后重试。';
+    if(status>=500)return 'Server 内部错误，请稍后重试。';
+    return '生成失败，请重试。';
+  }
+
   function createController({els,csrf=()=>'',fetcher=(...a)=>root.fetch(...a),now=()=>Date.now(),
     setTimer=(f,ms)=>root.setInterval(f,ms),clearTimer=id=>root.clearInterval(id),
     clipboard=()=>root.navigator&&root.navigator.clipboard,available=()=>true,unavailableReason=()=>'',unauthorized=()=>{}}){
@@ -78,7 +96,12 @@
     function back(){reset();}
 
     async function submit(){
-      if(submitting||!csrf())return false;
+      if(submitting)return false;
+      if(!csrf()){
+        els.error.textContent='未登录或登录已过期，请刷新页面并重新登录。';
+        els.error.classList.remove('hidden');
+        return false;
+      }
       const name=els.name.value;
       submitting=true;els.submit.disabled=true;els.error.classList.add('hidden');
       try{
@@ -90,8 +113,7 @@
         if(response.status===401){unauthorized();return false;}
         if(!response.ok){
           const error=await readError(response);
-          els.error.textContent=error.code==='install_unavailable'?(error.message||'此构建无法使用一键安装'):
-            error.code==='enrollment_limit'?'待使用的安装命令过多，请先作废或等待过期':'生成失败，请重试。';
+          els.error.textContent=createErrorText(response.status,error);
           els.error.classList.remove('hidden');
           els.submit.disabled=false;
           return false;
@@ -105,7 +127,7 @@
         timer=setTimer(render,1000);
         return true;
       }catch(error){
-        els.error.textContent='生成失败，请重试。';
+        els.error.textContent=error&&error.name==='TypeError'?'无法连接到 Server，请检查网络后重试。':'生成失败，请重试。';
         els.error.classList.remove('hidden');
         els.submit.disabled=false;
         return false;
@@ -163,6 +185,6 @@
     return {reset,close,chooseOneClick,chooseManual,submit,copy,revoke,back,tick:render,get hasCommand(){return Boolean(state&&!state.ended);}};
   }
 
-  const api={createController,countdownText};
+  const api={createController,countdownText,createErrorText};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.AgentEnrollment=api;
 })(globalThis);

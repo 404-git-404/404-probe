@@ -12,8 +12,9 @@ import (
 // credential: it is single-use, expires, is bound to the Agent name typed in the panel, and only
 // its SHA-256 is stored. Redeeming it creates the Agent and hands back that Agent's credential.
 const (
-	EnrollmentTokenTTL          = 30 * time.Minute
-	maxPendingEnrollmentTokens  = 32
+	EnrollmentTokenTTL = 30 * time.Minute
+	// MaxPendingEnrollmentTokens is how many unused, unrevoked, unexpired one-click tokens may exist at once.
+	MaxPendingEnrollmentTokens  = 10
 	enrollmentTokenRetention    = 7 * 24 * time.Hour
 	maxEnrollmentTokenNameBytes = 128
 )
@@ -66,7 +67,7 @@ func (s *Store) CreateAgentEnrollmentToken(ctx context.Context, id, name string,
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_enrollment_tokens WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at>?`, now.UnixMilli()).Scan(&pending); err != nil {
 		return time.Time{}, err
 	}
-	if pending >= maxPendingEnrollmentTokens {
+	if pending >= MaxPendingEnrollmentTokens {
 		return time.Time{}, ErrEnrollmentLimit
 	}
 	expiresAt = now.Add(EnrollmentTokenTTL)

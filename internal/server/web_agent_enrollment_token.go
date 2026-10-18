@@ -74,7 +74,7 @@ func (a *App) handleCreateWebAgentEnrollment(w http.ResponseWriter, r *http.Requ
 	expiresAt, err := a.store.CreateAgentEnrollmentToken(r.Context(), id, request.Name, tokenHash, now)
 	if err != nil {
 		if errors.Is(err, storage.ErrEnrollmentLimit) {
-			writeJobError(w, http.StatusTooManyRequests, "enrollment_limit", "too many pending enrollment commands; revoke or wait for one to expire")
+			writeJobError(w, http.StatusTooManyRequests, "enrollment_pending_limit", fmt.Sprintf("there are already %d unused install commands; use or revoke one, or wait for them to expire", storage.MaxPendingEnrollmentTokens))
 			return
 		}
 		a.logger.Error("store enrollment token", "error", err)
