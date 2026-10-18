@@ -461,17 +461,51 @@ func TestWebSessionIdleAbsoluteExpiryAndLimit(t *testing.T) {
 	}
 }
 
-func TestWebLoginRateLimitAndControlBoundary(t *testing.T) {
+func TestWebLoginWrongPasswordsNeverLockOut(t *testing.T) {
 	app, store, _ := newWebAuthenticationTestApp(t)
 	defer store.Close()
-	client := "192.0.2.10"
-	for index := 0; index < webLoginFailuresPerIP; index++ {
-		app.webAuth.recordLoginFailure(client, app.now())
+	origin := app.webAuth.publicOrigin.String()
+	for index := 0; index < 100; index++ {
+		response := postWebLogin(t, app, "wrong-password", origin)
+		if response.Code != http.StatusUnauthorized || response.Header().Get("Retry-After") != "" {
+			t.Fatalf("attempt %d: status=%d retry-after=%q", index, response.Code, response.Header().Get("Retry-After"))
+		}
 	}
-	if app.webAuth.beginPasswordCheck(client, app.now()) {
-		app.webAuth.endPasswordCheck()
-		t.Fatal("rate-limited client acquired password slot")
+	response := postWebLogin(t, app, "test-password", origin)
+	if response.Code != http.StatusSeeOther || sessionCookieFromResponse(t, app, response) == nil {
+		t.Fatalf("correct password after 100 failures: status=%d body=%s", response.Code, response.Body.String())
 	}
+}
+
+func TestWebLoginHashConcurrencyCapReturnsBusyWithoutHashing(t *testing.T) {
+	app, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	origin := app.webAuth.publicOrigin.String()
+	for index := 0; index < webPasswordCheckSlots; index++ {
+		if !app.webAuth.beginPasswordCheck() {
+			t.Fatalf("slot %d unavailable", index)
+		}
+	}
+	if app.webAuth.beginPasswordCheck() {
+		t.Fatal("a third slot was granted")
+	}
+	// Even the right password is refused while every slot is taken, and it is not queued.
+	response := postWebLogin(t, app, "test-password", origin)
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "1" || !strings.Contains(response.Body.String(), "busy") {
+		t.Fatalf("busy response status=%d retry-after=%q body=%s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+	}
+	if len(response.Result().Cookies()) == 0 {
+		t.Fatal("busy response must still hand out a fresh login token")
+	}
+	app.webAuth.endPasswordCheck()
+	response = postWebLogin(t, app, "test-password", origin)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("login after a slot was released: status=%d body=%s", response.Code, response.Body.String())
+	}
+	app.webAuth.endPasswordCheck()
+}
+
+func TestWebLoginControlBoundary(t *testing.T) {
 	controlToken, controlHash, err := auth.NewToken()
 	if err != nil {
 		t.Fatal(err)

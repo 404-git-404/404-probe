@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -22,6 +23,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -927,34 +929,67 @@ func runScheduleMutation(command string, args []string, now func() time.Time, ou
 
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }
 
+// minWebPasswordLength applies to newly set Web passwords only; existing hash files keep working.
+const minWebPasswordLength = 16
+
 func webCommand(args []string) error {
 	if len(args) != 1 || args[0] != "password-hash" {
 		return usageError()
 	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return errors.New("web password-hash requires an interactive terminal")
-	}
-	fmt.Fprint(os.Stderr, "Password: ")
-	password, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return errors.New("read password")
-	}
-	fmt.Fprint(os.Stderr, "Confirm password: ")
-	confirmation, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return errors.New("read password confirmation")
-	}
-	if subtle.ConstantTimeCompare(password, confirmation) != 1 {
-		return errors.New("passwords do not match")
+	return webPasswordHash(os.Stdin, os.Stdout, os.Stderr, term.IsTerminal(int(os.Stdin.Fd())))
+}
+
+// webPasswordHash prints the Argon2id hash of a new Web password. On a terminal it asks twice
+// without echo; otherwise it reads one line from stdin (the installer pipes a generated password
+// in so it never appears in an argument list or the environment).
+func webPasswordHash(stdin *os.File, stdout, stderr io.Writer, terminal bool) error {
+	var password []byte
+	if terminal {
+		fmt.Fprint(stderr, "Password: ")
+		first, err := term.ReadPassword(int(stdin.Fd()))
+		fmt.Fprintln(stderr)
+		if err != nil {
+			return errors.New("read password")
+		}
+		if err := checkWebPasswordLength(first); err != nil {
+			return err
+		}
+		fmt.Fprint(stderr, "Confirm password: ")
+		confirmation, err := term.ReadPassword(int(stdin.Fd()))
+		fmt.Fprintln(stderr)
+		if err != nil {
+			return errors.New("read password confirmation")
+		}
+		if subtle.ConstantTimeCompare(first, confirmation) != 1 {
+			return errors.New("passwords do not match")
+		}
+		password = first
+	} else {
+		line, err := io.ReadAll(io.LimitReader(stdin, 1025))
+		if err != nil {
+			return errors.New("read password")
+		}
+		if len(line) > 1024 {
+			return errors.New("password is too long")
+		}
+		password = bytes.TrimSuffix(bytes.TrimSuffix(line, []byte{10}), []byte{13})
+		if err := checkWebPasswordLength(password); err != nil {
+			return err
+		}
 	}
 	encoded, err := auth.HashPassword(password)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(os.Stdout, encoded)
+	_, err = fmt.Fprintln(stdout, encoded)
 	return err
+}
+
+func checkWebPasswordLength(password []byte) error {
+	if utf8.RuneCount(password) < minWebPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minWebPasswordLength)
+	}
+	return nil
 }
 
 func loadControlTokenHash(path string) ([]byte, error) {

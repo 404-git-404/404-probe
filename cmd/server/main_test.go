@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -970,5 +971,33 @@ func TestLoadControlTokenHashRejectsBroadUnixPermissions(t *testing.T) {
 	}
 	if _, err := loadControlTokenHash(path); err == nil {
 		t.Fatal("broad token file permissions accepted")
+	}
+}
+
+func TestWebPasswordHashReadsStdinAndRequiresSixteenCharacters(t *testing.T) {
+	run := func(input string) (string, error) {
+		reader, writer, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.WriteString(input); err != nil {
+			t.Fatal(err)
+		}
+		writer.Close()
+		defer reader.Close()
+		var output bytes.Buffer
+		err = webPasswordHash(reader, &output, io.Discard, false)
+		return output.String(), err
+	}
+	for _, short := range []string{"", "\n", "123456789012345\n", strings.Repeat("密", 15) + "\n"} {
+		if output, err := run(short); err == nil || output != "" {
+			t.Fatalf("short password %q accepted: output=%q err=%v", short, output, err)
+		}
+	}
+	for _, good := range []string{"1234567890123456\n", "1234567890123456", strings.Repeat("密", 16) + "\n"} {
+		output, err := run(good)
+		if err != nil || !strings.HasPrefix(output, "$argon2id$") {
+			t.Fatalf("good password %q: output=%q err=%v", good, output, err)
+		}
 	}
 }

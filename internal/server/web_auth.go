@@ -9,10 +9,8 @@ import (
 	"errors"
 	"html/template"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"sync"
 	"time"
 
@@ -28,10 +26,9 @@ const (
 	webLoginTokenTTL          = 10 * time.Minute
 	webLoginTokenLimit        = 128
 	webLoginBodyBytes         = 2 << 10
-	webLoginWindow            = 10 * time.Minute
-	webLoginFailuresPerIP     = 5
-	webLoginFailuresGlobal    = 50
-	webLoginIPLimit           = 1024
+	// At most this many password hashes run at once. A wrong password never locks anything: the
+	// only protection besides a strong password is this cap, which keeps the CPU from being filled.
+	webPasswordCheckSlots = 2
 )
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
@@ -40,6 +37,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <body><main class="login"><article class="login-card"><h1>404-probe</h1><p>管理员登录</p>
 {{if .Failed}}<div class="login-error" role="alert">登录失败，请稍后重试。</div>{{end}}
 {{if .Expired}}<div class="login-error" role="alert">登录请求已过期，请重新登录。</div>{{end}}
+{{if .Busy}}<div class="login-error" role="alert" data-error="busy">服务器正忙，请稍后重试。</div>{{end}}
 <form method="post" action="/login"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <label for="password">密码</label><input id="password" name="password" type="password" maxlength="1024" required autocomplete="current-password" autofocus>
 <button type="submit">登录</button></form></article></main></body></html>`))
@@ -59,8 +57,6 @@ type webAuthenticator struct {
 	mu            sync.Mutex
 	sessions      map[string]*webSession
 	loginTokens   map[string]webLoginToken
-	ipFailures    map[string][]time.Time
-	globalFailure []time.Time
 	passwordSlots chan struct{}
 }
 
@@ -92,6 +88,7 @@ type webLoginPageView struct {
 	CSRFToken string
 	Failed    bool
 	Expired   bool
+	Busy      bool
 }
 
 func WithWebAuthentication(config WebAuthenticationConfig) Option {
@@ -123,7 +120,7 @@ func newWebAuthenticator(config WebAuthenticationConfig, stores ...*storage.Stor
 	return &webAuthenticator{
 		passwordHash: config.PasswordHash, publicOrigin: origin, secureCookie: origin.Scheme == "https", store: store,
 		sessions: make(map[string]*webSession), loginTokens: make(map[string]webLoginToken),
-		ipFailures: make(map[string][]time.Time), passwordSlots: make(chan struct{}, 2),
+		passwordSlots: make(chan struct{}, webPasswordCheckSlots),
 	}, nil
 }
 
@@ -375,20 +372,17 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 		a.renderWebLogin(w, r, http.StatusForbidden, false, true)
 		return
 	}
-	client := webClientAddress(r.RemoteAddr)
-	if !a.webAuth.beginPasswordCheck(client, a.now()) {
-		w.Header().Set("Retry-After", "60")
-		a.renderWebLogin(w, r, http.StatusTooManyRequests, true, false)
+	if !a.webAuth.beginPasswordCheck() {
+		w.Header().Set("Retry-After", "1")
+		a.renderWebLoginPage(w, r, http.StatusTooManyRequests, webLoginPageView{Busy: true})
 		return
 	}
 	valid := auth.VerifyPassword(a.webAuth.passwordHash, []byte(r.PostForm.Get("password")))
 	a.webAuth.endPasswordCheck()
 	if !valid {
-		a.webAuth.recordLoginFailure(client, a.now())
 		a.renderWebLogin(w, r, http.StatusUnauthorized, true, false)
 		return
 	}
-	a.webAuth.recordLoginSuccess(client, a.now())
 	plain, _, err := a.webAuth.createSessionForTarget(a.now(), target.origin.String(), target.policyRev)
 	if err != nil {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not create session")
@@ -401,6 +395,10 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) renderWebLogin(w http.ResponseWriter, r *http.Request, status int, failed, expired bool) {
+	a.renderWebLoginPage(w, r, status, webLoginPageView{Failed: failed, Expired: expired})
+}
+
+func (a *App) renderWebLoginPage(w http.ResponseWriter, r *http.Request, status int, view webLoginPageView) {
 	target := webTargetFromContext(r)
 	if target == nil {
 		writeJobError(w, http.StatusForbidden, "forbidden", "Web request host is not allowed")
@@ -414,7 +412,8 @@ func (a *App) renderWebLogin(w http.ResponseWriter, r *http.Request, status int,
 	a.webAuth.setLoginCookie(w, token, a.now())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_ = loginTemplate.Execute(w, webLoginPageView{CSRFToken: token, Failed: failed, Expired: expired})
+	view.CSRFToken = token
+	_ = loginTemplate.Execute(w, view)
 }
 
 func (a *App) handleWebLogout(w http.ResponseWriter, r *http.Request) {
@@ -470,17 +469,6 @@ func exactWebForm(values url.Values, names ...string) bool {
 func webSessionFromContext(ctx context.Context) *webSession {
 	session, _ := ctx.Value(webSessionContextKey{}).(*webSession)
 	return session
-}
-
-func webClientAddress(remote string) string {
-	host, _, err := net.SplitHostPort(remote)
-	if err == nil && host != "" {
-		return host
-	}
-	if remote == "" {
-		return "unknown"
-	}
-	return remote
 }
 
 func (w *webAuthenticator) sameOriginRequest(r *http.Request) bool {
@@ -624,21 +612,10 @@ func (w *webAuthenticator) shutdown() {
 	}
 	clear(w.sessions)
 	clear(w.loginTokens)
-	clear(w.ipFailures)
-	w.globalFailure = nil
 }
 
-func (w *webAuthenticator) beginPasswordCheck(client string, now time.Time) bool {
-	w.mu.Lock()
-	w.pruneLoginFailuresLocked(now)
-	allowed := len(w.globalFailure) < webLoginFailuresGlobal && len(w.ipFailures[client]) < webLoginFailuresPerIP
-	if _, exists := w.ipFailures[client]; !exists && len(w.ipFailures) >= webLoginIPLimit {
-		allowed = false
-	}
-	w.mu.Unlock()
-	if !allowed {
-		return false
-	}
+// beginPasswordCheck takes a hashing slot without waiting; false means every slot is busy.
+func (w *webAuthenticator) beginPasswordCheck() bool {
 	select {
 	case w.passwordSlots <- struct{}{}:
 		return true
@@ -648,39 +625,6 @@ func (w *webAuthenticator) beginPasswordCheck(client string, now time.Time) bool
 }
 
 func (w *webAuthenticator) endPasswordCheck() { <-w.passwordSlots }
-
-func (w *webAuthenticator) recordLoginFailure(client string, now time.Time) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.pruneLoginFailuresLocked(now)
-	w.ipFailures[client] = append(w.ipFailures[client], now)
-	w.globalFailure = append(w.globalFailure, now)
-}
-
-func (w *webAuthenticator) recordLoginSuccess(client string, now time.Time) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.pruneLoginFailuresLocked(now)
-	delete(w.ipFailures, client)
-}
-
-func (w *webAuthenticator) pruneLoginFailuresLocked(now time.Time) {
-	cutoff := now.Add(-webLoginWindow)
-	w.globalFailure = recentWebFailures(w.globalFailure, cutoff)
-	for client, failures := range w.ipFailures {
-		failures = recentWebFailures(failures, cutoff)
-		if len(failures) == 0 {
-			delete(w.ipFailures, client)
-		} else {
-			w.ipFailures[client] = failures
-		}
-	}
-}
-
-func recentWebFailures(values []time.Time, cutoff time.Time) []time.Time {
-	index := sort.Search(len(values), func(index int) bool { return values[index].After(cutoff) })
-	return values[index:]
-}
 
 func (w *webAuthenticator) pruneSessionsLocked(now time.Time) {
 	for _, session := range w.sessions {
