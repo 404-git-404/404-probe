@@ -69,8 +69,10 @@ func asManualLines(t *testing.T, s *Store, id string, slots ...string) {
 
 func rerunMigration31(t *testing.T, s *Store, path string) *Store {
 	t.Helper()
-	if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version>=31`); err != nil {
-		t.Fatal(err)
+	for _, statement := range []string{`DELETE FROM schema_migrations WHERE version>=31`, `DROP TABLE agent_enrollment_tokens`} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -179,7 +181,7 @@ func TestMigration31TurnsManualLinesIntoUnsetAndKeepsHistory(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM quality_targets t JOIN quality_slots s ON s.target_id=t.id WHERE t.payload LIKE '%"source":"manual"%'`).Scan(&manualLeft); err != nil || manualLeft != 0 {
 		t.Fatalf("manual targets still scheduled: %d err=%v", manualLeft, err)
 	}
-	if version, err := s.SchemaVersion(ctx); err != nil || version != 31 {
+	if version, err := s.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema=%d err=%v", version, err)
 	}
 }

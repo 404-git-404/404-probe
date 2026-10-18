@@ -107,6 +107,8 @@ func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	a.qualityRoutes(mux)
 	mux.HandleFunc("POST /api/v1/report", a.handleReport)
+	mux.HandleFunc("POST /api/v1/agent/enroll", a.handleAgentEnroll)
+	mux.HandleFunc("/api/v1/agent/enroll", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/outbounds", a.handleAgentOutbounds)
 	mux.HandleFunc("/api/v1/agent/outbounds", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/security", a.handleAgentSecurity)

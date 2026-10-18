@@ -107,6 +107,7 @@ func TestPublicEgressMigrationLeavesExistingAgentsDisabled(t *testing.T) {
 	for _, statement := range []string{
 		`DROP INDEX idx_probe_jobs_one_pending_public_egress`,
 		`DROP TABLE agent_public_egress_control`,
+		`DROP TABLE agent_enrollment_tokens`,
 		`DELETE FROM schema_migrations WHERE version>=30`,
 	} {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {

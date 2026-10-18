@@ -143,6 +143,8 @@ func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	mux.Handle("GET /api/v1/web/session", a.requireWebSession(http.HandlerFunc(a.handleWebSession), true))
 	mux.Handle("GET /api/v1/web/version", a.requireWebSession(http.HandlerFunc(a.handleGetWebVersion), true))
 	mux.Handle("POST /api/v1/web/agents", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebAgent)))
+	mux.Handle("POST /api/v1/web/agent-enrollments", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebAgentEnrollment)))
+	mux.Handle("POST /api/v1/web/agent-enrollments/{enrollment_id}/revoke", a.requireWebMutation(http.HandlerFunc(a.handleRevokeWebAgentEnrollment)))
 	mux.Handle("GET /api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgents), true))
 	mux.Handle("/api/v1/web/agents", a.requireWebSession(http.HandlerFunc(a.handleWebAgentCollectionMethodNotAllowed), true))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/history", a.requireWebSession(http.HandlerFunc(a.handleGetWebAgentHistory), true))
