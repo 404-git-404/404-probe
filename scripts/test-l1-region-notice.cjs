@@ -75,3 +75,12 @@ test('M3: both pages show an unavailable security audit with its reason, not as 
     assert.ok(text.includes('不可用：') && text.includes('unavailableText'), file);
   }
 });
+
+test('N3: the history page and the dialog share the neutral no-sing-box-logs wording', () => {
+  for (const file of ['history.js', 'device-details.js']) {
+    const text = fs.readFileSync(require.resolve('../web/static/' + file), 'utf8');
+    assert.ok(text.includes('未发现 sing-box 日志（本机可能未安装或未运行 sing-box）'), file);
+    assert.ok(text.includes("'no_sing_box_logs'"), file);
+    assert.ok(!text.includes('no_journal_entries'), file + ' must not special-case the legacy wire form; the Server normalises it');
+  }
+});

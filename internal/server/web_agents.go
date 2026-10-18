@@ -52,6 +52,16 @@ type webManagementView struct {
 	CountryCodeLookup bool `json:"country_code_lookup"`
 }
 
+// A local audit that found no sing-box log entries at all means sing-box is probably not installed or not
+// running here: a neutral observation, not a failure. Agents before v1.0.4 report it as failed/no_journal_entries;
+// the Web view presents both forms the same way (stored data and the Agent protocol are unchanged).
+func neutralSecurityOutcome(status protocol.SecurityStatus, reason string) (protocol.SecurityStatus, string) {
+	if status == protocol.SecurityStatusFailed && reason == "no_journal_entries" {
+		return protocol.SecurityStatusNoData, "no_sing_box_logs"
+	}
+	return status, reason
+}
+
 type webSecurityView struct {
 	Supported           bool                    `json:"supported"`
 	Status              protocol.SecurityStatus `json:"status"`
@@ -324,13 +334,15 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		Stale: record.Agent.Revoked || record.Agent.DisabledAt != nil || !record.Online}
 	if view.Security.Supported && record.State != nil && capability.Epoch == record.State.Epoch && capability.SessionID == record.State.SessionID {
 		updated := capability.UpdatedAt
-		view.Security.Status, view.Security.Reason, view.Security.UpdatedAt = capability.Status, capability.Reason, &updated
+		view.Security.Status, view.Security.Reason = neutralSecurityOutcome(capability.Status, capability.Reason)
+		view.Security.UpdatedAt = &updated
 		current, err := a.store.CurrentSecurity(ctx, agentID, capability, a.now())
 		if err != nil {
 			return webAgentDetailView{}, err
 		}
 		if current != nil {
 			batch := current.Batch
+			batch.Status, batch.Reason = neutralSecurityOutcome(batch.Status, batch.Reason)
 			view.Security.Current = &batch
 			view.Security.DeliveryGap = current.DeliveryGap
 			view.Security.PreviousCollectedAt = current.PreviousCollectedAt
@@ -399,7 +411,9 @@ func (a *App) handleGetWebAgentHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	security := make([]webSecurityRecordView, 0, len(securityRecords))
 	for _, record := range securityRecords {
-		security = append(security, webSecurityRecordView{SecurityBatch: record.Batch, DeliveryGap: record.DeliveryGap, PreviousCollectedAt: record.PreviousCollectedAt})
+		batch := record.Batch
+		batch.Status, batch.Reason = neutralSecurityOutcome(batch.Status, batch.Reason)
+		security = append(security, webSecurityRecordView{SecurityBatch: batch, DeliveryGap: record.DeliveryGap, PreviousCollectedAt: record.PreviousCollectedAt})
 	}
 	writeJSON(w, http.StatusOK, webAgentHistoryView{AgentID: agentID, Hours: hours, Points: views, Security: security})
 }

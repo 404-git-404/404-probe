@@ -221,8 +221,9 @@ function renderSecurity(agent) {
 	const labels = {unavailable: 'Setup required', no_data: '等待首次本地审计', complete: '完整', partial: '部分结果', failed: '采集失败'};
 	const unavailableReasons = {sandbox_unavailable: 'systemd 沙箱不可用（容器或受限环境），安全观察无法运行', collector_start_failed: '本地安全采集服务启动失败'};
 	const unavailableText = security.status === 'unavailable' ? unavailableReasons[security.reason] : '';
-	const statusLabel = unavailableText ? `不可用：${unavailableText}` : security.status === 'unavailable' && security.reason === 'platform_unsupported' ? '此平台暂不支持（v1.1）' : labels[security.status] || security.status;
-	securityState.textContent = `${statusLabel}${security.stale ? ' · stale' : ''}${security.reason && !unavailableText ? ` · ${security.reason}` : ''}`;
+	const neutral = security.status === 'no_data' && security.reason === 'no_sing_box_logs' ? '未发现 sing-box 日志（本机可能未安装或未运行 sing-box）' : '';
+	const statusLabel = neutral || (unavailableText ? `不可用：${unavailableText}` : security.status === 'unavailable' && security.reason === 'platform_unsupported' ? '此平台暂不支持（v1.1）' : labels[security.status] || security.status);
+	securityState.textContent = `${statusLabel}${security.stale ? ' · stale' : ''}${security.reason && !unavailableText && !neutral ? ` · ${security.reason}` : ''}`;
 	const batch = security.current;
 	if (!batch) {
 	  securityWindow.textContent = '';

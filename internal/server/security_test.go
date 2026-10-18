@@ -126,3 +126,70 @@ func TestSecurityUnavailableForTheCollectorSandboxIsStoredAndShownWithItsReason(
 		t.Fatalf("unknown reason status=%d", response.Code)
 	}
 }
+
+func TestSecurityNoJournalEntriesIsPresentedAsANeutralObservation(t *testing.T) {
+	for _, legacyBatch := range []bool{false, true} {
+		app, store, agentID, token := testApp(t)
+		now := time.Now().Truncate(time.Second)
+		app.now = func() time.Time { return now }
+		report := reportFor(agentID, 1)
+		report.CollectedAt = now.UnixMilli()
+		if response := postReport(t, app, token, report); response.Code != http.StatusOK {
+			t.Fatalf("report status=%d", response.Code)
+		}
+		submission := protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: 1, SessionID: "session", Status: protocol.SecurityStatusFailed, Reason: "no_journal_entries"}
+		if legacyBatch {
+			start, end := now.Add(-time.Hour).UnixMilli(), now.Add(-time.Minute).UnixMilli()
+			batch := protocol.SecurityBatch{BatchID: "cccccccccccccccccccccccccccccccc", WindowStart: start, WindowEnd: end, CollectedAt: now.UnixMilli(),
+				Status: protocol.SecurityStatusFailed, Reason: "no_journal_entries", Sources: []protocol.SecuritySource{}}
+			submission.Batch = &batch
+		}
+		body, _ := json.Marshal(submission)
+		if response := postSecurityRequest(app, token, body); response.Code != http.StatusOK {
+			t.Fatalf("batch=%v submit status=%d body=%s", legacyBatch, response.Code, response.Body.String())
+		}
+		var view struct {
+			Security struct {
+				Status  string `json:"status"`
+				Reason  string `json:"reason"`
+				Current *struct {
+					Status string `json:"status"`
+					Reason string `json:"reason"`
+				} `json:"current"`
+			} `json:"security"`
+		}
+		response := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/agents/"+agentID)
+		if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		if view.Security.Status != "no_data" || view.Security.Reason != "no_sing_box_logs" || strings.Contains(response.Body.String(), "no_journal_entries") && !legacyBatch {
+			t.Fatalf("batch=%v security=%+v body=%s", legacyBatch, view.Security, response.Body.String())
+		}
+		if legacyBatch && (view.Security.Current == nil || view.Security.Current.Status != "no_data" || view.Security.Current.Reason != "no_sing_box_logs") {
+			t.Fatalf("current batch not normalised: %s", response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), "no_journal_entries") {
+			t.Fatalf("the failure wording leaked into the Web view: %s", response.Body.String())
+		}
+		history := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/agents/"+agentID+"/history?hours=24")
+		if strings.Contains(history.Body.String(), "no_journal_entries") || legacyBatch && !strings.Contains(history.Body.String(), "no_sing_box_logs") {
+			t.Fatalf("history not normalised: %s", history.Body.String())
+		}
+		store.Close()
+	}
+}
+
+func TestOtherSecurityFailuresKeepTheirWebStatus(t *testing.T) {
+	for _, reason := range []string{"journal_read_failed", "journal_timeout", "invalid_export"} {
+		status, got := neutralSecurityOutcome(protocol.SecurityStatusFailed, reason)
+		if status != protocol.SecurityStatusFailed || got != reason {
+			t.Fatalf("%s became %s/%s", reason, status, got)
+		}
+	}
+	if status, reason := neutralSecurityOutcome(protocol.SecurityStatusComplete, "no_journal_entries"); status != protocol.SecurityStatusComplete || reason != "no_journal_entries" {
+		t.Fatalf("only failed reports are reinterpreted: %s/%s", status, reason)
+	}
+	if status, reason := neutralSecurityOutcome(protocol.SecurityStatusNoData, "awaiting_first_collection"); status != protocol.SecurityStatusNoData || reason != "awaiting_first_collection" {
+		t.Fatalf("%s/%s", status, reason)
+	}
+}
