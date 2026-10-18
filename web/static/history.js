@@ -10,11 +10,6 @@ const googleValues = document.querySelector('#google-status-values');
 const googleChecked = document.querySelector('#google-status-checked');
 const googleRerun = document.querySelector('#google-status-rerun');
 const googleFeedback = document.querySelector('#google-status-feedback');
-const egressSwitch = document.querySelector('#public-egress-switch');
-const egressButton = document.querySelector('#public-egress-check');
-const egressNote = document.querySelector('#public-egress-note');
-const egressLines = document.querySelector('#public-egress-lines');
-const egressFeedback = document.querySelector('#public-egress-feedback');
 const securityState = document.querySelector('#security-state');
 const securityWindow = document.querySelector('#security-window');
 const securitySources = document.querySelector('#security-sources');
@@ -202,79 +197,18 @@ googleRerun.addEventListener('click', async () => {
   }
 });
 
-function renderPublicEgress(agent) {
-  const panel = PublicEgressCheck.view(agent);
-  egressSwitch.checked = panel.enabled;
-  egressSwitch.disabled = !mutationCSRFToken || !agent || panel.switchDisabled;
-  egressButton.disabled = !mutationCSRFToken || panel.buttonDisabled;
-  egressButton.textContent = panel.buttonLabel;
-  egressNote.textContent = panel.note;
-  egressLines.replaceChildren(...panel.lines.map(line => { const row = document.createElement('div'); row.textContent = line; return row; }));
-}
-
-async function postPublicEgress(path, body) {
-  const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(id)}${path}`, {
-    method: 'POST', cache: 'no-store',
-    headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken}, body,
-  });
-  if (response.status === 401) { location.assign('/login'); return null; }
-  let payload = null;
-  try { payload = await response.json(); } catch (error) { /* keep null */ }
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || '请求失败');
-    error.code = payload?.error?.code; error.nextAllowedAt = payload?.next_allowed_at;
-    throw error;
-  }
-  return payload;
-}
-
-egressSwitch.addEventListener('change', async () => {
-  if (!currentAgent || !mutationCSRFToken) return;
-  const wanted = egressSwitch.checked;
-  const mutation = agentState.beginMutation(id, ['egress']);
-  if (!mutation) { egressSwitch.checked = !wanted; return; }
-  egressSwitch.disabled = true;
-  egressFeedback.textContent = '';
-  try {
-    const result = await postPublicEgress('/public-egress', JSON.stringify({enabled: wanted}));
-    if (!result) return;
-    const {created, ...check} = result;
-    agentState.finishMutation(mutation, {public_egress_check: check});
-    currentAgent = agentState.agents.get(id);
-    if (wanted && !created) egressFeedback.textContent = check.cooldown_until ? '冷却期内重新打开不会立即检测，将按计划检测。' : '';
-  } catch (error) {
-    egressFeedback.textContent = error.message || '无法修改公网 IP 检测开关';
-  } finally {
-    agentState.finishMutation(mutation);
-    reconciliation.notify(id);
-    renderPublicEgress(agentState.agents.get(id));
-  }
+// The panel is shared with the device-details dialog. Revealed addresses stay in memory only.
+const egressPanel = PublicEgressCheck.createPanel({
+  agentId: id, csrf: () => mutationCSRFToken, idPrefix: 'history-egress',
+  begin: () => agentState.beginMutation(id, ['egress']),
+  finish: (token, patch) => {
+    const committed = agentState.finishMutation(token, patch);
+    if (committed) { currentAgent = agentState.agents.get(id); reconciliation.notify(id); renderPublicEgress(currentAgent); }
+    return committed;
+  },
 });
-
-egressButton.addEventListener('click', async () => {
-  if (!currentAgent || !mutationCSRFToken || egressButton.disabled) return;
-  const mutation = agentState.beginMutation(id, ['egress']);
-  if (!mutation) return;
-  egressButton.disabled = true;
-  egressFeedback.textContent = '';
-  try {
-    const result = await postPublicEgress('/public-egress/check', '{}');
-    if (!result) return;
-    agentState.finishMutation(mutation, {public_egress_check: {...agentState.agents.get(id)?.public_egress_check, pending: true}});
-    currentAgent = agentState.agents.get(id);
-  } catch (error) {
-    if (error.code === 'cooldown' && error.nextAllowedAt) {
-      agentState.finishMutation(mutation, {public_egress_check: {...agentState.agents.get(id)?.public_egress_check, cooldown_until: error.nextAllowedAt}});
-      currentAgent = agentState.agents.get(id);
-    } else {
-      egressFeedback.textContent = error.message || '检测请求失败';
-    }
-  } finally {
-    agentState.finishMutation(mutation);
-    reconciliation.notify(id);
-    renderPublicEgress(agentState.agents.get(id));
-  }
-});
+document.querySelector('#public-egress-mount').append(egressPanel.node);
+function renderPublicEgress(agent) { egressPanel.update(agent); }
 
 function renderSecurity(agent) {
 	const security = agent?.security;

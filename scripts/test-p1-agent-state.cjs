@@ -95,6 +95,7 @@ function dashboard(file = 'app.js', readTimeout = 1000) {
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/plan-renewal.js'),'utf8'),sandbox,{filename:'plan-renewal.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/overview.js'),'utf8'),sandbox,{filename:'overview.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/plan-units.js'),'utf8'),sandbox,{filename:'plan-units.js'});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/public-egress-check.js'),'utf8'),sandbox,{filename:'public-egress-check.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',file),'utf8'),sandbox,{filename:file});
   if(file === 'app.js') vm.runInContext("agentState.endRefresh(agentState.beginRefresh()); var actualDashboardRender=render; render = () => {}; mutationCSRFToken = 'test-token';",sandbox);
   else vm.runInContext("loadController.abort(); renderCurrentAgent = () => {currentAgent=agentState.agents.get(id);}; renderOutbounds=()=>{};renderAgentRuntime=()=>{};renderGoogleStatus=()=>{}; mutationCSRFToken='test-token';",sandbox);

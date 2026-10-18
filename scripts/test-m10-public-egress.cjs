@@ -78,7 +78,7 @@ function loadApp() {
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
   vm.createContext(sandbox);
-  for (const file of ['management.js', 'selector.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'resource-history.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js', 'plan-units.js', 'youtube-status.js', 'latency-mini.js', 'app.js'])
+  for (const file of ['management.js', 'selector.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'resource-history.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js', 'plan-units.js', 'youtube-status.js', 'public-egress-check.js', 'latency-mini.js', 'app.js'])
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../web/static', file), 'utf8'), sandbox);
   const render = input => {sandbox.input = input; return vm.runInContext('(()=>{const e=createPublicEgress("a");e.update(input);return e.element;})()', sandbox);};
   render.live = () => {const e = vm.runInContext('createPublicEgress("a")', sandbox); return input => {sandbox.live = e; sandbox.input = input; vm.runInContext('live.update(input)', sandbox); return e.element;};};
@@ -95,7 +95,9 @@ test('M10 UI: fresh available families are shown', () => {
   assert.deepEqual(shown(render(card({ipv4: fresh('ipv4', '8.8.8.8')}))), ['V4']);
   const el = render(card({ipv6: fresh('ipv6', '2001:db8::1')}));
   assert.deepEqual(shown(el), ['V6']);
-  assert.match(el.children[0].attributes['aria-label'], /2001:db8::1/);
+  assert.match(el.children[0].attributes['aria-label'], /2001:db8:…/);
+  assert.doesNotMatch(el.children[0].attributes['aria-label'], /2001:db8::1/, 'aria-label shows the half-hidden address only');
+  assert.doesNotMatch(el.children[1].textContent, /2001:db8::1/, 'tooltip shows the half-hidden address only');
 });
 
 test('M10 UI: unavailable, unknown, stale or empty-IP families are hidden and the container is empty', () => {
@@ -133,12 +135,13 @@ test('M10 UI: an unchanged set of families keeps its nodes in the DOM and refres
   const original = el.replaceChildren.bind(el);
   el.replaceChildren = (...children) => {rebuilt++; original(...children);};
   const v4 = el.children[0], tip = el.children[1];
-  update(card({ipv4: fresh('ipv4', '8.8.4.4')}));
+  update(card({ipv4: fresh('ipv4', '9.9.4.4')}));
   assert.equal(rebuilt, 0);
   assert.equal(el.children[0], v4);
-  assert.match(tip.textContent, /8\.8\.4\.4/);
-  assert.match(v4.attributes['aria-label'], /8\.8\.4\.4/);
-  update(card({ipv4: fresh('ipv4', '8.8.4.4'), ipv6: fresh('ipv6', '2001:db8::1')}));
+  assert.match(tip.textContent, /9\.9\.\*\.\*/);
+  assert.match(v4.attributes['aria-label'], /9\.9\.\*\.\*/);
+  assert.doesNotMatch(tip.textContent + v4.attributes['aria-label'], /9\.9\.4\.4/);
+  update(card({ipv4: fresh('ipv4', '9.9.4.4'), ipv6: fresh('ipv6', '2001:db8::1')}));
   assert.equal(rebuilt, 1);
   assert.equal(el.children[0], v4);
 });
@@ -147,7 +150,7 @@ test('M10 UI: the tooltip shows a reason only when it is verified', () => {
   const text = reason => render(card({ipv4: fresh('ipv4', '8.8.8.8', {reason})})).children[1].textContent;
   assert.match(text('verified'), /已验证/);
   assert.doesNotMatch(text('network'), /尚无可靠结果|已验证/);
-  assert.match(text('network'), /8\.8\.8\.8 · .*；Agent/);
+  assert.match(text('network'), /8\.8\.\*\.\* · .*；Agent/);
 });
 
 // ---------- detail page: switch and "check now" button ----------
@@ -207,7 +210,8 @@ test('M10 panel: an old Agent is unsupported, while the switch and any legacy re
   assert.equal(view.note, 'Agent 版本不支持，升级 Agent 后可用');
   assert.equal(view.buttonDisabled, true);
   assert.equal(view.switchDisabled, false);
-  assert.match(view.lines.join('\n'), /IPv4：8\.8\.8\.8/);
+  assert.match(view.lines.join('\n'), /IPv4：8\.8\.\*\.\*/);
+  assert.doesNotMatch(view.lines.join('\n'), /8\.8\.8\.8/);
 });
 
 test('M10 panel: offline, paused and revoked Agents', () => {
@@ -224,22 +228,28 @@ test('M10 panel: results, last check and next check are shown only while enabled
   const agent = panelAgent({next_check_at: T0 + 604800000}, {state: {public_egress: {ipv4: fresh, ipv6: {status: 'unavailable', checked_at: T0 - 60000, valid_until: T0 + 1}}}});
   const text = PublicEgressCheck.view(agent, T0).lines.join('\n');
   assert.match(text, /公网 IP 检测：已启用/);
-  assert.match(text, /IPv4：8\.8\.8\.8/);
+  assert.match(text, /IPv4：8\.8\.\*\.\*/);
   assert.match(text, /IPv6：不可用/);
   assert.match(text, /上次检测：/);
   assert.match(text, /下次检测：/);
   const stale = panelAgent({}, {state: {public_egress: {ipv4: {...fresh, stale: true}, ipv6: {status: 'unknown', checked_at: 0}}}});
-  assert.match(PublicEgressCheck.view(stale, T0).lines.join('\n'), /IPv4：旧数据 8\.8\.8\.8/);
+  assert.match(PublicEgressCheck.view(stale, T0).lines.join('\n'), /IPv4：旧数据 8\.8\.\*\.\*/);
+  assert.match(PublicEgressCheck.view(stale, T0, {reveal: true}).lines.join('\n'), /IPv4：旧数据 8\.8\.8\.8/);
   assert.match(PublicEgressCheck.view(stale, T0).lines.join('\n'), /IPv6：尚未检测/);
   assert.doesNotMatch(PublicEgressCheck.view(panelAgent({enabled: false}), T0).lines.join('\n'), /IPv4/);
 });
 
-test('M10 panel: the page wires the switch and the button to the two endpoints with the CSRF token', () => {
-  const history = fs.readFileSync(require.resolve('../web/static/history.js'), 'utf8');
-  const html = fs.readFileSync(require.resolve('../web/static/history.html'), 'utf8');
-  for (const id of ['public-egress-switch', 'public-egress-check', 'public-egress-note', 'public-egress-lines']) assert.ok(html.includes(`id="${id}"`), id);
-  assert.ok(html.includes('src="/public-egress-check.js"'));
-  assert.ok(history.includes("'/public-egress'") && history.includes("'/public-egress/check'"));
-  assert.ok(history.includes("'X-CSRF-Token': mutationCSRFToken"));
-  assert.ok(history.includes('JSON.stringify({enabled: wanted})'));
+test('M10 panel: both pages build the one shared panel, which posts to the two endpoints with the CSRF token', () => {
+  const read = file => fs.readFileSync(require.resolve('../web/static/' + file), 'utf8');
+  const history = read('history.js'), html = read('history.html'), app = read('app.js'), shared = read('public-egress-check.js'), index = read('index.html');
+  assert.ok(html.includes('id="public-egress-mount"') && html.includes('src="/public-egress-check.js"'));
+  assert.ok(index.includes('src="/public-egress-check.js"') && index.indexOf('public-egress-check.js') < index.indexOf('/app.js'));
+  assert.ok(history.includes('PublicEgressCheck.createPanel') && app.includes('PublicEgressCheck.createPanel'));
+  assert.ok(app.includes('detailPanel.append(detailActions, egressPanel.node'), 'the panel sits in the device-details management tab');
+  assert.ok(app.includes('conceal: () =>') && read('device-details.js').includes('conceal();leave()'));
+  assert.ok(shared.includes("'/public-egress'") && shared.includes("'/public-egress/check'") && /'X-CSRF-Token':\s*csrf\(\)/.test(shared));
+  assert.ok(shared.includes('JSON.stringify({enabled:wanted})'));
+  // No copy of the state logic in the pages and nothing is persisted.
+  for (const text of [history, app, shared]) assert.doesNotMatch(text.replace(/localStorage\.[a-z]+\([^)]*(sidebar|view|mode)[^)]*\)/g, ''), /egress[^\n]*(localStorage|sessionStorage|document\.cookie)/i);
+  assert.doesNotMatch(shared, /localStorage|sessionStorage|document\.cookie|indexedDB/);
 });
