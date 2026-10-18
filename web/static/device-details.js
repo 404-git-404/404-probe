@@ -5,7 +5,7 @@
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   function create({document:doc=root.document,state=root.AgentState,agents,coordinator,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Plot=root.uPlot,Resize=root.ResizeObserver,
-    management=()=>null,resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},network=()=>null}={}) {
+    management=()=>null,resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},network=()=>null,conceal=()=>{}}={}) {
     const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={};
     let current=null,tab='management',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
     let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,selected=0,networkIdentity=null,networkPending=false;
@@ -71,12 +71,12 @@
       else {network()?.ensureHistoryTargets?.(current);populateNetworkTargets();if(shouldRestoreNetwork&&networkIdentity)restoreNetwork();else if(!networkIdentity)networkChart.replaceChildren(el('p','','暂无有效网络历史目标；请检查现有地区配置。'));}
     }
     function open(id,key='management',trigger=null,exact=null){if(dead||!agents.has(id))return;
-      if(current!==id){leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';rangeError.textContent='';networkIdentity=null;current=id;}
+      if(current!==id){conceal();leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';rangeError.textContent='';networkIdentity=null;current=id;}
       if(trigger||current!==origin?.id)origin={node:trigger,id,key:trigger?.dataset?.focusKey||'manage'};
       const opening=!dialog.open;if(opening){opened=true;scroll=[root.scrollX||0,root.scrollY||0];overflow=doc.body.style.overflow;doc.body.style.overflow='hidden';dialog.showModal();}
       if(exact)networkIdentity={...exact};updateTitle();activate(key,{restoreNetwork:!exact});if(opening)closeButton.focus({preventScroll:true});
     }
-    function close({restoreFocus=true}={}){if(!opened)return;opened=false;leave();release();pending=false;data=null;error='';if(dialog.open)dialog.close();doc.body.style.overflow=overflow;
+    function close({restoreFocus=true}={}){if(!opened)return;opened=false;conceal();leave();release();pending=false;data=null;error='';if(dialog.open)dialog.close();doc.body.style.overflow=overflow;
       if(restoreFocus&&origin&&agents.has(origin.id)){const trigger=origin.node?.isConnected?origin.node:doc.querySelector(`.agent-card[data-agent-id="${origin.id}"] [data-focus-key="${origin.key}"]`);trigger?.focus({preventScroll:true});}
       if(scroll)root.scrollTo?.(...scroll);}
     function apply(next){release();query=next;data=null;error='';pending=false;renderPlot();request();}

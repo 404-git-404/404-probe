@@ -114,3 +114,22 @@ test('P5a2 combined actual Details + N3 host exact V6 ratio hidden/visible once,
  dialog.querySelector('#details-tab-network').dispatch('click');await flush();assert.equal(ui.snapshot().history,null);assert.ok(details.networkContainer().children[0].textContent.includes('不可用'));
  details.shutdown();ui.close();queue.close();
 });
+
+test('J2 closing the dialog or switching device returns revealed IP addresses to half hidden',()=>{
+ const {doc,dialog,Element}=dom(),queue=C.coordinator(),PE=require('../web/static/public-egress-check.js');
+ const agents=new Map([[id,{agent_id:id,name:'设备',detail_loaded:true}],[other,{agent_id:other,name:'另一个',detail_loaded:true}]]);
+ const panel=PE.createPanel({document:doc,agentId:id,csrf:()=>'t',now:()=>now});
+ const pane=new Element('section');pane.append(panel.node);
+ const agent=agent_id=>({agent_id,online:true,public_egress_check:{enabled:true,supported:true,pending:false},state:{public_egress:{ipv4:{status:'available',ip:'203.0.113.9',checked_at:now-1000,valid_until:now+1e9},ipv6:{status:'unknown',checked_at:now-1000}}}});
+ const details=D.create({document:doc,state:S,agents,coordinator:queue,Plot:class{},Resize:null,management:()=>pane,conceal:()=>panel.conceal(),fetcher:()=>new Promise(()=>{})});
+ try{
+  panel.update(agent(id));details.open(id,'management');
+  const eye=panel.elements.eye,ipv4=()=>panel.elements.rows.ipv4.text.textContent;
+  assert.equal(ipv4(),'IPv4：203.0.*.*');eye.dispatch('click');assert.equal(ipv4(),'IPv4：203.0.113.9');
+  details.update(agents.get(id));assert.equal(ipv4(),'IPv4：203.0.113.9','a refresh while open keeps the choice');
+  details.close();assert.equal(ipv4(),'IPv4：203.0.*.*','closing conceals');
+  details.open(id,'management');assert.equal(ipv4(),'IPv4：203.0.*.*','reopening starts half hidden');
+  eye.dispatch('click');assert.equal(ipv4(),'IPv4：203.0.113.9');
+  details.open(other,'management');assert.equal(ipv4(),'IPv4：203.0.*.*','another device starts half hidden');
+ }finally{details.shutdown();queue.close();}
+});

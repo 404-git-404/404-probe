@@ -53,6 +53,8 @@ const overview = Overview.create({size:CardMetrics.size,deadline:planDeadline});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   network: () => networkQuality, identity: agent => countryMark(agent?.country_code,agent?.country_source),
   management: agent => agentCards.get(agent.agent_id)?.detailPanel,
+  // Revealed IP addresses never outlive the dialog or a switch to another Agent.
+  conceal: () => { for (const view of agentCards.values()) view.egressPanel?.conceal(); },
   resourceFacts: resourceFactsFor,
   hydrate: id => { if(agents.has(id)&&!agents.get(id).detail_loaded)reconciliation.notify(id); }});
 const revokedAgentIDs = agentState.revokedAgentIDs;
@@ -1192,7 +1194,7 @@ function createPublicEgress(agentID) {
       if(!available||stale)continue;
       const at=new Date(observation.checked_at).toLocaleString();
       const history=observation.last_success;
-      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${observation.ip} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+history.ip+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
+      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${PublicEgressCheck.maskIP(observation.ip)} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+PublicEgressCheck.maskIP(history.ip)+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
       setCardText(tip,full);item.setAttribute('aria-label',full);
       item.dataset.status=status;item.dataset.stale='false';
       shown.push(item,tip);families.push(family);
@@ -1397,7 +1399,14 @@ function createAgentCard(initialAgent) {
     resetFeedback.textContent = trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量';
     detailActions.append(resetTraffic,resetFeedback);
     const countryControls = countryCodeLookupControls(agent);
-    detailPanel.append(detailActions, countryControls, management);
+    // Public IP detection lives in the same panel as the other device management actions.
+    const egressPanel = PublicEgressCheck.createPanel({
+      agentId: agent.agent_id, csrf: () => mutationCSRFToken, idPrefix: 'detail-egress',
+      begin: () => agentState.beginMutation(agent.agent_id, ['egress']),
+      finish: (token, patch) => finishResource(token, patch),
+    });
+    egressPanel.update(agent);
+    detailPanel.append(detailActions, egressPanel.node, countryControls, management);
     card.append(detailPanel);
 
     const detailToggle = document.createElement('button');
@@ -1455,8 +1464,9 @@ function createAgentCard(initialAgent) {
     allViews.addEventListener('click',()=>{const next=Object.values(modes).every(m=>m==='graph')?'detail':'graph';for(const key of ['A','B','C'])applyMode(key,next);});
     for(const key of ['A','B','C'])applyMode(key,'graph');
 
-    return {card, detailPanel, modes, setView:applyMode, update(next) {
+    return {card, detailPanel, egressPanel, modes, setView:applyMode, update(next) {
       agent = next;
+      egressPanel.update(agent);
       const state = agent.state || {}, hasState = Boolean(agent.state);
       const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
