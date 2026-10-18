@@ -1,0 +1,11 @@
+# Anonymous GET https://www.youtube.com/premium from three EU test hosts (DE, FR, NL), IPv4 only, HTTP/1.1,
+# User-Agent and Accept-Language as the Agent sends them, no cookies. Query strings and cookie values removed.
+# The Agent's redirect check stops at the first consent host, so it never reads anything after hop 1.
+hop 1: GET https://www.youtube.com/premium
+       -> 302 Found, Location: https://consent.youtube.com/m?<continue,gl,m,pc,cm,hl,src>
+          (sets several cookies: SOCS, VISITOR_*, YSC ...)
+hop 2: GET https://consent.youtube.com/m?...
+       -> 303 See Other, empty body, Location: https://www.youtube.com/premium?<cbrd,ucbcb>
+hop 3: GET https://www.youtube.com/premium?cbrd=1&ucbcb=1
+       -> 200 text/html, a normal "YouTube Premium" page (about 0.9 MB) carrying the region in ytcfg:
+          DE host -> DE, FR host -> FR, NL host -> IT (Google's own geolocation of that address)
