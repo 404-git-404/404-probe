@@ -240,7 +240,7 @@ const enrollmentDialog = AgentEnrollment.createController({
     status: document.querySelector('#oneclick-status'), revoke: document.querySelector('#oneclick-revoke'),
   },
   csrf: () => mutationCSRFToken,
-  available: () => Boolean(serverBuild.upgrade_eligible),
+  available: () => Boolean(serverBuild.one_click_install),
   unavailableReason: () => '此 Server 是开发构建或无法校验的构建，没有对应的正式 release，无法使用一键安装；请使用手动安装。',
   unauthorized: () => location.assign('/login'),
 });

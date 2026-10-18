@@ -165,6 +165,7 @@ func TestOneClickEnrollmentUnavailableOnDevelopmentBuilds(t *testing.T) {
 		{Version: "dev", Commit: strings.Repeat("a", 40)},
 		{Version: "v1.0.4", Commit: strings.Repeat("a", 40), Dirty: true},
 		{Version: "v1.0.4"},
+		{Version: "v1.0.4-rc.0", Commit: strings.Repeat("a", 40)},
 	} {
 		app.buildInfo = info
 		response := postEnrollmentAPI(t, app, "/api/v1/web/agent-enrollments", `{"name":"x"}`, nil)
@@ -225,6 +226,20 @@ func TestOneClickCommandQuotesTheAgentName(t *testing.T) {
 		command := webOneClickInstallCommand("https://probe.example.com", name, token, info)
 		if !strings.HasSuffix(command, want) {
 			t.Fatalf("name %q: command=%s want suffix %s", name, command, want)
+		}
+	}
+}
+
+func TestOneClickIsAvailableForCleanReleaseBuildsIncludingRC(t *testing.T) {
+	app, _ := oneClickApp(t)
+	for _, version := range []string{"v1.0.4", "v1.0.4-rc.4", "v1.0.4-beta.1"} {
+		app.buildInfo = buildinfo.Info{Version: version, Commit: strings.Repeat("a", 40)}
+		view, _ := createOneClick(t, app, "r")
+		if !strings.Contains(view.Command, "/releases/download/"+version+"/install.sh") {
+			t.Fatalf("%s: command=%s", version, view.Command)
+		}
+		if !webOneClickAvailable(app.buildInfo) {
+			t.Fatalf("%s reported unavailable", version)
 		}
 	}
 }

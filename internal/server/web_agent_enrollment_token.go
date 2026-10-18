@@ -203,7 +203,7 @@ func (a *App) handleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 }
 
 func webOneClickAvailable(info buildinfo.Info) bool {
-	return info.UpgradeEligible() && buildinfo.IsCanonicalVersion(info.Version)
+	return info.ExplicitUpgradeEligible()
 }
 
 // webOneClickInstallCommand builds the command copied from the panel. The Server's own release

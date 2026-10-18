@@ -204,6 +204,7 @@ test('K2 dialog: the page wires the dialog, nothing is persisted, and the manual
     assert.ok(html.includes(`id="${id}"`), id);
   }
   assert.ok(html.indexOf('/agent-enrollment.js') > 0 && html.indexOf('/agent-enrollment.js') < html.indexOf('/app.js'));
+  assert.ok(app.includes('serverBuild.one_click_install'), 'availability comes from the Server version endpoint');
   assert.ok(app.includes('AgentEnrollment.createController') && app.includes('enrollmentDialog.reset()'));
   assert.ok(app.includes("fetch('/api/v1/web/agents'"), 'manual install still uses the existing endpoint');
   assert.doesNotMatch(module_, /localStorage|sessionStorage|document\.cookie|indexedDB/);
