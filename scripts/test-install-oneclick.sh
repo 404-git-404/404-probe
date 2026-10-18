@@ -149,3 +149,18 @@ install_agent() { printf 'install_agent %s server=%s name=%s\n' "$1" "${ONECLICK
 attempt install_agent_oneclick
 [[ "${status}" -eq 0 && "${output}" == 'install_agent  server=https://probe.example.com name=web 1' ]]
 printf 'PASS a clean machine proceeds to the Agent install\n'
+
+# 12. Non-root: refused first, with the guidance and without using the token.
+reset; set_complete
+current_euid() { printf '1000'; }
+attempt oneclick_require_root
+[[ "${status}" -ne 0 && "${output}" == *"sudo -i"* && "${output}" == *"token was not used"* && "${output}" != *"${token}"* && ! -e "${temporary}/curl.argv" ]]
+current_euid() { printf '0'; }
+attempt oneclick_require_root
+[[ "${status}" -eq 0 ]]
+# main() runs the root check before any other check: with a non-root user and one-click variables it stops there.
+current_euid() { printf '1000'; }
+reject_deferred_command_on_host() { printf 'reached another check\n'; }
+attempt main
+[[ "${status}" -ne 0 && "${output}" == *"sudo -i"* && "${output}" != *"reached another check"* && ! -e "${temporary}/curl.argv" ]]
+printf 'PASS non-root is refused first and the token is not used\n'

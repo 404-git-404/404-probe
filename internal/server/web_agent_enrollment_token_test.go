@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -80,7 +81,7 @@ func oneClickApp(t *testing.T) (*App, func(name string) int) {
 func TestOneClickEnrollmentIsSingleUseAndBoundToTheName(t *testing.T) {
 	app, agentsNamed := oneClickApp(t)
 	view, token := createOneClick(t, app, "东京 web 1")
-	want := "curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.4/install.sh | sudo env PROBE_404_ROLE=agent PROBE_404_SERVER=https://probe.test PROBE_404_ENROLL_TOKEN=" + token + " PROBE_404_AGENT_NAME='东京 web 1' bash"
+	want := "curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.4/install.sh | PROBE_404_ROLE=agent PROBE_404_SERVER=https://probe.test PROBE_404_ENROLL_TOKEN=" + token + " PROBE_404_AGENT_NAME='东京 web 1' bash"
 	if view.Command != want {
 		t.Fatalf("command=%s\nwant   =%s", view.Command, want)
 	}
@@ -224,6 +225,9 @@ func TestOneClickCommandQuotesTheAgentName(t *testing.T) {
 		"line*glob?[x]~!": "PROBE_404_AGENT_NAME='line*glob?[x]~!' bash",
 	} {
 		command := webOneClickInstallCommand("https://probe.example.com", name, token, info)
+		if strings.Contains(command, "sudo") || strings.Contains(command, " env ") || !strings.Contains(command, "install.sh | PROBE_404_ROLE=agent ") {
+			t.Fatalf("variables must be bash's own environment, got %s", command)
+		}
 		if !strings.HasSuffix(command, want) {
 			t.Fatalf("name %q: command=%s want suffix %s", name, command, want)
 		}
@@ -240,6 +244,29 @@ func TestOneClickIsAvailableForCleanReleaseBuildsIncludingRC(t *testing.T) {
 		}
 		if !webOneClickAvailable(app.buildInfo) {
 			t.Fatalf("%s reported unavailable", version)
+		}
+	}
+}
+
+// The generated assignments really reach the process as environment values, byte for byte.
+func TestOneClickCommandAssignmentsSurviveRealShellParsing(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not available")
+	}
+	info := buildinfo.Info{Version: "v1.0.4", Commit: strings.Repeat("a", 40)}
+	token := strings.Repeat("T", 43)
+	for _, name := range []string{"plain", "with space", "it's", `say "hi"`, "$HOME `id` $(id)", "a;b&c|d>e", "东京 节点 #1", `back\slash`, "glob*?[x]~!"} {
+		command := webOneClickInstallCommand("https://probe.example.com", name, token, info)
+		right := command[strings.Index(command, "| ")+2:]
+		// Replace the final "bash" with a command that prints the variables, keeping the assignments as written.
+		script := strings.TrimSuffix(right, " bash") + ` bash -c 'printf "%s\n%s\n%s\n%s" "$PROBE_404_ROLE" "$PROBE_404_SERVER" "$PROBE_404_ENROLL_TOKEN" "$PROBE_404_AGENT_NAME"'`
+		out, err := exec.Command(bash, "-c", script).Output()
+		if err != nil {
+			t.Fatalf("name %q: %v", name, err)
+		}
+		if want := "agent\nhttps://probe.example.com\n" + token + "\n" + name; string(out) != want {
+			t.Fatalf("name %q: got %q want %q", name, out, want)
 		}
 	}
 }

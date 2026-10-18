@@ -13,7 +13,7 @@ class El {
 }
 const names = ['choice', 'manual', 'manualResult', 'oneclick', 'oneclickResult', 'chooseOneClick', 'chooseManual', 'reason', 'form', 'name', 'error', 'submit', 'oneclickBack', 'command', 'copy', 'countdown', 'status', 'revoke'];
 
-const COMMAND = 'curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.4/install.sh | sudo env PROBE_404_ROLE=agent PROBE_404_SERVER=https://probe.example.com PROBE_404_ENROLL_TOKEN=' + 'T'.repeat(43) + " PROBE_404_AGENT_NAME='web 1' bash";
+const COMMAND = 'curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.4/install.sh | PROBE_404_ROLE=agent PROBE_404_SERVER=https://probe.example.com PROBE_404_ENROLL_TOKEN=' + 'T'.repeat(43) + " PROBE_404_AGENT_NAME='web 1' bash";
 const T0 = 1800000000000;
 
 function harness(options = {}) {
@@ -207,6 +207,8 @@ test('K2 dialog: the page wires the dialog, nothing is persisted, and the manual
   assert.ok(app.includes('serverBuild.one_click_install'), 'availability comes from the Server version endpoint');
   assert.ok(app.includes('AgentEnrollment.createController') && app.includes('enrollmentDialog.reset()'));
   assert.ok(app.includes("fetch('/api/v1/web/agents'"), 'manual install still uses the existing endpoint');
+  assert.match(html, /请以 root 执行；非 root 用户先运行 sudo -i。需要该版本已发布到 GitHub。/);
+  assert.doesNotMatch(COMMAND, /sudo|env/);
   assert.doesNotMatch(module_, /localStorage|sessionStorage|document\.cookie|indexedDB/);
   assert.match(html, /<p class="install-note">在目标 Linux 主机执行命令，然后在隐藏提示中粘贴下面的 enrollment value/, 'the manual instructions are unchanged');
 });

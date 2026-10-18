@@ -2322,6 +2322,14 @@ oneclick_variables_present() {
   return 1
 }
 
+current_euid() { printf '%s' "${EUID}"; }
+
+# The one-click path needs root and says so before anything else, so the token is never spent on a refused run.
+oneclick_require_root() {
+  [[ "$(current_euid)" == 0 ]] \
+    || die "请以 root 执行（非 root 先 sudo -i）。Run this as root (non-root users: sudo -i first). The registration token was not used."
+}
+
 # Returns 1 when no one-click variable is set (interactive install); exits on partial or unsupported input.
 oneclick_agent_requested() {
   oneclick_variables_present || return 1
@@ -3613,6 +3621,7 @@ upgrade_old_beta_agent() (
 
 main() {
   case "${1:-}" in -h|--help|help) usage; return ;; esac
+  if [[ -z "${1:-}" ]] && oneclick_variables_present; then oneclick_require_root; fi
   reject_deferred_command_on_host "${1:-}"
   require_root_linux_systemd
   case "${1:-}" in setup-security) reject_openrc_deferred setup-security ;; esac

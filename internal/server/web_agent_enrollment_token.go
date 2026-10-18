@@ -207,9 +207,11 @@ func webOneClickAvailable(info buildinfo.Info) bool {
 }
 
 // webOneClickInstallCommand builds the command copied from the panel. The Server's own release
-// installer is fetched by exact version; every value that is not plainly safe is single-quoted.
+// installer is fetched by exact version; every value that is not plainly safe is single-quoted. The
+// variables are bash's own environment (assignments before the command on the right of the pipe), so
+// they appear in no process's argument list and in no sudo log; the user runs it as root.
 func webOneClickInstallCommand(origin, name, token string, info buildinfo.Info) string {
-	return fmt.Sprintf("curl -fsSL %s/%s/install.sh | sudo env PROBE_404_ROLE=agent PROBE_404_SERVER=%s PROBE_404_ENROLL_TOKEN=%s PROBE_404_AGENT_NAME=%s bash",
+	return fmt.Sprintf("curl -fsSL %s/%s/install.sh | PROBE_404_ROLE=agent PROBE_404_SERVER=%s PROBE_404_ENROLL_TOKEN=%s PROBE_404_AGENT_NAME=%s bash",
 		webOneClickReleaseBaseURL, info.Version, shellWord(origin), shellWord(token), shellWord(name))
 }
 
