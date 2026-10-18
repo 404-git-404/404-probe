@@ -40,7 +40,7 @@ transformed=""
 crash_transformed=""
 test_user_created=0
 
-[[ "${candidate_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+[[ "${candidate_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] \
   || { printf 'candidate has no canonical version: %s\n' "${candidate_version_json}" >&2; exit 1; }
 [[ "${expected_schema}" =~ ^[1-9][0-9]*$ ]] \
   || { printf 'invalid expected schema: %s\n' "${expected_schema}" >&2; exit 1; }
@@ -370,3 +370,38 @@ fi
 run_upgrade
 assert_upgraded
 printf 'isolated missing-helper SIGKILL recovery and fresh retry passed\n'
+
+# A candidate that starts but does not stay healthy must be rolled back: the normal upgrade runs the same
+# five-second stability check as recovery. The hook below is injected right after candidate-started.
+candidate_failure_hook="${rehearsal_workspace}/candidate-hook.txt"
+cat >"${candidate_failure_hook}" <<HOOK
+  case "\${PROBE_404_TEST_CANDIDATE_MODE:-}" in
+    exit-immediately) systemctl stop ${test_service} ;;
+    exit-after-2s) ( sleep 2; systemctl stop ${test_service} ) >/dev/null 2>&1 & ;;
+    pid-change) ( sleep 2; kill -KILL "\$(systemctl show -p MainPID --value ${test_service})" ) >/dev/null 2>&1 & ;;
+  esac
+HOOK
+for mode in exit-immediately exit-after-2s pid-change; do
+  setup_old_server
+  cp -- "${transformed}" "${crash_transformed}"
+  sed -i "/write_server_upgrade_state candidate-started .*could not persist candidate startup state/r ${candidate_failure_hook}" "${crash_transformed}"
+  chmod 0700 "${crash_transformed}"
+  grep -q 'PROBE_404_TEST_CANDIDATE_MODE' "${crash_transformed}" || { printf 'candidate failure hook was not injected\n' >&2; exit 1; }
+  if printf 'y\n' | script -qec "env PROBE_404_VERSION=${candidate_version} PROBE_404_LOCAL_ASSET_DIRECTORY=${asset_directory} PROBE_404_TEST_CANDIDATE_MODE=${mode} bash ${crash_transformed}" /dev/null; then
+    printf 'candidate that failed (%s) was accepted as a successful upgrade\n' "${mode}" >&2
+    exit 1
+  fi
+  systemctl is-active --quiet "${test_service}" || { printf 'old Server is not running after %s rollback\n' "${mode}" >&2; exit 1; }
+  systemctl is-enabled --quiet "${test_service}"
+  [[ "$("${test_binary}" version --json)" == "${old_server_version_json}" ]] || { printf 'old Server version was not restored after %s\n' "${mode}" >&2; exit 1; }
+  [[ "$(sha256sum "${test_binary}" | awk '{print $1}')" == "${old_server_sha}" ]] || { printf 'old binary SHA was not restored after %s\n' "${mode}" >&2; exit 1; }
+  [[ "$(sha256sum "${test_binary_directory}/install-helper" | awk '{print $1}')" == "${old_helper_sha}" ]] || { printf 'old helper SHA was not restored after %s\n' "${mode}" >&2; exit 1; }
+  [[ "$(database_schema)" == "${original_schema}" ]] || { printf 'schema was not restored after %s\n' "${mode}" >&2; exit 1; }
+  [[ "$(runuser -u "${test_user}" -- "${test_binary}" agent list --db "${test_root}/404-probe.db")" == "${expected_agent_listing}" ]]
+  [[ ! -e "${test_upgrade}/pending" ]] || { printf 'pending state survived the %s rollback\n' "${mode}" >&2; exit 1; }
+  printf 'isolated candidate failure (%s) rolled back to the old Server\n' "${mode}"
+done
+upgrade_output="$(run_upgrade)"
+grep -Fq 'passed the five-second stability check' <<<"${upgrade_output}" || { printf 'normal upgrade output has no stability line\n%s\n' "${upgrade_output}" >&2; exit 1; }
+assert_upgraded
+printf 'isolated healthy candidate upgrade passed the five-second stability check\n'

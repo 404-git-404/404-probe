@@ -123,7 +123,7 @@ func TestInstallerServerUpgradeTransactionContract(t *testing.T) {
 		`restore_server_upgrade`,
 		`original_active=`,
 		`original_enabled=`,
-		`running Server process is not the installed candidate`,
+		`verify_server_stable_readiness || die "candidate Server did not stay healthy for five seconds"`,
 		`helper-state`,
 		`SERVER_UPGRADE_HELPER_CANDIDATE`,
 		`"${INSTALL_HELPER}" domains list`,

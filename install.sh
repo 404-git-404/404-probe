@@ -2802,7 +2802,9 @@ verify_restored_server_files() {
   [[ "${actual}" == "${expected}" ]]
 }
 
-verify_restored_server_readiness() {
+# Shared by recovery and by the normal upgrade: after a start, the Server must stay up for at least five
+# seconds on the same PID and the same installed executable while HTTP keeps answering 401.
+verify_server_stable_readiness() {
   local listen origin expected pid current_pid executable status_code observation
   listen="$(sed -n "s#^ExecStart=${SERVER_BINARY} serve --listen \([^ ]*\) .*#\1#p" "${SERVER_UNIT}")" || return 1
   [[ "$(printf '%s\n' "${listen}" | grep -c .)" -eq 1 ]] || return 1
@@ -2899,7 +2901,7 @@ restore_server_upgrade() {
   if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || return 1
   else systemctl disable 404-probe-server.service >/dev/null || return 1; fi
   if (( active != 0 )); then
-    if ! systemctl start 404-probe-server.service || ! verify_restored_server_readiness; then
+    if ! systemctl start 404-probe-server.service || ! verify_server_stable_readiness; then
       systemctl stop 404-probe-server.service >/dev/null 2>&1 || true
       if systemctl is-active --quiet 404-probe-server.service; then
         printf '404-probe installer: recovered Server failed health verification and could not be stopped; recovery remains pending\n' >&2
@@ -3082,11 +3084,10 @@ EOF
   if (( active != 0 )); then
     systemctl start 404-probe-server.service || die "candidate Server failed to start"
     write_server_upgrade_state candidate-started "${active}" "${enabled}" "${target}" || die "could not persist candidate startup state"
-    wait_for_server_readiness 404-probe-server.service "${origin}"
-    pid="$(systemctl show -p MainPID --value 404-probe-server.service)"
-    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || die "candidate Server has no main process"
-    executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
-    [[ "${executable}" == "${SERVER_BINARY}" ]] || die "running Server process is not the installed candidate"
+    # A started candidate is not a healthy candidate: require the same five-second stability check as
+    # recovery. A failure dies here, so server_upgrade_trap restores the pre-upgrade Server.
+    verify_server_stable_readiness || die "candidate Server did not stay healthy for five seconds"
+    note "Candidate Server passed the five-second stability check (active, same process and binary, HTTP 401)."
   fi
   if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || die "could not restore enabled state"
   else systemctl disable 404-probe-server.service >/dev/null || die "could not restore disabled state"; fi

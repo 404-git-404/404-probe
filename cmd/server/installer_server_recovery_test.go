@@ -40,8 +40,7 @@ func TestInstallerM12OfflineChecksPrecedeCandidateStartup(t *testing.T) {
 		`"${INSTALL_HELPER}" domains list`,
 		`systemctl start 404-probe-server.service`,
 		`write_server_upgrade_state candidate-started`,
-		`wait_for_server_readiness 404-probe-server.service`,
-		`running Server process is not the installed candidate`,
+		`verify_server_stable_readiness || die`,
 		`clear_server_upgrade_state`,
 	} {
 		idx := strings.Index(s, step)
@@ -111,7 +110,7 @@ systemctl() {
     *) return 98 ;;
   esac
 }
-verify_restored_server_readiness() {
+verify_server_stable_readiness() {
   printf health >>"${task_root}/events"
   [[ "${fault}" != health ]]
 }

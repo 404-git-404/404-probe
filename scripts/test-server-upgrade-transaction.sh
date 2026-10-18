@@ -41,6 +41,19 @@ systemctl() {
   if [[ "$1" == is-active ]]; then return 1; fi
   return 0
 }
+# Recovery tests simulate the five-second health check; its real behaviour is tested separately below.
+real_stable_readiness="$(declare -f verify_server_stable_readiness)"
+READINESS_FAIL=0
+verify_server_stable_readiness() { return "${READINESS_FAIL}"; }
+RUNUSER_FAIL=0
+runuser() {
+  while [[ $# -gt 0 && "$1" != -- ]]; do shift; done
+  shift
+  if [[ "$(basename -- "${1:-}")" == "$(basename -- "${SERVER_BINARY}")" && "${2:-}" == database && "${3:-}" == verify ]]; then
+    return "${RUNUSER_FAIL}"
+  fi
+  return 69
+}
 sync() {
   if (( SYNC_FAIL != 0 )); then return 1; fi
   command sync "$@"
@@ -175,6 +188,71 @@ restore_server_upgrade || { printf 'legacy v0.9.1 recovery failed\n' >&2; exit 1
 [[ "$(<"${SERVER_DATABASE}")" == old-database ]] || { printf 'legacy old DB was not restored\n' >&2; exit 1; }
 [[ "$(<"${SERVER_BINARY}")" == old-binary ]] || { printf 'legacy old binary was not restored\n' >&2; exit 1; }
 [[ "$(<"${INSTALL_HELPER}")" == old-helper ]] || { printf 'legacy recovery changed the helper\n' >&2; exit 1; }
+
+
+# --- verify_server_stable_readiness: shared by recovery and the normal upgrade ---------------------
+# A real process is started from a copy of sleep installed as SERVER_BINARY so that /proc/<pid>/exe,
+# the executable path and its hash are genuine. systemctl and curl are driven from small state files.
+stable_directory="${temporary}/stable"
+mkdir -p "${stable_directory}"
+printf '[Service]\nExecStart=%s serve --listen 127.0.0.1:8080 --db /x\n' "${SERVER_BINARY}" >"${SERVER_UNIT}"
+real_systemctl="$(declare -f systemctl)"
+systemctl() {
+  case "$1" in
+    is-active) local state; state="$(<"${stable_directory}/state")"; [[ "${2:-}" == --quiet ]] || printf '%s\n' "${state}"; [[ "${state}" == active ]] ;;
+    show) cat "${stable_directory}/pid" ;;
+    status) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+journalctl() { return 0; }
+curl() { printf '%s' "$(<"${stable_directory}/http")"; }
+eval "${real_stable_readiness}"
+start_stable_server() {
+  rm -f -- "${SERVER_BINARY}"
+  cp -- "$(command -v sleep)" "${SERVER_BINARY}"
+  chmod 0755 "${SERVER_BINARY}"
+  "${SERVER_BINARY}" 120 &
+  stable_pid=$!
+  printf '%s\n' "${stable_pid}" >"${stable_directory}/pid"
+  printf 'active\n' >"${stable_directory}/state"
+  printf '401' >"${stable_directory}/http"
+}
+stop_stable_server() { kill "${stable_pid}" 2>/dev/null || true; wait "${stable_pid}" 2>/dev/null || true; }
+expect_stable() { # name, expected status, minimum seconds, maximum seconds, background mutation command
+  local name="$1" expected="$2" minimum="$3" maximum="$4" status=0 started elapsed
+  start_stable_server
+  if [[ -n "${5:-}" ]]; then ( eval "$5" ) >/dev/null 2>&1 & fi
+  started=${SECONDS}
+  verify_server_stable_readiness >/dev/null 2>&1 || status=$?
+  elapsed=$(( SECONDS - started ))
+  stop_stable_server
+  if (( expected == 0 )) && (( status != 0 )) || (( expected != 0 )) && (( status == 0 )); then
+    printf 'stable readiness: %s returned %s\n' "${name}" "${status}" >&2; exit 1
+  fi
+  if (( elapsed < minimum || elapsed > maximum )); then
+    printf 'stable readiness: %s took %ss, expected %s-%ss\n' "${name}" "${elapsed}" "${minimum}" "${maximum}" >&2; exit 1
+  fi
+  printf 'stable readiness: %s ok (%ss)\n' "${name}" "${elapsed}"
+}
+sd="${stable_directory}"
+expect_stable 'healthy candidate passes after the full observation window' 0 5 8
+expect_stable 'candidate that never becomes active is rejected' 1 0 4 "printf 'inactive\n' >${sd}/state"
+expect_stable 'candidate that dies after two seconds is rejected' 1 2 4 "sleep 2; printf 'inactive\n' >${sd}/state; kill \${stable_pid}"
+expect_stable 'candidate that is restarted (PID change) is rejected' 1 2 4 "sleep 2; ${SERVER_BINARY} 120 & printf '%s\n' \$! >${sd}/pid; wait"
+expect_stable 'candidate whose HTTP stops answering 401 is rejected' 1 2 4 "sleep 2; printf '500' >${sd}/http"
+expect_stable 'candidate whose executable was swapped is rejected' 1 2 4 "sleep 2; cp -- /bin/true ${SERVER_BINARY}.swap; mv -f -- ${SERVER_BINARY}.swap ${SERVER_BINARY}"
+unset -f systemctl journalctl curl
+eval "${real_systemctl}"
+verify_server_stable_readiness() { return "${READINESS_FAIL}"; }
+rm -f -- "${SERVER_BINARY}" "${SERVER_UNIT}" "${server_unit}"
+
+# Both paths use the one function.
+[[ "$(grep -c 'verify_server_stable_readiness' "${root}/install.sh")" -ge 3 ]] || { printf 'stable readiness is not shared\n' >&2; exit 1; }
+! grep -q 'verify_restored_server_readiness' "${root}/install.sh" || { printf 'old readiness function name still used\n' >&2; exit 1; }
+candidate_block="$(sed -n '/write_server_upgrade_state candidate-started/,/systemctl enable 404-probe-server.service >\/dev\/null || die "could not restore enabled state"/p' "${root}/install.sh")"
+grep -q 'verify_server_stable_readiness || die' <<<"${candidate_block}" || { printf 'normal upgrade does not run the stability check after candidate-started\n' >&2; exit 1; }
+! grep -q 'readlink -f "/proc/${pid}/exe"' <<<"${candidate_block}" || { printf 'normal upgrade still has the one-shot PID check\n' >&2; exit 1; }
 
 fixture_directory="${temporary}/release-fixture"
 fake_bin="${temporary}/fake-bin"
