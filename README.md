@@ -17,7 +17,7 @@ curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.4/ins
 
 Server 新装需输入公开 HTTPS 地址并设置 Web 管理员密码（默认由安装器生成 43 个字符的随机密码，在终端显示一次，请立即保存；也可以选择自己输入，至少 16 个字符）；反向代理或 Cloudflare Tunnel 由你自行配置，安装器不管理 Tunnel。Agent 新装先在 Server 创建 Agent，复制显示一次的 enrollment 值，然后在 Agent 主机的隐藏提示中粘贴；不要把凭据放进命令、URL 或历史记录。
 
-**现有受支持 Server 升级（包括 v0.9.3/v1.0.0/v1.0.1/v1.0.2/v1.0.3）：**在 Server 主机运行上面的同一命令，确认目标 v1.0.4。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。数据库迁移到 schema 29（27→28→29）（包含旧库历史的有界恢复回填）；迁移后恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。
+**现有受支持 Server 升级（包括 v0.9.3/v1.0.0/v1.0.1/v1.0.2/v1.0.3）：**在 Server 主机运行上面的同一命令，确认目标 v1.0.4。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。数据库迁移到 schema 32（29→30→31→32；包含旧库历史的有界恢复回填）；迁移后恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。
 
 **现有 v1.0.3/v1.0.2/v1.0.1 Agent，或更早正式 Agent 且 Updater 正常：**先升级 Server，再登录 Web，打开设备管理中的升级操作，确认目标 v1.0.4。默认只显示 Stable；Beta 需要在当前单台 Agent 的操作中显式勾选，不能因此为其他设备开启 Beta。仅在线、未暂停/撤销、正式且具有所需 updater 能力的受支持 Agent 可执行；逐台操作并核对健康版本上报，失败由 updater 回滚。Web 路径只替换 Agent 二进制，不安装新的 root helper。
 
@@ -158,7 +158,7 @@ that metric as unknown. CPU and disk baselines are independent, so an unavailabl
 disk topology does not suppress CPU steal (and vice versa). Older Agents omit the
 fields and remain compatible. These fields were introduced with schema 24;
 the current v1.0.4 Server migrates an existing database through the older steps
-to schema 29. Preserve the protected upgrade backup and do not directly
+to schema 32. Preserve the protected upgrade backup and do not directly
 downgrade the migrated database.
 
 ## 历史升级说明：V0.9（不是当前 v1.0.4 命令）
