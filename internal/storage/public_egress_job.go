@@ -31,7 +31,9 @@ const (
 	// measured from the creation of the previous manual job whatever its outcome.
 	PublicEgressManualCooldown = 24 * time.Hour
 	PublicEgressJobTimeout     = 20 * time.Second
-	publicEgressJobLife        = 10 * time.Minute
+	// A reconnect brings a check forward at most this often (see EnsurePublicEgressJob).
+	PublicEgressReconnectSpacing = 6 * time.Hour
+	publicEgressJobLife          = 10 * time.Minute
 )
 
 // After a failed check the next attempts come after 1, 5, 15 and 30 minutes; the attempt after
@@ -383,8 +385,23 @@ func (s *Store) EnsurePublicEgressJob(ctx context.Context, agentID string, epoch
 		}
 		return false, tx.Commit()
 	}
-	if !newSession && row.nextCheckAt > nowMS {
-		return false, tx.Commit()
+	if row.nextCheckAt > nowMS {
+		// Not due yet. Only a reconnect can bring a check forward, and a crash-looping Agent must not turn
+		// that into a stream of third-party requests: at most one reconnect-triggered check per spacing,
+		// counted from the latest check of any kind (periodic, retry, manual or reconnect).
+		if !newSession {
+			return false, tx.Commit()
+		}
+		var lastCreated int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(created_at),0) FROM probe_jobs WHERE agent_id=? AND probe_type='public_egress'`, agentID).Scan(&lastCreated); err != nil {
+			return false, err
+		}
+		if nowMS-lastCreated < PublicEgressReconnectSpacing.Milliseconds() {
+			if _, err := tx.ExecContext(ctx, `UPDATE agent_public_egress_control SET session_epoch=?,session_id=? WHERE agent_id=?`, int64(epoch), sessionID, agentID); err != nil {
+				return false, err
+			}
+			return false, tx.Commit()
+		}
 	}
 	jobID, err := insertPublicEgressJobTx(ctx, tx, agentID, nowMS)
 	if err != nil {

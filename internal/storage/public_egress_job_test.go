@@ -257,17 +257,22 @@ func TestPublicEgressSevenDayCycleAndReconnect(t *testing.T) {
 	if ok, err := store.NegotiatePublicEgressCapability(ctx, agentID, true, 1, "session-1", done); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	if !ensureEgress(t, store, agentID, done.Add(time.Hour), "session-2") {
+	// A reconnect within six hours of the last check changes nothing; after that it brings one forward.
+	if ensureEgress(t, store, agentID, done.Add(time.Hour), "session-2") {
+		t.Fatal("a reconnect one hour after the last check dispatched another")
+	}
+	reconnect := done.Add(PublicEgressReconnectSpacing)
+	if !ensureEgress(t, store, agentID, reconnect, "session-3") {
 		t.Fatal("reconnect did not dispatch a check")
 	}
-	if ensureEgress(t, store, agentID, done.Add(time.Hour), "session-2") {
+	if ensureEgress(t, store, agentID, reconnect, "session-3") {
 		t.Fatal("reconnect dispatched twice")
 	}
 	// Reconnecting with a check in flight does not queue another one.
-	if ensureEgress(t, store, agentID, done.Add(time.Hour+time.Minute), "session-3") {
+	if ensureEgress(t, store, agentID, reconnect.Add(time.Minute), "session-4") {
 		t.Fatal("overlapping check on reconnect")
 	}
-	job, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session-1", protocol.ProbeTypePublicEgress), done.Add(time.Hour+time.Minute), time.Minute)
+	job, err := store.ClaimJob(ctx, agentID, claimRequest(1, "session-1", protocol.ProbeTypePublicEgress), reconnect.Add(time.Minute), time.Minute)
 	if err != nil || job == nil {
 		t.Fatal(job, err)
 	}
@@ -275,15 +280,15 @@ func TestPublicEgressSevenDayCycleAndReconnect(t *testing.T) {
 	outcome := egressOutcome(true, false)
 	result.ResolvedIP = ""
 	result.Result = protocol.ProbeResult{PublicEgress: &outcome}
-	finished := done.Add(time.Hour + time.Minute + time.Second)
+	finished := reconnect.Add(time.Minute + time.Second)
 	if _, err := store.SubmitJobResult(ctx, agentID, job.JobID, result, finished); err != nil {
 		t.Fatal(err)
 	}
 	// The cycle restarts from this check: due seven days after it.
-	if ensureEgress(t, store, agentID, finished.Add(6*24*time.Hour), "session-3") {
+	if ensureEgress(t, store, agentID, finished.Add(6*24*time.Hour), "session-4") {
 		t.Fatal("dispatched inside the new cycle")
 	}
-	if !ensureEgress(t, store, agentID, finished.Add(7*24*time.Hour), "session-3") {
+	if !ensureEgress(t, store, agentID, finished.Add(7*24*time.Hour), "session-4") {
 		t.Fatal("seven-day check missing")
 	}
 }
@@ -358,7 +363,11 @@ func TestPublicEgressAutomaticChecksIgnoreTheManualCooldown(t *testing.T) {
 		t.Fatal("failure retry was blocked by the manual cooldown")
 	}
 	finishEgressJob(t, store, agentID, retry, egressOutcome(true, false))
-	if !ensureEgress(t, store, agentID, retry.Add(time.Minute), "session-2") {
+	reconnect := retry.Add(PublicEgressReconnectSpacing)
+	if control := egressControl(t, store, agentID, reconnect); control.CooldownUntil <= reconnect.UnixMilli() {
+		t.Fatalf("the manual cooldown should still be active: %+v", control)
+	}
+	if !ensureEgress(t, store, agentID, reconnect, "session-2") {
 		t.Fatal("reconnect was blocked by the manual cooldown")
 	}
 }
@@ -510,5 +519,91 @@ func TestPublicEgressResultRejectsNonPublicAddresses(t *testing.T) {
 		if err := result.Validate(); err == nil {
 			t.Errorf("address %q was accepted", ip)
 		}
+	}
+}
+
+// A crash-looping Agent reconnects every minute with a new session; a reconnect alone must not bring a
+// check forward more than once per spacing (the failure backoff still applies to jobs the Agent never finished).
+func TestPublicEgressCrashLoopingReconnectsAreSpacedSixHours(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(60_000, 0)
+	negotiateEgress(t, store, agentID, at)
+	if created, err := store.SetPublicEgressEnabled(ctx, agentID, true, at, egressOffline); err != nil || !created {
+		t.Fatal(created, err)
+	}
+	done := at.Add(5 * time.Second)
+	finishEgressJob(t, store, agentID, done, egressOutcome(true, true))
+	for minute := 1; minute < int(PublicEgressReconnectSpacing/time.Minute); minute++ {
+		now := done.Add(time.Duration(minute) * time.Minute)
+		if ensureEgress(t, store, agentID, now, "restart-"+now.Format("150405")) {
+			t.Fatalf("a reconnect dispatched a check %d minutes after the last one", minute)
+		}
+	}
+	// Six hours after the last check a reconnect may bring the next one forward.
+	first := done.Add(PublicEgressReconnectSpacing)
+	if !ensureEgress(t, store, agentID, first, "restart-after-six-hours") {
+		t.Fatal("no check after the spacing")
+	}
+	// From now on every further job must come from the failure backoff (the Agent never answers), never
+	// from a reconnect: a job is only created once the stored next-check time has passed.
+	jobs := 1
+	for minute := 1; minute <= 5*60; minute++ {
+		now := first.Add(time.Duration(minute) * time.Minute)
+		due := egressControl(t, store, agentID, now).NextCheckAt <= now.UnixMilli()
+		if ensureEgress(t, store, agentID, now, "again-"+now.Format("150405")) {
+			jobs++
+			if !due {
+				t.Fatalf("a reconnect created a job %d minutes after the previous reconnect-triggered check, before it was due", minute)
+			}
+		}
+	}
+	// Job 1 plus at most the five backoff steps (1, 5, 15, 30 minutes, then seven days), never a job per restart.
+	if jobs > 5 {
+		t.Fatalf("a crash loop created %d jobs in five hours", jobs)
+	}
+}
+
+// The spacing only limits reconnects: the periodic check, the failure backoff and the manual check keep their rules.
+func TestPublicEgressSpacingDoesNotDelayPeriodicBackoffOrManualChecks(t *testing.T) {
+	store, agentID, _ := testStore(t, ":memory:")
+	defer store.Close()
+	ctx := context.Background()
+	at := time.Unix(70_000, 0)
+	negotiateEgress(t, store, agentID, at)
+	if created, err := store.SetPublicEgressEnabled(ctx, agentID, true, at, egressOffline); err != nil || !created {
+		t.Fatal(created, err)
+	}
+	// A failed check: the one-minute retry fires for the same session, long before six hours.
+	now := at.Add(time.Second)
+	finishEgressJob(t, store, agentID, now, egressOutcome(false, false))
+	if ensureEgress(t, store, agentID, now.Add(time.Minute-time.Second), "session-1") {
+		t.Fatal("retried early")
+	}
+	retry := now.Add(time.Minute)
+	if !ensureEgress(t, store, agentID, retry, "session-1") {
+		t.Fatal("the failure backoff was delayed by the reconnect spacing")
+	}
+	// A reconnect while the next retry (five minutes away) is not due does not pull it forward.
+	finishEgressJob(t, store, agentID, retry, egressOutcome(false, false))
+	if ensureEgress(t, store, agentID, retry.Add(time.Second), "session-9") {
+		t.Fatal("a reconnect overrode the failure backoff")
+	}
+	second := retry.Add(5 * time.Minute)
+	if !ensureEgress(t, store, agentID, second, "session-9") {
+		t.Fatal("the second backoff retry is missing")
+	}
+	// A success; the seven-day periodic check then fires on the same session with no spacing involved.
+	finishEgressJob(t, store, agentID, second, egressOutcome(true, true))
+	periodic := second.Add(7 * 24 * time.Hour)
+	if !ensureEgress(t, store, agentID, periodic, "session-9") {
+		t.Fatal("the periodic check was delayed")
+	}
+	// A manual check is available as before (24 hours after the previous manual one).
+	finishEgressJob(t, store, agentID, periodic, egressOutcome(true, true))
+	egressReport(t, store, agentID, periodic.Add(time.Second), "session-1", 1, nil) // the Agent is online
+	if err := store.CreateManualPublicEgressJob(ctx, agentID, periodic.Add(time.Second), egressOffline); err != nil {
+		t.Fatalf("manual check: %v", err)
 	}
 }
