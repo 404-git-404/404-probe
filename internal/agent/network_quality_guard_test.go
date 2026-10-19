@@ -72,7 +72,7 @@ func TestQualityTCPNeverDialsAnUnsafeAddress(t *testing.T) {
 		}
 		// A literal address in the target, staged and legacy.
 		for _, staged := range []bool{true, false} {
-			e := &TCPExecutor{dialContext: dial, qualityResolver: fixedResolver{ip}}
+			e := &TCPExecutor{qualityDial: dial, qualityResolver: fixedResolver{ip}}
 			target := protocol.QualityTarget{Host: text, Port: 443, Family: family, Protocol: "tcp"}
 			var result qualityProbeResult
 			if staged {
@@ -88,7 +88,7 @@ func TestQualityTCPNeverDialsAnUnsafeAddress(t *testing.T) {
 			}
 		}
 		// A public-looking name whose DNS answer is the unsafe address (rebinding).
-		e := &TCPExecutor{dialContext: dial, qualityResolver: fixedResolver{ip}}
+		e := &TCPExecutor{qualityDial: dial, qualityResolver: fixedResolver{ip}}
 		result := e.qualityStagedProbe(context.Background(), protocol.QualityTarget{Host: "catalog-host.example", Port: 443, Family: family, Protocol: "tcp"})
 		if result.outcome != "unsafe_address" || dials.Load() != 0 {
 			t.Errorf("%s via DNS: outcome=%q dials=%d", text, result.outcome, dials.Load())
@@ -119,14 +119,14 @@ func TestQualityTCPStillProbesAPublicTarget(t *testing.T) {
 		dialed.Store(address)
 		return fakeRemoteConn{Conn: client, remote: &net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 443}}, nil
 	}
-	e := &TCPExecutor{dialContext: dial, qualityResolver: fixedResolver{netip.MustParseAddr("8.8.8.8")}}
+	e := &TCPExecutor{qualityDial: dial, qualityResolver: fixedResolver{netip.MustParseAddr("8.8.8.8")}}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	result := e.qualityStagedProbe(ctx, protocol.QualityTarget{Host: "catalog-host.example", Port: 443, Family: "ipv4", Protocol: "tcp"})
 	if result.outcome != "success" || result.ip != "8.8.8.8" || dials.Load() != 1 || dialed.Load() != "8.8.8.8:443" {
 		t.Fatalf("result=%+v dials=%d dialed=%v", result, dials.Load(), dialed.Load())
 	}
-	legacy := (&TCPExecutor{dialContext: dial}).qualityProbe(ctx, protocol.QualityTarget{Host: "8.8.8.8", Port: 443, Family: "ipv4", Protocol: "tcp"})
+	legacy := (&TCPExecutor{qualityDial: dial}).qualityProbe(ctx, protocol.QualityTarget{Host: "8.8.8.8", Port: 443, Family: "ipv4", Protocol: "tcp"})
 	if legacy.outcome != "success" || dials.Load() != 2 {
 		t.Fatalf("legacy result=%+v dials=%d", legacy, dials.Load())
 	}

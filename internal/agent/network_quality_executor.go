@@ -45,7 +45,7 @@ func (e *TCPExecutor) qualityProbe(ctx context.Context, t protocol.QualityTarget
 	if t.Family == "ipv6" {
 		network = "tcp6"
 	}
-	dial := e.dialContext
+	dial := e.qualityDial
 	if dial == nil {
 		dial = qualityDefaultDial()
 	}

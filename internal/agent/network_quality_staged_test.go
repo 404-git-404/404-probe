@@ -56,7 +56,7 @@ func TestA2TCPDNSConnectCloseAndActualRefused(t *testing.T) {
 	}()
 	resolver := &a2Resolver{delay: 220 * time.Millisecond}
 	dialer := &net.Dialer{}
-	e := &TCPExecutor{qualityResolver: resolver, dialContext: func(ctx context.Context, n, a string) (net.Conn, error) {
+	e := &TCPExecutor{qualityResolver: resolver, qualityDial: func(ctx context.Context, n, a string) (net.Conn, error) {
 		c, err := dialer.DialContext(ctx, n, a)
 		if err != nil {
 			return nil, err
@@ -108,7 +108,7 @@ func TestA2StagedTCPTimeoutBeforeContextUpdate(t *testing.T) {
 	if legacy != "network_error" {
 		t.Fatal("legacy classification changed", legacy)
 	}
-	e := &TCPExecutor{dialContext: func(context.Context, string, string) (net.Conn, error) { return nil, socketTimeout }}
+	e := &TCPExecutor{qualityDial: func(context.Context, string, string) (net.Conn, error) { return nil, socketTimeout }}
 	r := e.qualityStagedProbe(ctx, protocol.QualityTarget{Host: "127.0.0.1", Port: 9452, Protocol: "tcp", Family: "ipv4"})
 	d, err := protocol.DecodeQualityDetails(r.details)
 	if err != nil || r.outcome != "timeout" || r.latency != nil || d.ErrorCode != "timeout" || d.ErrorStage != "connect" || !d.ConnectAttempted || !d.ConnectComplete || !d.ProbeComplete || ctx.Err() != nil {

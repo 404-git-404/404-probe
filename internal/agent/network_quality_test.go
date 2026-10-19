@@ -232,7 +232,7 @@ func TestN2bTCPForcedFamilyAndRealLoopback(t *testing.T) {
 		e := NewTCPExecutor()
 		target.Family = family
 		calls := 0
-		e.dialContext = func(_ context.Context, network, address string) (net.Conn, error) {
+		e.qualityDial = func(_ context.Context, network, address string) (net.Conn, error) {
 			calls++
 			want := "tcp4"
 			if family == "ipv6" {

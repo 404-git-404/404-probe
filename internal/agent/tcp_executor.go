@@ -20,13 +20,16 @@ type dialContextFunc func(context.Context, string, string) (net.Conn, error)
 // immediately closes a connection; it does not exchange application data or
 // negotiate TLS.
 type TCPExecutor struct {
+	// dialContext is for TCP-connect jobs only. Network-quality probes never use it: they dial through
+	// qualityDial, whose Control hook refuses every non-public address at connect time.
 	dialContext     dialContextFunc
+	qualityDial     dialContextFunc
 	qualityResolver icmpResolver
 }
 
 func NewTCPExecutor() *TCPExecutor {
 	dialer := &net.Dialer{}
-	return &TCPExecutor{dialContext: dialer.DialContext}
+	return &TCPExecutor{dialContext: dialer.DialContext, qualityDial: qualityDefaultDial()}
 }
 
 func (*TCPExecutor) SupportedProbeTypes() []protocol.ProbeType {

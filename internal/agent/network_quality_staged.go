@@ -104,7 +104,7 @@ func (e *TCPExecutor) qualityStagedProbe(ctx context.Context, t protocol.Quality
 		out.details = d.Encode()
 		return out
 	}
-	dial := e.dialContext
+	dial := e.qualityDial
 	if dial == nil {
 		dial = qualityDefaultDial()
 	}
