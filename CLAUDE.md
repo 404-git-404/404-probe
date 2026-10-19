@@ -40,14 +40,14 @@ go test ./... -count=1
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
 5. **推送顺序（每一步推送都先让维护者确认）：**
-   1. 把发布分支快进推到远端（v1.0.1/v1.0.2/v1.0.3 都是 `codex/v1.0.1-m01`）。
+   1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `main` 拉出（`main` 只包含已正式发布的版本）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
    2. 对发布提交打**带注释**的 tag `vX.Y.Z`，只推这个 tag。
    3. `gh release create vX.Y.Z --verify-tag --title "404-probe vX.Y.Z Stable" --notes-file RELEASE_NOTES_vX.Y.Z.md --latest=false`，附上这 7 个文件。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
    4. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。
    5. 成功后 `gh release edit vX.Y.Z --latest`；失败则改回草稿（`--draft=true`），不删除 release 或 tag，也不重新上传不同字节。
    6. 说明文件的后续修改在 tag 之后单独提交并推送。
-   7. **最后一步**才把 `main` 快进到最新提交（`main` 此前一直落后于发布分支）。
-6. 默认分支是 `main`，发布不通过合并进 `main` 完成；tag 指向的提交必须在远端某个分支上可见。
+   7. **最后一步**才把 `main` 快进到该发布分支（发布完成后 `main` 才前进）。
+6. 默认分支是 `main`，发布不通过合并进 `main` 完成，而是先在 `release/vX.Y.Z` 上完成，最后快进 `main`；tag 指向的提交必须在远端某个分支上可见。
 
 ## Web 升级的约束（决定了上面的顺序）
 
@@ -83,4 +83,14 @@ go test ./... -count=1
 
 ## 待办
 
-v1.0.4 的待办在 GitHub Issues #3 到 #7：M12-B 恢复重试不幂等、ipify 外联开关、YouTube 欧盟 consent 与失败原因细分、正常升级流程的 5 秒稳定检查、`install.sh` 非交互安装。
+v1.0.4 的 Issues #3 到 #9 已在 v1.0.4 完成：#3 恢复重试幂等、#4 ipify 外联开关、#5 YouTube 欧盟 consent 与失败原因细分、#6 正常升级流程的 5 秒稳定检查、#7 `install.sh` 非交互安装、#8 工具链改为 go1.26.8 并由构建脚本校验、#9 文本文件统一 LF。
+
+v1.0.5 及以后的待办：
+
+- 设备详情页重新设计。
+- 面板修改密码。
+- Cloudflare Zero Trust / 双域名。
+- Agent 升级演练脚本（`scripts/test-agent-upgrade-systemd.sh`）参数化。
+- Server 本机监控（在 Server 上安装 Agent）。
+- 已撤销 Agent 记录的彻底删除。
+- M14–M19。
