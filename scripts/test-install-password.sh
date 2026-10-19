@@ -89,3 +89,17 @@ printf 'PASS repeated bad input aborts without hashing\n'
 if run_case 3; then printf 'invalid choice accepted\n' >&2; exit 1; fi
 [[ ! -s "${temporary}/argv" ]]
 printf 'PASS invalid choice refused\n'
+
+# Multi-byte passwords are counted in characters, in any locale: 15 characters are 45 bytes but still too short.
+export LC_ALL=C
+cjk() { local n="$1" out="" i; for ((i = 0; i < n; i++)); do out+="密"; done; printf '%s' "${out}"; }
+run_case 2 "$(cjk 15)" "${good}" "${good}"
+grep -Fq 'at least 16 characters' "${temporary}/screen"
+[[ "$(cat "${temporary}/stdin")" == "${good}" ]]
+printf 'PASS 15 multi-byte characters are rejected by the installer itself\n'
+run_case 2 "$(cjk 16)" "$(cjk 16)"
+[[ "$(cat "${temporary}/stdin")" == "$(cjk 16)" ]]
+! grep -Fq 'at least 16 characters' "${temporary}/screen"
+printf 'PASS 16 multi-byte characters are accepted\n'
+[[ "$(utf8_length "$(cjk 7)")" == 7 && "$(utf8_length 'abc')" == 3 && "$(utf8_length '')" == 0 ]]
+printf 'PASS utf8_length counts code points\n'

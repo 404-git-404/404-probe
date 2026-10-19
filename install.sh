@@ -53,6 +53,11 @@ INSTALL_TRANSACTION_PATHS=()
 
 die() {
   printf '404-probe installer: %s\n' "$*" >&2
+  # A one-click registration token that was redeemed is spent, whatever happens next; outside the install
+  # transaction (which prints the same hint when it rolls back) say so here.
+  if [[ "${ONECLICK_REDEEMED:-0}" == 1 && "${INSTALL_TRANSACTION_ACTIVE:-0}" != 1 ]]; then
+    printf '404-probe installer: 注册 token 已被使用，请在面板重新生成命令 (the registration token was already used; generate a new command in the panel).\n' >&2
+  fi
   exit 1
 }
 
@@ -1517,6 +1522,11 @@ tty_write() { printf '%s' "$1" >/dev/tty; }
 tty_read() { IFS= read -r "$1" </dev/tty; }
 tty_read_secret() { IFS= read -r -s "$1" </dev/tty; }
 
+# Number of characters (Unicode code points) of a UTF-8 string, whatever the locale: it counts the bytes
+# that are not continuation bytes. (${#var} counts bytes in the C locale, which would let a short
+# multi-byte password through to the hasher.)
+utf8_length() { printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' \n'; }
+
 # Prints the Argon2id hash for the Web administrator password. The password only ever travels on
 # the hasher's stdin (never an argument or environment variable) and is never written to a file.
 obtain_web_password_hash() {
@@ -1539,7 +1549,7 @@ obtain_web_password_hash() {
         tty_write 'Password: '
         tty_read_secret password
         tty_write $'\n'
-        if (( ${#password} < 16 )); then
+        if (( $(utf8_length "${password}") < 16 )); then
           tty_write $'The password must be at least 16 characters.\n'
           continue
         fi
@@ -2641,7 +2651,7 @@ oneclick_redeem_token() {
   response="$(printf '{"token":"%s","name":"%s"}' "${ONECLICK_TOKEN}" "${name_json}" | \
     curl --silent --show-error --connect-timeout 10 --max-time 30 --request POST \
       --header 'Content-Type: application/json' --data-binary @- --write-out $'\n%{http_code}' \
-      "${ONECLICK_SERVER}/api/v1/agent/enroll")" || die "could not reach the Server to register this Agent"
+      "${ONECLICK_SERVER}/api/v1/agent/enroll")" || die "could not reach the Server to register this Agent (if the Server did answer, the registration token may already have been used; generate a new command in the panel if the next attempt says so)"
   unset ONECLICK_TOKEN
   ONECLICK_TOKEN=""
   status="${response##*$'\n'}"

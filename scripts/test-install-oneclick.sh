@@ -8,6 +8,7 @@ temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 export STUB_DIR="${temporary}"
 
+original_install_agent="$(declare -f install_agent)"
 # The interactive Agent prompts must be unchanged (checked on the real function before any stubbing).
 declare -f install_agent | grep -Fq "Enrollment value: "
 declare -f install_agent | grep -Eq 'read -r -s enrollment < /dev/tty'
@@ -164,3 +165,38 @@ reject_deferred_command_on_host() { printf 'reached another check\n'; }
 attempt main
 [[ "${status}" -ne 0 && "${output}" == *"sudo -i"* && "${output}" != *"reached another check"* && ! -e "${temporary}/curl.argv" ]]
 printf 'PASS non-root is refused first and the token is not used\n'
+
+# 13. A token that was redeemed is spent: any failure between the redemption and the start of the install
+# transaction says so (inside the transaction the rollback prints the same hint).
+die_status() { status=0; ( "$@" ) >"${temporary}/out" 2>"${temporary}/err" || status=$?; error="$(cat "${temporary}/err")"; }
+ONECLICK_REDEEMED=1; INSTALL_TRANSACTION_ACTIVE=0
+die_status die "something failed after the redemption"
+[[ "${status}" -ne 0 && "${error}" == *"something failed"* && "${error}" == *"注册 token 已被使用，请在面板重新生成命令"* ]]
+INSTALL_TRANSACTION_ACTIVE=1
+die_status die "failure inside the transaction"
+[[ "${error}" != *"已被使用"* ]]  # the rollback handler owns the hint there
+ONECLICK_REDEEMED=0; INSTALL_TRANSACTION_ACTIVE=0
+die_status die "failure before any redemption"
+[[ "${error}" != *"已被使用"* ]]
+body="$(declare -f rollback_install_transaction)"
+[[ "${body}" == *"ONECLICK_REDEEMED"* && "${body}" == *"已被使用，请在面板重新生成命令"* ]]
+printf 'PASS a spent token is reported on every later failure\n'
+
+# The real install_agent, with the Server's answer and everything environmental stubbed: authentication fails right
+# after a successful redemption, before the transaction starts.
+if [[ ! -e "${AGENT_UNIT}" && ! -e "${CONFIG_DIRECTORY}/agent.env" && ! -e "${AGENT_BINARY}" && ! -e "${AGENT_REMOVAL_WORKER_UNIT}" && ! -e "${AGENT_REMOVAL_FINALIZER_UNIT}" \
+  && ! -e "${AGENT_REMOVAL_WORKER_BINARY}" && ! -e "${STATE_DIRECTORY}/agent.epoch" && ! -e "${STATE_DIRECTORY}/agent.epoch.lock" ]]; then
+  eval "${original_install_agent}"
+  openrc_role_residue() { return 1; }
+  server_residue_exists() { return 1; }
+  sandbox_prepare() { :; }
+  oneclick_redeem_token() { printf '%s\n%s\n' 0123456789abcdef0123456789abcdef "${fake_agent_credential}"; }
+  verify_agent_authentication() { die "Agent authentication verification failed (stub)"; }
+  fake_agent_credential="${agent_token}"; ONECLICK_REDEEMED=0; ONECLICK_SERVER=https://probe.example.com; ONECLICK_NAME=x
+  die_status install_agent ""
+  [[ "${status}" -ne 0 && "${error}" == *"authentication verification failed"* && "${error}" == *"注册 token 已被使用，请在面板重新生成命令"* && "${error}" != *"${agent_token}"* ]] \
+    || { printf 'install_agent flow: status=%s error=%s\n' "${status}" "${error}" >&2; exit 1; }
+  printf 'PASS install_agent reports the spent token when authentication fails after the redemption\n'
+else
+  printf 'SKIP install_agent flow (an Agent is installed on this machine)\n'
+fi
