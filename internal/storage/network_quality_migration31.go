@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"404-probe/internal/protocol"
@@ -25,6 +26,8 @@ func migrateQualityManualRemovalTx(ctx context.Context, tx *sql.Tx) error {
 		lanes    []protocol.QualityLaneChoice
 		hasLanes bool
 		changed  bool
+		// unreadable: a stored choices/lanes value that is not valid JSON; the line is reset to "not set".
+		unreadable bool
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT agent_id,revision,choices,v2_lanes FROM quality_config`)
 	if err != nil {
@@ -40,14 +43,15 @@ func migrateQualityManualRemovalTx(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		if err := json.Unmarshal([]byte(rawChoices), &c.choices); err != nil {
-			rows.Close()
-			return err
+			// A row that cannot be read must not stop the Server from starting: it becomes "not set".
+			c.choices = []protocol.QualityChoice{{Slot: "telecom", Source: "catalog", Protocol: "tcp"}, {Slot: "unicom", Source: "catalog", Protocol: "tcp"}, {Slot: "mobile", Source: "catalog", Protocol: "tcp"}}
+			c.unreadable, c.changed = true, true
 		}
 		if rawLanes.Valid {
 			c.hasLanes = true
 			if err := json.Unmarshal([]byte(rawLanes.String), &c.lanes); err != nil {
-				rows.Close()
-				return err
+				c.lanes, c.hasLanes = nil, false
+				c.unreadable, c.changed = true, true
 			}
 		}
 		configs = append(configs, c)
@@ -84,6 +88,26 @@ func migrateQualityManualRemovalTx(ctx context.Context, tx *sql.Tx) error {
 	byAgent := map[string]*config{}
 	for _, c := range configs {
 		byAgent[c.agent] = c
+		if c.unreadable {
+			slog.Warn("network-quality configuration could not be read during the schema 31 migration; the line was reset to not set", "agent_id", c.agent)
+			unreadableRows, err := tx.QueryContext(ctx, `SELECT slot,family,protocol FROM quality_slots WHERE agent_id=?`, c.agent)
+			if err != nil {
+				return err
+			}
+			for unreadableRows.Next() {
+				var slot, family, proto string
+				if err := unreadableRows.Scan(&slot, &family, &proto); err != nil {
+					unreadableRows.Close()
+					return err
+				}
+				manualSlots[c.agent] = append(manualSlots[c.agent], [3]string{slot, family, proto})
+			}
+			if err := unreadableRows.Err(); err != nil {
+				unreadableRows.Close()
+				return err
+			}
+			unreadableRows.Close()
+		}
 		for i, choice := range c.choices {
 			if choice.Source == "manual" {
 				c.choices[i] = protocol.QualityChoice{Slot: choice.Slot, Source: "catalog", Protocol: choice.Protocol}

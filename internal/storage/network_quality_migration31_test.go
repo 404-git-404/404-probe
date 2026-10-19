@@ -250,3 +250,56 @@ func TestQualityConfigUpdateRefusesManualSource(t *testing.T) {
 		}
 	}
 }
+
+// A stored choices/lanes value that cannot be read (valid JSON of the wrong shape; the table refuses invalid JSON) must not keep the Server from starting: that agent's
+// line becomes "not set" (nothing is sent to the Agent), history stays, and the migration stays idempotent.
+func TestMigration31ResetsAnUnreadableConfigInsteadOfFailing(t *testing.T) {
+	for _, column := range []string{"choices", "v2_lanes"} {
+		path := filepath.Join(t.TempDir(), "q.db")
+		s, id, cfg, now := qualityFixture(t, path)
+		qualitySave(t, s, id, now, qualitySample(qualityTarget(t, cfg, "telecom"), cfg.Revision, 1, now.Add(-time.Minute), 12.5, "success"))
+		rawBefore := countRows(t, s, `SELECT COUNT(*) FROM quality_raw WHERE agent_id=?`, id)
+		var revisionBefore int64
+		if err := s.db.QueryRow(`SELECT revision FROM quality_config WHERE agent_id=?`, id).Scan(&revisionBefore); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`UPDATE quality_config SET `+column+`='{"valid":"json of the wrong shape"}' WHERE agent_id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+		s = rerunMigration31(t, s, path) // Open (and so the migration) must succeed
+		var choicesRaw string
+		var lanesRaw sql.NullString
+		var revisionAfter int64
+		if err := s.db.QueryRow(`SELECT choices,v2_lanes,revision FROM quality_config WHERE agent_id=?`, id).Scan(&choicesRaw, &lanesRaw, &revisionAfter); err != nil {
+			t.Fatal(err)
+		}
+		var choices []protocol.QualityChoice
+		if err := json.Unmarshal([]byte(choicesRaw), &choices); err != nil || len(choices) != 3 {
+			t.Fatalf("%s: choices=%q err=%v", column, choicesRaw, err)
+		}
+		for _, choice := range choices {
+			// Only an unreadable choices value resets the choices; an unreadable lanes value leaves them alone.
+			if column == "choices" && (choice.Source != "catalog" || choice.Host != "" || choice.Port != 0 || choice.Region != "") {
+				t.Fatalf("%s: line not reset: %+v", column, choice)
+			}
+		}
+		if lanesRaw.Valid {
+			t.Fatalf("%s: lanes should be cleared, got %q", column, lanesRaw.String)
+		}
+		if revisionAfter <= revisionBefore {
+			t.Fatalf("%s: revision %d -> %d", column, revisionBefore, revisionAfter)
+		}
+		if sent := countRows(t, s, `SELECT COUNT(*) FROM quality_slots WHERE agent_id=? AND target_id IS NOT NULL`, id); sent != 0 {
+			t.Fatalf("%s: %d slots still point at a target", column, sent)
+		}
+		if raw := countRows(t, s, `SELECT COUNT(*) FROM quality_raw WHERE agent_id=?`, id); raw != rawBefore {
+			t.Fatalf("%s: history changed: %d -> %d", column, rawBefore, raw)
+		}
+		// Idempotent: running it again changes nothing.
+		s = rerunMigration31(t, s, path)
+		var again int64
+		if err := s.db.QueryRow(`SELECT revision FROM quality_config WHERE agent_id=?`, id).Scan(&again); err != nil || again != revisionAfter {
+			t.Fatalf("%s: second run revision %d -> %d err=%v", column, revisionAfter, again, err)
+		}
+	}
+}
