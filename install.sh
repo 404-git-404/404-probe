@@ -1447,6 +1447,8 @@ setup_security() {
     die "Agent service account can write the security aggregate export"
   fi
   systemctl enable --now 404-probe-security-collect.timer
+  # The collector works now: an earlier "unavailable" marker must not keep the Agent reporting it.
+  rm -f -- "${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"
   (( agent_was_active == 0 )) || systemctl restart 404-probe-agent.service
   printf '404-probe local security audit is enabled.\n'
 }
@@ -1859,7 +1861,7 @@ SANDBOX_CONFIG="${CONFIG_DIRECTORY}/sandbox.conf"
 # installed: it starts throw-away transient units with the full hardening set and, if that fails,
 # with each directive on its own. Directives that do not work are left out of every unit the
 # installer generates (SANDBOX_REMOVED); everything else stays exactly as before. The result is
-# recorded in ${CONFIG_DIRECTORY}/sandbox.conf and every path that rewrites units uses it again.
+# recorded in ${CONFIG_DIRECTORY}/sandbox.conf for reference; every path that rewrites units measures the machine again.
 SANDBOX_REMOVED=""
 SANDBOX_PROBE_UNIT="404-probe-sandbox-probe.service"
 SECURITY_COLLECTOR_STATE="ok"
@@ -1912,6 +1914,16 @@ sandbox_net_raw_in_bounding_set() {
   [[ "${bounding}" =~ ^[0-9a-fA-F]+$ ]] && (( (0x${bounding} >> 13) & 1 ))
 }
 
+# An existing non-root account to try the CAP_NET_RAW grant as: nobody, the service account, daemon, or the
+# first ordinary account. Prints nothing when there is none.
+sandbox_unprivileged_user() {
+  local candidate
+  for candidate in nobody "${SERVICE_USER}" daemon; do
+    if getent passwd "${candidate}" >/dev/null 2>&1; then printf '%s' "${candidate}"; return 0; fi
+  done
+  getent passwd 2>/dev/null | awk -F: '$3 > 0 && $3 < 65534 { print $1; exit }'
+}
+
 # Fills SANDBOX_REMOVED. Exits before any registration if even the minimal hardening cannot run.
 sandbox_probe() {
   local option key index ambient_user="" index_net_raw=-1 list net_raw_ok=1
@@ -1926,8 +1938,11 @@ sandbox_probe() {
   list="$(printf '%s\n' "${base[@]}")"; SANDBOX_BATCH+=("${list}")                                    # 0: minimal
   list="$(printf '%s\n' "${base[@]}" "${all[@]}" "${rest[@]}")"; SANDBOX_BATCH+=("${list}")           # 1: full
   for option in "${all[@]}"; do list="$(printf '%s\n' "${base[@]}" "${option}")"; SANDBOX_BATCH+=("${list}"); done  # 2..: each alone
-  getent passwd nobody >/dev/null 2>&1 && ambient_user=nobody
-  if [[ -n "${ambient_user}" ]] && sandbox_net_raw_in_bounding_set; then
+  # The grant is tried as an unprivileged user if there is one; without any, as root (the bounding set check below
+  # is what matters). A host without a "nobody" account must not lose ICMP because of that.
+  ambient_user="$(sandbox_unprivileged_user)"
+  ambient_user="${ambient_user:-root}"
+  if sandbox_net_raw_in_bounding_set; then
     index_net_raw=${#SANDBOX_BATCH[@]}
     list="$(printf '%s\n' "User=${ambient_user}" UMask=0077 NoNewPrivileges=true CapabilityBoundingSet=CAP_NET_RAW AmbientCapabilities=CAP_NET_RAW)"
     SANDBOX_BATCH+=("${list}")
@@ -1992,7 +2007,8 @@ sandbox_describe() {
 sandbox_write_config() {
   local content mode=full
   [[ -z "${SANDBOX_REMOVED}" ]] || mode=reduced
-  content="# Written by the 404-probe installer; used again whenever the Agent's systemd units are rewritten.
+  content="# Written by the 404-probe installer. For reference only: every install and upgrade measures this machine again
+# (仅供参考，安装和升级时都会重新探测).
 PROBE_404_SANDBOX_MODE=${mode}
 PROBE_404_SANDBOX_REMOVED=\"${SANDBOX_REMOVED}\"
 PROBE_404_SANDBOX_VIRT=\"$(sandbox_virtualization)\"
@@ -2373,6 +2389,9 @@ setup_security_existing() (
     die "Agent service account can write the security aggregate export"
   fi
   systemctl enable --now 404-probe-security-collect.timer
+  # The collector works now: an earlier "unavailable" marker must not keep the Agent reporting it.
+  rm -f -- "${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"
+  SECURITY_COLLECTOR_STATE="ok"
   if (( agent_was_active != 0 )); then
     systemctl restart 404-probe-agent.service
     wait_for_service 404-probe-agent.service

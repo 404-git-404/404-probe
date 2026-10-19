@@ -249,11 +249,19 @@ const securityCollectorUnavailableMarker = "collector-unavailable"
 
 // securityCollectorUnavailableReason returns a validated reason from the installer's marker file, or "".
 func (r *Runner) securityCollectorUnavailableReason() string {
-	file, err := os.Open(filepath.Join(r.config.SecurityExportDir, securityCollectorUnavailableMarker))
+	markerPath := filepath.Join(r.config.SecurityExportDir, securityCollectorUnavailableMarker)
+	file, err := os.Open(markerPath)
 	if err != nil {
 		return ""
 	}
 	defer file.Close()
+	// A collection finished after the marker was written means the collector works now (the installer
+	// removes the marker too; this covers a path that did not).
+	if marker, markerErr := file.Stat(); markerErr == nil {
+		if current, currentErr := os.Stat(filepath.Join(r.config.SecurityExportDir, "current.json")); currentErr == nil && current.ModTime().After(marker.ModTime()) {
+			return ""
+		}
+	}
 	data, err := io.ReadAll(io.LimitReader(file, 128))
 	if err != nil {
 		return ""

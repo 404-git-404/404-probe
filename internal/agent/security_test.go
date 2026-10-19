@@ -212,3 +212,30 @@ func TestSecurityUploaderFallsBackToSetupRequiredForOlderServersAndIgnoresJunkMa
 		t.Fatalf("junk marker changed the report: %+v", got)
 	}
 }
+
+func TestSecurityUploaderIgnoresAMarkerOlderThanTheLatestCollection(t *testing.T) {
+	var got protocol.SecuritySubmission
+	runner, _ := securityMarkerRunner(t, "sandbox_unavailable\n", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(protocol.SecurityResponse{Accepted: true})
+	})
+	export := runner.config.SecurityExportDir
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(export, "collector-unavailable"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing collected since the marker: still unavailable.
+	runner.uploadSecurity(context.Background())
+	if got.Reason != "sandbox_unavailable" {
+		t.Fatalf("marker not honoured: %+v", got)
+	}
+	// A collection newer than the marker proves the collector works: the marker is ignored.
+	if err := os.WriteFile(filepath.Join(export, "current.json"), []byte("{}"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	got = protocol.SecuritySubmission{}
+	runner.uploadSecurity(context.Background())
+	if got.Reason == "sandbox_unavailable" || got.Reason == "collector_start_failed" {
+		t.Fatalf("a stale marker still reported: %+v", got)
+	}
+}

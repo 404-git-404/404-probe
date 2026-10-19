@@ -55,7 +55,17 @@ sandbox_trial_batch() {
 }
 NET_RAW_BOUND=1
 sandbox_net_raw_in_bounding_set() { (( NET_RAW_BOUND == 1 )); }
-getent() { if [[ "$1" == passwd && "$2" == nobody ]]; then echo "nobody:x:65534:65534::/:/usr/sbin/nologin"; return 0; fi; command getent "$@"; }
+# Accounts on the stubbed system, "name:uid" separated by spaces (default: a normal Debian with nobody).
+PASSWD_USERS="root:0 daemon:1 nobody:65534"
+getent() {
+  local entry name
+  [[ "$1" == passwd ]] || { command getent "$@"; return; }
+  if [[ $# -eq 2 ]]; then
+    for entry in ${PASSWD_USERS}; do name="${entry%%:*}"; [[ "${name}" == "$2" ]] && { echo "${name}:x:${entry#*:}:${entry#*:}::/:/usr/sbin/nologin"; return 0; }; done
+    return 2
+  fi
+  for entry in ${PASSWD_USERS}; do name="${entry%%:*}"; echo "${name}:x:${entry#*:}:${entry#*:}::/:/usr/sbin/nologin"; done
+}
 sandbox_virtualization() { printf 'podman'; }
 
 run_probe() { SANDBOX_REMOVED=""; FAIL_KEYS="$1"; FAIL_COMBO="${2:-}"; NET_RAW_BOUND=1; : >"${TRIALS}"; : >"${BATCHES}"; sandbox_probe; }
@@ -155,6 +165,23 @@ NET_RAW_BOUND=1
 printf 'PASS a CAP_NET_RAW outside the bounding set is dropped without a trial
 '
 
+# ---- 6c. a host without a "nobody" account keeps ICMP: the grant is tried as another account, or as root
+for users in "root:0 daemon:1" "root:0 svc:1500" "root:0"; do
+  PASSWD_USERS="${users}"; run_probe ""
+  [[ -z "${SANDBOX_REMOVED}" ]] || { printf 'NET_RAW lost without nobody (%s): %s
+' "${users}" "${SANDBOX_REMOVED}" >&2; exit 1; }
+  case "${users}" in
+    *daemon*) grep -q "User=daemon" "${TRIALS}" ;;
+    *svc*) grep -q "User=svc" "${TRIALS}" ;;
+    *) grep -q "User=root.*AmbientCapabilities=CAP_NET_RAW" "${TRIALS}" ;;
+  esac
+done
+PASSWD_USERS="root:0 daemon:1 nobody:65534"
+run_probe "NET_RAW"
+[[ "${SANDBOX_REMOVED}" == "NET_RAW" ]]
+printf 'PASS ICMP is not lost on hosts without a nobody account
+'
+
 # ---- 7. description and recorded configuration ---------------------------------------------------------------
 run_probe "${podman_fail} NET_RAW"
 description="$(sandbox_describe)"
@@ -164,6 +191,7 @@ omitted_line="$(grep 'Omitted systemd directives' <<<"${description}")"
 SECURITY_COLLECTOR_STATE="unavailable:sandbox_unavailable"
 sandbox_write_config
 grep -Fxq 'PROBE_404_SANDBOX_MODE=reduced' "${SANDBOX_CONFIG}"
+grep -Fq '仅供参考，安装和升级时都会重新探测' "${SANDBOX_CONFIG}"
 grep -Fxq "PROBE_404_SANDBOX_REMOVED=\"${SANDBOX_REMOVED}\"" "${SANDBOX_CONFIG}"
 grep -Fxq 'PROBE_404_SECURITY_COLLECTOR="unavailable:sandbox_unavailable"' "${SANDBOX_CONFIG}"
 run_probe ""; SECURITY_COLLECTOR_STATE=ok; sandbox_write_config
@@ -220,3 +248,17 @@ printf 'PASS probing precedes registration and every unit-writing path uses the 
 : >"${TRIALS}"; INSTALL_INIT=openrc sandbox_prepare
 [[ ! -s "${TRIALS}" ]]
 printf 'PASS OpenRC is untouched\n'
+
+# ---- 11. a working collector clears an earlier "unavailable" marker on every recovery path -------------------------
+for fn in setup_security_existing; do
+  body="$(declare -f "${fn}")"
+  enable_at="${body%%enable --now 404-probe-security-collect.timer*}"
+  clear_at="${body%%collector-unavailable*}"
+  [[ "${body}" == *collector-unavailable* ]] && (( ${#enable_at} < ${#clear_at} )) || { printf '%s does not clear the marker after enabling the timer
+' "${fn}" >&2; exit 1; }
+done
+# The installed helper's own setup_security (a separate copy of the logic inside install.sh) does too.
+helper_body="$(sed -n '/^setup_security() {$/,/^}$/p' "${root}/install.sh")"
+[[ -n "${helper_body}" && "${helper_body}" == *'rm -f -- "${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"'* ]]
+printf 'PASS recovery paths clear the collector-unavailable marker
+'
