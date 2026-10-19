@@ -34,7 +34,7 @@ type Checker struct {
 func NewChecker() *Checker {
 	d := &net.Dialer{Timeout: Timeout}
 	r := &net.Resolver{PreferGo: true}
-	return &Checker{endpoint: [2]string{"https://api.ipify.org?format=json", "https://api6.ipify.org?format=json"}, resolver: r.LookupIP, dial: d.DialContext, allowDestination: protocol.PublicEgressIP, noRoute: noUsableRoute}
+	return &Checker{endpoint: [2]string{"https://api.ipify.org?format=json", "https://api6.ipify.org?format=json"}, resolver: r.LookupIP, dial: d.DialContext, allowDestination: protocol.PublicDestinationIP, noRoute: noUsableRoute}
 }
 
 func (c *Checker) Check(ctx context.Context, family string) protocol.EgressObservation {

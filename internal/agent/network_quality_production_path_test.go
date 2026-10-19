@@ -190,3 +190,29 @@ func TestProductionPublicEgressExecutorIsConstructedWithTheGuard(t *testing.T) {
 		t.Fatal("the production executor has no public egress executor")
 	}
 }
+
+// NAT64: the well-known prefix is judged by the IPv4 address inside it, in the policy, in the production
+// dialer's connect-time hook and in the staged probe built by the production constructor.
+func TestQualityGuardJudgesNAT64ByTheEmbeddedIPv4(t *testing.T) {
+	tcp, _ := productionExecutors(t)
+	for address, allowed := range map[string]bool{
+		"64:ff9b::808:808": true, "64:ff9b::101:101": true,
+		"64:ff9b::a00:1": false, "64:ff9b::7f00:1": false, "64:ff9b::a9fe:a9fe": false, "64:ff9b::c0a8:101": false,
+		"64:ff9b:1::808:808": false, "64:ff9b::1:808:808": false, "2002:808:808::1": false,
+	} {
+		ip := netip.MustParseAddr(address)
+		if got := qualityAddressPolicy(ip); got != allowed {
+			t.Errorf("policy(%s)=%v want %v", address, got, allowed)
+		}
+		err := qualityGuardControl("tcp6", net.JoinHostPort(address, "80"), nil)
+		if (err == nil) != allowed {
+			t.Errorf("connect-time hook(%s) err=%v, allowed=%v", address, err, allowed)
+		}
+		if !allowed {
+			tcp.qualityResolver = internalResolver{ip}
+			if result := tcp.qualityStagedProbe(context.Background(), qualityTarget("catalog-host.example", "ipv6")); result.outcome != "unsafe_address" {
+				t.Errorf("staged probe to %s: %+v", address, result)
+			}
+		}
+	}
+}

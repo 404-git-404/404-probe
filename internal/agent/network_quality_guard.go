@@ -25,7 +25,7 @@ func qualityAddressSafe(ip netip.Addr) bool {
 	if ip.Is6() {
 		family = "ipv6"
 	}
-	return protocol.PublicEgressIP(ip.String(), family)
+	return protocol.PublicDestinationIP(ip.String(), family)
 }
 
 func qualityGuardControl(_, address string, _ syscall.RawConn) error {

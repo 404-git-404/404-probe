@@ -127,17 +127,34 @@ func TestM10HTTPSFailureClassification(t *testing.T) {
 			t.Fatal(v)
 		}
 	})
-	t.Run("NAT64 destination", func(t *testing.T) {
+	// The well-known NAT64 prefix is judged by the IPv4 address inside it.
+	t.Run("NAT64 destination with a public IPv4 is dialed", func(t *testing.T) {
 		c := NewChecker()
 		c.resolver = func(context.Context, string, string) ([]net.IP, error) {
 			return []net.IP{net.ParseIP("64:ff9b::808:808")}, nil
 		}
+		dialed := 0
 		c.dial = func(context.Context, string, string) (net.Conn, error) {
-			t.Error("dialed NAT64")
-			return nil, errors.New("unexpected")
+			dialed++
+			return nil, errors.New("stop here")
 		}
-		if v := c.Check(context.Background(), "ipv6"); v.Status != "unknown" {
-			t.Fatal(v)
+		if v := c.Check(context.Background(), "ipv6"); v.Status != "unknown" || dialed != 1 {
+			t.Fatal(v, dialed)
+		}
+	})
+	t.Run("NAT64 destination with a private IPv4 is refused", func(t *testing.T) {
+		for _, address := range []string{"64:ff9b::a00:1", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "64:ff9b::c0a8:101", "64:ff9b:1::808:808", "64:ff9b::1:808:808"} {
+			c := NewChecker()
+			c.resolver = func(context.Context, string, string) ([]net.IP, error) {
+				return []net.IP{net.ParseIP(address)}, nil
+			}
+			c.dial = func(context.Context, string, string) (net.Conn, error) {
+				t.Errorf("dialed %s", address)
+				return nil, errors.New("unexpected")
+			}
+			if v := c.Check(context.Background(), "ipv6"); v.Status != "unknown" {
+				t.Fatal(address, v)
+			}
 		}
 	})
 }

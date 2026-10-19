@@ -162,6 +162,26 @@ func PublicEgressIP(text, family string) bool {
 	return true
 }
 
+var nat64WellKnownPrefix = netip.MustParsePrefix("64:ff9b::/96")
+
+// PublicDestinationIP decides whether the Agent may open a connection to an address it was given or
+// resolved (a destination, as opposed to an observed egress address, which PublicEgressIP validates).
+// It is PublicEgressIP plus one exception: an IPv6 address inside the well-known NAT64 prefix
+// 64:ff9b::/96 is judged by the IPv4 address embedded in it, so an IPv6-only host can still reach public
+// IPv4 destinations through its NAT64 gateway while an embedded private, loopback or link-local IPv4
+// address stays refused. No other IPv6 range is relaxed.
+func PublicDestinationIP(text, family string) bool {
+	if PublicEgressIP(text, family) {
+		return true
+	}
+	a, err := netip.ParseAddr(text)
+	if family != "ipv6" || err != nil || a.Zone() != "" || !a.Is6() || a.Is4In6() || !nat64WellKnownPrefix.Contains(a) {
+		return false
+	}
+	b := a.As16()
+	return PublicEgressIP(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}).String(), "ipv4")
+}
+
 // NormalizeEgress isolates all optional errors and bounds times against the
 // accepted report/server clocks. Stale successes remain explicitly timestamped.
 func NormalizeEgress(o EgressObservation, family string, collected, received int64) EgressObservation {

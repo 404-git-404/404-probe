@@ -40,3 +40,30 @@ func TestM10OptionalShapesAreIsolated(t *testing.T) {
 		t.Fatal(p)
 	}
 }
+
+// Connection destinations may sit behind the well-known NAT64 prefix; observed egress addresses may not.
+func TestPublicDestinationIPJudgesNAT64ByTheEmbeddedIPv4(t *testing.T) {
+	for _, test := range []struct {
+		ip, family string
+		allowed    bool
+	}{
+		{"8.8.8.8", "ipv4", true}, {"2606:4700:4700::1111", "ipv6", true},
+		{"64:ff9b::808:808", "ipv6", true}, {"64:ff9b::101:101", "ipv6", true},
+		{"64:ff9b::a00:1", "ipv6", false}, {"64:ff9b::7f00:1", "ipv6", false}, {"64:ff9b::a9fe:a9fe", "ipv6", false},
+		{"64:ff9b::c0a8:101", "ipv6", false}, {"64:ff9b::6440:1", "ipv6", false}, {"64:ff9b::c000:201", "ipv6", false},
+		{"64:ff9b::e000:1", "ipv6", false}, {"64:ff9b::", "ipv6", false}, {"64:ff9b::ffff:ffff", "ipv6", false},
+		{"64:ff9b::808:808", "ipv4", false},
+		{"64:ff9b:1::808:808", "ipv6", false}, {"64:ff9b::1:808:808", "ipv6", false}, {"64:ff9a::808:808", "ipv6", false},
+		{"2002:0808:0808::1", "ipv6", false}, {"::ffff:8.8.8.8", "ipv6", false}, {"fe80::1%eth0", "ipv6", false}, {"not an address", "ipv6", false},
+	} {
+		t.Run(test.ip+"/"+test.family, func(t *testing.T) {
+			if got := PublicDestinationIP(test.ip, test.family); got != test.allowed {
+				t.Fatalf("PublicDestinationIP=%v want %v", got, test.allowed)
+			}
+		})
+	}
+	// Observed egress addresses never take the exception.
+	if PublicEgressIP("64:ff9b::808:808", "ipv6") {
+		t.Fatal("a NAT64 address was accepted as an observed egress address")
+	}
+}
