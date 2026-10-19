@@ -182,15 +182,6 @@ func TestProductionICMPQualityProbesRefuseNonPublicTargets(t *testing.T) {
 	}
 }
 
-// The public IP check dials through its own guarded transport; it must refuse the same ranges as built by
-// the production constructor (egress.New is what NewPublicEgressExecutor wraps).
-func TestProductionPublicEgressExecutorIsConstructedWithTheGuard(t *testing.T) {
-	executor := NewProbeExecutor()
-	if executor.egress == nil {
-		t.Fatal("the production executor has no public egress executor")
-	}
-}
-
 // NAT64: the well-known prefix is judged by the IPv4 address inside it, in the policy, in the production
 // dialer's connect-time hook and in the staged probe built by the production constructor.
 func TestQualityGuardJudgesNAT64ByTheEmbeddedIPv4(t *testing.T) {
@@ -213,6 +204,36 @@ func TestQualityGuardJudgesNAT64ByTheEmbeddedIPv4(t *testing.T) {
 			if result := tcp.qualityStagedProbe(context.Background(), qualityTarget("catalog-host.example", "ipv6")); result.outcome != "unsafe_address" {
 				t.Errorf("staged probe to %s: %+v", address, result)
 			}
+		}
+	}
+}
+
+// The YouTube/Google status fetcher built by the production constructor refuses non-public
+// destinations for every resolved address and never dials them.
+func TestProductionGoogleStatusFetcherRefusesNonPublicDestinations(t *testing.T) {
+	executor := NewGoogleStatusExecutor()
+	fetcher, ok := executor.fetcher.(googleNetworkFetcher)
+	if !ok {
+		t.Fatalf("production fetcher is %T", executor.fetcher)
+	}
+	if fetcher.addressAllowed != nil || fetcher.dial != nil || fetcher.resolve != nil {
+		t.Fatal("the production fetcher must not carry test seams")
+	}
+	for _, address := range []string{"127.0.0.1", "10.1.2.3", "169.254.169.254", "192.168.0.9", "100.64.0.1", "198.51.100.7", "0.0.0.0"} {
+		var dials atomic.Int32
+		probe := fetcher
+		probe.resolve = func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr(address)}, nil
+		}
+		probe.dial = func(context.Context, string, string) (net.Conn, error) {
+			dials.Add(1)
+			return nil, net.ErrClosed
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, category := probe.fetch(ctx, googleTargets[0])
+		cancel()
+		if category != "unsafe_address" || dials.Load() != 0 {
+			t.Errorf("%s: category=%q dials=%d", address, category, dials.Load())
 		}
 	}
 }

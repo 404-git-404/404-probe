@@ -180,3 +180,21 @@ func TestM10UnavailableNeedsProof(t *testing.T) {
 		t.Fatal("route parser")
 	}
 }
+
+// A Checker from the production constructor never dials a resolved non-public destination.
+func TestNewCheckerNeverDialsNonPublicDestinations(t *testing.T) {
+	for _, test := range []struct{ family, address string }{
+		{"ipv4", "127.0.0.1"}, {"ipv4", "10.0.0.5"}, {"ipv4", "169.254.169.254"}, {"ipv4", "192.168.1.1"}, {"ipv4", "100.64.0.1"}, {"ipv4", "198.51.100.7"},
+		{"ipv6", "::1"}, {"ipv6", "fc00::1"}, {"ipv6", "fe80::1"}, {"ipv6", "2001:db8::1"},
+	} {
+		c := NewChecker()
+		c.resolver = func(context.Context, string, string) ([]net.IP, error) { return []net.IP{net.ParseIP(test.address)}, nil }
+		c.dial = func(context.Context, string, string) (net.Conn, error) {
+			t.Errorf("dialed %s", test.address)
+			return nil, errors.New("unexpected")
+		}
+		if v := c.Check(context.Background(), test.family); v.Status != "unknown" {
+			t.Errorf("%s: %+v", test.address, v)
+		}
+	}
+}
