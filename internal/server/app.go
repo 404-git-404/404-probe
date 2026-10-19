@@ -270,7 +270,15 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if accepted {
 		a.publishReportedState(state, owner, received)
 	}
-	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{PublicEgressReport: true, AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, PublicEgressJob: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
+	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, PublicEgressJob: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
+	// Agents of v1.0.3 run their own public IP monitor whenever this capability is true, whatever the
+	// Server does with the data. It is only advertised while detection is switched on for this Agent, so
+	// an Agent that never opted in makes no third-party request; v1.0.4 Agents ignore it (they use jobs).
+	if control, controlErr := a.store.GetPublicEgressControl(r.Context(), authenticatedID, received); controlErr != nil {
+		a.logger.Warn("read public egress switch for the report response", "agent_id", authenticatedID, "error", controlErr)
+	} else {
+		response.Capabilities.PublicEgressReport = control.Enabled
+	}
 	response.Capabilities.NetworkQuality = true
 	response.Capabilities.NetworkQualityV2 = r.Header.Get(protocol.QualityVersionHeader) == "2" || report.NetworkQualityV2 != nil
 	response.Capabilities.NetworkQualityStaged = r.Header.Get(protocol.QualitySemanticsHeader) == protocol.QualityStagedSemantics || report.NetworkQualityV2 != nil && report.NetworkQualityV2.Semantics == protocol.QualityStagedSemantics

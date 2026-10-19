@@ -297,8 +297,8 @@ func TestPublicEgressCapabilityAndLegacyGate(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"public_egress_job":true`) {
 		t.Fatalf("report response %d %s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `"public_egress_report":true`) {
-		t.Fatalf("legacy telemetry capability withdrawn: %s", response.Body.String())
+	if strings.Contains(response.Body.String(), "public_egress_report") {
+		t.Fatalf("the legacy telemetry capability is advertised while detection is off: %s", response.Body.String())
 	}
 	// Telemetry of a v1.0.3 Agent: dropped while off, accepted once on.
 	telemetry := &protocol.PublicEgress{Version: 1,
@@ -318,8 +318,12 @@ func TestPublicEgressCapabilityAndLegacyGate(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	report.Sequence = 3
-	if got := postReport(t, app, token, report); got.Code != http.StatusOK {
+	got := postReport(t, app, token, report)
+	if got.Code != http.StatusOK {
 		t.Fatal(got.Code, got.Body.String())
+	}
+	if !strings.Contains(got.Body.String(), `"public_egress_report":true`) {
+		t.Fatalf("a v1.0.3 Agent is not told to resume its monitor once detection is on: %s", got.Body.String())
 	}
 	if detail, err = app.webAgentDetail(context.Background(), agentID); err != nil || detail.State.PublicEgress.IPv4.IP != "8.8.8.8" {
 		t.Fatalf("telemetry rejected while on: %+v err=%v", detail.State, err)
@@ -332,6 +336,10 @@ func TestPublicEgressCapabilityAndLegacyGate(t *testing.T) {
 	egressSwitch(t, app, agentID, false)
 	if detail, err = app.webAgentDetail(context.Background(), agentID); err != nil || detail.State.PublicEgress.IPv4.IP != "" {
 		t.Fatalf("result visible after switching off: %+v err=%v", detail.State, err)
+	}
+	report.Sequence = 4
+	if off := postReport(t, app, token, report); off.Code != http.StatusOK || strings.Contains(off.Body.String(), "public_egress_report") {
+		t.Fatalf("a v1.0.3 Agent is not told to stop its monitor after switching off: %d %s", off.Code, off.Body.String())
 	}
 }
 
