@@ -188,7 +188,9 @@ func TestNewCheckerNeverDialsNonPublicDestinations(t *testing.T) {
 		{"ipv6", "::1"}, {"ipv6", "fc00::1"}, {"ipv6", "fe80::1"}, {"ipv6", "2001:db8::1"},
 	} {
 		c := NewChecker()
-		c.resolver = func(context.Context, string, string) ([]net.IP, error) { return []net.IP{net.ParseIP(test.address)}, nil }
+		c.resolver = func(context.Context, string, string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP(test.address)}, nil
+		}
 		c.dial = func(context.Context, string, string) (net.Conn, error) {
 			t.Errorf("dialed %s", test.address)
 			return nil, errors.New("unexpected")
