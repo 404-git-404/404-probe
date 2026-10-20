@@ -103,3 +103,42 @@ run_case 2 "$(cjk 16)" "$(cjk 16)"
 printf 'PASS 16 multi-byte characters are accepted\n'
 [[ "$(utf8_length "$(cjk 7)")" == 7 && "$(utf8_length 'abc')" == 3 && "$(utf8_length '')" == 0 ]]
 printf 'PASS utf8_length counts code points\n'
+
+# All valid UTF-8 scalar ranges, including their boundary values, stay accepted.
+for value in '' 'ASCII' $'\x7f' $'\xc2\x80' $'\xdf\xbf' $'\xe0\xa0\x80' $'\xed\x9f\xbf' $'\xef\xbf\xbf' $'\xf0\x90\x80\x80' $'\xf4\x8f\xbf\xbf' '密码🙂'; do
+  utf8_valid "${value}" || { printf 'valid UTF-8 was rejected\n' >&2; exit 1; }
+done
+printf 'PASS UTF-8 scalar boundaries are valid\n'
+
+# Invalid input must be rejected even after enough ASCII to pass the old length check.
+for invalid in $'\x80' $'\xbf' $'\xc0\x80' $'\xc1\xbf' $'\xe0\x80\x80' $'\xed\xa0\x80' $'\xf0\x80\x80\x80' $'\xf4\x90\x80\x80' $'\xf5\x80\x80\x80' $'\xff' $'\xc2' $'\xe2\x82' $'\xf0\x90\x80' $'\xc2A' $'\xe2A\x80' $'\xe2\x82A' $'\xf0A\x80\x80' $'\xf0\x90A\x80' $'\xf0\x90\x80A'; do
+  if utf8_valid "${invalid}"; then printf 'invalid UTF-8 was accepted\n' >&2; exit 1; fi
+  run_case 2 "${good}${invalid}" "${good}" "${good}"
+  grep -Fq 'must be valid UTF-8' "${temporary}/screen"
+  [[ "$(cat "${temporary}/stdin")" == "${good}" && "$(cat "${temporary}/argv")" == 'web password-hash' ]]
+done
+printf 'PASS malformed UTF-8 is rejected before hashing and the password prompt retries\n'
+
+# Confirmation is validated too; three malformed attempts never reach the hasher.
+run_case 2 "${good}" "${good}"$'\x80' "${good}" "${good}"
+grep -Fq 'must be valid UTF-8' "${temporary}/screen"
+[[ "$(cat "${temporary}/stdin")" == "${good}" ]]
+if run_case 2 "${good}"$'\x80' "${good}"$'\xe2\x82' "${good}"$'\xed\xa0\x80'; then
+  printf 'three invalid UTF-8 passwords were accepted\n' >&2; exit 1
+fi
+[[ ! -s "${temporary}/stdin" && ! -s "${temporary}/argv" ]]
+printf 'PASS invalid confirmation retries and repeated invalid passwords abort without hashing\n'
+
+# A supplementary-plane character counts as one code point, and caller locale is not changed.
+unicode_password="$(printf '🙂%.0s' {1..16})"
+run_case 2 "${unicode_password}" "${unicode_password}"
+[[ "$(cat "${temporary}/stdin")" == "${unicode_password}" && "${LC_ALL}" == C ]]
+if command -v locale >/dev/null 2>&1 && locale -a | grep -Fxi 'C.utf8' >/dev/null; then
+  (
+    export LC_ALL=C.utf8
+    utf8_valid "${unicode_password}"
+    ! utf8_valid "${good}"$'\x80'
+    [[ "${LC_ALL}" == C.utf8 ]]
+  )
+fi
+printf 'PASS valid Unicode passwords and the caller locale are preserved\n'

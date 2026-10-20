@@ -1527,6 +1527,36 @@ tty_read_secret() { IFS= read -r -s "$1" </dev/tty; }
 # multi-byte password through to the hasher.)
 utf8_length() { printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' \n'; }
 
+# Validate UTF-8 with Bash builtins only. The first continuation-byte bounds reject
+# overlong encodings, surrogate code points and values above U+10FFFF.
+utf8_valid() {
+  local LC_ALL=C value="$1" index=0 byte remaining=0 minimum=128 maximum=191
+  while (( index < ${#value} )); do
+    printf -v byte '%d' "'${value:index:1}"
+    index=$((index + 1))
+    if (( remaining > 0 )); then
+      (( byte >= minimum && byte <= maximum )) || return 1
+      remaining=$((remaining - 1))
+      minimum=128; maximum=191
+    elif (( byte <= 127 )); then
+      :
+    elif (( byte >= 194 && byte <= 223 )); then
+      remaining=1
+    elif (( byte >= 224 && byte <= 239 )); then
+      remaining=2
+      if (( byte == 224 )); then minimum=160
+      elif (( byte == 237 )); then maximum=159; fi
+    elif (( byte >= 240 && byte <= 244 )); then
+      remaining=3
+      if (( byte == 240 )); then minimum=144
+      elif (( byte == 244 )); then maximum=143; fi
+    else
+      return 1
+    fi
+  done
+  (( remaining == 0 ))
+}
+
 # Prints the Argon2id hash for the Web administrator password. The password only ever travels on
 # the hasher's stdin (never an argument or environment variable) and is never written to a file.
 obtain_web_password_hash() {
@@ -1549,6 +1579,10 @@ obtain_web_password_hash() {
         tty_write 'Password: '
         tty_read_secret password
         tty_write $'\n'
+        if ! utf8_valid "${password}"; then
+          tty_write $'The password must be valid UTF-8. Please enter it again. (密码必须是有效的 UTF-8，请重新输入。)\n'
+          continue
+        fi
         if (( $(utf8_length "${password}") < 16 )); then
           tty_write $'The password must be at least 16 characters.\n'
           continue
@@ -1556,6 +1590,10 @@ obtain_web_password_hash() {
         tty_write 'Confirm password: '
         tty_read_secret confirmation
         tty_write $'\n'
+        if ! utf8_valid "${confirmation}"; then
+          tty_write $'The password must be valid UTF-8. Please enter it again. (密码必须是有效的 UTF-8，请重新输入。)\n'
+          continue
+        fi
         if [[ "${password}" != "${confirmation}" ]]; then
           tty_write $'The passwords do not match.\n'
           continue
