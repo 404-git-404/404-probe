@@ -29,7 +29,7 @@
 | v1.0.7 | M15 分类分组标签 + M16 顶部总览 + R19 全局网络质量开关 |
 | v1.0.8 | M17 紧凑列表 + R10–R13 面板管理 |
 | v1.1.0 | M13-Final → M18 → M19 |
-| 待定 | R08、R14–R18、M20+ |
+| 待定 | R08、R14–R18、R24、M20+ |
 
 ---
 
@@ -120,7 +120,9 @@ v1.0.4 已有的基础：
 - 每删一个之前先由维护者确认。
 
 ### R22 移除 gg-status 依赖，YouTube 检测只保留 YouTube 一项（施工方：Claude Code）
-- 移除对 gg-status（`404-vps-tools`）的依赖和移植代码；检测项只保留 YouTube。
+- 移除测试中的 gg-status 原脚本拷贝（`testdata/gg-status.canonical`）和对照测试，改用项目自己的真实样本作为测试基准。
+- 删除 Google Search、Sign-in、Gemini 三项检测的残留代码，以及文件头的 gg-status 来源注释。
+- YouTube 检测逻辑保留，除 R23 的修复外行为不变。
 - 与 R23 合并，分 2 阶段：先调查（第 1 阶段），再修复（第 2 阶段）。
 
 ### R23 YouTube 地区误判（施工方：Claude Code，与 R22 合并，分 2 阶段：调查 → 修复）
@@ -130,6 +132,8 @@ v1.0.4 已有的基础：
 - README 删除 zstatic 致谢。
 - 按最终的 `go.mod` 和代码复核 `THIRD_PARTY_NOTICES.md`；zstatic、gg-status 两节随 R07 和 R22 删除或更新。
 - 按 R06 评审的建议更新 `AGENTS.md`：报告中主动列出联网操作和临时环境变量；沙箱中 `GOCACHE` 可以用临时目录，不设置 `GOTOOLCHAIN`。
+- `CLAUDE.md` 发布流程写明：发布产物必须在主仓库 `D:\Claude-Github\404-probe` 或 `core.autocrlf=false` 的干净克隆中构建，不能在 git worktree 中构建（Windows 上 Go 1.26.8 不会为 worktree 写入 VCS 信息，构建门禁会失败；Linux worktree 尚未实测）。
+- `CLAUDE.md` 基线失败列表加入 `internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（Windows 下约 5% 偶发失败，v1.0.4 基准上同样存在，见 `release-records\v1.0.5\R20-supplement-20261020.md`）；是否修复这个测试见“待定”中的 R24。
 
 ---
 
@@ -216,7 +220,7 @@ M14-D SQLite/API
 - 明确区分两个统计范围：“全部设备”和“当前筛选”。
 
 ### R19 顶部全局网络质量开关（施工方：待定）
-- 顶部全局网络质量开关。依赖 R07-4 的单卡总开关和 M15 的筛选契约。
+- 顶部全局网络质量开关。与 M16 同一施工方；依赖 R07-4 的单卡总开关和 M15 的筛选契约。
 - 语义（总闸：保留各卡片状态 / 批量设置：改写各卡片开关）、作用范围（全部设备 / 当前筛选）、批量操作是否需要确认，维护者尚未决定，开工前讨论。
 
 ---
@@ -298,4 +302,5 @@ v1.0.5 起不再内置第三方目标，目标和地区、ISP 标签都由用户
 - R16：ASN 数据来源（IP→ASN 数据库或外部查询），涉及新依赖和隐私，需要单独讨论。
 - R17：性能基准测试（Agent 端跑分），是 M19 性能维度的前提。
 - R18：项目许可证，在公开推广或接受外部贡献之前确定。
+- R24：`internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint` 在 Windows 下约 5% 偶发失败（v1.0.4 基准上同样存在），是否修复，另行讨论。
 - M20+：未来新增的模块。
