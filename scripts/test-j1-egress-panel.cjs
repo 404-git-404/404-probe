@@ -141,7 +141,7 @@ test('J2: the last successful address follows the same rule', async () => {
 test('J1: every state of the switch and the button', () => {
   const cases = [
     ['ready', agentWith({next_check_at: NOW + 1000}), {checked: true, buttonDisabled: false, label: '立即检测', note: ''}],
-    ['cooldown', agentWith({cooldown_until: NOW + 3 * 3600000}), {checked: true, buttonDisabled: true, label: '立即检测', note: /^可在 \d{2}:\d{2} 后再次检测$/}],
+    ['cooldown', agentWith({cooldown_until: NOW + 3 * 3600000}), {checked: true, buttonDisabled: true, label: '立即检测', note: /^可在 \d{2}-\d{2} \d{2}:\d{2} 后再次检测$/}],
     ['pending', agentWith({pending: true}), {checked: true, buttonDisabled: true, label: '检测中…', note: '检测中'}],
     ['off', agentWith({enabled: false}), {checked: false, buttonDisabled: true, label: '立即检测', note: '未启用'}],
     ['unsupported', agentWith({supported: false}), {checked: true, buttonDisabled: true, label: '立即检测', note: 'Agent 版本不支持，升级 Agent 后可用'}],

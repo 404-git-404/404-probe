@@ -42,6 +42,12 @@
     const time=new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false});
     return sameDay(ms,now)?time:new Date(ms).toLocaleDateString([],{month:'2-digit',day:'2-digit'})+' '+time;
   }
+  // Cooldowns always include the local date; include the year when crossing into another year.
+  function cooldownClock(ms,now){
+    const date=new Date(ms),pad=n=>String(n).padStart(2,'0');
+    const year=date.getFullYear()===new Date(now).getFullYear()?'':`${date.getFullYear()}-`;
+    return `${year}${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
 
   // One address row: text for display and, only when there is an address, the full value for the copy button.
   function row(name,o,now,reveal){
@@ -72,7 +78,7 @@
     else if(!c.supported){state='unsupported';note='Agent 版本不支持，升级 Agent 后可用';}
     else if(offline){state='offline';note='Agent 离线';}
     else if(c.pending){state='pending';note='检测中';label='检测中…';}
-    else if(cooldownUntil){state='cooldown';note=`可在 ${clock(cooldownUntil,now)} 后再次检测`;}
+    else if(cooldownUntil){state='cooldown';note=`可在 ${cooldownClock(cooldownUntil,now)} 后再次检测`;}
     const rows={ipv4:null,ipv6:null,last_ipv4:null,last_ipv6:null};
     const lines=[];
     if(!enabled){lines.push('公网 IP 检测：未启用');}
