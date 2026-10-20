@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"404-probe"
+	notices "404-probe"
 	"404-probe/internal/buildinfo"
 )
 
@@ -25,6 +25,21 @@ func noticeFile(t *testing.T) []byte {
 	}
 	if len(data) == 0 || bytes.ContainsRune(data, '\r') {
 		t.Fatal("notices must be nonempty and use LF")
+	}
+	for _, heading := range []string{
+		"## 附录 V：Web 资源许可证原文",
+		"## 附录 M：Go 模块许可证原文",
+		"## 附录 N：模块内嵌套来源原文",
+		"## 附录 G：Go 工具链声明原文",
+		"## 附录 O：OpenRC 许可证原文",
+		"## 附录 E：上游核验摘要",
+		"### M15 — github.com/remyoudompheng/bigfft",
+		"### N4 — GNU LGPL 2.1 全文",
+		"### E1 — 实际取得的固定来源及网页证据",
+	} {
+		if !bytes.Contains(data, []byte("\n"+heading)) {
+			t.Errorf("notices missing appendix heading %q", heading)
+		}
 	}
 	return data
 }

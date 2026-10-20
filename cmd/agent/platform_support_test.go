@@ -36,6 +36,8 @@ func TestCLIPlatformGatePrecedesServiceDispatch(t *testing.T) {
 		}
 		// licenses must return without probing host files. Every existing command
 		// still reaches the platform gate before its original dispatch.
+		// Intentionally check statement positions: licenses must be first and the
+		// platform gate second, so inserting an earlier statement requires review.
 		licenses, ok := fn.Body.List[0].(*ast.IfStmt)
 		if !ok || licenses.Init != nil {
 			t.Fatal("missing standalone licenses dispatch")

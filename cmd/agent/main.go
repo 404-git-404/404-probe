@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"404-probe"
+	notices "404-probe"
 	"404-probe/internal/agent"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/geoip"

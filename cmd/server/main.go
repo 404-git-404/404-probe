@@ -28,7 +28,7 @@ import (
 
 	"golang.org/x/term"
 
-	"404-probe"
+	notices "404-probe"
 	"404-probe/internal/auth"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"

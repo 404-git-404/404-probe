@@ -36,12 +36,6 @@
   }
   const validIP=text=>maskIP(text)!=='—';
 
-  const sameDay=(a,b)=>new Date(a).toDateString()===new Date(b).toDateString();
-  // HH:MM in the browser's local time, with the date when it is not today.
-  function clock(ms,now){
-    const time=new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false});
-    return sameDay(ms,now)?time:new Date(ms).toLocaleDateString([],{month:'2-digit',day:'2-digit'})+' '+time;
-  }
   // Cooldowns always include the local date; include the year when crossing into another year.
   function cooldownClock(ms,now){
     const date=new Date(ms),pad=n=>String(n).padStart(2,'0');
@@ -195,6 +189,6 @@
     return {node,update,conceal,elements:{toggle,check,eye,note,feedback,rows:rowNodes,times,status},get revealed(){return revealed;}};
   }
 
-  const api={view,maskIP,clock,createPanel};
+  const api={view,maskIP,createPanel};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PublicEgressCheck=api;
 })(globalThis);
