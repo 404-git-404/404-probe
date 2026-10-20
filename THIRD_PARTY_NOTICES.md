@@ -6,7 +6,8 @@
 
 本文记录该提交的来源、许可证、修改和分发情况，不为 404-probe 本身选择许可证。
 Komari 仅引用既有说明，不重新审计。发布前若依赖、工具链或第三方数据变化，
-由发布流程复核；本文不自动覆盖后续提交。
+由发布流程复核；本文不自动覆盖后续提交。发布前须按 v1.0.5 最终的 `go.mod`
+重新核对依赖版本和声明，保留上述审计基准提交不变。
 
 “已核实”指本次读取固定上游内容，或读取与 `go.sum` 对应且通过
 `go mod verify` 的模块原文。“未核实”表示没有足够证据，不能作为授权已获得的结论。
@@ -92,8 +93,8 @@ purego 和 numcpus 模块内未找到独立 NOTICE 文件；保留 Apache 原文
 | SQLite 3.51.3；[SQLite](https://sqlite.org/copyright.html) | sqlite v1.46.2 的 `lib/sqlite_linux_{amd64,arm64}.go`，`SQLITE_VERSION` 为 `3.51.3`；上游转译的 C 实现，本项目未改 | SQLite 公有领域声明已核实；Go 封装不是公有领域，而是 BSD-3-Clause | Server；附录 N1 为模块自带 `SQLITE-LICENSE` |
 | musl 1.2.5，提交 `7ada6dde6f9dc6a2836c3d92c2f762d35fd229e0`；[固定上游](https://git.musl-libc.org/cgit/musl/tree/?id=7ada6dde6f9dc6a2836c3d92c2f762d35fd229e0) | libc v1.70.0 的 `builder.json` 固定该归档；`ccgo_linux_*.go` 等为上游转译及适配，本项目未改 | MIT 为主，包含 TRE BSD-2-Clause、数学函数等其他宽松授权；归档 `VERSION`、COPYRIGHT 及来源注释已读取。不能只用 libc 顶层 BSD 概括 | Server；N2 为 libc 自带第三方声明，N3 为精确 musl COPYRIGHT 及相关原始源码授权注释 |
 | go-netdb、NixOS/nixpkgs；[go-netdb](https://github.com/dominikh/go-netdb)、[nixpkgs](https://github.com/NixOS/nixpkgs) | libc 的 `honnef.co/`、生成/构建内容；以 libc v1.70.0 为实际版本，独立上游提交**未核实**；项目未改 | MIT 声明见 libc 原文；不推定构建配置全部进入二进制 | 模块含有；本次 Linux 包依赖没有导入 `honnef.co` 子包；N2 保留完整声明 |
-| UUID / Theodore Ts'o；[util-linux](https://github.com/util-linux/util-linux)；独立版本**未核实** | libc 的 `uuid/uuid/uuid_linux_{amd64,arm64}.go`，上游生成 | UUID BSD-3-Clause 版权声明已见；同文件还包含 GNU C Library 头文件的 LGPL-2.1-or-later 和 GCC 头文件的 GPL-3.0-or-later WITH GCC-exception-3.1 声明。具体链接内容及合规影响**未核实**，见问题 Q3 | Server 包依赖中包含该包；N4 保留两架构生成文件的不同授权注释、LGPL-2.1/GPL-3.0 全文及 GCC Runtime Library Exception 3.1 |
-| Public Suffix List，提交 `2c960dac3d39ba521eb5db9da192968f5be0aded`，2025-03-18；[固定原始数据](https://github.com/publicsuffix/list/blob/2c960dac3d39ba521eb5db9da192968f5be0aded/public_suffix_list.dat) | x/net v0.42.0 的 `publicsuffix/table.go` 和 `publicsuffix/data/*`，上游生成的压缩数据，本项目未改 | 原始列表头为 MPL-2.0，Go 实现为 BSD-3-Clause；版本字符串与固定数据头已核实。转换后数据的具体分发义务**未核实**，见 Q4 | Server 的域名后缀检查；N5 保留原始声明、数据来源及 MPL-2.0 全文 |
+| UUID / Theodore Ts'o；[util-linux](https://github.com/util-linux/util-linux)；独立版本**未核实** | libc 的 `uuid/uuid/uuid_linux_{amd64,arm64}.go`，上游生成 | UUID BSD-3-Clause 版权声明已见；同文件还包含 GNU C Library 头文件的 LGPL-2.1-or-later 和 GCC 头文件的 GPL-3.0-or-later WITH GCC-exception-3.1 声明。交叉评审确认这些文件仅有常量和类型定义、没有函数；适用 LGPL-2.1 §5，Q3 已解决 | Server 包依赖中包含该包；N4 保留两架构生成文件的不同授权注释、LGPL-2.1/GPL-3.0 全文及 GCC Runtime Library Exception 3.1 |
+| Public Suffix List，提交 `2c960dac3d39ba521eb5db9da192968f5be0aded`，2025-03-18；[固定原始数据](https://github.com/publicsuffix/list/blob/2c960dac3d39ba521eb5db9da192968f5be0aded/public_suffix_list.dat) | x/net v0.42.0 的 `publicsuffix/table.go` 和 `publicsuffix/data/*`，上游生成的压缩数据，本项目未改 | 原始列表头为 MPL-2.0，Go 实现为 BSD-3-Clause；版本字符串与固定数据头已核实。通过 R20 将许可声明及源码获取位置嵌入二进制，处理 MPL-2.0 §3.2 的告知要求，见 Q4 | Server 的域名后缀检查；N5 保留原始声明、数据来源及 MPL-2.0 全文 |
 | ntgo v0.8.0；[固定源文件](https://github.com/ntrrg/ntgo/blob/v0.8.0/runtime/infrastructure.go) | gopsutil 的 `internal/common/endian.go` 明记 copied from；上游采纳为辅助函数，本项目未改 | 原始项目 MIT、Miguel Angel Rivera Notararigo 版权已核实；不能只保留 gopsutil 顶层 BSD | Agent；N6 原始 MIT 全文 |
 | Go 标准库代码的上游复用 | gopsutil `internal/common/binary.go`、`readlink_linux.go`；bigfft `fermat.go`；memory 的 mmap/Go 适配 | Go BSD 版权已见；具体原始 Go 版本未在这些文件统一固定，不补猜版本 | 相关 Server/Agent 包；gopsutil LICENSE、M15、memory 附加 LICENSE 原文保留 |
 
@@ -137,17 +138,23 @@ Go 标准库和内置 x/text 使用的 Unicode 数据版本为 15.0.0；来源
 
 ### 5.1 zstaticcdn 网络质量目录
 
+v1.0.5 将通过 R07 移除全部 zstatic 内置目标。以下记录审计基准中的历史用法；
+发布前按最终代码删除或更新本节，不将计划移除写成已经完成。
+
 - 上游：[DescribeAllNodes](https://www.zstaticcdn.com/api/v1/DescribeAllNodes)、
   [官网](https://www.zstaticcdn.com/)。仓库位置 `internal/server/quality_catalog.json`。
 - 目录版本字段：`updated_at=2026-09-15T12:27:24Z`；
   `raw_sha256=b57179984ae38103656c120b952481b525be56a3d69782c9b6ef0601230f32c5`；
   `frontend_sha256=59088ee5cd1edafdc5d7f84ddf22a51562af91ca93646e8ca03ce4abca3e64f1`。
-  这些是既有来源记录，原始历史抓取未在仓库内，本次没有重建这两个历史摘要，标为**未核实**。
+  前端摘要已核实，与附录 E1 的现行前端文件摘要一致；`raw_sha256` 因历史
+  API 响应未保存，仍未复现，标为**未核实**。
 - 数据已加工为地区/运营商/IPv4/IPv6 目标；目录中区分 `api_literal` 和
   `official_frontend_transform`。属于加工数据，不是原 API 的原样副本。
   随 Server 内嵌，部分目标及标签经 API 下发给 Agent 和 Web。
-- 仓库 README 原有记录是“仅供 TCP-Ping 使用”。本次官方页面的公告代码中，
-  公告版本 `2026-09-29.2` 另有以下原文：
+  目录文件的 `connectivity` 字段为 `not_tested`，不表示目标连通性已验证。
+- 仓库 README 原有记录是“仅供 TCP-Ping 使用”，交叉评审只找到社区转述，
+  没有找到这句话的官方出处，不能将它作为已核实的官方使用条款。
+  官方前端版本 `2026-09-29.2` 的公告原文已核对如下：
 
   > 页面标注的节点名称仅作为 IP 归属地识别与展示标记，不代表官方命名、线路属性、机房归属或其他任何用途；
   > 本页面仅供个人测试与研究参考，不能作为任何形式的网络质量评价、服务承诺、商业宣传或第三方结论依据；
@@ -155,9 +162,11 @@ Go 标准库和内置 x/text 使用的 Unicode 数据版本为 15.0.0；来源
   > 页面展示内容可能因资源调整、网络策略变化或服务方要求而更新、限制或下线，请以实际情况为准。
 
   来源是官网当日引用的 `/_next/static/chunks/1yvmx9jjmxw4u.js`，
-  SHA256 另见附录 E1。这是当日上游内容，不是 2026-09-15 的历史授权证明。
+  SHA256 另见附录 E1，且与目录中的 `frontend_sha256` 一致，前端摘要已核实。
+  该一致性不等于取得了数据再分发授权。
   未找到可确认的开放数据再分发许可原文；许可证和历史授权状态均为**未核实**。
-  与当前产品用途可能存在不一致，仅列问题 Q1，不在本任务中决定是否继续使用。
+  与审计基准中的产品用途可能存在不一致；维护者已决定通过 R07 移除全部内置目标，
+  处理状态见 Q1，本任务不修改检测实现或目录文件。
 
 ### 5.2 Google 检测参考实现
 
@@ -166,9 +175,10 @@ Go 标准库和内置 x/text 使用的 Unicode 数据版本为 15.0.0；来源
 提交 `b8830f4c86ddebc0be19bd4fadb07ca5a586dfb2`、blob
 `50c5afa7f6fae163e48040c4624e0638c6250840` 移植。
 本次取得固定源文件，其 Git blob 标识核对见 E1。
-这是从 shell/awk 到 Go 的重写和适配，随 Agent 二进制，不是原样文件分发。
-固定提交根目录树及脚本未见明确 LICENSE 授权；许可证及移植授权**未核实**（Q2）。
-不因两个仓库属于同一 GitHub 账号而推断第三方权利已清理。
+这是从 shell/awk 到 Go 的重写和适配，随 Agent 二进制。
+404-vps-tools 属于维护者的同一 GitHub 账号，是公开项目，没有 LICENSE 文件。
+维护者已确认两个项目均为本人同一作者的作品，无其他贡献者，因此这次移植无需
+另行授权，Q2 已解决。测试中保留的原脚本拷贝将通过 R22 移除。
 
 ### 5.3 地区名单、页面样本和服务调用
 
@@ -204,11 +214,11 @@ OpenRC 的运行监督配置参考官方提交
 
 | 编号 | 问题、证据与限制 | 留待处理 |
 | --- | --- | --- |
-| Q1 | zstatic 数据无已核实的再分发许可证；历史原始数据/前端摘要未复现；当前公告限制网络质量评价，与本项目目标可能不一致。既有说明的 TCP-Ping 限制还需要与基准中的 ICMP 用法一并审查 | 由维护者处理来源授权和用途问题；本任务不改数据、README 或检测实现 |
-| Q2 | gg-status 固定脚本及根树无明确许可；移植授权未核实 | 查明权利和授权，不在本文替上游选择许可证 |
-| Q3 | libc v1.70.0 的 UUID 生成文件保留 GNU C Library LGPL-2.1-or-later 和 GCC GPL-3.0-or-later（附 GCC Runtime Library Exception 3.1）头文件声明；顶层 BSD 和 `LICENSE-3RD-PARTY.md` 不足以解释该部分。未确认这些内容只是定义/注释还是形成需要额外履约的可执行代码 | 原文及来源保留；最终链接内容和可能的源代码/重链接义务需要另行核实，不把整个依赖断言成 LGPL 或断言不存在风险 |
-| Q4 | x/net 的 PSL 原始数据明确 MPL-2.0，模块根只有 Go BSD 不能代替数据说明；本项目此前没有集中保留该数据许可 | 本文补入 MPL 原文和固定源数据链接；压缩生成数据的分发义务仍未核实 |
-| Q5 | 现有 7 文件发布清单仅包含 4 个 ELF、install.sh、元数据、校验表；根目录本文和非 Web 的 Go/安装器相关 notices 不会因此自动进入安装目标或单独二进制下载。Web vendor 原文已嵌入 Server，不等于其他 notices 均已交付 | **分发缺口**：发布流程决定附件/安装包如何携带版权、许可及必要来源信息；本任务仅报告，不改打包或安装器 |
+| Q1 | zstatic 数据无已核实的再分发许可证；前端摘要已核实，历史 API 原始响应摘要仍未复现；官方公告限制网络质量评价。“仅供 TCP-Ping”仅有社区转述，无官方出处；目录 `connectivity=not_tested` | 维护者已决定 v1.0.5 通过 R07 移除全部 zstatic 内置目标；发布前按最终代码删除或更新 5.1。本任务不改数据、README 或检测实现 |
+| Q2 | **已解决**：维护者确认 gg-status 与本项目为本人同一作者的作品，无其他贡献者；404-vps-tools 属于同一账号、公开且没有 LICENSE，本次移植无需另行授权 | 保留来源说明；R22 将移除测试中的原脚本拷贝 |
+| Q3 | **已解决**：交叉评审确认 libc v1.70.0 的 UUID 相关生成文件只有常量和类型定义、没有函数。Go 1.26.8 的 Linux/amd64 Server 符号检查仅剩 `uuid.init`（60 字节）、`uuid.CAPI`（8 字节）及 init 任务，约 70 字节符号内容，没有可执行的 UUID 实现 | 适用 LGPL-2.1 §5 对数值参数、数据结构布局等使用的规定；GCC 头文件同时带 Runtime Library Exception 3.1，不产生本项所担心的源码提供或重新链接义务。Agent 不依赖 libc；N4 原文继续保留 |
+| Q4 | x/net 的 PSL 原始数据明确 MPL-2.0，模块根只有 Go BSD 不能代替数据说明；本文已保留 MPL 原文和固定源码获取位置 | 通过 R20 将本文的许可声明及源码获取位置嵌入二进制，处理 MPL-2.0 §3.2 的告知要求；随 Q5 一起解决，R20 验收前不记为已完成 |
+| Q5 | 现有 7 文件发布清单仅包含 4 个 ELF、install.sh、元数据、校验表；根目录本文和非 Web 的 Go/安装器相关 notices 不会因此自动进入安装目标或单独二进制下载。Web vendor 原文已嵌入 Server，不等于其他 notices 均已交付 | **处理方式已确定**：通过 R20 将本文嵌入 Server、Agent 二进制解决分发缺口，不增加第 8 个发布文件；R20 验收前不记为已解决。本任务不改代码、打包或安装器 |
 | Q6 | Google 地区名单、YouTube 页面精简样本及用户提供日志未有可确认的独立再分发授权；原始版本/权利状态未完全核实 | 保留来源和加工说明，不将其标成 MIT/公有领域；不新增原始抓取或敏感样本 |
 | Q7 | Unicode 15.0.0 数据、Go 中早期数学实现及 libc 的部分嵌套项目独立上游版本/授权链不全；已记录能确认的工具链/模块/来源原文，未完成对每个生成项的历史权利追溯 | 下文 G4 保留本次可取得的 Unicode 官方原文；历史适用授权及数据转换义务仍须明确，不据最新授权推断历史版本 |
 
@@ -3662,7 +3672,9 @@ obstacle to adoption, that text has been removed.
 
 ### N4 — libc UUID 生成代码中的来源声明
 
-以下摘录实际模块中的授权注释（保持注释符号）；不将注释存在本身当作最终机器码受 LGPL 约束的证明。
+以下摘录实际模块中的授权注释（保持注释符号），作为来源记录保留。
+交叉评审已确认相关文件仅含常量和类型定义，没有函数；二进制核查及 LGPL-2.1 §5
+的适用结论见 Q3，该项已解决。
 
 ### N4.1 — uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_arm64.go
 
@@ -3702,7 +3714,7 @@ obstacle to adoption, that text has been removed.
 // %End-Header%
 ```
 
-### N4.2 — uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go
+### N4.2 — uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_arm64.go（共 16 处）
 
 原文 SHA256：`6d7b2382d1222242c347048172abf0613f3280937d9d2bc4c717b3a5940109ff`。
 
@@ -3799,7 +3811,7 @@ obstacle to adoption, that text has been removed.
 //    <https://www.gnu.org/licenses/>.
 ```
 
-### N4.6 — uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go, uuid/uuid/uuid_linux_arm64.go
+### N4.6 — uuid/uuid/uuid_linux_amd64.go, uuid/uuid/uuid_linux_arm64.go（共 24 处）
 
 原文 SHA256：`222ec99391aaae6c531887cd42888b42d59689a8434b1de7fb5fa18bbb90b7f7`。
 
