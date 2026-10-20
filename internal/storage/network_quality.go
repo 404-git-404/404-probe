@@ -61,6 +61,12 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 	if err != nil {
 		return out, err
 	}
+	// Samples of user-entered targets are only accepted from a session that completed the two-step
+	// negotiation (design 4.2); an old or unnegotiated session gets "unauthorized".
+	var userTargets bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quality_capability c JOIN agent_state s ON c.agent_id=s.agent_id AND c.epoch=s.epoch AND c.session_id=s.session_id WHERE c.agent_id=? AND c.epoch=? AND c.session_id=? AND c.user_targets=1)`, id, epoch, b.SessionID).Scan(&userTargets); err != nil {
+		return out, err
+	}
 	var rawLocal, rawGlobal, minuteLocal, minuteGlobal int
 	staged := b.Version == 2 && caps != nil && caps.Semantics == protocol.QualityStagedSemantics
 	rawLimit, minuteLimit := qualityRawDevice, qualityMinuteDevice
@@ -181,6 +187,12 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		var target protocol.QualityTarget
 		if err := json.Unmarshal([]byte(targetJSON), &target); err != nil {
 			return protocol.QualityBatchResponse{}, err
+		}
+		target.ID = sample.TargetID
+		if target.Source == "user" && !userTargets {
+			ack[2] = "unauthorized"
+			out.Results = append(out.Results, ack)
+			continue
 		}
 		if b.Version == 2 && !qualityLaneSupported(caps, target.Family, target.Protocol) {
 			ack[2] = "unauthorized"

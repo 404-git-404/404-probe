@@ -77,7 +77,9 @@ func rerunMigration31(t *testing.T, s *Store, path string) *Store {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	migration34Skip = true // observe what migration 31 itself produces
 	reopened, err := Open(context.Background(), path)
+	migration34Skip = false
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +183,7 @@ func TestMigration31TurnsManualLinesIntoUnsetAndKeepsHistory(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM quality_targets t JOIN quality_slots s ON s.target_id=t.id WHERE t.payload LIKE '%"source":"manual"%'`).Scan(&manualLeft); err != nil || manualLeft != 0 {
 		t.Fatalf("manual targets still scheduled: %d err=%v", manualLeft, err)
 	}
-	if version, err := s.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
+	if version, err := s.SchemaVersion(ctx); err != nil || version != 33 {
 		t.Fatalf("schema=%d err=%v", version, err)
 	}
 }
@@ -221,7 +223,10 @@ func TestMigration31IsAtomic(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if bad, err := Open(context.Background(), path); err == nil {
+	migration34Skip = true
+	bad, err := Open(context.Background(), path)
+	migration34Skip = false
+	if err == nil {
 		bad.Close()
 		t.Fatal("migration 31 succeeded although its last step was blocked")
 	}

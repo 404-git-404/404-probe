@@ -81,6 +81,9 @@ func (s *Store) qualityHistoryRaw(ctx context.Context, id, targetID string, hour
 	if err := json.Unmarshal([]byte(targetJSON), &out.Target); err != nil {
 		return out, err
 	}
+	if err := qualityLabelTargetTx(ctx, tx, id, &out.Target); err != nil {
+		return out, err
+	}
 	var currentRevision int64
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM quality_slots WHERE agent_id=? AND target_id=?),0),EXISTS(SELECT 1 FROM quality_intervals i JOIN agents a ON a.id=i.agent_id WHERE i.agent_id=? AND i.target_id=? AND i.end_at IS NULL AND a.revoked=0 AND a.disabled_at IS NULL AND NOT EXISTS(SELECT 1 FROM agent_removal_operations o WHERE o.agent_id=a.id))`, id, targetID, id, targetID).Scan(&currentRevision, &active); err != nil {
@@ -353,4 +356,20 @@ func qualityPercentileSorted(values []float64, p float64) float64 {
 	}
 	weight := pos - float64(lower)
 	return values[lower]*(1-weight) + values[upper]*weight
+}
+
+// qualityLabelTargetTx gives a history target the slot's current user labels. Labels exist once, in
+// quality_slot_settings: a retired target and a v1.0.4 leftover are shown with the labels their slot
+// has now (design 2.3), and a payload never carries a label.
+func qualityLabelTargetTx(ctx context.Context, tx *sql.Tx, id string, target *protocol.QualityTarget) error {
+	var kind, region, isp string
+	err := tx.QueryRowContext(ctx, `SELECT kind,region,isp FROM quality_slot_settings WHERE agent_id=? AND slot=?`, id, target.Slot).Scan(&kind, &region, &isp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	target.Kind, target.Region, target.ISP = kind, region, isp
+	return nil
 }

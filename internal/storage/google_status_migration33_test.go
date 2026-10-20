@@ -68,6 +68,7 @@ func TestMigration33AddsNullablePremiumNotice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rewindQualityUserTargetsFixture(t, db)
 	for _, statement := range []string{
 		`ALTER TABLE agent_google_status DROP COLUMN youtube_premium_notice`,
 		`DELETE FROM schema_migrations WHERE version=33`,
@@ -124,6 +125,7 @@ func TestMigration33SkipsAnExistingColumnAndKeepsItsValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rewindQualityUserTargetsFixture(t, db)
 	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=33`); err != nil {
 		t.Fatal(err)
 	}

@@ -435,3 +435,23 @@ func ParseQualityExpectedRevision(s string) (int64, bool) {
 	v, err := QualityInteger(s)
 	return v, err == nil
 }
+
+// Lane status and condition values of the v4 read model (design 7). The Server computes them; the
+// page only displays them.
+const (
+	QualityLaneDeviceInactive   = "device_inactive"
+	QualityLaneAgentUnavailable = "agent_unavailable"
+	QualityLaneExcluded         = "excluded"
+	QualityLaneStoragePressure  = "storage_pressure"
+	QualityLaneDisabled         = "disabled"
+	QualityLaneUnset            = "unset"
+	QualityLaneInactive         = "inactive"
+	QualityLaneNoIPv6           = "no_ipv6"
+	QualityLaneICMPUnsupported  = "icmp_unsupported"
+	QualityLaneTargetAbnormal   = "target_abnormal"
+	QualityLaneActive           = "active"
+
+	QualityConditionNotFound      = "not_found"
+	QualityConditionNoAddress     = "no_address"
+	QualityConditionUnsafeAddress = "unsafe_address"
+)

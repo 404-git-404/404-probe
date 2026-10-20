@@ -338,7 +338,9 @@ func TestA1Migration25MixedProtocolsPreservesRowsAndRollback(t *testing.T) {
 			if err := s.db.QueryRow(`SELECT rootpage FROM sqlite_master WHERE name='quality_raw'`).Scan(&rawRoot); err != nil {
 				t.Fatal(err)
 			}
+			migration34Skip = true // this test is about migrations up to 26
 			err = s.migrate(ctx)
+			migration34Skip = false
 			if fault != "" {
 				if err == nil {
 					t.Fatal("migration fault ignored")
@@ -381,6 +383,9 @@ func TestA1Migration25MixedProtocolsPreservesRowsAndRollback(t *testing.T) {
 				if a1Rows(t, s, table, columns[table]) != oldRows[table] {
 					t.Fatal("legacy column bytes/IDs/hashes changed", table)
 				}
+			}
+			if err := s.migrate(ctx); err != nil { // the rest of the checks need the latest schema
+				t.Fatal(err)
 			}
 			for i, target := range cfg.Targets {
 				sample := qualitySample(target, cfg.Revision, int64(i+1), now, 2, "success")
