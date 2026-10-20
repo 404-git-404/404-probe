@@ -10,45 +10,48 @@ import (
 const MaxReportBytes = 64 << 10
 
 type Report struct {
-	PublicEgress        *PublicEgress                `json:"public_egress,omitempty"`
-	NetworkQualityV2    *QualityCapabilities         `json:"network_quality_v2,omitempty"`
-	NetworkQuality      bool                         `json:"network_quality,omitempty"`
-	AgentID             string                       `json:"agent_id"`
-	Epoch               uint64                       `json:"epoch"`
-	SessionID           string                       `json:"session_id"`
-	Sequence            uint64                       `json:"sequence"`
-	CollectedAt         int64                        `json:"collected_at"`
-	Hostname            string                       `json:"hostname"`
-	OS                  string                       `json:"os"`
-	Arch                string                       `json:"arch"`
-	AgentVersion        string                       `json:"agent_version,omitempty"`
-	AgentUpgradeCapable bool                         `json:"agent_upgrade_capable,omitempty"`
-	AgentUpgradeV2      bool                         `json:"agent_upgrade_v2,omitempty"`
-	Management          *AgentManagementCapabilities `json:"management_capabilities,omitempty"`
-	BootID              string                       `json:"boot_id"`
-	Uptime              uint64                       `json:"uptime"`
-	CPUPercent          float64                      `json:"cpu_percent"`
-	CPUStealPercent     *float64                     `json:"cpu_steal_percent,omitempty"`
-	CPUCores            uint32                       `json:"cpu_cores,omitempty"`
-	Load1               float64                      `json:"load1"`
-	Load5               float64                      `json:"load5"`
-	Load15              float64                      `json:"load15"`
-	RAMUsed             uint64                       `json:"ram_used"`
-	RAMTotal            uint64                       `json:"ram_total"`
-	RAMPercent          float64                      `json:"ram_percent"`
-	SwapUsed            uint64                       `json:"swap_used"`
-	SwapTotal           uint64                       `json:"swap_total"`
-	SwapPercent         float64                      `json:"swap_percent"`
-	DiskUsed            uint64                       `json:"disk_used"`
-	DiskTotal           uint64                       `json:"disk_total"`
-	DiskPercent         float64                      `json:"disk_percent"`
-	DiskReadRate        *float64                     `json:"disk_read_rate,omitempty"`
-	DiskWriteRate       *float64                     `json:"disk_write_rate,omitempty"`
-	DiskBusyPercent     *float64                     `json:"disk_busy_percent,omitempty"`
-	CountryCode         string                       `json:"country_code,omitempty"`
-	RXBytes             uint64                       `json:"rx_bytes"`
-	TXBytes             uint64                       `json:"tx_bytes"`
-	NetworkCounters     *NetworkCounterSet           `json:"network_counters,omitempty"`
+	PublicEgress     *PublicEgress        `json:"public_egress,omitempty"`
+	NetworkQualityV2 *QualityCapabilities `json:"network_quality_v2,omitempty"`
+	NetworkQuality   bool                 `json:"network_quality,omitempty"`
+	// QualityTargetsHeader is set by the Server from the X-404-Probe-Quality-Targets request header.
+	// It is never part of the wire format.
+	QualityTargetsHeader bool                         `json:"-"`
+	AgentID              string                       `json:"agent_id"`
+	Epoch                uint64                       `json:"epoch"`
+	SessionID            string                       `json:"session_id"`
+	Sequence             uint64                       `json:"sequence"`
+	CollectedAt          int64                        `json:"collected_at"`
+	Hostname             string                       `json:"hostname"`
+	OS                   string                       `json:"os"`
+	Arch                 string                       `json:"arch"`
+	AgentVersion         string                       `json:"agent_version,omitempty"`
+	AgentUpgradeCapable  bool                         `json:"agent_upgrade_capable,omitempty"`
+	AgentUpgradeV2       bool                         `json:"agent_upgrade_v2,omitempty"`
+	Management           *AgentManagementCapabilities `json:"management_capabilities,omitempty"`
+	BootID               string                       `json:"boot_id"`
+	Uptime               uint64                       `json:"uptime"`
+	CPUPercent           float64                      `json:"cpu_percent"`
+	CPUStealPercent      *float64                     `json:"cpu_steal_percent,omitempty"`
+	CPUCores             uint32                       `json:"cpu_cores,omitempty"`
+	Load1                float64                      `json:"load1"`
+	Load5                float64                      `json:"load5"`
+	Load15               float64                      `json:"load15"`
+	RAMUsed              uint64                       `json:"ram_used"`
+	RAMTotal             uint64                       `json:"ram_total"`
+	RAMPercent           float64                      `json:"ram_percent"`
+	SwapUsed             uint64                       `json:"swap_used"`
+	SwapTotal            uint64                       `json:"swap_total"`
+	SwapPercent          float64                      `json:"swap_percent"`
+	DiskUsed             uint64                       `json:"disk_used"`
+	DiskTotal            uint64                       `json:"disk_total"`
+	DiskPercent          float64                      `json:"disk_percent"`
+	DiskReadRate         *float64                     `json:"disk_read_rate,omitempty"`
+	DiskWriteRate        *float64                     `json:"disk_write_rate,omitempty"`
+	DiskBusyPercent      *float64                     `json:"disk_busy_percent,omitempty"`
+	CountryCode          string                       `json:"country_code,omitempty"`
+	RXBytes              uint64                       `json:"rx_bytes"`
+	TXBytes              uint64                       `json:"tx_bytes"`
+	NetworkCounters      *NetworkCounterSet           `json:"network_counters,omitempty"`
 }
 
 // NetworkCounterSet carries per-interface cumulative counters. Version zero
@@ -206,4 +209,8 @@ type ReportCapabilities struct {
 	// GoogleStatusChinaSignal: the Server accepts a YouTube cn result that keeps the page region and
 	// the premium_unavailable_notice field. Without it an Agent reports the older Region=CN shape.
 	GoogleStatusChinaSignal bool `json:"google_status_china_signal,omitempty"`
+
+	// NetworkQualityUserTargets answers the X-404-Probe-Quality-Targets header: the Server accepts
+	// the second negotiation step (the "targets" capability).
+	NetworkQualityUserTargets bool `json:"network_quality_user_targets,omitempty"`
 }

@@ -24,6 +24,10 @@ type QualityCapabilities struct {
 	Semantics      string                  `json:"semantics"`
 	ExcludedReason string                  `json:"excluded_reason,omitempty"`
 	Lanes          []QualityLaneCapability `json:"lanes"`
+	// Targets and IPv6Address are only sent after the Server answered the quality-targets header
+	// (two-step negotiation); an older Server never sees them.
+	Targets     string `json:"targets,omitempty"`
+	IPv6Address string `json:"ipv6_address,omitempty"`
 }
 
 func (c QualityCapabilities) Validate() error {
@@ -32,6 +36,18 @@ func (c QualityCapabilities) Validate() error {
 	}
 	if c.ExcludedReason != "" && c.ExcludedReason != "platform_excluded:alpine" && c.ExcludedReason != "platform_identity_unknown" {
 		return errors.New("invalid quality exclusion")
+	}
+	if c.Targets != "" && c.Targets != QualityTargetsUserV1 {
+		return errors.New("invalid quality targets capability")
+	}
+	switch c.IPv6Address {
+	case "":
+	case QualityIPv6Present, QualityIPv6None, QualityIPv6Unknown:
+		if c.Targets != QualityTargetsUserV1 {
+			return errors.New("ipv6 address state requires user targets")
+		}
+	default:
+		return errors.New("invalid ipv6 address state")
 	}
 	seen := map[string]bool{}
 	for _, l := range c.Lanes {
