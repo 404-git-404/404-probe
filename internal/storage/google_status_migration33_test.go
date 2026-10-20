@@ -107,3 +107,50 @@ func TestMigration33AddsNullablePremiumNotice(t *testing.T) {
 		}
 	}
 }
+
+// The column exists but schema_migrations has no 33 (a rewound fixture or an operator copy): the
+// migration must record the version without adding the column again, and keep the stored values.
+func TestMigration33SkipsAnExistingColumnAndKeepsItsValues(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "m33-existing.db")
+	store, agentID, _ := testStore(t, path)
+	no := false
+	yes := true
+	saveYouTubeForTest(t, store, agentID, protocol.YouTubeResult{Status: protocol.YouTubeCN, Region: "US", SentToChina: &yes, PremiumNotice: &no}, 5000)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=33`); err != nil {
+		t.Fatal(err)
+	}
+	var columns int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('agent_google_status') WHERE name='youtube_premium_notice'`).Scan(&columns); err != nil || columns != 1 {
+		t.Fatalf("column count=%d err=%v", columns, err)
+	}
+	db.Close()
+	for attempt := 0; attempt < 2; attempt++ {
+		store, err = Open(ctx, path)
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		if version, err := store.SchemaVersion(ctx); err != nil || version != currentSchemaVersion || version < 33 {
+			t.Fatalf("version=%d err=%v", version, err)
+		}
+		var columns int
+		if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('agent_google_status') WHERE name='youtube_premium_notice'`).Scan(&columns); err != nil || columns != 1 {
+			t.Fatalf("column count=%d err=%v", columns, err)
+		}
+		snapshot, exists, err := store.GetGoogleStatus(ctx, agentID)
+		if err != nil || !exists || snapshot.Result.YouTube.PremiumNotice == nil || *snapshot.Result.YouTube.PremiumNotice {
+			t.Fatalf("stored false value lost: %+v exists=%t err=%v", snapshot.Result.YouTube, exists, err)
+		}
+		if _, err := store.db.Exec(`UPDATE agent_google_status SET youtube_premium_notice=2`); err == nil {
+			t.Fatal("CHECK no longer rejects 2")
+		}
+		store.Close()
+	}
+}

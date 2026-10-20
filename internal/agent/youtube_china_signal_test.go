@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"404-probe/internal/protocol"
 )
@@ -187,5 +191,123 @@ func TestRunnerReportsOlderCNShapeUntilServerAdvertisesChinaSignal(t *testing.T)
 		if !advertised && (got.Region != "CN" || got.PremiumNotice != nil) {
 			t.Fatalf("older shape not used: %+v", got)
 		}
+	}
+}
+
+// An invalid contentRegion (a script value or a meta tag) is never hidden by a missing GL or an earlier
+// conflict, so the China signal cannot turn an invalid page into cn.
+func TestYouTubeInvalidContentRegionIsNeverOverriddenByChinaSignal(t *testing.T) {
+	withMeta := func(body, code string) string {
+		return strings.Replace(body, "<title>YouTube Premium</title>", `<title>YouTube Premium</title><meta itemprop="contentRegion" content="`+code+`">`, 1)
+	}
+	second := func(first, config string) string {
+		return strings.Replace(first, "</script>", `;ytcfg.set(`+config+`);</script>`, 1)
+	}
+	gl := `"INNERTUBE_CONTEXT_GL":"US"`
+	for _, tc := range []struct {
+		name, body, status, region, reason string
+	}{
+		{"no GL, invalid contentRegion", youtubeFixturePage(chinaConfig(zwiebackCN, `"contentRegion":"ZZ"`)), "unknown", "", "invalid_region"},
+		{"no GL, invalid meta contentRegion", withMeta(youtubeFixturePage(chinaConfig(zwiebackCN, "")), "ZZ"), "unknown", "", "invalid_region"},
+		{"GL, invalid meta contentRegion", withMeta(youtubeFixturePage(chinaConfig(zwiebackCN, gl)), "ZZ"), "unknown", "", "invalid_region"},
+		{"conflict first, invalid contentRegion later", second(youtubeFixturePage(chinaConfig(zwiebackCN, gl+`,"contentRegion":"JP"`)), `{"contentRegion":"ZZ"}`), "unknown", "", "invalid_region"},
+		{"conflict first, invalid meta later", withMeta(youtubeFixturePage(chinaConfig(zwiebackCN, gl+`,"contentRegion":"JP"`)), "ZZ"), "unknown", "", "invalid_region"},
+		{"GL and invalid contentRegion in one config", youtubeFixturePage(chinaConfig(zwiebackCN, gl+`,"contentRegion":"ZZ"`)), "unknown", "", "invalid_region"},
+		{"empty meta contentRegion", withMeta(youtubeFixturePage(chinaConfig(zwiebackCN, gl)), ""), "unknown", "", "invalid_region"},
+		// Valid but missing or conflicting evidence stays outranked by the China signal.
+		{"no GL, valid contentRegion", youtubeFixturePage(chinaConfig(zwiebackCN, `"contentRegion":"JP"`)), "cn", "", ""},
+		{"valid meta conflict", withMeta(youtubeFixturePage(chinaConfig(zwiebackCN, gl)), "JP"), "cn", "", ""},
+		// Without a China signal an invalid contentRegion alone is invalid, not merely missing.
+		{"invalid contentRegion alone", youtubeFixturePage(`{"contentRegion":"ZZ"}`), "unknown", "", "invalid_region"},
+		{"valid contentRegion alone stays missing evidence", youtubeFixturePage(`{"contentRegion":"JP"}`), "unknown", "", "missing_evidence"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseYouTube(htmlResponse(200, googleTargets[0].url, tc.body))
+			if string(got.Status) != tc.status || got.Region != tc.region || got.Error.Category != tc.reason {
+				t.Fatalf("%+v", got)
+			}
+			validYouTubeResult(t, got)
+		})
+	}
+}
+
+// The notice is the page's own message block: the whole sentence as the value of a "content" field.
+func TestYouTubePremiumNoticeNeedsTheMessageField(t *testing.T) {
+	cn := chinaConfig(zwiebackCN, `"INNERTUBE_CONTEXT_GL":"US"`)
+	page := func(script string) string {
+		return strings.Replace(youtubeFixturePage(cn), "</body>", `<script>`+script+`</script></body>`, 1)
+	}
+	for _, tc := range []struct {
+		name, script string
+		want         bool
+	}{
+		{"real message block", `var ytInitialData={"title":{"content":"YouTube Premium is not available in your country","styleRuns":[]}};`, true},
+		{"JSON spacing", `var ytInitialData={"title":{ "content" : "YouTube Premium is not available in your country" }};`, true},
+		{"another field", `var messages={"help":"YouTube Premium is not available in your country"};`, false},
+		{"tail of a longer sentence", `var ytInitialData={"title":{"content":"Learn why YouTube Premium is not available in your country"}};`, false},
+		{"longer sentence after it", `var ytInitialData={"title":{"content":"YouTube Premium is not available in your country yet"}};`, false},
+		{"no quote on the left", `var s=content:"YouTube Premium is not available in your country";`, false},
+		{"plain text", `var s='YouTube Premium is not available in your country';`, false},
+		{"absent", `var s=1;`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseYouTube(htmlResponse(200, googleTargets[0].url, page(tc.script)))
+			if got.Status != protocol.YouTubeCN || got.PremiumNotice == nil || *got.PremiumNotice != tc.want {
+				t.Fatalf("%+v", got)
+			}
+		})
+	}
+}
+
+// The three real flagged pages carry the message as a "content" field; the committed fixture keeps that shape.
+func TestYouTubePremiumNoticeFixtureKeepsTheRealMessageShape(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("testdata", "youtube", "premium-cn-flagged-us-gl.html"))
+	if err != nil || !strings.Contains(string(body), `"content":"YouTube Premium is not available in your country"`) {
+		t.Fatalf("fixture lost the message shape: %v", err)
+	}
+}
+
+// Server capability reaches the Agent through the real report exchange and decides the shape of the
+// next Google status result.
+func TestReportCapabilityDecidesTheCNShapeOfTheNextResult(t *testing.T) {
+	body := youtubeFixturePage(chinaConfig(zwiebackCN, `"INNERTUBE_CONTEXT_GL":"US"`))
+	job := protocol.Job{JobID: "job", ProbeType: protocol.ProbeTypeGoogleStatus, TimeoutMS: 5000, Attempt: 1, LeaseToken: "lease",
+		Config: protocol.ProbeConfig{GoogleStatus: &protocol.GoogleStatusConfig{}}}
+	for _, tc := range []struct {
+		name, capabilities, region string
+		notice                     bool
+	}{
+		{"older Server", `{"google_status":true}`, "CN", false},
+		{"Server with the China signal", `{"google_status":true,"google_status_china_signal":true}`, "US", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"accepted":true,"capabilities":`+tc.capabilities+`}`)
+			}))
+			defer server.Close()
+			runner, err := New(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second,
+				AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch")}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner.collector = reportCollectorFunc(staticReportCollector)
+			runner.executor = &GoogleStatusExecutor{fetcher: fixtureGoogleFetcher{googleYouTube: {htmlResponse(200, "https://www.youtube.com/premium", body), ""}}}
+			if runner.googleChinaSignalSupported.Load() {
+				t.Fatal("capability must start unadvertised")
+			}
+			sequence := uint64(0)
+			if accepted, err := runner.sendReport(context.Background(), &sequence); err != nil || !accepted {
+				t.Fatalf("accepted=%t err=%v", accepted, err)
+			}
+			result := runner.executeJob(context.Background(), job)
+			if !result.Success || result.Result.GoogleStatus == nil {
+				t.Fatalf("%+v", result)
+			}
+			got := result.Result.GoogleStatus.YouTube
+			if got.Status != protocol.YouTubeCN || got.Region != tc.region || (got.PremiumNotice != nil) != tc.notice {
+				t.Fatalf("%+v", got)
+			}
+		})
 	}
 }

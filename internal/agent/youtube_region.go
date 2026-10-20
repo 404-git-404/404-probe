@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"404-probe/internal/protocol"
@@ -205,26 +206,34 @@ func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
 	return protocol.YouTubeResult{Status: protocol.YouTubeNotCN, Region: region, SentToChina: &cn}
 }
 
-// The page region as the aggregate of every trusted GL and its contentRegion corroboration.
+// The page region as the aggregate of every trusted GL and its contentRegion corroboration. Every
+// collected value is validated first: a missing GL or a conflict between valid regions can later be
+// outranked by the China signal, an invalid country code never can.
 func youtubeAggregateRegion(regions, corroboration []string) (string, string) {
-	if len(regions) == 0 {
-		return "", "missing_evidence"
-	}
-	region := regions[0]
-	for _, v := range append(append([]string{}, regions...), corroboration...) {
+	all := append(append([]string{}, regions...), corroboration...)
+	for _, v := range all {
 		if !protocol.ValidCountryCode(v) {
 			return "", "invalid_region"
 		}
-		if v != region {
+	}
+	if len(regions) == 0 {
+		return "", "missing_evidence"
+	}
+	for _, v := range all {
+		if v != regions[0] {
 			return "", "region_conflict"
 		}
 	}
-	return region, ""
+	return regions[0], ""
 }
+
+// The page's own message block: a JSON "content" field whose whole value is the sentence. A sentence
+// that is only the tail of a longer text, or sits in another field, is not this message.
+var youtubePremiumNotice = regexp.MustCompile(`"content"\s*:\s*"YouTube Premium is not available in your country"`)
 
 func youtubeChinaResult(region string, body []byte) protocol.YouTubeResult {
 	cn := true
-	notice := bytes.Contains(body, []byte(`YouTube Premium is not available in your country"`))
+	notice := youtubePremiumNotice.Match(body)
 	return protocol.YouTubeResult{Status: protocol.YouTubeCN, Region: region, SentToChina: &cn, PremiumNotice: &notice}
 }
 
