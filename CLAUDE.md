@@ -48,6 +48,7 @@ go test ./... -count=1
    6. 说明文件的后续修改在 tag 之后单独提交并推送。
    7. **最后一步**才把 `main` 快进到该发布分支（发布完成后 `main` 才前进）。
 6. 默认分支是 `main`，发布不通过合并进 `main` 完成，而是先在 `release/vX.Y.Z` 上完成，最后快进 `main`；tag 指向的提交必须在远端某个分支上可见。
+7. 评审记录统一保存在 `D:\Claude-Github\release-records\<版本>\`。
 
 ## Web 升级的约束（决定了上面的顺序）
 
@@ -59,6 +60,8 @@ go test ./... -count=1
 ## 技术与安全决策
 
 遇到需要二选一的技术或安全决策（例如是否阻塞发布、测试白名单还是不暴露字段），先调用子代理 `release-decider`（`.claude/agents/release-decider.md`），按它的结论执行；它自己认为必须由人决定的事项，再交给维护者。拿不准时选更安全、更保守的方案。
+
+Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选方案交给维护者。
 
 ## 测试机
 
@@ -81,33 +84,25 @@ go test ./... -count=1
 - 不要把主机名之外的连接信息（IP、密钥）、密码、token 写进仓库、说明、文档或提交。第三方页面的原始抓取（例如 YouTube 页面）只保留脱敏后的最小样本，使用后删除原始文件。
 - Alpine 只支持 Agent，不提供 Server 和自动升级；新装前先确认 OpenRC 已完整启动，工具为 GNU 版本；不要把产物放在 `/tmp`（tmpfs 占内存）。
 
-## 待办
+## 双模型开发
 
-v1.0.4 的 Issues #3 到 #9 已在 v1.0.4 完成：#3 恢复重试幂等、#4 ipify 外联开关、#5 YouTube 欧盟 consent 与失败原因细分、#6 正常升级流程的 5 秒稳定检查、#7 `install.sh` 非交互安装、#8 工具链改为 go1.26.8 并由构建脚本校验、#9 文本文件统一 LF。
+v1.0.5 起试运行：Claude Code 和 Codex 各自施工，互相做只读交叉评审。
 
-v1.0.5 及以后的待办：
+- 施工方是 Claude Code 或 Codex，由维护者在 ROADMAP.md 中分配；Codex 另需遵守根目录的 `AGENTS.md`。
+- 每个施工方使用独立的 git worktree 和分支，不共用工作目录。公共开发分支是 `dev/vX.Y.Z`（从 `main` 拉出）；v1.0.5 的约定：
+  - Claude Code：分支 `claude/v1.0.5`，worktree 在 `D:\Claude-Github\404-probe-claude`。
+  - Codex：分支 `codex/v1.0.5`，worktree 在 `D:\Claude-Github\404-probe-codex`。
+  - 两个分支都从 `dev/v1.0.5` 拉出。
+- 同一版本内只允许一方新增数据库迁移，由 ROADMAP 指定（v1.0.5 为 Claude Code）。
+- 开发期间双方都不改 `RELEASE_NOTES`、`README`、`CLAUDE.md`、`AGENTS.md`，发布时统一整理。
+- `app.js` 等大型公共文件，同一版本内尽量只由一方修改（v1.0.5 为 Claude Code）；另一方的任务如果需要修改，先停下来报告。
+- 测试 Server 同一时间只给一方使用，由维护者安排。
+- 模块完成后由另一方做只读交叉评审，以此代替一轮模块评审；发布前仍保留一次独立 High 评审。
+- 合并顺序：双方分支经验收后合入 `dev/vX.Y.Z`；发布时从 `dev/vX.Y.Z` 准备 `release/vX.Y.Z`。
 
-- 设备详情页重新设计。
-- 面板修改密码。
-- Cloudflare Zero Trust / 双域名。
-- Agent 升级演练脚本（`scripts/test-agent-upgrade-systemd.sh`）参数化。
-- Server 本机监控（在 Server 上安装 Agent）。
-- 已撤销 Agent 记录的彻底删除。
-- M14–M19。
-- v1.0.4 评审建议：
-  - 一键安装在 `oneclick_redeem_token` 子 shell 中失败（响应解析失败或未知状态码）时，报错里加上“token 可能已被使用，请在面板重新生成命令”。
-  - 沙箱探测最坏情况会长时间无输出：加开头提示“正在检测运行环境…”，并缩短单次超时。
-  - 非法 UTF-8 下 Go 与 bash 的密码长度计数差异（低优先级，Server 端会再校验）。
-- 网络质量目标改造：
-  - 内置目标只保留 zstaticcdn 的 TCP 检测，去掉内置 ICMP。
-  - 支持手动添加目标（只允许公网地址，复用 Agent 端的地址检查）。
-  - 检测频率可调，默认 30 秒，不允许快于 30 秒。
-  - 目标失效时显示“目标异常”，而不是线路丢包。
-- 小的显示问题：
-  - 公网 IP 冷却提示只写时间、不写日期（“可在 23:59 后”），改为带日期。
-  - 网络质量关闭后，卡片仍显示地区和“暂无有效 RTT”，应显示“已关闭”。
-  - 一键安装曾出现过笼统的“生成失败”，原因未查明，现在已有具体错误码，再出现时据此排查。
-- 第三方代码审计和 `THIRD_PARTY_NOTICES.md`（Komari 之外，含 `web/static/vendor`）。
-- 项目许可证：在公开推广或接受外部贡献之前选定。
-- 发布流程改进：Web 升级验证前，先记录各测试 Agent 的状态快照（版本、加固方式、开关、单元文件哈希），升级后逐项对比。
-- 评审记录统一保存在 `D:\Claude-Github\release-records\<版本>\`。
+## 后续任务
+
+未来任务以 `roadmap` 分支的 ROADMAP.md 为准（该分支不合并进 `main` 或任何发布分支）：
+
+- 在线阅读：https://github.com/404-git-404/404-probe/blob/roadmap/ROADMAP.md
+- 原始文本：https://raw.githubusercontent.com/404-git-404/404-probe/roadmap/ROADMAP.md
