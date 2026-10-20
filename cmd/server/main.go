@@ -28,6 +28,7 @@ import (
 
 	"golang.org/x/term"
 
+	"404-probe"
 	"404-probe/internal/auth"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
@@ -48,6 +49,11 @@ func run(args []string) error {
 		return usageError()
 	}
 	switch args[0] {
+	case "licenses":
+		if len(args) != 1 {
+			return errors.New("usage: 404-probe-server licenses")
+		}
+		return notices.Write(os.Stdout)
 	case "version":
 		return versionCommand(args[1:])
 	case "database":
@@ -76,7 +82,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server version [--json] | release verify [flags] | database <verify|migrate-copy|migrate-protected> --db path | web-domain <list|add|remove|disable> --db path [--json] [suffix] | serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
+	return errors.New("usage: 404-probe-server licenses | version [--json] | release verify [flags] | database <verify|migrate-copy|migrate-protected> --db path | web-domain <list|add|remove|disable> --db path [--json] [suffix] | serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
 }
 
 type webDomainCommandResult struct {

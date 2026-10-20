@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"404-probe"
 	"404-probe/internal/agent"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/geoip"
@@ -23,6 +24,17 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "licenses" {
+		if len(os.Args) != 2 {
+			slog.Error("usage: 404-probe-agent licenses")
+			os.Exit(2)
+		}
+		if err := notices.Write(os.Stdout); err != nil {
+			slog.Error("write Agent licenses", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := checkPlatformCommand(os.Args[1:], platformsupport.Host()); err != nil {
 		slog.Error("unsupported Agent command", "error", err)
 		os.Exit(1)
