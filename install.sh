@@ -2031,6 +2031,7 @@ PROBE_404_SECURITY_COLLECTOR=\"${SECURITY_COLLECTOR_STATE}\""
 # Runs before anything is registered or installed. No-op for OpenRC.
 sandbox_prepare() {
   [[ "${INSTALL_INIT:-systemd}" != openrc ]] || return 0
+  note "正在检测运行环境… (Checking the runtime environment…)"
   sandbox_probe
   local description
   description="$(sandbox_describe)"
@@ -2658,9 +2659,9 @@ oneclick_redeem_token() {
   body="${response%$'\n'*}"
   if [[ "${status}" == 200 ]]; then
     local agent_id agent_token
-    [[ "${body}" =~ \"agent_id\":\"([0-9a-f]{32})\" ]] || die "the Server returned an unexpected registration response"
+    [[ "${body}" =~ \"agent_id\":\"([0-9a-f]{32})\" ]] || die "the Server returned an unexpected registration response; the registration token may already have been used; generate a new command in the panel (注册 token 可能已被使用，请在面板重新生成命令)"
     agent_id="${BASH_REMATCH[1]}"
-    [[ "${body}" =~ \"agent_token\":\"([A-Za-z0-9_-]{43})\" ]] || die "the Server returned an unexpected registration response"
+    [[ "${body}" =~ \"agent_token\":\"([A-Za-z0-9_-]{43})\" ]] || die "the Server returned an unexpected registration response; the registration token may already have been used; generate a new command in the panel (注册 token 可能已被使用，请在面板重新生成命令)"
     agent_token="${BASH_REMATCH[1]}"
     printf '%s\n%s\n' "${agent_id}" "${agent_token}"
     return 0
@@ -2673,7 +2674,7 @@ oneclick_redeem_token() {
     enrollment_revoked) message="this registration token was revoked; generate a new command in the panel" ;;
     enrollment_invalid) message="the Server does not recognise this registration token" ;;
     enrollment_name_mismatch) message="PROBE_404_AGENT_NAME does not match the name the token was generated for" ;;
-    *) message="the Server refused the registration (HTTP ${status:-unknown})" ;;
+    *) message="the Server refused the registration (HTTP ${status:-unknown}); the registration token may already have been used; generate a new command in the panel (注册 token 可能已被使用，请在面板重新生成命令)" ;;
   esac
   die "Agent registration failed: ${message}"
 }
