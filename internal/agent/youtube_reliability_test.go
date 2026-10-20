@@ -58,7 +58,7 @@ func TestM11YouTubeEvidence(t *testing.T) {
 		{"HK nested", youtubeFixturePage(`{"INNERTUBE_CONTEXT":{"client":{"gl":"HK"}}}`), "HK", ""},
 		{"CN", youtubeFixturePage(`{"INNERTUBE_CONTEXT_GL":"CN"}`), "CN", ""},
 		{"DE escaped", youtubeFixturePage(`{"INNERTUBE_CONTEXT_GL":"D\u0045"}`), "DE", ""},
-		{"unrelated google.cn", strings.Replace(youtubeFixturePage(`{"INNERTUBE_CONTEXT_GL":"US"}`), "</body>", `<a href="https://www.google.cn">irrelevant</a></body>`, 1), "US", ""},
+		{"unrelated google.cn", strings.Replace(youtubeFixturePage(`{"INNERTUBE_CONTEXT_GL":"US"}`), "</body>", `<a href="https://www.google.cn">elsewhere</a></body>`, 1), "", "china_signal_unverified"},
 		{"conflict", youtubeFixturePage(`{"INNERTUBE_CONTEXT_GL":"US","contentRegion":"CN"}`), "", "region_conflict"},
 		{"nested conflict", youtubeFixturePage(`{"INNERTUBE_CONTEXT_GL":"JP","INNERTUBE_CONTEXT":{"client":{"gl":"US"}}}`), "", "region_conflict"},
 		{"duplicate key", youtubeFixturePage(`{"INNERTUBE_CONTEXT_GL":"US","INNERTUBE_CONTEXT_GL":"CN"}`), "", "invalid_configuration"},

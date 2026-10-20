@@ -258,7 +258,17 @@ func TestTCPMiniDSTProofAndInitialization(t *testing.T) {
 }
 func dropPublicEgressControlFixtureSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	for _, q := range []string{`DELETE FROM schema_migrations WHERE version=32`, `DROP TABLE IF EXISTS agent_enrollment_tokens`, `DELETE FROM schema_migrations WHERE version=31`, `DROP INDEX IF EXISTS idx_probe_jobs_one_pending_public_egress`, `DROP TABLE IF EXISTS agent_public_egress_control`, `DELETE FROM schema_migrations WHERE version=30`} {
+	// Migration 33 added the premium notice column; rewind it when the table is still there.
+	var hasPremiumNotice int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('agent_google_status') WHERE name='youtube_premium_notice'`).Scan(&hasPremiumNotice); err != nil {
+		t.Fatal(err)
+	}
+	if hasPremiumNotice > 0 {
+		if _, err := db.Exec(`ALTER TABLE agent_google_status DROP COLUMN youtube_premium_notice`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{`DELETE FROM schema_migrations WHERE version=33`, `DELETE FROM schema_migrations WHERE version=32`, `DROP TABLE IF EXISTS agent_enrollment_tokens`, `DELETE FROM schema_migrations WHERE version=31`, `DROP INDEX IF EXISTS idx_probe_jobs_one_pending_public_egress`, `DROP TABLE IF EXISTS agent_public_egress_control`, `DELETE FROM schema_migrations WHERE version=30`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}

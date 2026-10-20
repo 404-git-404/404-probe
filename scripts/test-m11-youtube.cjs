@@ -4,8 +4,8 @@ const now=1800000000000;
 const agent=(youtube,extra={})=>({online:true,google_status:{supported:true,pending:false,checked_at:now-1000,next_due_at:now+86400000,result:{youtube},...extra}});
 
 test('M11: a page region makes no playback, entitlement or IP geolocation claim',()=>{
- for(const region of ['US','JP','HK','CN','DE','CW']){
-  const view=YouTube.view(agent({status:region==='CN'?'cn':'not_cn',region}),now);
+ for(const region of ['US','JP','HK','DE','CW']){
+  const view=YouTube.view(agent({status:'not_cn',region}),now);
   assert.equal(view.label,'地区 '+region);assert.equal(view.tone,'observed');
   assert.doesNotMatch(view.label,/正常|解锁|送中/);assert.match(view.description,/未验证视频播放或 Premium 解锁/);assert.match(view.description,/不代表出口 IP 归属/);
  }
@@ -35,12 +35,12 @@ test('M11: Premium availability colours only valid results, by the official list
  const premium=(region,extra={},base={})=>YouTube.view({...agent({status:region==='CN'?'cn':'not_cn',region},extra),...base},now);
  assert.equal(premium('US').premium,'available');assert.equal(premium('US').tone,'observed');
  assert.equal(premium('PR').premium,'available');
- for(const region of ['CN','MO','RU']){const v=premium(region);assert.equal(v.premium,'unavailable');assert.match(v.description,/Premium 不可用地区（依据 YouTube 官方名单，核对日期 \d{4}-\d{2}-\d{2}）/);}
+ for(const region of ['MO','RU']){const v=premium(region);assert.equal(v.premium,'unavailable');assert.match(v.description,/Premium 不可用地区（依据 YouTube 官方名单，核对日期 \d{4}-\d{2}-\d{2}）/);}
  assert.match(premium('US').description,/Premium 可用地区/);assert.match(premium('US').description,/未验证视频播放或 Premium 解锁/);assert.match(premium('CN').description,/不代表出口 IP 归属/);
 });
 test('M11: stale, offline, pending, unknown and unsupported stay neutral',()=>{
  const stale=YouTube.view(agent({status:'cn',region:'CN'},{stale:true}),now);
- assert.equal(stale.label,'过期·CN');assert.equal(stale.premium,null);assert.equal(stale.tone,'stale');assert.doesNotMatch(stale.description,/Premium (不)?可用地区/);
+ assert.equal(stale.label,'过期·送中');assert.equal(stale.premium,null);assert.equal(stale.tone,'stale');assert.doesNotMatch(stale.description,/Premium (不)?可用地区/);
  const offline=YouTube.view({...agent({status:'not_cn',region:'US'}),online:false},now);assert.equal(offline.premium,null);assert.equal(offline.tone,'stale');
  assert.equal(YouTube.view(agent({status:'unknown',error:{category:'timeout'}}),now).premium,null);
  assert.equal(YouTube.view(agent({status:'not_cn',region:'ZZ'}),now).premium,null);
@@ -82,4 +82,38 @@ test('L2: the card and the history page both take the label and premium colour f
  const fs=require('node:fs'),read=f=>fs.readFileSync(require.resolve('../web/static/'+f),'utf8');
  assert.ok(read('app.js').includes('YouTubeStatus.view(agent)')&&read('app.js').includes('value.label,value.tone,value.premium'));
  assert.ok(read('history.js').includes('observation.premium'));
+});
+
+// R23: 送中 means Google treats the IP as being in China; the page region is only a default there.
+const chinaAgent=(extra={},base={})=>({...agent({status:'cn',sent_to_china:true,region:'US',...extra}),...base});
+test('R23: 送中 is the main label, the page region is a footnote and Premium comes from the page message only',()=>{
+ const withNotice=YouTube.view(chinaAgent({premium_unavailable_notice:true}),now);
+ assert.equal(withNotice.label,'送中');assert.equal(withNotice.tone,'warn');assert.equal(withNotice.premium,'unavailable');assert.equal(withNotice.known,false);
+ assert.match(withNotice.description,/页面提示 Premium 不可用/);assert.match(withNotice.description,/页面地区 US（送中时不可信）/);
+ assert.doesNotMatch(withNotice.description,/Premium (不)?可用地区/);
+ for(const extra of [{premium_unavailable_notice:false},{}]){
+  const view=YouTube.view(chinaAgent(extra),now);
+  assert.equal(view.label,'送中');assert.equal(view.premium,'undetermined');assert.match(view.description,/送中，无法判断 Premium 是否可用/);assert.doesNotMatch(view.description,/页面提示 Premium 不可用/);
+ }
+});
+test('R23: 送中 without a usable page region shows no region footnote and never an official-list verdict',()=>{
+ for(const region of ['CN','']){
+  const view=YouTube.view(chinaAgent({region}),now);
+  assert.equal(view.label,'送中');assert.equal(view.premium,'undetermined');assert.doesNotMatch(view.description,/页面地区 [A-Z]{2}（送中时不可信）/);assert.doesNotMatch(view.description,/Premium (不)?可用地区/);
+ }
+});
+test('R23: stale, offline, pending and unsupported 送中 results stay neutral',()=>{
+ assert.equal(YouTube.view(chinaAgent({premium_unavailable_notice:true},{google_status:{...chinaAgent({premium_unavailable_notice:true}).google_status,stale:true}}),now).label,'过期·送中');
+ const offline=YouTube.view(chinaAgent({premium_unavailable_notice:true},{online:false}),now);
+ assert.equal(offline.label,'旧·送中');assert.equal(offline.tone,'stale');assert.equal(offline.premium,null);
+ const pending=chinaAgent({premium_unavailable_notice:true});pending.google_status.pending=true;assert.equal(YouTube.view(pending,now).label,'检测中');assert.equal(YouTube.view(pending,now).premium,null);
+ const unsupported=chinaAgent({premium_unavailable_notice:true});unsupported.google_status.supported=false;assert.equal(YouTube.view(unsupported,now).premium,null);
+});
+test('R23: an unverified China signal is unknown with its own reason and no Premium verdict',()=>{
+ const view=YouTube.view(agent({status:'unknown',error:{category:'china_signal_unverified'}}),now);
+ assert.equal(view.label,'未知');assert.equal(view.tone,'unknown');assert.equal(view.premium,null);assert.equal(view.known,false);assert.match(view.reason,/页面出现中国区信号但无法确认/);
+});
+test('R23: a normal region is still judged by the official list and never shows 送中',()=>{
+ const view=YouTube.view(agent({status:'not_cn',region:'US',sent_to_china:false}),now);
+ assert.equal(view.label,'地区 US');assert.equal(view.premium,'available');assert.doesNotMatch(view.description,/送中/);
 });

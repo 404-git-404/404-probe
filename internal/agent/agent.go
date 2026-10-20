@@ -123,6 +123,7 @@ type Runner struct {
 	upgradeV2ClaimSupported      atomic.Bool
 	interactiveControlSupported  atomic.Bool
 	googleStatusSupported        atomic.Bool
+	googleChinaSignalSupported   atomic.Bool
 	publicEgressSupported        atomic.Bool
 	securitySupported            atomic.Bool
 	managementAPISupported       atomic.Bool
@@ -507,6 +508,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	r.interactiveControlSupported.Store(response.Capabilities.InteractiveControl)
 	r.googleStatusSupported.Store(response.Capabilities.GoogleStatus)
+	r.googleChinaSignalSupported.Store(response.Capabilities.GoogleStatusChinaSignal)
 	r.securitySupported.Store(response.Capabilities.Security)
 	if response.Capabilities.InteractiveControl {
 		r.interactiveControlOnce.Do(func() { close(r.interactiveControlReady) })

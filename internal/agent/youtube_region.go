@@ -134,6 +134,7 @@ func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
 		return unknown("missing_evidence")
 	}
 	var regions []string
+	var zwieback []any
 	for _, s := range scripts {
 		configs, err := youtubeConfigs(s)
 		if err != nil {
@@ -145,6 +146,9 @@ func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
 			continue
 		}
 		for _, config := range configs {
+			if raw, ok := config["ZWIEBACK_PING_URLS"]; ok {
+				zwieback = append(zwieback, raw)
+			}
 			if raw, ok := config["INNERTUBE_CONTEXT_GL"]; ok {
 				v, ok := raw.(string)
 				if !ok || !protocol.ValidCountryCode(v) {
@@ -172,24 +176,115 @@ func parseYouTube(response googleHTTPResponse) protocol.YouTubeResult {
 			}
 		}
 	}
+	region, reason := youtubeAggregateRegion(regions, corroboration)
+	if reason == "invalid_region" {
+		return unknown(reason)
+	}
+	// Google decides per IP whether a visitor is treated as being in China. For such an IP the page's
+	// own region (GL, contentRegion) is only a default, so the Google China ping URL in the page
+	// configuration outranks it. Only the strictly parsed key counts; see youtubeZwiebackChina.
+	if youtubeZwiebackChina(zwieback) {
+		if reason != "" {
+			region = ""
+		}
+		return youtubeChinaResult(region, response.body)
+	}
+	if reason == "" && region == "CN" {
+		return youtubeChinaResult(region, response.body)
+	}
+	// A China domain somewhere in the page that the configuration did not confirm is a signal this
+	// reader cannot vouch for: report it as unknown instead of claiming the visitor is not in China.
+	// This byte scan can only produce unknown, never a China verdict.
+	if youtubeMentionsChinaDomain(response.body) {
+		return unknown("china_signal_unverified")
+	}
+	if reason != "" {
+		return unknown(reason)
+	}
+	cn := false
+	return protocol.YouTubeResult{Status: protocol.YouTubeNotCN, Region: region, SentToChina: &cn}
+}
+
+// The page region as the aggregate of every trusted GL and its contentRegion corroboration.
+func youtubeAggregateRegion(regions, corroboration []string) (string, string) {
 	if len(regions) == 0 {
-		return unknown("missing_evidence")
+		return "", "missing_evidence"
 	}
 	region := regions[0]
-	for _, v := range append(regions, corroboration...) {
+	for _, v := range append(append([]string{}, regions...), corroboration...) {
 		if !protocol.ValidCountryCode(v) {
-			return unknown("invalid_region")
+			return "", "invalid_region"
 		}
 		if v != region {
-			return unknown("region_conflict")
+			return "", "region_conflict"
 		}
 	}
-	cn := region == "CN"
-	status := protocol.YouTubeNotCN
-	if cn {
-		status = protocol.YouTubeCN
+	return region, ""
+}
+
+func youtubeChinaResult(region string, body []byte) protocol.YouTubeResult {
+	cn := true
+	notice := bytes.Contains(body, []byte(`YouTube Premium is not available in your country"`))
+	return protocol.YouTubeResult{Status: protocol.YouTubeCN, Region: region, SentToChina: &cn, PremiumNotice: &notice}
+}
+
+// True only when every top-level ZWIEBACK_PING_URLS of the strictly parsed configurations is an array
+// of strings and contains at least one URL whose host is google.cn or below it.
+func youtubeZwiebackChina(values []any) bool {
+	if len(values) == 0 {
+		return false
 	}
-	return protocol.YouTubeResult{Status: status, Region: region, SentToChina: &cn}
+	for _, value := range values {
+		urls, ok := value.([]any)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, element := range urls {
+			raw, ok := element.(string)
+			if !ok {
+				return false
+			}
+			if youtubeChinaURL(raw) {
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func youtubeChinaURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return host == "google.cn" || strings.HasSuffix(host, ".google.cn")
+}
+
+// google.cn as a whole label sequence: not preceded by [a-z0-9-] and not followed by [a-z0-9_-].
+func youtubeMentionsChinaDomain(body []byte) bool {
+	lower := bytes.ToLower(body)
+	needle := []byte("google.cn")
+	for offset := 0; ; {
+		found := bytes.Index(lower[offset:], needle)
+		if found < 0 {
+			return false
+		}
+		found += offset
+		end := found + len(needle)
+		if (found == 0 || !youtubeLabelByte(lower[found-1], false)) && (end >= len(lower) || !youtubeLabelByte(lower[end], true)) {
+			return true
+		}
+		offset = found + 1
+	}
+}
+
+func youtubeLabelByte(c byte, underscore bool) bool {
+	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || underscore && c == '_'
 }
 
 // Extract only literal, top-level ytcfg.set(JSON) statements in inline script.

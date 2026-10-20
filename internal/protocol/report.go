@@ -202,4 +202,8 @@ type ReportCapabilities struct {
 	Security              bool `json:"security,omitempty"`
 	ManagementReport      bool `json:"management_capabilities_report,omitempty"`
 	NetworkCountersReport bool `json:"network_counters_report,omitempty"`
+
+	// GoogleStatusChinaSignal: the Server accepts a YouTube cn result that keeps the page region and
+	// the premium_unavailable_notice field. Without it an Agent reports the older Region=CN shape.
+	GoogleStatusChinaSignal bool `json:"google_status_china_signal,omitempty"`
 }

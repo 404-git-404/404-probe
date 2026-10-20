@@ -376,6 +376,9 @@ func (r *Runner) executeJob(ctx context.Context, job protocol.Job) protocol.JobR
 	cancel()
 	finished := time.Now()
 
+	if err == nil && job.ProbeType == protocol.ProbeTypeGoogleStatus && !r.googleChinaSignalSupported.Load() {
+		googleStatusOlderServerShape(execution.Result.GoogleStatus)
+	}
 	if err != nil {
 		category := "executor_error"
 		message := "probe executor failed"

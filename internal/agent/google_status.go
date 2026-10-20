@@ -98,6 +98,16 @@ func (e *GoogleStatusExecutor) Execute(ctx context.Context, job protocol.Job) (E
 	return Execution{Success: true, Result: protocol.ProbeResult{GoogleStatus: &result}}, nil
 }
 
+// A Server that did not advertise ReportCapabilities.GoogleStatusChinaSignal only accepts the older
+// cn shape (Region CN, no premium notice); a cn page region and the notice stay on this Agent.
+func googleStatusOlderServerShape(result *protocol.GoogleStatusResult) {
+	if result == nil || result.YouTube.Status != protocol.YouTubeCN {
+		return
+	}
+	result.YouTube.Region = "CN"
+	result.YouTube.PremiumNotice = nil
+}
+
 func firstCategory(value, fallback string) string {
 	if value != "" {
 		return value
