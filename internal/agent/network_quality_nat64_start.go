@@ -37,7 +37,9 @@ func (r *Runner) startNAT64Discovery(ctx context.Context, config *protocol.Quali
 	q := r.quality
 	q.mu.Lock()
 	launch := q.nat64Ctx == nil || q.nat64Ctx.Err() != nil
+	var generation uint64
 	if launch {
+		generation = nat64NextGeneration()
 		q.nat64Ctx = ctx
 		if !q.nat64Done && q.nat64Timer == nil {
 			timeout := q.nat64Timeout
@@ -57,7 +59,7 @@ func (r *Runner) startNAT64Discovery(ctx context.Context, config *protocol.Quali
 		if wait == nil {
 			wait = time.After
 		}
-		go runNAT64Discovery(ctx, resolver, wait, q.markNAT64Done)
+		go runNAT64DiscoveryAs(ctx, resolver, wait, q.markNAT64Done, generation)
 	}
 	return done
 }

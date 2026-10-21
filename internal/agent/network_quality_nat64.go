@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/netip"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -157,6 +158,10 @@ type nat64Lookup interface {
 // nat64Refresh asks once. A failed query keeps what is known; a successful one replaces it, an empty
 // answer meaning there is no DNS64.
 func nat64Refresh(ctx context.Context, resolver nat64Lookup) error {
+	return nat64RefreshAs(ctx, resolver, 0)
+}
+
+func nat64RefreshAs(ctx context.Context, resolver nat64Lookup, generation uint64) error {
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, nat64QueryTimeout)
 	defer cancel()
@@ -167,13 +172,44 @@ func nat64Refresh(ctx context.Context, resolver nat64Lookup) error {
 	}
 	if err != nil {
 		if isDNSNotFound(err) {
-			nat64Snapshot.Store(&nat64Set{}) // an answer: no DNS64 here
+			nat64Publish(&nat64Set{}, generation) // an answer: no DNS64 here
 			return nil
 		}
 		return err
 	}
-	nat64Snapshot.Store(nat64Discover(answers))
+	nat64Publish(nat64Discover(answers), generation)
 	return nil
+}
+
+// nat64PublishHook lets a test stop a loop right before it publishes; it is nil in production.
+var nat64PublishHook func()
+
+// Every loop that is started takes the next generation number. Publishing compares it with the newest
+// one and stores in the same critical section, so a loop that was superseded after it passed its
+// cancellation check cannot replace what a newer loop published. Generation 0 is a one-off refresh
+// that belongs to no loop.
+var (
+	nat64Mu     sync.Mutex
+	nat64Newest uint64
+)
+
+func nat64NextGeneration() uint64 {
+	nat64Mu.Lock()
+	defer nat64Mu.Unlock()
+	nat64Newest++
+	return nat64Newest
+}
+
+func nat64Publish(set *nat64Set, generation uint64) {
+	if nat64PublishHook != nil {
+		nat64PublishHook()
+	}
+	nat64Mu.Lock()
+	defer nat64Mu.Unlock()
+	if generation != 0 && generation != nat64Newest {
+		return
+	}
+	nat64Snapshot.Store(set)
 }
 
 // nat64Delay is the wait before the next query: ten minutes after a success, then one minute doubling
@@ -192,9 +228,13 @@ func nat64Delay(failures int) time.Duration {
 // runNAT64Discovery queries at start and then on the fixed schedule until ctx ends. The connection
 // check only reads the snapshot; no DNS query ever runs inside Dialer.Control.
 func runNAT64Discovery(ctx context.Context, resolver nat64Lookup, wait func(time.Duration) <-chan time.Time, first func()) {
+	runNAT64DiscoveryAs(ctx, resolver, wait, first, 0)
+}
+
+func runNAT64DiscoveryAs(ctx context.Context, resolver nat64Lookup, wait func(time.Duration) <-chan time.Time, first func(), generation uint64) {
 	failures := 0
 	for ctx.Err() == nil {
-		if err := nat64Refresh(ctx, resolver); err != nil {
+		if err := nat64RefreshAs(ctx, resolver, generation); err != nil {
 			failures++
 		} else {
 			failures = 0
