@@ -113,6 +113,8 @@
       if(s.slot!==slots[i]||!['builtin','custom'].includes(s.kind)||typeof s.region!=='string'||typeof s.isp!=='string'||typeof s.host!=='string'||!Number.isInteger(s.port)||typeof s.slot_enabled!=='boolean'||subItems.some(([k])=>typeof s[k]!=='boolean'))bad('卡槽 '+(i+1));
       bySlot.set(s.slot,s);
     });
+    // What the Agent of this session can do with ICMP, per family, as the Server says it. Missing or unrecognised means unknown, never unsupported.
+    const level=v=>v==='supported'||v==='unsupported'?v:'unknown',icmpSupport={ipv4:level(v4.icmp_support?.ipv4),ipv6:level(v4.icmp_support?.ipv6)};
     const targets=[],lanes=new Map();
     for(const l of v4.lanes) {
       if(!bySlot.has(l.slot)||!['ipv4','ipv6'].includes(l.family)||!['tcp','icmp'].includes(l.protocol)||!laneStatuses.includes(l.status)||!isDecimal(l.slot_revision)||(l.target_id!==null&&!/^[0-9a-f]{32}$/.test(l.target_id)))bad('通道');
@@ -124,7 +126,7 @@
         lane_status:l.status,condition:l.condition||'',source:'user',host:s.host,port:l.protocol==='icmp'?0:s.port});
     }
     return {version:4,revision:v4.config_revision,settings_revision:v4.settings_revision,enabled:v4.enabled,interval_ms:v4.interval_ms,effective_interval_ms:v4.effective_interval_ms,
-      state:v4.state,agent_support:v4.agent_support,supported:v4.agent_support==='user_targets',slots:v4.slots.map(s=>({...s})),lanes,targets};
+      state:v4.state,agent_support:v4.agent_support,icmpSupport,supported:v4.agent_support==='user_targets',slots:v4.slots.map(s=>({...s})),lanes,targets};
   }
   const slotNumber=slot=>slots.indexOf(slot)+1;
   const ispText=s=>s?.kind==='builtin'?(names[s.isp]||s.isp):s?.isp;

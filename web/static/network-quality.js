@@ -339,7 +339,8 @@
       value(p.interval,String(p.draft.interval_ms));
       p.frequencyNote.textContent=config&&config.effective_interval_ms!==config.interval_ms?`实际间隔 ${config.effective_interval_ms/1000} 秒（Server 容量限制）`:'';
       const hints=C.hints(p.draft);
-      const icmpOff=new Set((config?[...config.lanes.values()]:[]).filter(l=>l.status==='icmp_unsupported').map(l=>l.family));
+      // Only the Server's capability answer disables an ICMP box; "unknown" (not negotiated yet, no session) leaves it open.
+      const icmpOff=new Set(['ipv4','ipv6'].filter(family=>config?.icmpSupport?.[family]==='unsupported'));
       for(const s of p.draft.slots) {
         const v=p.slots.get(s.slot);v.on.checked=s.slot_enabled;
         v.radios.builtin.checked=s.kind==='builtin';v.radios.custom.checked=s.kind==='custom';

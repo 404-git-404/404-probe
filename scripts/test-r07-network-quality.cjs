@@ -4,6 +4,7 @@ const {test} = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
 const {C, UI, load, clone, flush, setup, cardHistory, allowedTags, tags, AGENT} = require('./lib/r07-harness.cjs');
 
+const screen = (w, h) => { globalThis.innerWidth = w; globalThis.innerHeight = h; };
 const inc = v => String(BigInt(v) + 1n);
 // The Server's answer to a save: the posted content, the next settings revision.
 const saved = (body, ctx) => {
@@ -216,17 +217,61 @@ test('a literal address of one family locks the sub-items of the other; kind swi
   assert.match(text, /已填地址时必须填写/);
 });
 
-test('ICMP: unsupported on this host disables the ICMP sub-items of that family and says why', async () => {
+const withIcmp = (name, v4, v6) => { const r = clone(load(name)); if (v4 === undefined) delete r.icmp_support; else r.icmp_support = {ipv4: v4, ipv6: v6}; return r; };
+const icmpBoxes = (f, slot = 'telecom') => ({ipv4: f.field(`${slot}-ipv4_icmp`).disabled, ipv6: f.field(`${slot}-ipv6_icmp`).disabled, tcp4: f.field(`${slot}-ipv4_tcp`).disabled, tcp6: f.field(`${slot}-ipv6_tcp`).disabled});
+
+test('ICMP: the Server\'s capability answer disables the ICMP boxes of that family and says why, whatever the lanes say', async () => {
   const f = setup({raw: load('v4-no-ipv6-no-icmp')});
   await f.open();
-  for (const slot of C.slots) {
-    // The IPv6 side is reported as "no IPv6" first, so only the IPv4 ICMP lane tells us the host cannot send ICMP.
-    assert.equal(f.field(`${slot}-ipv4_icmp`).disabled, true, `${slot}-ipv4_icmp`);
-    assert.equal(f.field(`${slot}-ipv4_tcp`).disabled, false);
-  }
+  assert.deepEqual(load('v4-no-ipv6-no-icmp').icmp_support, {ipv4: 'unsupported', ipv6: 'unsupported'});
+  // (unicom's address is an IPv4 literal, which locks its IPv6 boxes on its own account; telecom is a name.)
+  assert.deepEqual(icmpBoxes(f, 'telecom'), {ipv4: true, ipv6: true, tcp4: false, tcp6: false});
+  assert.equal(f.field('unicom-ipv4_icmp').disabled, true); assert.equal(f.field('mobile-ipv6_icmp').disabled, true);
   assert.match(f.panel().all().map(n => n.textContent).join('|'), /当前环境不支持 ICMP/);
-  // A saved tick on the disabled box is kept, not cleared.
+  assert.equal(f.field('telecom-ipv4_icmp').checked, true, 'a saved tick on a disabled box is kept, not cleared');
+  assert.equal(f.field('telecom-ipv6_icmp').checked, true);
+});
+
+test('ICMP matrix (review M5): the same unsupported answer disables the boxes with the switch off, nothing ticked, nothing configured, and only for the family it names', async () => {
+  const cases = {
+    'switch off, configured': withIcmp('v4-saved-off', 'unsupported', 'unsupported'),
+    'switch on, nothing ticked': (() => { const r = withIcmp('v4-running', 'unsupported', 'unsupported'); for (const s of r.slots) Object.assign(s, {ipv4_icmp: false, ipv6_icmp: false}); return r; })(),
+    'nothing configured': withIcmp('v4-empty-unreported', 'unsupported', 'unsupported'),
+    'IPv6 only': withIcmp('v4-saved-off', 'supported', 'unsupported'),
+    'IPv4 only': withIcmp('v4-saved-off', 'unsupported', 'supported'),
+  };
+  const expect = {'switch off, configured': [true, true], 'switch on, nothing ticked': [true, true], 'nothing configured': [true, true], 'IPv6 only': [false, true], 'IPv4 only': [true, false]};
+  for (const [what, raw] of Object.entries(cases)) {
+    const f = setup({raw}); await f.open();
+    const got = icmpBoxes(f); assert.deepEqual([got.ipv4, got.ipv6], expect[what], what);
+    assert.equal(got.tcp4 || got.tcp6, false, 'TCP is never affected');
+  }
+});
+
+test('ICMP matrix: "unknown", a missing field or a value we do not know never disables anything', async () => {
+  for (const [what, raw] of Object.entries({
+    'negotiating': load('v4-negotiating'), 'first upgrade step': load('v4-first-upgrade'), 'old agent': load('v4-old-agent'), 'never reported': load('v4-empty-unreported'),
+    'field missing': withIcmp('v4-saved-off'), 'garbage': (() => { const r = clone(load('v4-saved-off')); r.icmp_support = {ipv4: 'no', ipv6: 7}; return r; })(), 'null': (() => { const r = clone(load('v4-saved-off')); r.icmp_support = null; return r; })(),
+  })) {
+    const f = setup({raw}); await f.open();
+    assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false}, what);
+    assert.doesNotMatch(f.panel().all().map(n => n.textContent).join('|'), /当前环境不支持 ICMP/, what);
+  }
+  assert.deepEqual(C.adapt(load('v4-negotiating')).icmpSupport, {ipv4: 'unknown', ipv6: 'unknown'});
+  assert.deepEqual(C.adapt(withIcmp('v4-saved-off')).icmpSupport, {ipv4: 'unknown', ipv6: 'unknown'});
+});
+
+test('ICMP: capability lost and recovered while the dialog is open follows the Server and keeps the ticks', async () => {
+  let offset = 0; screen(1000, 1000);
+  const f = setup({raw: withIcmp('v4-saved-off', 'supported', 'supported'), clock: () => offset});
+  await f.open();
+  assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false});
+  f.setRaw(withIcmp('v4-saved-off', 'unsupported', 'unsupported')); offset += 31000; f.ui.tick(); await flush();
+  assert.deepEqual(icmpBoxes(f), {ipv4: true, ipv6: true, tcp4: false, tcp6: false});
   assert.equal(f.field('telecom-ipv4_icmp').checked, true);
+  f.setRaw(withIcmp('v4-saved-off', 'supported', 'supported')); offset += 31000; f.ui.tick(); await flush();
+  assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false});
+  assert.equal(f.ui.snapshot().panel.dirty, false, 'following the capability is not an edit');
 });
 
 test('server field errors appear next to their inputs; the rest of the dialog is untouched', async () => {
@@ -732,7 +777,6 @@ test('M6: the last IPv4 TCP lane turning into something else drops the old alert
   assert.ok(texts(c).includes('无当前 TCP 检测'));
 });
 
-const screen = (w, h) => { globalThis.innerWidth = w; globalThis.innerHeight = h; };
 const configReads = f => f.requests.filter(r => r.method === 'GET' && r.url.endsWith('/v4/config')).length;
 
 test('M7: a visible card reads the v4 state again every 30 seconds, so negotiation finishing shows up without reopening anything', async () => {

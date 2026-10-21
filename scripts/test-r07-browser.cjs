@@ -93,3 +93,17 @@ test('M3 (Chromium): a ticked box of the other family can be unticked after typi
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });
+
+test('M5 (Chromium): the three cases of the review - switch off, nothing ticked, IPv6 hidden by "no IPv6" - all disable the ICMP boxes the Server says are unsupported', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const off = load('v4-saved-off'); off.icmp_support = {ipv4: 'unsupported', ipv6: 'unsupported'};
+  const unticked = load('v4-running'); unticked.icmp_support = {ipv4: 'unsupported', ipv6: 'unsupported'}; for (const s of unticked.slots) Object.assign(s, {ipv4_icmp: false, ipv6_icmp: false});
+  const noV6 = load('v4-no-ipv6-no-icmp');
+  for (const [what, raw] of [['switch off', off], ['nothing ticked', unticked], ['no IPv6', noV6]]) {
+    const {page, errors} = await open(raw);
+    try {
+      const boxes = await page.evaluate(() => ['ipv4_icmp', 'ipv6_icmp', 'ipv4_tcp'].map(k => document.querySelector(`[data-nq-field="telecom-${k}"]`).disabled));
+      assert.deepEqual(boxes, [true, true, false], what);
+      assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+  }
+});
