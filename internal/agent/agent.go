@@ -130,6 +130,7 @@ type Runner struct {
 	qualitySupported             atomic.Bool
 	qualityV2Supported           atomic.Bool
 	qualityStagedSupported       atomic.Bool
+	qualityUserTargets           atomic.Bool // the Server answered the targets header of this session
 	quality                      *qualityControl
 	googleStatusAvailable        bool
 	publicEgressAvailable        bool
@@ -449,6 +450,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	if errors.Is(err, errQualityV2Rejected) {
 		r.qualityStagedSupported.Store(false)
 		r.qualityV2Supported.Store(false)
+		r.setQualityUserTargets(false)
 		r.stopQuality("v2_negotiation_rejected")
 		measurement.NetworkQualityV2 = nil
 		response, err = r.post(ctx, measurement) // Once only; the rejected report was not committed.
@@ -471,6 +473,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		if strings.Contains(response.Reason, "session") || strings.Contains(response.Reason, "epoch") {
 			r.qualityStagedSupported.Store(false)
 			r.qualityV2Supported.Store(false)
+			r.setQualityUserTargets(false)
 			r.stopQuality("report_session_rejected")
 		}
 		r.logger.Warn("report rejected", "reason", response.Reason, "epoch", r.epoch, "sequence", *sequence)
@@ -500,6 +503,13 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		r.stopQuality("staged_capability_withdrawn")
 	}
 	r.qualityStagedSupported.Store(response.Capabilities.NetworkQualityV2 && response.Capabilities.NetworkQualityStaged)
+	// The Server withdrawing the targets capability stops what was installed from it at once; the
+	// stop configuration that follows (or nothing) is all the Agent keeps (design 4.2).
+	if r.qualityUserTargets.Load() && !(response.Capabilities.NetworkQualityUserTargets && response.Capabilities.NetworkQualityV2) {
+		r.setQualityUserTargets(false)
+		r.stopQuality("user_targets_capability_withdrawn")
+	}
+	r.setQualityUserTargets(response.Capabilities.NetworkQualityUserTargets && response.Capabilities.NetworkQualityV2)
 	r.observeQualityReport(measurement.NetworkQuality, response)
 	r.reportNetworkCounters = response.Capabilities.NetworkCountersReport
 	r.managementAPISupported.Store(response.Capabilities.ManagementReport)
@@ -546,6 +556,7 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
 	req.Header.Set(protocol.QualityVersionHeader, "2")
 	req.Header.Set(protocol.QualitySemanticsHeader, protocol.QualityStagedSemantics)
+	req.Header.Set(protocol.QualityTargetsHeader, protocol.QualityTargetsUserV1)
 	resp, err := doAgentServerRequest(r.client, req)
 	if err != nil {
 		return protocol.ReportResponse{}, err

@@ -1,6 +1,10 @@
 package agent
 
-import "404-probe/internal/protocol"
+import (
+	"time"
+
+	"404-probe/internal/protocol"
+)
 
 func (r *Runner) qualityCapabilities() *protocol.QualityCapabilities {
 	c := &protocol.QualityCapabilities{Version: 2, Semantics: protocol.QualityV2Semantics}
@@ -9,6 +13,18 @@ func (r *Runner) qualityCapabilities() *protocol.QualityCapabilities {
 	}
 	if r.quality != nil {
 		c.ExcludedReason = r.quality.excludedReason
+	}
+	// Step two of the negotiation: only after the Server answered the header (design 4.2).
+	if r.qualityUserTargets.Load() {
+		c.Targets = protocol.QualityTargetsUserV1
+		c.IPv6Address = protocol.QualityIPv6Unknown
+		if r.quality != nil && r.quality.ipv6 != nil {
+			now := time.Now
+			if r.quality.now != nil {
+				now = r.quality.now
+			}
+			c.IPv6Address = r.quality.ipv6.observe(now())
+		}
 	}
 	var icmp *ICMPExecutor
 	if e, ok := r.executor.(*ProbeExecutor); ok {

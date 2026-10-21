@@ -34,9 +34,15 @@ type qualityControl struct {
 	uploadScheduled  func(time.Time) // Instance-local deterministic timing observation.
 	scheduleObserved func(uint64, int)
 	sampleQueued     func(string, string)
+	// userTargets is true while the Server answered the targets header of this session: user-entered
+	// targets are accepted, and catalog targets are not (guarded by mu).
+	userTargets bool
+	ipv6        *qualityIPv6Monitor
 }
 
-func newQualityControl() *qualityControl { return &qualityControl{wake: make(chan struct{}, 1)} }
+func newQualityControl() *qualityControl {
+	return &qualityControl{wake: make(chan struct{}, 1), ipv6: newQualityIPv6Monitor()}
+}
 func (q *qualityControl) signal() {
 	select {
 	case q.wake <- struct{}{}:
@@ -58,7 +64,12 @@ func (r *Runner) stopQuality(reason string) {
 	q.signal()
 	r.logger.Info("quality stopped", "reason", reason)
 }
-func qualityValidateConfig(c protocol.QualityConfig) error {
+func qualityValidateConfig(c protocol.QualityConfig) error { return qualityValidateConfigFor(c, false) }
+
+// qualityValidateConfigFor validates a configuration. userTargets is whether this session negotiated
+// user-entered targets: then active targets must be source "user" and pass the host rules shared with
+// the Server; otherwise they must be catalog targets as before.
+func qualityValidateConfigFor(c protocol.QualityConfig, userTargets bool) error {
 	limit := 6
 	if c.Version == 2 {
 		limit = 12
@@ -95,7 +106,7 @@ func qualityValidateConfig(c protocol.QualityConfig) error {
 		}
 		if c.Version == 2 {
 			key += "/" + t.Protocol
-			if t.Status == "active" && (c.RegionID == "" || t.Region != c.RegionID) {
+			if t.Status == "active" && t.Source != "user" && (c.RegionID == "" || t.Region != c.RegionID) {
 				return errors.New("quality region mismatch")
 			}
 		}
@@ -120,8 +131,13 @@ func qualityValidateConfig(c protocol.QualityConfig) error {
 				return errors.New("unsupported active quality lane")
 			}
 		}
-		if !c.Enabled || (t.Family == "ipv6" && !c.IPv6) || t.Source != "catalog" {
+		if !c.Enabled || (t.Family == "ipv6" && !c.IPv6) || t.Source != "catalog" && t.Source != "user" || (t.Source == "user") != userTargets {
 			return errors.New("unauthorized quality target")
+		}
+		if t.Source == "user" {
+			if err := qualityValidateUserTarget(c, t); err != nil {
+				return err
+			}
 		}
 		if len(t.ID) != 32 {
 			return errors.New("invalid quality target ID")
@@ -157,7 +173,7 @@ func qualityValidateConfig(c protocol.QualityConfig) error {
 	return nil
 }
 func (q *qualityControl) install(c protocol.QualityConfig) bool {
-	if qualityValidateConfig(c) != nil {
+	if qualityValidateConfigFor(c, q.userTargets) != nil {
 		return false
 	}
 	if q.config != nil {
@@ -202,6 +218,12 @@ func (r *Runner) observeQualityReport(optIn bool, response protocol.ReportRespon
 	q.signal()
 }
 func (r *Runner) qualityHTTP(ctx context.Context, path string, body []byte, limit int, result any) error {
+	return r.qualityHTTPWith(ctx, path, body, limit, result, false)
+}
+
+// qualityHTTPWith sends the targets header when the session negotiated user targets; without it the
+// Server answers with the old stop format.
+func (r *Runner) qualityHTTPWith(ctx context.Context, path string, body []byte, limit int, result any, userTargets bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(r.config.ServerURL, "/")+path, bytes.NewReader(body))
@@ -210,6 +232,9 @@ func (r *Runner) qualityHTTP(ctx context.Context, path string, body []byte, limi
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
+	if userTargets {
+		req.Header.Set(protocol.QualityTargetsHeader, protocol.QualityTargetsUserV1)
+	}
 	resp, err := doAgentServerRequest(r.client, req)
 	if err != nil {
 		return err
@@ -252,12 +277,13 @@ func (r *Runner) fetchQualityConfig(ctx context.Context) (protocol.QualityConfig
 	}
 	body, _ := json.Marshal(request)
 	var c protocol.QualityConfig
-	err := r.qualityHTTP(ctx, "/api/v1/agent/network-quality/config", body, protocol.QualityConfigResponseLimit, &c)
+	userTargets := r.qualityUserTargets.Load() && request.Version == 2
+	err := r.qualityHTTPWith(ctx, "/api/v1/agent/network-quality/config", body, protocol.QualityConfigResponseLimit, &c, userTargets)
 	if err == nil {
 		if request.Version == 2 && c.Version != 2 {
 			return c, errors.New("quality config negotiation mismatch")
 		}
-		err = qualityValidateConfig(c)
+		err = qualityValidateConfigFor(c, userTargets)
 	}
 	return c, err
 }
