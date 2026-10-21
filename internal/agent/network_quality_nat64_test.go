@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 )
@@ -18,12 +19,21 @@ func (fixedNAT64) LookupNetIP(context.Context, string, string) ([]netip.Addr, er
 }
 
 type scriptedNAT64 struct {
+	mu      sync.Mutex
 	answers []netip.Addr
 	err     error
 	asked   int
 }
 
+func (s *scriptedNAT64) set(answers []netip.Addr, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.answers, s.err = answers, err
+}
+
 func (s *scriptedNAT64) LookupNetIP(_ context.Context, network, host string) ([]netip.Addr, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.asked++
 	if network != "ip6" || host != "ipv4only.arpa" {
 		return nil, errors.New("unexpected question")
@@ -38,7 +48,7 @@ func setNAT64(t *testing.T, prefixes ...string) {
 	for _, p := range prefixes {
 		set = append(set, netip.MustParsePrefix(p))
 	}
-	nat64Snapshot.Store(&set)
+	nat64Snapshot.Store(&nat64Set{checked: set})
 	t.Cleanup(func() { nat64Snapshot.Store(previous) })
 }
 
@@ -95,19 +105,19 @@ func TestNAT64DiscoveryDerivesEveryPrefixLength(t *testing.T) {
 		for _, well := range nat64WellKnown {
 			prefix := netip.PrefixFrom(netip.MustParseAddr("2001:db8:122:344::"), length).Masked()
 			answer := nat64Compose(prefix, well)
-			found := nat64Discover([]netip.Addr{answer})
+			found := nat64Discover([]netip.Addr{answer}).checked
 			if len(found) != 1 || found[0] != prefix {
 				t.Errorf("/%d %v: %v", length, answer, found)
 			}
 		}
 	}
 	// A /96 whose bits 64-71 are not zero is still discovered (design 5.1, review R2).
-	found := nat64Discover([]netip.Addr{netip.MustParseAddr("2606:4700:1234:5678:9abc:def0:c000:00aa")})
+	found := nat64Discover([]netip.Addr{netip.MustParseAddr("2606:4700:1234:5678:9abc:def0:c000:00aa")}).checked
 	if len(found) != 1 || found[0] != netip.MustParsePrefix("2606:4700:1234:5678:9abc:def0::/96") {
 		t.Fatalf("%v", found)
 	}
 	// /32 to /64 candidates with a non-zero u octet are not candidates.
-	if got := nat64Discover([]netip.Addr{netip.MustParseAddr("2001:db8:122:344:ff00:c0:0:aa")}); len(got) != 0 {
+	if got := nat64Discover([]netip.Addr{netip.MustParseAddr("2001:db8:122:344:ff00:c0:0:aa")}).checked; len(got) != 0 {
 		t.Fatalf("%v", got)
 	}
 	// Several prefixes are kept once each, at most eight.
@@ -116,11 +126,11 @@ func TestNAT64DiscoveryDerivesEveryPrefixLength(t *testing.T) {
 		prefix := netip.PrefixFrom(netip.AddrFrom16([16]byte{0x20, 0x01, 0x0d, 0xb8, byte(i + 1), 0, 0, 0}), 96)
 		answers = append(answers, nat64Compose(prefix, nat64WellKnown[0]), nat64Compose(prefix, nat64WellKnown[0]))
 	}
-	if got := nat64Discover(answers); len(got) != nat64MaxPrefixes {
-		t.Fatalf("kept %d prefixes", len(got))
+	if got := nat64Discover(answers); len(got.checked) != nat64MaxPrefixes || len(got.refused) != 4 {
+		t.Fatalf("kept %d checked and %d refused", len(got.checked), len(got.refused))
 	}
 	// Non-IPv6 answers are ignored.
-	if got := nat64Discover([]netip.Addr{netip.MustParseAddr("192.0.0.170")}); len(got) != 0 {
+	if got := nat64Discover([]netip.Addr{netip.MustParseAddr("192.0.0.170")}).checked; len(got) != 0 {
 		t.Fatal(got)
 	}
 }
@@ -131,18 +141,18 @@ func TestNAT64RefreshKeepsKnowledgeOnFailureAndClearsOnNoDNS64(t *testing.T) {
 	nat64Snapshot.Store(nil)
 	prefix := netip.MustParsePrefix("2001:db8:100::/96")
 	resolver := &scriptedNAT64{answers: []netip.Addr{nat64Compose(prefix, nat64WellKnown[0])}}
-	if err := nat64Refresh(context.Background(), resolver); err != nil || len(*nat64Snapshot.Load()) != 1 {
+	if err := nat64Refresh(context.Background(), resolver); err != nil || len(nat64Snapshot.Load().checked) != 1 {
 		t.Fatal(err)
 	}
 	resolver.answers, resolver.err = nil, errors.New("SERVFAIL")
-	if err := nat64Refresh(context.Background(), resolver); err == nil || len(*nat64Snapshot.Load()) != 1 {
+	if err := nat64Refresh(context.Background(), resolver); err == nil || len(nat64Snapshot.Load().checked) != 1 {
 		t.Fatal("a failed query lost the previous result")
 	}
-	if err := nat64Refresh(context.Background(), fixedNAT64{}); err != nil || len(*nat64Snapshot.Load()) != 0 {
+	if err := nat64Refresh(context.Background(), fixedNAT64{}); err != nil || len(nat64Snapshot.Load().checked) != 0 {
 		t.Fatal("a definite answer without AAAA must clear the prefixes")
 	}
 	resolver.err, resolver.answers = nil, nil
-	if err := nat64Refresh(context.Background(), resolver); err != nil || len(*nat64Snapshot.Load()) != 0 {
+	if err := nat64Refresh(context.Background(), resolver); err != nil || len(nat64Snapshot.Load().checked) != 0 {
 		t.Fatal("an empty answer means no DNS64")
 	}
 }
@@ -173,13 +183,13 @@ func TestNAT64ScheduleIsBounded(t *testing.T) {
 			c := make(chan time.Time, 1)
 			c <- time.Now()
 			return c
-		})
+		}, nil)
 		close(done)
 	}()
 	if d := <-waits; d != 10*time.Minute {
 		t.Fatalf("first wait %v", d)
 	}
-	resolver.err = errors.New("down")
+	resolver.set(nil, errors.New("down")) // the loop is running in another goroutine
 	if d := <-waits; d != 10*time.Minute && d != time.Minute {
 		t.Fatalf("second wait %v", d)
 	}
@@ -201,7 +211,7 @@ func TestNAT64PrefixesOnlyTightenTheCheck(t *testing.T) {
 	if !qualityAddressSafe(embeddedPrivate) || !qualityAddressSafe(embeddedPublic) {
 		t.Fatal("the fixtures should be ordinary public IPv6 addresses")
 	}
-	nat64Snapshot.Store(&[]netip.Prefix{public})
+	nat64Snapshot.Store(&nat64Set{checked: []netip.Prefix{public}})
 	if qualityAddressSafe(embeddedPrivate) {
 		t.Fatal("an address embedding a private IPv4 inside a discovered prefix was allowed")
 	}
@@ -214,22 +224,22 @@ func TestNAT64PrefixesOnlyTightenTheCheck(t *testing.T) {
 		}
 	}
 	// A forged prefix cannot make a refused address acceptable: 2001:db8::/32 stays refused.
-	nat64Snapshot.Store(&[]netip.Prefix{netip.MustParsePrefix("2001:db8::/32")})
+	nat64Snapshot.Store(&nat64Set{checked: []netip.Prefix{netip.MustParsePrefix("2001:db8::/32")}})
 	if qualityAddressSafe(nat64Compose(netip.MustParsePrefix("2001:db8::/32"), netip.MustParseAddr("8.8.8.8"))) {
 		t.Fatal("a documentation address was allowed because a prefix covers it")
 	}
 	// Overlapping prefixes: all of them must pass. Under the /96 this address embeds 10.0.0.1.
-	nat64Snapshot.Store(&[]netip.Prefix{netip.MustParsePrefix("2606:4700::/32"), netip.MustParsePrefix("2606:4700::/96")})
+	nat64Snapshot.Store(&nat64Set{checked: []netip.Prefix{netip.MustParsePrefix("2606:4700::/32"), netip.MustParsePrefix("2606:4700::/96")}})
 	if qualityAddressSafe(netip.MustParseAddr("2606:4700::a00:1")) {
 		t.Fatal("one overlapping prefix embedding a private IPv4 must refuse")
 	}
 	// A prefix whose layout cannot yield an IPv4 refuses the address (u octet not zero at /48).
-	nat64Snapshot.Store(&[]netip.Prefix{netip.MustParsePrefix("2606:4700:1::/48")})
+	nat64Snapshot.Store(&nat64Set{checked: []netip.Prefix{netip.MustParsePrefix("2606:4700:1::/48")}})
 	if qualityAddressSafe(netip.MustParseAddr("2606:4700:1:0:ff00:0:0:1")) {
 		t.Fatal("an address with no embedded IPv4 was allowed inside a prefix")
 	}
 	// The well-known prefix is still decided by the ordinary check.
-	nat64Snapshot.Store(&[]netip.Prefix{})
+	nat64Snapshot.Store(&nat64Set{checked: []netip.Prefix{}})
 	if !qualityAddressSafe(netip.MustParseAddr("64:ff9b::808:808")) || qualityAddressSafe(netip.MustParseAddr("64:ff9b::a00:1")) || qualityAddressSafe(netip.MustParseAddr("64:ff9b:1::1")) {
 		t.Fatal("the well-known prefix rules changed")
 	}
@@ -265,9 +275,9 @@ func TestNAT64DiscoveryNeverAllowsWhatWasRefused(t *testing.T) {
 		if rng.Intn(2) == 0 && len(prefixes) > 0 {
 			addr = nat64Compose(prefixes[rng.Intn(len(prefixes))], netip.AddrFrom4([4]byte{byte(rng.Intn(256)), byte(rng.Intn(256)), byte(rng.Intn(256)), byte(rng.Intn(256))}))
 		}
-		nat64Snapshot.Store(&[]netip.Prefix{})
+		nat64Snapshot.Store(&nat64Set{checked: []netip.Prefix{}})
 		without := qualityAddressSafe(addr)
-		nat64Snapshot.Store(&prefixes)
+		nat64Snapshot.Store(&nat64Set{checked: prefixes})
 		with := qualityAddressSafe(addr)
 		if with && !without {
 			t.Fatalf("%v was refused without the prefixes %v and allowed with them", addr, prefixes)

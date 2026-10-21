@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"net/netip"
+	"sort"
 	"sync/atomic"
 	"time"
 )
@@ -20,8 +21,14 @@ import (
 // known; the resolver interface returns no TTL, so refreshing is a fixed, bounded schedule.
 
 const (
-	nat64Name          = "ipv4only.arpa"
+	nat64Name = "ipv4only.arpa"
+	// nat64MaxPrefixes prefixes are judged by their embedded IPv4 address. Further candidates (up to
+	// nat64MaxRefused in all) are not dropped, because dropping one would lift a refusal: addresses
+	// inside them are refused outright. Beyond that the answer is unusable and no IPv6 destination
+	// passes. More candidates therefore never allow anything that fewer refused.
 	nat64MaxPrefixes   = 8
+	nat64MaxRefused    = 64
+	nat64MaxAnswers    = 128
 	nat64QueryTimeout  = 5 * time.Second
 	nat64RefreshEvery  = 10 * time.Minute
 	nat64RetryFirst    = time.Minute
@@ -30,8 +37,15 @@ const (
 
 var nat64WellKnown = [2]netip.Addr{netip.AddrFrom4([4]byte{192, 0, 0, 170}), netip.AddrFrom4([4]byte{192, 0, 0, 171})}
 
-// nat64Snapshot is the immutable set read by the connection check. It is replaced as a whole.
-var nat64Snapshot atomic.Pointer[[]netip.Prefix]
+// nat64Set is what discovery found. It is immutable and replaced as a whole.
+type nat64Set struct {
+	checked   []netip.Prefix // judged by the embedded IPv4 address
+	refused   []netip.Prefix // overflow: every address inside is refused
+	refuseAll bool           // far too many candidates: no IPv6 destination passes
+}
+
+// nat64Snapshot is the set read by the connection check.
+var nat64Snapshot atomic.Pointer[nat64Set]
 
 // nat64Embedded extracts the IPv4 address embedded in an IPv6 address by the RFC 6052 layout of the
 // given prefix length. For lengths up to 64 the u octet (bits 64–71) must be zero.
@@ -71,7 +85,15 @@ func nat64Allows(address netip.Addr) bool {
 	if snapshot == nil || !address.Is6() {
 		return true
 	}
-	for _, prefix := range *snapshot {
+	if snapshot.refuseAll {
+		return false
+	}
+	for _, prefix := range snapshot.refused {
+		if prefix.Contains(address) {
+			return false
+		}
+	}
+	for _, prefix := range snapshot.checked {
 		if !prefix.Contains(address) {
 			continue
 		}
@@ -84,7 +106,12 @@ func nat64Allows(address netip.Addr) bool {
 }
 
 // nat64Discover derives the prefixes from the AAAA records of ipv4only.arpa.
-func nat64Discover(answers []netip.Addr) []netip.Prefix {
+func nat64Discover(answers []netip.Addr) *nat64Set {
+	set := &nat64Set{}
+	if len(answers) > nat64MaxAnswers {
+		set.refuseAll = true
+		return set
+	}
 	var found []netip.Prefix
 	seen := map[netip.Prefix]bool{}
 	for _, answer := range answers {
@@ -98,13 +125,29 @@ func nat64Discover(answers []netip.Addr) []netip.Prefix {
 				continue
 			}
 			prefix := netip.PrefixFrom(answer, length).Masked()
-			if !seen[prefix] && len(found) < nat64MaxPrefixes {
+			if !seen[prefix] {
 				seen[prefix] = true
 				found = append(found, prefix)
 			}
 		}
 	}
-	return found
+	// A fixed order, independent of the order of the answers: a candidate added later can only push
+	// another one from the checked group into the refused group (stricter), never the other way round.
+	sort.Slice(found, func(i, j int) bool {
+		if c := found[i].Addr().Compare(found[j].Addr()); c != 0 {
+			return c < 0
+		}
+		return found[i].Bits() < found[j].Bits()
+	})
+	switch {
+	case len(found) <= nat64MaxPrefixes:
+		set.checked = found
+	case len(found) <= nat64MaxRefused:
+		set.checked, set.refused = found[:nat64MaxPrefixes], found[nat64MaxPrefixes:]
+	default:
+		set.refuseAll = true
+	}
+	return set
 }
 
 type nat64Lookup interface {
@@ -114,18 +157,22 @@ type nat64Lookup interface {
 // nat64Refresh asks once. A failed query keeps what is known; a successful one replaces it, an empty
 // answer meaning there is no DNS64.
 func nat64Refresh(ctx context.Context, resolver nat64Lookup) error {
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, nat64QueryTimeout)
 	defer cancel()
 	answers, err := resolver.LookupNetIP(ctx, "ip6", nat64Name)
+	// An answer that arrives after the loop was stopped must not overwrite what a newer loop learned.
+	if parent.Err() != nil {
+		return parent.Err()
+	}
 	if err != nil {
 		if isDNSNotFound(err) {
-			nat64Snapshot.Store(&[]netip.Prefix{}) // an answer: no DNS64 here
+			nat64Snapshot.Store(&nat64Set{}) // an answer: no DNS64 here
 			return nil
 		}
 		return err
 	}
-	prefixes := nat64Discover(answers)
-	nat64Snapshot.Store(&prefixes)
+	nat64Snapshot.Store(nat64Discover(answers))
 	return nil
 }
 
@@ -144,13 +191,17 @@ func nat64Delay(failures int) time.Duration {
 
 // runNAT64Discovery queries at start and then on the fixed schedule until ctx ends. The connection
 // check only reads the snapshot; no DNS query ever runs inside Dialer.Control.
-func runNAT64Discovery(ctx context.Context, resolver nat64Lookup, wait func(time.Duration) <-chan time.Time) {
+func runNAT64Discovery(ctx context.Context, resolver nat64Lookup, wait func(time.Duration) <-chan time.Time, first func()) {
 	failures := 0
 	for ctx.Err() == nil {
 		if err := nat64Refresh(ctx, resolver); err != nil {
 			failures++
 		} else {
 			failures = 0
+		}
+		if first != nil {
+			first()
+			first = nil
 		}
 		select {
 		case <-ctx.Done():

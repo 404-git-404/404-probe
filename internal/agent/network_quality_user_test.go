@@ -94,15 +94,17 @@ func TestQualityValidateUserTargets(t *testing.T) {
 }
 
 type negotiationServer struct {
-	mu           sync.Mutex
-	userTargets  atomic.Bool
-	rejectTarget atomic.Bool // answer 400 to a report that carries the targets capability
-	inline       atomic.Pointer[protocol.QualityConfig]
-	reports      []protocol.Report
-	headers      []string
-	pullHeaders  []string
-	pullStatus   atomic.Int32
-	pullBody     atomic.Pointer[protocol.QualityConfig]
+	mu            sync.Mutex
+	userTargets   atomic.Bool
+	rejectTarget  atomic.Bool // answer 400 to a report that carries the targets capability
+	rejectSession atomic.Bool // answer accepted:false with a session reason
+	sampleBatches atomic.Int32
+	inline        atomic.Pointer[protocol.QualityConfig]
+	reports       []protocol.Report
+	headers       []string
+	pullHeaders   []string
+	pullStatus    atomic.Int32
+	pullBody      atomic.Pointer[protocol.QualityConfig]
 }
 
 func (n *negotiationServer) handler() http.Handler {
@@ -117,6 +119,10 @@ func (n *negotiationServer) handler() http.Handler {
 			n.mu.Unlock()
 			if report.NetworkQualityV2 != nil && report.NetworkQualityV2.Targets != "" && n.rejectTarget.Load() {
 				w.WriteHeader(400)
+				return
+			}
+			if n.rejectSession.Load() {
+				_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: false, Reason: "session mismatch"})
 				return
 			}
 			response := protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{NetworkQuality: true, NetworkQualityV2: true, NetworkQualityStaged: true, NetworkQualityUserTargets: n.userTargets.Load()}}
@@ -137,6 +143,11 @@ func (n *negotiationServer) handler() http.Handler {
 			}
 			w.WriteHeader(500)
 		default:
+			var batch protocol.QualityBatch
+			_ = json.NewDecoder(r.Body).Decode(&batch)
+			if len(batch.Samples) > 0 {
+				n.sampleBatches.Add(1)
+			}
 			_ = json.NewEncoder(w).Encode(protocol.QualityBatchResponse{})
 		}
 	})
@@ -517,5 +528,94 @@ func TestQualityIPv6ScanReadsProcNetIfInet6(t *testing.T) {
 	qualityReadFile = func(string) ([]byte, error) { return nil, errors.New("permission denied") }
 	if _, err := scanUsableIPv6(); err == nil {
 		t.Error("an unreadable file must be an error (unknown), not none")
+	}
+}
+
+func newQuietServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(protocol.QualityBatchResponse{})
+	}))
+}
+
+// Samples already measured and waiting for upload are dropped when the authorization ends; they are
+// never sent after a withdrawal, a 400 fallback or a session rejection (R07-C review S2).
+func TestQualityStoppedAuthorizationDoesNotUploadQueuedSamples(t *testing.T) {
+	for _, mode := range []string{"withdrawal", "400 fallback", "session rejected"} {
+		t.Run(mode, func(t *testing.T) {
+			n := &negotiationServer{}
+			n.userTargets.Store(true)
+			server := httptest.NewServer(n.handler())
+			defer server.Close()
+			r := n2bRunner(t, server.URL, "id", "token")
+			r.quality.ipv6 = &qualityIPv6Monitor{scan: func() (bool, error) { return false, nil }}
+			r.quality.nat64Resolver = fixedNAT64{}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var seq uint64
+			for i := 0; i < 2; i++ {
+				if ok, err := r.sendReport(ctx, &seq); err != nil || !ok {
+					t.Fatal(ok, err)
+				}
+			}
+			var advance atomic.Int64
+			var queued atomic.Int32
+			r.quality.now = func() time.Time { return time.Now().Add(time.Duration(advance.Load())) }
+			r.quality.random = func() float64 { return .25 } // probes at 27 s, the upload only at 30 s
+			r.quality.sampleQueued = func(string, string) { queued.Add(1) }
+			r.quality.probe = func(context.Context, protocol.QualityTarget) qualityProbeResult {
+				return stagedRefused("93.184.216.34")
+			}
+			lanes := make(chan struct{}, 1)
+			r.quality.scheduleObserved = func(_ uint64, count int) {
+				if count == 1 {
+					select {
+					case lanes <- struct{}{}:
+					default:
+					}
+				}
+			}
+			config := userConfig(userTarget("telecom", "ipv4", "tcp", "example.com", 443))
+			n.inline.Store(&config)
+			if ok, err := r.sendReport(ctx, &seq); err != nil || !ok {
+				t.Fatal(ok, err)
+			}
+			done := make(chan struct{})
+			go func() { r.runQualityWorker(ctx); close(done) }()
+			<-lanes
+			advance.Store(int64(28 * time.Second))
+			r.quality.signal()
+			waitForAgentCondition(t, "sample queued", func() bool { return queued.Load() >= 1 })
+			if n.sampleBatches.Load() != 0 {
+				t.Fatal("the fixture uploaded before the authorization ended")
+			}
+			switch mode {
+			case "withdrawal":
+				n.userTargets.Store(false)
+				n.inline.Store(nil)
+			case "400 fallback":
+				n.rejectTarget.Store(true)
+				n.inline.Store(nil)
+			case "session rejected":
+				n.rejectSession.Store(true)
+			}
+			sent, err := r.sendReport(ctx, &seq)
+			if err != nil || (mode != "session rejected") != sent {
+				t.Fatal(sent, err)
+			}
+			waitForAgentCondition(t, "installed configuration gone", func() bool {
+				r.quality.mu.Lock()
+				defer r.quality.mu.Unlock()
+				return r.quality.config == nil
+			})
+			time.Sleep(50 * time.Millisecond)      // the worker discards its queue when it sees the stop
+			advance.Store(int64(60 * time.Second)) // the upload would be due now
+			r.quality.signal()
+			time.Sleep(150 * time.Millisecond)
+			if n.sampleBatches.Load() != 0 {
+				t.Fatal("a sample measured under the ended authorization was uploaded")
+			}
+			cancel()
+			<-done
+		})
 	}
 }

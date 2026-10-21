@@ -40,7 +40,10 @@ type qualityControl struct {
 	ipv6        *qualityIPv6Monitor
 	// NAT64 discovery starts once, when the first user target is installed; the fields let tests
 	// inject the resolver and the clock.
-	nat64Started  bool
+	nat64Ctx      context.Context // the context of the running discovery loop
+	nat64Done     bool            // the first discovery completed or timed out in this process
+	nat64Timer    *time.Timer
+	nat64Timeout  time.Duration
 	nat64Resolver nat64Lookup
 	nat64Wait     func(time.Duration) <-chan time.Time
 }
