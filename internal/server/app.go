@@ -44,6 +44,8 @@ type App struct {
 	buildInfo                     buildinfo.Info
 	handler                       http.Handler
 	staticAssets                  *staticAssets
+	qualityLookup                 qualityLookupFunc
+	qualityDNSSlots               chan struct{}
 }
 
 const (
@@ -74,7 +76,7 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 		cancel()
 		return nil, err
 	}
-	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, removalReceiptCleanupInterval: 5 * time.Minute, walHealthInterval: sqliteWALHealthInterval, buildInfo: buildinfo.Current()}
+	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, removalReceiptCleanupInterval: 5 * time.Minute, walHealthInterval: sqliteWALHealthInterval, buildInfo: buildinfo.Current(), qualityLookup: systemQualityLookup, qualityDNSSlots: make(chan struct{}, qualityDNSCheckSlots)}
 	a.traffic = traffic
 	for _, option := range options {
 		if option == nil {
