@@ -2,7 +2,7 @@
 (function(root) {
   'use strict';
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
-  const OUTDATED='页面已过期，请刷新';
+  const OUTDATED='页面已过期，请刷新',CONFLICT='配置已被其他页面修改',CONFIG_REFRESH_MS=30000;
   function create({document:doc=root.document,fetcher=(...args)=>root.fetch(...args),csrf=()=>'',unauthorized=()=>root.location.assign('/login'),
     state=root.AgentState,management=root.Management,Plot=root.uPlot,Observer=root.IntersectionObserver,Resize=root.ResizeObserver,
     interval=root.setInterval,clear=root.clearInterval,now=()=>Date.now(),coordinator=null,historyHost=null,onConfig=null}={}) {
@@ -49,8 +49,11 @@
       onConfig?.(card.id,config);
     }
     const readError=error=>error?.status===410?OUTDATED:error?.message?.startsWith('v4 配置契约')?'配置读取失败：响应不符合契约，保留上次可信状态':'配置读取失败，保留上次可信状态';
-    async function loadConfig(card,force=false) {
-      if(closed||card.dead||(!force&&card.config))return;
+    // The v4 state (negotiation, abnormal targets, capacity) changes on the Server without any action of this page, so a visible
+    // card reads it again every 30 seconds, the same pace as its bucket reads; failures back off to at most four minutes.
+    const configDue=card=>!card.reading&&!(panel?.card===card&&(panel.saving||panel.toggling))&&now()-(card.configAt||0)>=CONFIG_REFRESH_MS*2**Math.min(card.configFails||0,3);
+    async function loadConfig(card,force=false,refresh=false) {
+      if(closed||card.dead||(!force&&!refresh&&card.config))return;
       const key=JSON.stringify(['config',card.id]),owner=force||panel?.card===card?card.panelReadOwner:card.configOwner;
       if(card.reading){if(force)read(key,owner,path(card.id)+'v4/config').catch(()=>{});return;}
       card.reading=true;const serial=++card.configSerial;
@@ -58,8 +61,9 @@
         const raw=await read(key,owner,path(card.id)+'v4/config'),value=C.adapt(raw);
         if(closed||card.dead||serial!==card.configSerial)return;
         if(JSON.stringify(card.raw)!==JSON.stringify(raw)){card.raw=raw;bindConfig(card,value);}else card.error='';
+        card.configAt=now();card.configFails=0;
         if(panel?.card===card)panelAdopt(panel,value);
-      }catch(error){if(!card.dead&&serial===card.configSerial&&error.name!=='AbortError'){card.error=readError(error);if(panel?.card===card){panel.message=card.error;panel.outdated=error.status===410;renderPanel();}renderCard(card);}}
+      }catch(error){if(!card.dead&&serial===card.configSerial&&error.name!=='AbortError'){card.configAt=now();card.configFails=(card.configFails||0)+1;card.error=readError(error);if(panel?.card===card){panel.message=card.error;panel.outdated=error.status===410;renderPanel();}renderCard(card);}}
       finally{if(serial===card.configSerial)card.reading=false;}
     }
     function targets(card) {
@@ -71,6 +75,7 @@
     async function refreshCard(card) {
       if(!effective(card)||closed||card.dead)return;
       if(!card.config){loadConfig(card);return;}
+      if(configDue(card))loadConfig(card,false,true);
       if(card.graph)return; // Shared configuration remains live while bucket reads sleep.
       const generation=card.generation;
       // Only a lane that is measuring has a series worth reading; a switched-off or unset one shows its reason.
@@ -203,6 +208,8 @@
       },unauthorized,timeoutMs:10000}),fetcher)).finally(()=>queue.release(card.writeOwner));
     }
     const dirty=p=>C.isDirty(p.draft,p.baseDraft);
+    // What the keyboard can reach: enabled, shown controls only (a hidden guard's buttons are not among them).
+    const focusables=p=>[...p.node.querySelectorAll('button,input,select')].filter(n=>!n.disabled&&!n.hidden&&!n.parentNode?.hidden);
     function openPanel(card,trigger) {
       if(panel&&!closePanel(false))return;
       const config=card.config;
@@ -211,22 +218,22 @@
       panel.baseDraft=C.clone(panel.draft);
       panel.node.dataset.nqPanel='open';
       doc.body.append(panel.node);renderPanel();
-      (panel.node.querySelector('[data-nq-field="enabled"]')||panel.node.querySelector('button'))?.focus({preventScroll:true});
+      const usable=focusables(panel);((panel.enabled&&usable.includes(panel.enabled)?panel.enabled:usable[0])||panel.box).focus({preventScroll:true});
       loadConfig(card,true);
     }
-    // The Server's latest content becomes the new base. A clean draft follows it; an edited one is kept and the
-    // difference is said out loud. After a write of our own only a changed revision number is adopted when the
-    // content is the one we were editing from.
+    // What the Server has now. A clean draft follows it. An edited draft is never merged with it: when the content differs the
+    // user is asked whether to load the latest (the draft is dropped) or to keep editing. The base revision then stays as it was,
+    // so a save of the kept draft is refused again instead of overwriting the other page's change.
     function panelAdopt(p,config) {
       if(panel!==p)return;
-      const latest=C.draftOf(config),first=!p.loaded,sameContent=JSON.stringify(latest)===JSON.stringify(p.baseDraft),wasDirty=dirty(p);
-      p.loaded=true;p.config=config;p.base=config.settings_revision;
-      if(first){p.baseDraft=latest;p.draft=C.clone(latest);}
-      else if(!sameContent) {
-        const old=p.baseDraft;p.baseDraft=latest;
-        if(wasDirty){p.draft=C.mergeDraft(p.draft,old,latest);p.message='配置已被修改，已载入最新内容作为基准；你改过的内容已保留，其余已更新，请核对后再保存';}
-        else {p.draft=C.clone(latest);p.message='配置已被修改，已载入最新内容';}
-      }
+      const latest=C.draftOf(config),first=!p.loaded;
+      p.loaded=true;p.config=config;
+      if(first){p.base=config.settings_revision;p.baseDraft=latest;p.draft=C.clone(latest);renderPanel();return;}
+      p.latest=config;
+      if(C.sameContent(latest,p.baseDraft))p.base=config.settings_revision; // the content we edit from: only its number moved
+      else if(!dirty(p)){p.base=config.settings_revision;p.baseDraft=latest;p.draft=C.clone(latest);p.message='配置已被修改，已载入最新内容';}
+      else if(C.sameContent(latest,p.draft)){p.base=config.settings_revision;p.baseDraft=latest;p.message='已确认：当前内容已保存';} // our own write that was not confirmed
+      else if(p.guard!=='conflict'&&p.dismissed!==config.settings_revision){p.guard='conflict';p.message=CONFLICT;}
       renderPanel();
     }
     function closePanel(force=false) {
@@ -236,7 +243,7 @@
       const old=panel;panel=null;queue.release(old.card.panelReadOwner);old.card.configSerial++;old.card.reading=false;
       old.node.remove();if(old.trigger?.isConnected)old.trigger.focus({preventScroll:true});return true;
     }
-    function changed(){if(panel){panel.guard=null;panel.message='';panel.errors={};renderPanel();}}
+    function changed(){if(panel){if(panel.guard==='conflict')panel.dismissed=panel.latest?.settings_revision;panel.guard=null;panel.message='';panel.errors={};renderPanel();}}
     const fieldError=(p,slot,field)=>{const code=p.errors[slot]?.[field]||C.hints(p.draft)[slot]?.[field];return code?(C.errorText[code]||code):'';};
     function buildPanel(p) {
       const n=p.node;n.className='nq-overlay';
@@ -249,6 +256,10 @@
       p.guardDiscard=el('div','nq-status nq-guard');p.guardDiscard.setAttribute('role','alertdialog');
       p.guardDiscard.append(el('p','','放弃修改？'),button('放弃修改',()=>closePanel(true),'nq-link'),button('继续编辑',()=>{p.guard=null;renderPanel();},'nq-link'));
       p.guardDiscard.querySelectorAll('button').forEach((b,i)=>{b.dataset.nqField=i?'guard-keep':'guard-discard';});
+      p.guardConflict=el('div','nq-status nq-guard');p.guardConflict.setAttribute('role','alertdialog');
+      p.loadLatest=button('载入最新配置',()=>{const latest=p.latest;if(!latest||p.saving||p.toggling)return;p.base=latest.settings_revision;p.baseDraft=C.draftOf(latest);p.draft=C.clone(p.baseDraft);p.guard=null;p.errors={};p.latest=null;p.message='已载入最新配置，本页草稿已放弃';renderPanel();},'nq-link');p.loadLatest.dataset.nqField='guard-load-latest';
+      const keepDraft=button('取消',()=>{p.dismissed=p.latest?.settings_revision;p.guard=null;p.message='';renderPanel();},'nq-link');keepDraft.dataset.nqField='guard-conflict-cancel';
+      p.guardConflict.append(el('p','',CONFLICT),p.loadLatest,keepDraft);
       p.guardEnable=el('div','nq-status nq-guard');p.guardEnable.setAttribute('role','alertdialog');
       p.guardEnable.append(el('p','','有未保存的修改，先保存吗？'),
         button('保存并开启',()=>savePanel({thenEnable:true}),'nq-link'),
@@ -313,7 +324,7 @@
       p.messageNode=el('p','nq-status');p.messageNode.setAttribute('role','status');
       p.saveBottom=button('保存',()=>savePanel(),'nq-save');p.saveBottom.dataset.nqField='save-bottom';
       const foot=el('div','nq-dialog-foot');foot.append(p.messageNode,p.saveBottom);
-      p.box.append(header,p.guardDiscard,p.guardEnable,body,foot);n.append(p.box);
+      p.box.tabIndex=-1;p.box.append(header,p.guardDiscard,p.guardEnable,p.guardConflict,body,foot);n.append(p.box);
       n.addEventListener('pointerdown',event=>{if(event.target===n)closePanel();});
     }
     const draftOf=slot=>panel.draft.slots.find(s=>s.slot===slot);
@@ -321,7 +332,7 @@
       if(!panel)return;const p=panel;
       if(!p.box)buildPanel(p);
       const value=(input,next)=>{if(input.value!==next)input.value=next;};
-      p.guardDiscard.hidden=p.guard!=='discard';p.guardEnable.hidden=p.guard!=='enable';
+      p.guardDiscard.hidden=p.guard!=='discard';p.guardEnable.hidden=p.guard!=='enable';p.guardConflict.hidden=p.guard!=='conflict';p.loadLatest.disabled=!p.latest||p.saving||p.toggling;
       const config=p.config||p.card.config;
       p.enabled.checked=!!config?.enabled;p.enabled.disabled=p.toggling||p.saving||p.outdated||!config||!config.supported&&!config.enabled;
       p.masterNote.textContent=!config?'配置尚未读取':!config.supported?C.cardNotice(config)||'Agent 尚未支持':'';
@@ -347,8 +358,8 @@
         const lockLiteral=C.disabledSubs(s.host);
         for(const [key,,fam,proto] of C.subItems) {
           const box=v.checks.get(key),icmpBlocked=proto==='icmp'&&icmpOff.has(fam);
-          box.checked=!!s[key];box.disabled=lockLiteral[key]||icmpBlocked;
-          box.title=lockLiteral[key]?'地址是另一个地址族的字面量，不能勾选':icmpBlocked?'当前环境不支持 ICMP':'';
+          box.checked=!!s[key];box.disabled=(lockLiteral[key]&&!s[key])||icmpBlocked;
+          box.title=lockLiteral[key]?(s[key]?'地址是另一个地址族的字面量，请取消勾选':'地址是另一个地址族的字面量，不能勾选'):icmpBlocked?'当前环境不支持 ICMP':'';
           v.subNotes.get(key).textContent=icmpBlocked?'当前环境不支持 ICMP':fieldError(p,s.slot,key);
         }
       }
@@ -365,7 +376,7 @@
       if(p.card.dead||panel!==p)return;
       p.saving=false;p.toggling=false;
       if(error.status===410){p.outdated=true;p.message=OUTDATED;}
-      else if(error.status===409&&error.code==='revision_conflict'){p.message='保存冲突';loadConfig(p.card,true);}
+      else if(error.status===409&&error.code==='revision_conflict'){p.latest=null;p.dismissed=undefined;p.guard='conflict';p.message=CONFLICT;loadConfig(p.card,true);}
       else if(error.status===409&&error.code==='quality_quota')p.message='目标数量达到上限，请减少子项后再试';
       else if(error.status===409)p.message='当前 Agent 不支持自定义目标（需升级或平台不支持）';
       else if(error.status===503&&error.code==='storage_pressure')p.message='Server 存储压力大，暂时不能保存';
@@ -456,8 +467,10 @@
       if(Resize){resize=new Resize(()=>{if(history===h&&historyActive(h)&&plot)plot.setSize({width:width(),height:320});});resize.observe(chart);}
     }
     function keydown(event){if(event.key==='Escape'&&panel){event.preventDefault();closePanel();}else if(event.key==='Tab'&&panel){
-      const nodes=[...panel.node.querySelectorAll('button,input,select')].filter(n=>!n.disabled&&!n.hidden&&!n.parentNode?.hidden),first=nodes[0],last=nodes.at(-1);
-      if(event.shiftKey&&doc.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&doc.activeElement===last){event.preventDefault();first?.focus();}
+      const nodes=focusables(panel),first=nodes[0],last=nodes.at(-1),active=doc.activeElement;
+      if(!nodes.length){event.preventDefault();panel.box.focus();}
+      else if(!panel.node.contains(active)){event.preventDefault();(event.shiftKey?last:first).focus();}
+      else if(event.shiftKey&&(active===first||active===panel.box)){event.preventDefault();last.focus();}else if(!event.shiftKey&&active===last){event.preventDefault();first.focus();}
     }}
     function tick(){if(doc.hidden||closed)return;fallbackVisibility();queue.pump();for(const card of cards.values())refreshCard(card);requestHistory();}
     function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){for(const card of cards.values()){card.generation++;card.loading.clear();queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}

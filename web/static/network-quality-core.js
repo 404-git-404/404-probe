@@ -183,15 +183,22 @@
   const draftOf=config=>({interval_ms:config.interval_ms,slots:config.slots.map(slotDraft)});
   const clone=v=>JSON.parse(JSON.stringify(v));
   const trimmed=d=>({interval_ms:d.interval_ms,slots:d.slots.map(s=>({...s,host:s.host.trim(),port:s.port.trim()}))});
-  // A refused save or a changed base: slots the user did not touch follow the latest content, the ones they edited stay as they are.
-  function mergeDraft(draft,oldBase,latest) {
-    const same=(a,b)=>JSON.stringify(trimmed({interval_ms:0,slots:[a]}))===JSON.stringify(trimmed({interval_ms:0,slots:[b]}));
-    return {interval_ms:draft.interval_ms===oldBase.interval_ms?latest.interval_ms:draft.interval_ms,slots:latest.slots.map((slot,i)=>same(draft.slots[i],oldBase.slots[i])?slot:draft.slots[i])};
-  }
+  const sameContent=(a,b)=>JSON.stringify(trimmed(a))===JSON.stringify(trimmed(b));
   const isDirty=(d,base)=>JSON.stringify(trimmed(d))!==JSON.stringify(trimmed(base));
   // Switching between built-in and custom keeps address, port and ticks and only clears the labels, so no free text is carried into an enumeration.
   function switchKind(s,kind) {return s.kind===kind?s:{...s,kind,region:'',isp:''};}
-  const literalFamily=host=>{const h=host.trim();return /^\d{1,3}(\.\d{1,3}){3}$/.test(h)?'ipv4':h.includes(':')&&/^[0-9a-fA-F:.]+$/.test(h)?'ipv6':'';};
+  // The Server unmaps ::ffff:a.b.c.d before it decides the family, so the page does the same.
+  function mappedIPv4(h) {
+    const tail=h.toLowerCase().match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/),head=tail?tail[1]+'0:0':h.toLowerCase();
+    const halves=head.split('::');if(halves.length>2)return false;
+    const part=s=>s===''?[]:s.split(':'),a=part(halves[0]),b=halves.length===2?part(halves[1]):[];
+    const fill=8-a.length-b.length;
+    if(halves.length===2?fill<1:a.length!==8)return false;
+    const groups=halves.length===2?[...a,...Array(fill).fill('0'),...b]:a;
+    if(!groups.every(g=>/^[0-9a-f]{1,4}$/.test(g)))return false;
+    return groups.slice(0,5).every(g=>parseInt(g,16)===0)&&parseInt(groups[5],16)===0xffff;
+  }
+  const literalFamily=host=>{const h=host.trim();return /^\d{1,3}(\.\d{1,3}){3}$/.test(h)?'ipv4':h.includes(':')&&/^[0-9a-fA-F:.]+$/.test(h)?(mappedIPv4(h)?'ipv4':'ipv6'):'';};
   // Immediate hints only; the Server decides. A literal address of one family cannot be ticked for the other.
   function hints(d) {
     const out={};
@@ -303,6 +310,6 @@
     const text=`${time(block.start)} — ${time(block.end)}${block.end<block.start+300000?' · 当前未完成桶':''}\n${target.protocol.toUpperCase()} · ${target.family} · target ${target.id||'无'}\n${target.protocol==='tcp'?`纯 Connect P95 ${ms(block.p95_ms)}（量化误差≤0.125ms）；有效 RTT ${block.valid_rtts||0}`:`丢包 ${percent(loss)}；发送 ${block.sent||0} / 接收 ${block.received||0}`}\n样本 ${block.count||0} · ${reason||'未知'} · 未执行 ${block.not_executed||0}\n配置 ${block.config_revision_min||'无'}–${block.config_revision_max||'无'} / 槽位 ${block.slot_revision_min||'无'}–${block.slot_revision_max||'无'}\n分类 ${JSON.stringify(block.categories||{})}`;
     return {tone,text,mark:tone==='neutral'?'·':tone==='loss'?'!':block.completeness==='partial'?'·':''};
   }
-  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,mergeDraft,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,tcpMiniNotice,historyKey,ratio,current,blockText,columns,cardGroup,cardCurrent,cardPoints,cardBlock};
+  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,tcpMiniNotice,historyKey,ratio,current,blockText,columns,cardGroup,cardCurrent,cardPoints,cardBlock};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);

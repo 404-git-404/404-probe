@@ -67,4 +67,6 @@
 .nq-subs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px}.nq-sub{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 .nq-field-error{color:var(--nq-err);font-size:11px}.nq-field-error:empty{display:none}
 .nq-guard{margin:0;padding:8px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#b98a2c1f}.nq-guard p{margin:0 auto 0 0;font-weight:600}
+/* A flex rule above would otherwise show a hidden guard: hidden must win everywhere in the dialog. */
+.nq-overlay [hidden]{display:none!important}
 @media(max-width:600px){.nq-overlay{padding:0}.nq-dialog{max-height:100dvh;height:100dvh;border-radius:0;width:100%}.nq-subs{grid-template-columns:1fr}}

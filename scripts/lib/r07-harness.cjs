@@ -45,7 +45,8 @@ function dom() {
     removeEventListener(t, f) { this.listeners.set(t, (this.listeners.get(t) || []).filter(x => x !== f)); }
     dispatch(t, event = {}) { for (const f of this.listeners.get(t) || []) f({target: this, currentTarget: this, preventDefault() {}, ...event}); }
     click() { if (this.disabled) return; this.focus(); this.dispatch('click'); }
-    focus() { doc.activeElement = this; }
+    // Like a browser: a disabled or hidden control (or one inside a hidden parent) cannot take the focus.
+    focus() { if (this.disabled || this.hidden || this.parent?.hidden) return; doc.activeElement = this; }
     setSelectionRange() {}
     showModal() { this.open = true; }
     close() { this.open = false; this.dispatch('close'); }
@@ -93,6 +94,7 @@ function setup(options = {}) {
   const fetcher = async (url, init = {}) => {
     const method = init.method || 'GET'; requests.push({url, method, body: init.body ? JSON.parse(init.body) : null});
     const reply = (status, value) => ({ok: status >= 200 && status < 300, status, statusText: String(status), json: async () => value});
+    if (url.endsWith('/v4/config') && method === 'GET' && options.readFail?.()) return reply(503, {error: {code: 'unavailable'}});
     if (url.endsWith('/v4/config') && method === 'GET') return options.readStatus ? reply(options.readStatus, {error: {code: 'client_outdated'}}) : reply(200, raw);
     if (url.endsWith('/v4/config') && method === 'PUT') { writes.push({kind: 'save', body: JSON.parse(init.body)}); return (options.save || (() => reply(200, raw)))(JSON.parse(init.body), {reply, get raw() { return raw; }, set raw(v) { raw = v; }}); }
     if (url.endsWith('/v4/enabled') && method === 'PUT') { writes.push({kind: 'enable', body: JSON.parse(init.body)}); return (options.enable || (() => reply(200, raw)))(JSON.parse(init.body), {reply, get raw() { return raw; }, set raw(v) { raw = v; }}); }

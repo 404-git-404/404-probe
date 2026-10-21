@@ -114,7 +114,7 @@
         message=!c.isps.size?'未选择 ISP':inactive(c)?'设备暂停/撤销':!c.config?'等待配置':allStopped?stopped[0].text:!values.length?(c.loading.size?'读取历史…':rows.some(r=>r.entry?.error)?'历史读取失败':'暂无有效 RTT'):rows.some(r=>r.entry?.error)||c.agent.online===false?'旧历史':'';
       if(message)txt(left+pw/2,14,message,'middle');
       // N6: with no IPv4 TCP lane running, no old alert and no coverage warning is shown, only that there is none.
-      const alertText=c.protocol!=='tcp'?'':evidence?(evidence.kind==='none'||evidence.kind==='unknown'?evidence.text:''):'告警覆盖不足';
+      const alertText=c.protocol!=='tcp'?'':evidence?(evidence.kind==='none'||evidence.kind==='unknown'?evidence.text:''):c.tcpEvidenceError?'告警覆盖不足':'';
       if(alertText)txt(left+3,ph-3,alertText).dataset.tcpMini=evidence?.kind||'unknown';
       c.plot.replaceChildren(svg);c.alertNote.textContent=c.protocol==='tcp'&&evidence&&['alert','none','unknown'].includes(evidence.kind)?(evidence.text?evidence.text+'：':'')+evidence.detail:'';c.alertNote.hidden=!c.alertNote.textContent;c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
       c.plot.title=`${stamp(start)} — ${stamp(end)} · 5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${evidence?evidence.detail||'无告警':'告警覆盖不足'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
@@ -181,7 +181,9 @@
       }
       const was=inactive(c);c.agent=agent;if(!was&&inactive(c))invalidate(c,true);render(c);return c.node;
     }
-    function bindConfig(id,config){const c=cards.get(id);if(!c)return;const signature=JSON.stringify([config.revision,config.supported,config.enabled,config.targets.map(t=>[t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status,t.lane_status,t.condition])]);if(signature===c.signature){c.config=config;render(c);return;}invalidate(c,true);c.signature=signature;c.config=config;c.latestServer=null;render(c);request(c);}
+    function bindConfig(id,config){const c=cards.get(id);if(!c)return;const signature=JSON.stringify([config.revision,config.supported,config.enabled,config.targets.map(t=>[t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status,t.lane_status,t.condition])]);if(signature===c.signature){c.config=config;render(c);return;}invalidate(c,true);
+      // An answer read under the previous configuration says nothing about this one: no old alert stays on screen while the new answer is awaited.
+      c.tcpEvidence=null;c.tcpEvidenceError=false;c.evidenceUpdated=0;c.signature=signature;c.config=config;c.latestServer=null;render(c);request(c);}
     function retire(c){invalidate(c,true);c.dead=true;c.resize?.disconnect();observer?.unobserve(c.node);c.node.remove();cards.delete(c.id);}
     function tick(){if(closed||doc.hidden)return;fallback();queue.pump();for(const c of cards.values())request(c);}
     function visibility(){if(doc.hidden){for(const c of cards.values())invalidate(c);if(timer!==null)clear(timer);timer=null;}else{if(timer===null&&!closed)timer=interval(tick,30000);tick();}}

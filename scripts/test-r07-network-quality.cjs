@@ -245,23 +245,6 @@ test('server field errors appear next to their inputs; the rest of the dialog is
   assert.deepEqual(at(0), []);
 });
 
-test('conflicts: a refused save loads the latest as the base and says so; the edited draft is kept', async () => {
-  const other = clone(load('v4-saved-off')); other.settings_revision = '5'; other.interval_ms = 120000; other.effective_interval_ms = 120000; Object.assign(other.slots[2], {host: 'changed.example.org', port: 8443, region: '广东', isp: 'mobile', slot_enabled: true});
-  let conflict = true;
-  const f = setup({raw: load('v4-saved-off'), save: (b, ctx) => conflict ? ((conflict = false), ctx.raw = other, ctx.reply(409, {error: {code: 'revision_conflict', message: 'x'}})) : saved(b, ctx)});
-  const panel = await f.open();
-  f.type('telecom-port', '444');
-  f.field('save-top').click(); await flush();
-  assert.match(panel.querySelector('.nq-dialog-foot').textContent, /配置已被修改，已载入最新内容作为基准；你改过的内容已保留/);
-  assert.equal(f.field('telecom-port').value, '444', 'the edit survives');
-  assert.equal(f.field('interval').value, '120000', 'an untouched field follows the latest');
-  assert.equal(f.field('mobile-host').value, 'changed.example.org', 'the other content is now the base');
-  assert.equal(f.ui.snapshot().panel.base, '5');
-  assert.equal(f.writes.length, 1, 'no automatic second save');
-  f.field('save-top').click(); await flush();
-  assert.equal(f.writes[1].body.expected_revision, '5');
-});
-
 test('an answer to the master switch that carries other content replaces the base and says so; the same content only moves the revision', async () => {
   const changed = clone(load('v4-saved-off')); changed.settings_revision = '9'; changed.enabled = true; changed.slots[0].port = 8443;
   const f = setup({raw: load('v4-saved-off'), enable: (_b, ctx) => (ctx.raw = changed, ctx.reply(200, changed))});
@@ -478,17 +461,37 @@ test('N6: unknown evidence and a failed read keep the coverage warning only whil
   assert.ok(texts(bad).includes('告警覆盖不足'), 'a response without a boolean current_tcp is not trusted');
 });
 
-test('the latency chart relabels on a label-only change and keeps its curves; a new address clears them', async () => {
+// A one-day minute history for a target of the given configuration, in the shape the chart accepts.
+const minuteHistory = (config, now = NOW) => url => {
+  const id = new URL(url, 'http://local').searchParams.get('target_id'), t = config.targets.find(x => x.id === id);
+  if (!t) return Promise.reject(new Error('unknown target'));
+  const windowStart = Math.floor(now / 60000) * 60000 - 1439 * 60000;
+  const points = Array.from({length: 1440}, (_, i) => { const start = windowStart + i * 60000;
+    return {start, end: Math.min(start + 60000, now), count: 2, valid_rtts: 2, not_executed: 0, sent: 6, received: 6, p50_5m_ms: 20, p50_ms: 20, p95_ms: 30, completeness: 'complete', execution_coverage: 'unverified',
+      config_revision_min: config.revision, config_revision_max: config.revision, slot_revision_min: t.slot_revision, slot_revision_max: t.slot_revision, categories: {success: 2}}; });
+  return Promise.resolve({target: {id: t.id, slot: t.slot, family: t.family, protocol: t.protocol, slot_revision: t.slot_revision, status: t.status}, view: '1day', resolution_ms: 60000, now, window_start: windowStart,
+    algorithm: 'weighted-grid-rtt-adjacent-v3', histogram_version: 1, grid_ms: .25, percentile_max_error_ms: .125, groups: [{semantics: 'staged_probe_v2', metric: t.protocol === 'tcp' ? 'pure_connect' : 'echo_rtt', points}]});
+};
+
+test('the latency chart relabels on a label-only change and keeps its curves and cached history; a new address clears them', async () => {
   const running = C.adapt(load('v4-running'));
-  const c = await chart(running, load('tcp-mini-none'));
+  const c = await chart(running, load('tcp-mini-none'), {history: minuteHistory(running)});
   assert.deepEqual(c.legend.map(b => b.attributes['aria-label']), ['电信 · 广东 RTT 曲线', 'NTT · Tokyo RTT 曲线', '移动 RTT 曲线']);
+  const cached = c.api.snapshot().views[0].cachedTargets;
+  assert.ok(cached >= 2, 'history of the running lanes is cached: ' + cached);
   const relabelled = clone(load('v4-running')); relabelled.slots[0].region = '浙江'; relabelled.slots[0].isp = 'mobile';
   const snapshotBefore = JSON.stringify(c.api.snapshot().views[0]);
   c.api.bindConfig(AGENT, C.adapt(relabelled));
   assert.equal(c.legend[0].attributes['aria-label'], '移动 · 浙江 RTT 曲线');
   assert.equal(JSON.stringify(c.api.snapshot().views[0]), snapshotBefore, 'view, cache and follow state are untouched');
-  const view = c.api.snapshot().views[0];
-  assert.equal(view.cachedTargets, 0 + view.cachedTargets);
+  assert.equal(c.api.snapshot().views[0].cachedTargets, cached);
+  assert.ok(c.svg().some(n => n.tagName === 'path' && n.attributes.d?.includes('L')), 'the curve is still drawn');
+  // A new address is a new series: the old curve is gone at once.
+  const moved = clone(load('v4-running')); moved.config_revision = String(BigInt(moved.config_revision) + 1n);
+  for (const l of moved.lanes) if (l.slot === 'telecom' && l.target_id) { l.target_id = 'a'.repeat(32); l.slot_revision = moved.config_revision; }
+  moved.slots[0].host = 'new.example.org';
+  c.api.bindConfig(AGENT, C.adapt(moved));
+  assert.ok(c.api.snapshot().views[0].cachedTargets < cached, 'the replaced target\'s history is dropped');
 });
 
 test('XSS in the latency chart: legend, tooltip text and SVG titles are text', async () => {
@@ -552,4 +555,261 @@ test('a history answer for another protocol or slot never fills a card lane', as
     assert.equal(f.node.querySelectorAll('.nq-low').length, 0, field);
     assert.ok(f.node.querySelectorAll('.nq-metric').filter(m => m.dataset.laneState === 'measuring').every(m => !/[0-9]/.test(m.textContent)), field);
   }
+});
+
+// ---- review fixes (R07-D-review M1-M7) ----
+const keydown = (f, key, extra = {}) => { let prevented = false; f.doc.dispatch('keydown', {key, preventDefault() { prevented = true; }, ...extra}); return prevented; };
+const inside = f => f.panel().contains(f.doc.activeElement);
+const guards = f => f.panel().querySelectorAll('.nq-guard').filter(n => !n.hidden).map(n => n.querySelector('p').textContent);
+
+test('M1: the guards are hidden unless asked for, and the stylesheet lets hidden win over the flex rule that lays them out', async () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'web', 'static', 'network-quality.css'), 'utf8');
+  assert.match(css, /\.nq-overlay \[hidden\]\{display:none!important\}/, 'a rule with display on .nq-guard would otherwise show hidden guards');
+  const f = setup({raw: load('v4-saved-off'), save: saved, enable: toggled});
+  await f.open();
+  assert.deepEqual(guards(f), [], 'a clean dialog shows no question');
+  f.type('telecom-port', '444'); f.check('enabled', true);
+  assert.deepEqual(guards(f), ['有未保存的修改，先保存吗？']);
+  f.byText(f.panel(), '取消').click();
+  assert.deepEqual(guards(f), []);
+  f.field('close').click();
+  assert.deepEqual(guards(f), ['放弃修改？']);
+  f.field('guard-keep').click();
+  assert.deepEqual(guards(f), []);
+});
+
+test('M2: the focus starts inside the dialog even when the master switch is disabled, and Tab brings stray focus back in', async () => {
+  const f = setup({raw: load('v4-empty-unreported')});
+  await f.open();
+  assert.equal(f.field('enabled').disabled, true);
+  assert.ok(inside(f), 'initial focus is in the dialog');
+  assert.notEqual(f.doc.activeElement, f.field('enabled'));
+  f.doc.activeElement = f.node.querySelector('.nq-link'); // the trigger behind the dialog
+  assert.equal(keydown(f, 'Tab'), true); assert.ok(inside(f), 'Tab from outside enters the dialog');
+  f.doc.activeElement = f.node;
+  keydown(f, 'Tab', {shiftKey: true}); assert.ok(inside(f), 'Shift+Tab from outside enters it too');
+  // Wrapping at both ends.
+  const reachable = f.panel().querySelectorAll('button,input,select').filter(n => !n.disabled && !n.hidden && !n.parentNode?.hidden);
+  f.doc.activeElement = reachable.at(-1); keydown(f, 'Tab'); assert.equal(f.doc.activeElement, reachable[0]);
+  keydown(f, 'Tab', {shiftKey: true}); assert.equal(f.doc.activeElement, reachable.at(-1));
+  f.field('close').click(); assert.ok(!f.panel());
+  assert.equal(f.doc.activeElement, f.node.querySelector('.nq-link'), 'closing returns to the button that opened it');
+});
+
+test('M3: after switching to a literal address the ticks of the other family can be cleared, and nothing wrong can be newly ticked', async () => {
+  const f = setup({raw: load('v4-running'), save: saved});
+  await f.open();
+  for (const key of ['ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']) assert.equal(f.field(`telecom-${key}`).checked, true, key);
+  f.type('telecom-host', '93.184.216.34');
+  for (const key of ['ipv6_tcp', 'ipv6_icmp']) { assert.equal(f.field(`telecom-${key}`).checked, true); assert.equal(f.field(`telecom-${key}`).disabled, false, `${key} can be cleared`); }
+  f.field('save-bottom').click(); await flush();
+  assert.equal(f.writes.length, 0, 'the mismatch still blocks saving');
+  f.check('telecom-ipv6_tcp', false); f.check('telecom-ipv6_icmp', false);
+  for (const key of ['ipv6_tcp', 'ipv6_icmp']) assert.equal(f.field(`telecom-${key}`).disabled, true, `${key} cannot be ticked again`);
+  f.field('save-bottom').click(); await flush();
+  assert.equal(f.writes.length, 1);
+  assert.deepEqual([f.writes[0].body.slots[0].ipv6_tcp, f.writes[0].body.slots[0].ipv6_icmp, f.writes[0].body.slots[0].ipv4_tcp], [false, false, true]);
+  // And the other way round, then back to a name.
+  const g = setup({raw: load('v4-running')});
+  await g.open();
+  g.type('telecom-host', '2606:4700::1111');
+  for (const key of ['ipv4_tcp', 'ipv4_icmp']) { assert.equal(g.field(`telecom-${key}`).checked, true); assert.equal(g.field(`telecom-${key}`).disabled, false); }
+  g.type('telecom-host', 'example.net');
+  for (const key of ['ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']) assert.equal(g.field(`telecom-${key}`).disabled, false);
+});
+
+test('M3: an IPv4-mapped IPv6 address counts as IPv4, as it does on the Server', () => {
+  for (const host of ['::ffff:93.184.216.34', '::FFFF:93.184.216.34', '::ffff:5db8:d822', '0:0:0:0:0:ffff:93.184.216.34', '0000:0000:0000:0000:0000:ffff:5db8:d822', ' ::ffff:1.2.3.4 ']) assert.equal(C.literalFamily(host), 'ipv4', host);
+  for (const host of ['2606:4700::1111', '::1', '::', '::ffff', '64:ff9b::1.2.3.4', '2001:db8::ffff:1.2.3.4', '::fffe:1.2.3.4', '1::ffff:1.2.3.4']) assert.equal(C.literalFamily(host), 'ipv6', host);
+  assert.equal(C.literalFamily('93.184.216.34'), 'ipv4'); assert.equal(C.literalFamily('example.net'), '');
+  const draft = C.draftOf(C.adapt(load('v4-running')));
+  draft.slots[0].host = '::ffff:93.184.216.34'; draft.slots[0].port = '443';
+  assert.deepEqual(Object.keys(C.hints(draft).telecom).sort(), ['ipv6_icmp', 'ipv6_tcp']);
+  assert.deepEqual(C.disabledSubs('::ffff:93.184.216.34'), {ipv4_tcp: false, ipv4_icmp: false, ipv6_tcp: true, ipv6_icmp: true});
+});
+
+// A second page changed the same slot while this one edited only its label.
+const remoteChange = () => { const r = clone(load('v4-running')); r.settings_revision = '7'; Object.assign(r.slots[0], {host: 'new.example.net', port: 8443, ipv4_icmp: false}); return r; };
+const conflictSetup = (extra = {}) => {
+  const remote = remoteChange();
+  return setup({raw: load('v4-running'), save: (_b, ctx) => (ctx.raw = remote, ctx.reply(409, {error: {code: 'revision_conflict', message: 'x'}})), enable: toggled, ...extra});
+};
+
+test('M4: a refused save is never merged: the user is asked, "load the latest" drops the draft, nothing is written meanwhile', async () => {
+  const f = conflictSetup();
+  await f.open();
+  const before = load('v4-running').slots[0];
+  f.choose('telecom-region-select', '浙江');
+  f.field('save-top').click(); await flush();
+  assert.deepEqual(guards(f), ['配置已被其他页面修改']);
+  assert.match(f.panel().querySelector('.nq-dialog-foot').textContent, /配置已被其他页面修改/);
+  assert.equal(f.writes.length, 1, 'no automatic second write');
+  const draft = f.ui.snapshot().panel.draft.slots[0];
+  assert.equal(draft.region, '浙江'); assert.equal(draft.host, before.host, 'the other page\'s address is not mixed into the draft');
+  assert.equal(draft.port, String(before.port)); assert.equal(draft.ipv4_icmp, before.ipv4_icmp);
+  assert.equal(f.field('telecom-host').value, before.host);
+  f.field('guard-load-latest').click(); await flush();
+  const now = f.ui.snapshot().panel;
+  assert.equal(now.dirty, false); assert.equal(now.base, '7'); assert.equal(now.guard, null);
+  assert.equal(f.field('telecom-host').value, 'new.example.net'); assert.equal(f.field('telecom-port').value, '8443'); assert.equal(f.field('telecom-ipv4_icmp').checked, false);
+  assert.match(f.panel().querySelector('.nq-dialog-foot').textContent, /已载入最新配置，本页草稿已放弃/);
+  assert.equal(f.writes.length, 1);
+});
+
+test('M4: "cancel" keeps the draft and the dialog; saving it again is refused again instead of overwriting the other page', async () => {
+  const f = conflictSetup();
+  await f.open();
+  f.choose('telecom-region-select', '浙江');
+  f.field('save-top').click(); await flush();
+  f.field('guard-conflict-cancel').click();
+  assert.deepEqual(guards(f), []); assert.ok(f.panel(), 'the dialog stays');
+  assert.equal(f.field('telecom-region-select').value, '浙江');
+  assert.equal(f.ui.snapshot().panel.dirty, true);
+  f.field('save-top').click(); await flush();
+  assert.equal(f.writes.length, 2);
+  assert.equal(f.writes[1].body.expected_revision, load('v4-running').settings_revision, 'the revision the user saw, never the latest one');
+  assert.deepEqual(guards(f), ['配置已被其他页面修改'], 'asked again');
+});
+
+test('M4: a conflict while "save and switch on" stops there: no switch-on request', async () => {
+  const off = clone(load('v4-saved-off')); const g = setup({raw: off, save: (_b, ctx) => (ctx.raw = Object.assign(clone(off), {settings_revision: '9', interval_ms: 90000}), ctx.reply(409, {error: {code: 'revision_conflict', message: 'x'}})), enable: toggled});
+  await g.open();
+  g.type('telecom-port', '444'); g.check('enabled', true);
+  g.byText(g.panel(), '保存并开启').click(); await flush();
+  assert.deepEqual(guards(g), ['配置已被其他页面修改']);
+  assert.deepEqual(g.writes.map(w => w.kind), ['save']);
+});
+
+test('M4: a changed configuration found by a later read asks the same question; the unchanged case follows silently', async () => {
+  let offset = 0;
+  const f = setup({raw: load('v4-running'), clock: () => offset});
+  await f.open();
+  f.choose('telecom-region-select', '浙江');
+  f.setRaw(remoteChange()); offset += 31000; f.ui.tick(); await flush();
+  assert.deepEqual(guards(f), ['配置已被其他页面修改']);
+  assert.equal(f.field('telecom-host').value, load('v4-running').slots[0].host, 'the draft is untouched');
+  f.field('guard-conflict-cancel').click();
+  offset += 31000; f.ui.tick(); await flush();
+  assert.deepEqual(guards(f), [], 'the same latest is not asked about again');
+  // A clean dialog simply follows.
+  const g = setup({raw: load('v4-running'), clock: () => offset});
+  await g.open();
+  g.setRaw(remoteChange()); offset += 31000; g.ui.tick(); await flush();
+  assert.deepEqual(guards(g), []); assert.equal(g.field('telecom-host').value, 'new.example.net');
+});
+
+test('M6: switching detection off removes the old alert at once and the new answer decides', async () => {
+  const status = {...load('tcp-mini-alert-running')};
+  const c = await chart(C.adapt(load('v4-running')), status, {history: async () => { throw new Error('no history here'); }});
+  assert.equal(c.plot.dataset.warning, 'true');
+  Object.assign(status, load('tcp-mini-alert-switched-off'));
+  c.api.bindConfig(AGENT, C.adapt(load('v4-saved-off')));
+  assert.equal(c.plot.dataset.warning, 'false', 'no old alert while the new answer is awaited');
+  assert.equal(c.svg().filter(n => n.dataset.alert === 'true').length, 0);
+  assert.ok(!texts(c).includes('告警') && !c.note.textContent.includes('告警来源日'));
+  for (let i = 0; i < 30; i++) { await new Promise(r => setImmediate(r)); c.api.tick(); }
+  assert.ok(texts(c).includes('无当前 TCP 检测'));
+  assert.equal(c.plot.dataset.warning, 'false');
+  // Back on: the alert is read again, not remembered.
+  Object.assign(status, load('tcp-mini-alert-running'));
+  c.api.bindConfig(AGENT, C.adapt(load('v4-running')));
+  assert.equal(c.plot.dataset.warning, 'false', 'nothing is shown until the Server has answered');
+  for (let i = 0; i < 30; i++) { await new Promise(r => setImmediate(r)); c.api.tick(); }
+  assert.equal(c.plot.dataset.warning, 'true');
+});
+
+test('M6: the last IPv4 TCP lane turning into something else drops the old alert too', async () => {
+  const status = {...load('tcp-mini-alert-running')};
+  const c = await chart(C.adapt(load('v4-running')), status, {history: async () => { throw new Error('no history here'); }});
+  const icmpOnly = clone(load('v4-running'));
+  for (const l of icmpOnly.lanes) if (l.family === 'ipv4' && l.protocol === 'tcp') l.status = 'inactive';
+  for (const s of icmpOnly.slots) s.ipv4_tcp = false;
+  icmpOnly.config_revision = String(BigInt(icmpOnly.config_revision) + 1n);
+  Object.assign(status, load('tcp-mini-none'));
+  c.api.bindConfig(AGENT, C.adapt(icmpOnly));
+  assert.equal(c.plot.dataset.warning, 'false');
+  for (let i = 0; i < 30; i++) { await new Promise(r => setImmediate(r)); c.api.tick(); }
+  assert.ok(texts(c).includes('无当前 TCP 检测'));
+});
+
+const screen = (w, h) => { globalThis.innerWidth = w; globalThis.innerHeight = h; };
+const configReads = f => f.requests.filter(r => r.method === 'GET' && r.url.endsWith('/v4/config')).length;
+
+test('M7: a visible card reads the v4 state again every 30 seconds, so negotiation finishing shows up without reopening anything', async () => {
+  screen(1000, 1000);
+  let offset = 0;
+  const f = setup({raw: load('v4-empty-unreported'), clock: () => offset});
+  f.ui.setVisible(AGENT, true); await flush();
+  assert.equal(configReads(f), 1);
+  assert.match(f.node.querySelector('.nq-status').textContent, /Agent 尚未支持网络质量/);
+  f.setRaw(load('v4-running'));
+  offset += 10000; f.ui.tick(); await flush();
+  assert.equal(configReads(f), 1, 'not before the period is over');
+  offset += 21000; f.ui.tick(); await flush();
+  assert.equal(configReads(f), 2);
+  assert.doesNotMatch(f.node.querySelector('.nq-status').textContent, /尚未支持/);
+  assert.ok(f.requests.some(r => r.url.includes('card-history')), 'the lanes that now run read their buckets');
+});
+
+test('M7: a target that turns abnormal and recovers is followed', async () => {
+  screen(1000, 1000);
+  let offset = 0;
+  const f = setup({raw: load('v4-running'), clock: () => offset});
+  f.ui.setVisible(AGENT, true); await flush();
+  const lanesWith = c => c.lanes.map(l => l.status);
+  assert.ok(!lanesWith(f.raw()).includes('target_abnormal'));
+  f.setRaw(load('v4-target-abnormal')); offset += 31000; f.ui.tick(); await flush();
+  assert.ok(f.node.all().some(n => n.dataset.laneState === 'abnormal'));
+  f.setRaw(load('v4-running')); offset += 31000; f.ui.tick(); await flush();
+  assert.ok(!f.node.all().some(n => n.dataset.laneState === 'abnormal'));
+});
+
+test('M7: no reads while hidden or off screen, one catch-up read when back', async () => {
+  let offset = 0;
+  screen(1000, 1000);
+  const f = setup({raw: load('v4-running'), clock: () => offset});
+  f.ui.setVisible(AGENT, true); await flush();
+  const base = configReads(f);
+  f.doc.hidden = true; offset += 120000; f.ui.tick(); await flush();
+  assert.equal(configReads(f), base, 'a hidden page does not read');
+  f.doc.hidden = false; screen(0, 0); f.ui.tick(); offset += 120000; f.ui.tick(); await flush(); // the geometry says: not on screen
+  assert.equal(configReads(f), base, 'a card out of view does not read');
+  screen(1000, 1000); f.ui.tick(); await flush();
+  assert.equal(configReads(f), base + 1, 'back in view: one read');
+});
+
+test('M7: a failing read backs off 30 s, 60 s, 120 s and a good one resets it; the last good state stays on screen', async () => {
+  screen(1000, 1000);
+  let offset = 0, failing = false;
+  const f = setup({raw: load('v4-running'), clock: () => offset, readFail: () => failing});
+  f.ui.setVisible(AGENT, true); await flush();
+  let reads = configReads(f);
+  failing = true;
+  for (const [step, expected] of [[31000, 1], [31000, 0], [30000, 1], [60000, 0], [61000, 1]]) {
+    offset += step; f.ui.tick(); await flush();
+    assert.equal(configReads(f) - reads, expected, 'after +' + step); reads = configReads(f);
+  }
+  assert.match(f.node.querySelector('.nq-status').textContent, /配置读取失败，保留上次可信状态/);
+  assert.ok(f.node.all().some(n => n.dataset.laneState === 'measuring'), 'the last good lanes are still shown');
+  failing = false; offset += 241000; f.ui.tick(); await flush();
+  assert.equal(configReads(f) - reads, 1); reads = configReads(f);
+  assert.equal(f.node.querySelector('.nq-status').hidden, true);
+  offset += 31000; f.ui.tick(); await flush();
+  assert.equal(configReads(f) - reads, 1, 'back to the 30 s pace');
+});
+
+test('M7: a refresh while the dialog is saving does not start, and writes are never made by a refresh', async () => {
+  screen(1000, 1000);
+  let offset = 0;
+  const gate = {}; gate.promise = new Promise(r => { gate.release = r; });
+  const f = setup({raw: load('v4-saved-off'), clock: () => offset, save: async (b, ctx) => { await gate.promise; return saved(b, ctx); }});
+  await f.open();
+  f.type('telecom-port', '444'); f.field('save-top').click(); await flush();
+  const reads = configReads(f);
+  offset += 31000; f.ui.tick(); await flush();
+  assert.equal(configReads(f), reads, 'no read while a save is in flight');
+  gate.release(); await flush();
+  offset += 31000; f.ui.tick(); await flush();
+  assert.ok(configReads(f) > reads);
+  assert.equal(f.writes.length, 1, 'only the user\'s own save');
 });
