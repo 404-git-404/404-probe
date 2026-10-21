@@ -1,0 +1,160 @@
+{
+  "settings_revision": "0",
+  "config_revision": "0",
+  "enabled": false,
+  "interval_ms": 30000,
+  "effective_interval_ms": 30000,
+  "state": "unsupported",
+  "agent_support": "unsupported",
+  "slots": [
+    {
+      "slot": "telecom",
+      "kind": "builtin",
+      "region": "",
+      "isp": "telecom",
+      "host": "",
+      "port": 0,
+      "slot_enabled": false,
+      "ipv4_tcp": false,
+      "ipv4_icmp": false,
+      "ipv6_tcp": false,
+      "ipv6_icmp": false
+    },
+    {
+      "slot": "unicom",
+      "kind": "builtin",
+      "region": "",
+      "isp": "unicom",
+      "host": "",
+      "port": 0,
+      "slot_enabled": false,
+      "ipv4_tcp": false,
+      "ipv4_icmp": false,
+      "ipv6_tcp": false,
+      "ipv6_icmp": false
+    },
+    {
+      "slot": "mobile",
+      "kind": "builtin",
+      "region": "",
+      "isp": "mobile",
+      "host": "",
+      "port": 0,
+      "slot_enabled": false,
+      "ipv4_tcp": false,
+      "ipv4_icmp": false,
+      "ipv6_tcp": false,
+      "ipv6_icmp": false
+    }
+  ],
+  "lanes": [
+    {
+      "slot": "telecom",
+      "family": "ipv4",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "telecom",
+      "family": "ipv4",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "telecom",
+      "family": "ipv6",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "telecom",
+      "family": "ipv6",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv4",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv4",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv6",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv6",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv4",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv4",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv6",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv6",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "unsupported"
+    }
+  ]
+}

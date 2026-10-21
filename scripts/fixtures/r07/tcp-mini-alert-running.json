@@ -1,0 +1,16 @@
+{
+  "now": 1792238400000,
+  "timezone": "UTC",
+  "rules": "go1.26.8 time.LoadLocation (host/embedded tzdata)",
+  "state": "alert",
+  "coverage": "complete_since_start",
+  "evidence_start": 1791806400000,
+  "last_high": 1792144800000,
+  "last_low": 0,
+  "source_day": "2026-10-16",
+  "today": "2026-10-17",
+  "peak_ms": 4700,
+  "level_ms": 5000,
+  "revision": 4,
+  "current_tcp": true
+}
