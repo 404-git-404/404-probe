@@ -93,20 +93,143 @@
       snapshot:()=>({agents:agents.size,axes:[...agents].flatMap(([id,rows])=>[...rows].map(([kind,r])=>({id,kind,need:r.need,width:r.applied,visible:live(r)})))})
     };
   }
-  function draft(config) {
-    return {enabled:!!config.enabled,ipv6:!!config.ipv6,choices:slots.map(slot=>{
-      const t=(config.targets||[]).find(t=>t.slot===slot&&t.family==='ipv4')||(config.targets||[]).find(t=>t.slot===slot)||{};
-      return {slot,source:'catalog',region:t.region||'',protocol:t.protocol||'tcp'};
-    })};
+  // ---- R07: user-entered targets (the v4 model) ----------------------------------------------
+  const provinces=['河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','内蒙古','广西','西藏','宁夏','新疆','北京','天津','上海','重庆'];
+  const isps=slots.map(slot=>[slot,names[slot]]);
+  const intervals=Array.from({length:10},(_,i)=>(i+1)*30000);
+  const subItems=[['ipv4_tcp','IPv4 TCP','ipv4','tcp'],['ipv4_icmp','IPv4 ICMP','ipv4','icmp'],['ipv6_tcp','IPv6 TCP','ipv6','tcp'],['ipv6_icmp','IPv6 ICMP','ipv6','icmp']];
+  const laneStatuses=['device_inactive','agent_unavailable','excluded','storage_pressure','disabled','unset','inactive','no_ipv6','icmp_unsupported','target_abnormal','active'];
+  const isDecimal=v=>typeof v==='string'&&/^(0|[1-9][0-9]*)$/.test(v);
+  const bad=what=>{throw Error('v4 配置契约不匹配：'+what);};
+  // The Server answers with settings_revision (optimistic lock), config_revision (what samples carry),
+  // slots[3] and lanes[12]. Anything else is not adopted.
+  function adapt(v4) {
+    if(!v4||typeof v4!=='object')bad('响应');
+    if(!isDecimal(v4.settings_revision)||!isDecimal(v4.config_revision))bad('版本号');
+    if(!Array.isArray(v4.slots)||v4.slots.length!==3||!Array.isArray(v4.lanes)||v4.lanes.length!==12)bad('卡槽/通道数量');
+    if(!finite(v4.interval_ms)||!finite(v4.effective_interval_ms)||typeof v4.enabled!=='boolean'||typeof v4.state!=='string'||typeof v4.agent_support!=='string')bad('字段类型');
+    const bySlot=new Map();
+    v4.slots.forEach((s,i)=>{
+      if(s.slot!==slots[i]||!['builtin','custom'].includes(s.kind)||typeof s.region!=='string'||typeof s.isp!=='string'||typeof s.host!=='string'||!Number.isInteger(s.port)||typeof s.slot_enabled!=='boolean'||subItems.some(([k])=>typeof s[k]!=='boolean'))bad('卡槽 '+(i+1));
+      bySlot.set(s.slot,s);
+    });
+    const targets=[],lanes=new Map();
+    for(const l of v4.lanes) {
+      if(!bySlot.has(l.slot)||!['ipv4','ipv6'].includes(l.family)||!['tcp','icmp'].includes(l.protocol)||!laneStatuses.includes(l.status)||!isDecimal(l.slot_revision)||(l.target_id!==null&&!/^[0-9a-f]{32}$/.test(l.target_id)))bad('通道');
+      const key=l.slot+'/'+l.family+'/'+l.protocol;if(lanes.has(key))bad('通道重复');lanes.set(key,l);
+      if(l.target_id===null)continue;
+      const s=bySlot.get(l.slot),running=l.status==='active'||l.status==='target_abnormal';
+      // The page keeps working with the target shape it always had; labels come from the slot, never from the target.
+      targets.push({id:l.target_id,slot:l.slot,family:l.family,protocol:l.protocol,slot_revision:l.slot_revision,status:running?'active':'paused',
+        lane_status:l.status,condition:l.condition||'',source:'user',host:s.host,port:l.protocol==='icmp'?0:s.port});
+    }
+    return {version:4,revision:v4.config_revision,settings_revision:v4.settings_revision,enabled:v4.enabled,interval_ms:v4.interval_ms,effective_interval_ms:v4.effective_interval_ms,
+      state:v4.state,agent_support:v4.agent_support,supported:v4.agent_support==='user_targets',slots:v4.slots.map(s=>({...s})),lanes,targets};
   }
-  function chooseRegion(value,slot,region) {
-    const out=structuredClone(value);
-    for(const choice of out.choices) if(slot==='all'||choice.slot===slot) Object.assign(choice,{source:'catalog',region});
+  const slotNumber=slot=>slots.indexOf(slot)+1;
+  const ispText=s=>s?.kind==='builtin'?(names[s.isp]||s.isp):s?.isp;
+  // Row label of a slot: "ISP · region" exactly as the user typed or picked it; "卡槽 N（未标注）" when empty.
+  function slotLabel(config,slot) {
+    const s=config?.slots?.find(x=>x.slot===slot);
+    const text=[ispText(s),s?.region].filter(Boolean).join(' · ');
+    return text||`卡槽 ${slotNumber(slot)}（未标注）`;
+  }
+  function slotShort(config,slot) {
+    const s=config?.slots?.find(x=>x.slot===slot),text=ispText(s);
+    return text?Array.from(text)[0]:String(slotNumber(slot));
+  }
+  const conditionText={not_found:'域名不存在或没有该地址族的记录',no_address:'没有该地址族的解析结果',unsafe_address:'解析到非公网地址，已拒绝连接'};
+  // What a lane shows when it is not measuring: decided by the Server's status, never inferred by the page.
+  function laneNotice(config,slot,family,protocol) {
+    const l=config?.lanes?.get(`${slot}/${family}/${protocol}`);
+    if(!l)return {key:'waiting',text:'等待配置',detail:'配置尚未读取'};
+    switch(l.status) {
+      case 'active':return null;
+      case 'target_abnormal':return {key:'abnormal',text:'目标异常',detail:`目标异常（从本机看到）：${conditionText[l.condition]||l.condition||'地址不可用'}；不计入失败率`,measured:true};
+      case 'device_inactive':return {key:'device',text:'设备已撤销/暂停',detail:'设备已撤销或暂停，当前数据不可用'};
+      case 'excluded':return {key:'excluded',text:'平台不支持',detail:'当前平台不支持网络质量检测'};
+      case 'storage_pressure':return {key:'pressure',text:'存储压力，已暂停',detail:'Server 存储压力下暂停了检测'};
+      case 'agent_unavailable':
+        if(l.condition==='upgrade_required')return {key:'upgrade',text:'需升级 Agent',detail:'需升级 Agent 才能使用自定义目标'};
+        if(l.condition==='negotiating')return {key:'negotiating',text:'正在连接…',detail:'Agent 刚重启，正在完成协商，约一个上报周期'};
+        return {key:'unsupported',text:'Agent 不支持',detail:'Agent 没有上报网络质量能力'};
+      case 'disabled':return {key:'off',text:'已关闭',detail:'检测总开关已关闭'};
+      case 'unset':return {key:'unset',text:'未配置目标',detail:'这个卡槽还没有填写目标地址'};
+      case 'inactive':return {key:'inactive',text:'未启用',detail:'这个卡槽或子项没有勾选'};
+      case 'no_ipv6':return {key:'no_ipv6',text:'本机无 IPv6',detail:'这台机器没有可用的 IPv6 地址；有地址后会自动开始'};
+      case 'icmp_unsupported':return {key:'no_icmp',text:'不支持 ICMP',detail:'当前环境没有 ICMP 权限（例如容器内没有 CAP_NET_RAW）；TCP 不受影响'};
+      default:return {key:'unknown',text:'未知',detail:l.status};
+    }
+  }
+  // One sentence for the whole card, or '' when there is nothing to say.
+  function cardNotice(config) {
+    if(!config)return '配置尚未读取';
+    switch(config.state) {
+      case 'agent_upgrade_required':return '需升级 Agent 才能使用自定义目标';
+      case 'negotiating':return '正在连接…';
+      case 'unsupported':return 'Agent 尚未支持网络质量';
+      case 'excluded':return '当前平台不支持网络质量检测';
+      case 'storage_pressure':return 'Server 存储压力，检测已暂停';
+      case 'disabled':return '已关闭';
+      case 'unset':return '未配置目标';
+      case 'device_inactive':return '设备已撤销/暂停，当前数据不可用';
+      case 'capacity_throttled':return `Server 容量限制，实际间隔 ${config.effective_interval_ms/1000} 秒`;
+      case 'retention_degraded':return 'Server 容量紧张，历史保留已降级';
+      default:return '';
+    }
+  }
+  // ---- the settings dialog ----
+  const slotDraft=s=>({slot:s.slot,kind:s.kind,region:s.region,isp:s.isp,host:s.host,port:s.port?String(s.port):'',slot_enabled:s.slot_enabled,...Object.fromEntries(subItems.map(([k])=>[k,s[k]]))});
+  const draftOf=config=>({interval_ms:config.interval_ms,slots:config.slots.map(slotDraft)});
+  const clone=v=>JSON.parse(JSON.stringify(v));
+  const trimmed=d=>({interval_ms:d.interval_ms,slots:d.slots.map(s=>({...s,host:s.host.trim(),port:s.port.trim()}))});
+  // A refused save or a changed base: slots the user did not touch follow the latest content, the ones they edited stay as they are.
+  function mergeDraft(draft,oldBase,latest) {
+    const same=(a,b)=>JSON.stringify(trimmed({interval_ms:0,slots:[a]}))===JSON.stringify(trimmed({interval_ms:0,slots:[b]}));
+    return {interval_ms:draft.interval_ms===oldBase.interval_ms?latest.interval_ms:draft.interval_ms,slots:latest.slots.map((slot,i)=>same(draft.slots[i],oldBase.slots[i])?slot:draft.slots[i])};
+  }
+  const isDirty=(d,base)=>JSON.stringify(trimmed(d))!==JSON.stringify(trimmed(base));
+  // Switching between built-in and custom keeps address, port and ticks and only clears the labels, so no free text is carried into an enumeration.
+  function switchKind(s,kind) {return s.kind===kind?s:{...s,kind,region:'',isp:''};}
+  const literalFamily=host=>{const h=host.trim();return /^\d{1,3}(\.\d{1,3}){3}$/.test(h)?'ipv4':h.includes(':')&&/^[0-9a-fA-F:.]+$/.test(h)?'ipv6':'';};
+  // Immediate hints only; the Server decides. A literal address of one family cannot be ticked for the other.
+  function hints(d) {
+    const out={};
+    for(const s of d.slots) {
+      const e={},host=s.host.trim(),lit=literalFamily(host);
+      if(host) {
+        if(!/^[0-9]+$/.test(s.port.trim())||+s.port<1||+s.port>65535)e.port='invalid_port';
+        if(!s.region)e.region='label_required';
+        if(!s.isp)e.isp='label_required';
+      }
+      if(lit==='ipv4')for(const k of ['ipv6_tcp','ipv6_icmp'])if(s[k])e[k]='family_mismatch';
+      if(lit==='ipv6')for(const k of ['ipv4_tcp','ipv4_icmp'])if(s[k])e[k]='family_mismatch';
+      out[s.slot]=e;
+    }
     return out;
   }
-  function payload(value,revision) {
-    if(typeof revision!=='string') throw Error('配置版本缺失，不能保存');
-    return {expected_revision:revision,enabled:value.enabled,ipv6:value.ipv6,choices:value.choices.map(c=>({slot:c.slot,source:'catalog',protocol:c.protocol,region:c.region}))};
+  const disabledSubs=host=>{const lit=literalFamily(host);return {ipv4_tcp:lit==='ipv6',ipv4_icmp:lit==='ipv6',ipv6_tcp:lit==='ipv4',ipv6_icmp:lit==='ipv4'};};
+  const errorText={invalid_host:'地址不合法',reserved_name:'这是保留名称，不能检测',unsafe_address:'地址不是公网地址',family_mismatch:'字面地址与勾选的地址族不符',invalid_port:'端口须为 1–65535',
+    invalid_label:'标注不合法（1–32 个字符，不含控制字符和首尾空格）',label_required:'已填地址时必须填写',invalid_interval:'检测频率须为 30–300 秒，每档 30 秒',invalid_encoding:'含有非法字符',invalid_request:'请求不合法'};
+  function savePayload(d,settingsRevision) {
+    if(!isDecimal(settingsRevision))throw Error('配置版本缺失，不能保存');
+    if(!intervals.includes(d.interval_ms))throw Error('检测频率须为 30–300 秒，每档 30 秒');
+    return {expected_revision:settingsRevision,interval_ms:d.interval_ms,slots:d.slots.map(s=>{
+      const host=s.host.trim();
+      return {slot:s.slot,kind:s.kind,region:s.region,isp:s.isp,host,port:host?Number(s.port.trim()):0,slot_enabled:!!s.slot_enabled,ipv4_tcp:!!s.ipv4_tcp,ipv4_icmp:!!s.ipv4_icmp,ipv6_tcp:!!s.ipv6_tcp,ipv6_icmp:!!s.ipv6_icmp};
+    })};
+  }
+  function enabledPayload(settingsRevision,enabled) {
+    if(!isDecimal(settingsRevision))throw Error('配置版本缺失');
+    return {expected_revision:settingsRevision,enabled:!!enabled};
+  }
+  // ---- TCP Mini (N6): what the Server reports, shown as it is ----
+  function tcpMiniNotice(status) {
+    if(!status||status.current_tcp!==true)return {kind:'none',text:'无当前 TCP 检测',detail:'没有正在检测的 IPv4 TCP 线路（总开关关闭、没有勾选 IPv4 TCP，或只剩 ICMP / IPv6）；不显示旧告警'};
+    if(status.state==='alert')return {kind:'alert',text:'告警',source_day:status.source_day||'',
+      detail:`告警来源日 ${status.source_day||'未知'}；告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标`};
+    if(status.state==='normal')return {kind:'normal',text:'',detail:''};
+    return {kind:'unknown',text:'告警覆盖不足',detail:status.coverage||'告警覆盖不足'};
   }
   const historyKey = (agent,target,family,hours) => JSON.stringify(['history',agent,target,family,hours]);
   function ratio(stats,protocol) {
@@ -138,39 +261,9 @@
     const y=key=>valid.map(b=>b.gap?null:finite(b[key])?b[key]:null);
     return {blocks:valid,data:kind==='latency'?[x,y('p50_ms'),y('p95_ms')]:[x,valid.map(b=>b.gap?null:ratio(b,protocol).value)]};
   }
-  function laneDraft(config) {
-    return {enabled:!!config.enabled,ipv6:!!config.ipv6,region:config.region_id||'',choices:slots.flatMap(slot=>['ipv4','ipv6'].flatMap(family=>['tcp','icmp'].map(protocol=>{
-      const lane=(config.card_lanes||[]).find(t=>t.slot===slot&&t.family===family&&t.protocol===protocol);
-      return lane?{slot,family,protocol,enabled:!!lane.enabled,source:'catalog',region:lane.region||config.region_id||''}:{slot,family,protocol,enabled:false,source:'catalog',region:config.region_id||''};
-    })))};
-  }
-  function lanePayload(value,revision) {
-    if(typeof revision!=='string')throw Error('配置版本缺失');
-    if(!value.region&&value.enabled)throw Error('请选择三网共用地区');
-    return {expected_revision:revision,enabled:value.enabled,ipv6:value.ipv6,region_id:value.region,lanes:value.choices.map(c=>({
-      slot:c.slot,family:c.family,protocol:c.protocol,enabled:!!c.enabled,source:'catalog',region:value.region
-    }))};
-  }
   function cardGroup(h,target) {
     const metric=target?.protocol==='tcp'?'pure_connect':'echo_rtt';
     return h?.current?.find(g=>g.semantics==='staged_probe_v2'&&g.metric===metric);
-  }
-  // Why a card has nothing to measure, decided from the Server's card config alone. "Not selected" is
-  // a configuration state (the Agent is fine); "unsupported" is only for an Agent without the capability.
-  function configNotice(config) {
-    if(!config)return {key:'waiting',text:'等待地区配置'};
-    if(config.state==='region_selection_required')return {key:'region',text:'未选择地区',detail:'尚未选择地区；选择地区后才会开始检测'};
-    if(config.supported!==true)return {key:'unsupported',text:'Agent 不支持',detail:'Agent 没有上报 staged_probe_v2 网络质量能力'};
-    return null;
-  }
-  // One lane (family + protocol) that the Agent reports it cannot run: ICMP without CAP_NET_RAW, for example.
-  // TCP keeps working; the lane says why it is unavailable instead of showing "unknown".
-  function laneNotice(config,family,protocol) {
-    const lane=config?.capabilities?.lanes?.find(l=>l.family===family&&l.protocol===protocol);
-    if(!lane||lane.supported!==false)return null;
-    if(lane.reason==='platform_excluded')return {key:'lane',text:'不可用',detail:'不可用（当前平台不支持网络质量检测）'};
-    if(protocol==='icmp')return {key:'lane',text:'不可用',detail:'不可用（当前环境无 ICMP 权限）'};
-    return {key:'lane',text:'不可用',detail:`不可用（当前环境不支持 ${String(protocol).toUpperCase()}）`};
   }
   function cardCurrent(h,target,{old=false,revision,elapsed=0}={}) {
     const g=cardGroup(h,target),s=g?.latest_probe,d=s?.details;
@@ -210,6 +303,6 @@
     const text=`${time(block.start)} — ${time(block.end)}${block.end<block.start+300000?' · 当前未完成桶':''}\n${target.protocol.toUpperCase()} · ${target.family} · target ${target.id||'无'}\n${target.protocol==='tcp'?`纯 Connect P95 ${ms(block.p95_ms)}（量化误差≤0.125ms）；有效 RTT ${block.valid_rtts||0}`:`丢包 ${percent(loss)}；发送 ${block.sent||0} / 接收 ${block.received||0}`}\n样本 ${block.count||0} · ${reason||'未知'} · 未执行 ${block.not_executed||0}\n配置 ${block.config_revision_min||'无'}–${block.config_revision_max||'无'} / 槽位 ${block.slot_revision_min||'无'}–${block.slot_revision_max||'无'}\n分类 ${JSON.stringify(block.categories||{})}`;
     return {tone,text,mark:tone==='neutral'?'·':tone==='loss'?'!':block.completeness==='partial'?'·':''};
   }
-  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,draft,chooseRegion,payload,historyKey,ratio,current,blockText,columns,laneDraft,lanePayload,cardGroup,configNotice,laneNotice,cardCurrent,cardPoints,cardBlock};
+  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,mergeDraft,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,tcpMiniNotice,historyKey,ratio,current,blockText,columns,cardGroup,cardCurrent,cardPoints,cardBlock};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);

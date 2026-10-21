@@ -51,3 +51,20 @@
 .agent-card .nq-subtitle{display:inline;font-size:10px;color:var(--muted);white-space:nowrap}
 .agent-card .nq-title[data-has-status=true] .nq-subtitle{font-size:10px;text-decoration:none}
 @media(max-width:420px){.agent-card .nq-subtitle{display:none}}
+/* R07: the settings dialog (targets, frequency, master switch). */
+.nq-overlay{position:fixed;inset:0;z-index:1400;display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;background:#10110e99;overflow:auto}
+.nq-dialog{--nq-bg:#fffaf0;--nq-fg:#302d28;--nq-sub:#625b52;--nq-line:#d8cfc1;--nq-input:#fffdf8;--nq-err:#b3261e;color:var(--nq-fg);background:var(--nq-bg);color-scheme:light;font:13px/1.5 system-ui,sans-serif;width:min(640px,100%);box-sizing:border-box;border:1px solid var(--nq-line);border-radius:14px;padding:0;box-shadow:0 15px 50px #0006;display:flex;flex-direction:column;max-height:calc(100dvh - 48px)}
+[data-nq-theme=dark] .nq-dialog{--nq-bg:#23241f;--nq-fg:#f0e9dc;--nq-sub:#c0b6a5;--nq-line:#504c42;--nq-input:#302f28;--nq-err:#ff8a80;color-scheme:dark}
+@media(prefers-color-scheme:dark){:root:not([data-nq-theme=light]) .nq-dialog{--nq-bg:#23241f;--nq-fg:#f0e9dc;--nq-sub:#c0b6a5;--nq-line:#504c42;--nq-input:#302f28;--nq-err:#ff8a80;color-scheme:dark}}
+.nq-dialog-head{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--nq-line)}.nq-dialog-head h2{margin:0 auto 0 0;font-size:16px}.nq-dialog-actions{display:flex;gap:6px}
+.nq-dialog-body{padding:12px 16px;overflow:auto;display:grid;gap:10px}.nq-dialog-foot{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--nq-line)}.nq-dialog-foot .nq-status{margin:0 auto 0 0}
+.nq-dialog button{font:inherit;background:var(--nq-input);color:var(--nq-fg);border:1px solid #786e60;border-radius:7px;padding:4px 10px;cursor:pointer}.nq-dialog button:disabled{opacity:.6;cursor:default}.nq-dialog .nq-save{background:#116d5e;border-color:#116d5e;color:#fff}
+.nq-dialog :focus-visible{outline:2px solid var(--nq-fg);outline-offset:2px}
+.nq-master{display:flex;gap:8px;align-items:center;font-weight:600}.nq-notice{margin:0;padding:6px 8px;border-left:3px solid #b98a2c;background:#b98a2c1f}
+.nq-slot{border:1px solid var(--nq-line);border-radius:10px;padding:8px 10px;display:grid;gap:8px;min-width:0}.nq-slot legend{font-weight:600;padding:0 4px}
+.nq-kinds{display:flex;gap:14px}.nq-kind{display:inline-flex;gap:4px;align-items:center}
+.nq-dialog .nq-field{display:grid;gap:3px}.nq-dialog .nq-field input[type=text],.nq-dialog .nq-field input:not([type]),.nq-dialog .nq-field select{font:inherit;width:100%;min-width:0;box-sizing:border-box;color:var(--nq-fg);background:var(--nq-input);border:1px solid #786e60;border-radius:7px;padding:5px 7px}
+.nq-subs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px}.nq-sub{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.nq-field-error{color:var(--nq-err);font-size:11px}.nq-field-error:empty{display:none}
+.nq-guard{margin:0;padding:8px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#b98a2c1f}.nq-guard p{margin:0 auto 0 0;font-weight:600}
+@media(max-width:600px){.nq-overlay{padding:0}.nq-dialog{max-height:100dvh;height:100dvh;border-radius:0;width:100%}.nq-subs{grid-template-columns:1fr}}

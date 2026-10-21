@@ -3,7 +3,7 @@ const L=require('../web/static/latency-mini.js');
 const M=60000,NOW=1792080030000,FIRST=Math.floor(NOW/M)*M-1439*M;
 const LAST=1439; // in-progress minute (end = NOW)
 function fixture(protocol='tcp',slot='telecom'){
- const target={id:`t-${protocol}-${slot}`,slot,family:'ipv4',protocol,region:'test',slot_revision:'7',status:'active'};
+ const target={id:`t-${protocol}-${slot}`,slot,family:'ipv4',protocol,slot_revision:'7',status:'active',lane_status:'active',condition:''};
  const points=Array.from({length:1440},(_,i)=>({start:FIRST+i*M,end:Math.min(FIRST+(i+1)*M,NOW),count:0,valid_rtts:0,not_executed:0,sent:0,received:0,p50_ms:null,p50_5m_ms:null,p95_ms:null,completeness:'no_data',execution_coverage:'unverified',categories:{}}));
  for(let i=1430;i<1436;i++)Object.assign(points[i],{count:2,valid_rtts:2,p50_ms:30+i-1430,p50_5m_ms:20+i-1430,p95_ms:40+i-1430,completeness:'complete',config_revision_min:'9',config_revision_max:'9',slot_revision_min:'7',slot_revision_max:'7',categories:{success:2}});
  const h={target,view:'1day',resolution_ms:M,now:NOW,window_start:FIRST,algorithm:'weighted-grid-rtt-adjacent-v3',histogram_version:1,grid_ms:.25,percentile_max_error_ms:.125,groups:[{semantics:'staged_probe_v2',metric:protocol==='tcp'?'pure_connect':'echo_rtt',points}]};return {target,h,points};
@@ -59,11 +59,13 @@ class El{
 }
 const fakeDoc={hidden:false,createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
 const IDS={telecom:1,unicom:2,mobile:3};
-async function card({height=80,protocol='tcp',series,status={state:'normal',level_ms:2000,now:NOW},id='a'}){
+async function card({height=80,protocol='tcp',series,status={state:'normal',level_ms:2000,now:NOW,current_tcp:true},id='a'}){
  // series: {slot: points => void}; slots absent from `series` get empty history.
  const histories={};
  for(const proto of ['tcp','icmp'])for(const slot of Object.keys(IDS)){const f=fixture(proto,slot);for(const p of f.points)Object.assign(p,{count:0,valid_rtts:0,p50_ms:null,p95_ms:null,completeness:'no_data'});if(proto===protocol)series[slot]?.(f.points);histories[f.target.id]=f.h;}
- const config={revision:'1',region_id:'test',supported:true,enabled:true,targets:['tcp','icmp'].flatMap(proto=>Object.keys(IDS).map(slot=>fixture(proto,slot).target))};
+ const targets=['tcp','icmp'].flatMap(proto=>Object.keys(IDS).map(slot=>fixture(proto,slot).target));
+ const lanes=new Map(targets.map(t=>[`${t.slot}/ipv4/${t.protocol}`,{slot:t.slot,family:'ipv4',protocol:t.protocol,status:'active',condition:''}]));
+ const config={revision:'1',supported:true,enabled:true,targets,lanes,slots:Object.keys(IDS).map(slot=>({slot,kind:'builtin',region:'',isp:slot,host:'example.com',port:443}))};
  const state={};
  state.fetchJSON=async url=>{
   if(url.includes('/tcp-mini'))return status;
@@ -148,13 +150,13 @@ test('a lone value is not marked lowest; deselecting a line clears its number',a
 });
 test('TCP alert shows a red 告警 mark with the evidence tooltip; normal hides it; unknown keeps the coverage hint',async()=>{
  const mark=c=>c.svg().filter(n=>n.dataset.alert==='true');
- const alert=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},status:{state:'alert',level_ms:5000,now:NOW,coverage:'覆盖完整',source_day:'2026-10-16'}});
+ const alert=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},status:{state:'alert',level_ms:5000,now:NOW,coverage:'覆盖完整',source_day:'2026-10-16',current_tcp:true}});
  assert.equal(mark(alert).length,1);assert.equal(mark(alert)[0].ownText,'告警');assert.equal(mark(alert)[0].attributes.fill,'#c42b32');assert.match(mark(alert)[0].textContent,/告警来源日 2026-10-16/);
  assert.equal(alert.plot.dataset.warning,'true');assert.match(alert.plot.title,/告警来源日 2026-10-16/);
  assert.equal(alert.svg().filter(n=>n.tagName==='text'&&/log/.test(n.ownText)).length,0);
  const normal=await card({series:{telecom:p=>line(p,1420,1428,()=>100)}});
  assert.equal(mark(normal).length,0);assert.equal(normal.plot.dataset.warning,'false');
- const unknown=await card({series:{},status:{state:'unknown',level_ms:2000,now:NOW}});
+ const unknown=await card({series:{},status:{state:'unknown',level_ms:2000,now:NOW,current_tcp:true}});
  assert.equal(mark(unknown).length,0);assert.ok(unknown.svg().some(n=>n.ownText==='告警覆盖不足'));
  // the old ceiling number turning red is gone: the top label no longer depends on the alert level.
  assert.equal(alert.svg().find(n=>n.dataset.axisTick==='1000').attributes.fill,'#4e5965');

@@ -5,7 +5,7 @@
   const MINUTE=60000,HOUR=3600000,DAY=24*HOUR,TTL=120000;
   const colors={telecom:'#007d83',unicom:'#8653b1',mobile:'#ae7017'};
   const finite=C.finite,integer=v=>Number.isSafeInteger(v)&&v>=0;
-  const identity=t=>JSON.stringify([t.id,t.slot,t.family,t.protocol,t.region,t.slot_revision,t.status]);
+  const identity=t=>JSON.stringify([t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status]);
   const metric=t=>t.protocol==='tcp'?'pure_connect':'echo_rtt';
   const number=v=>{const text=v>=1000?String(Math.round(v)):v>=10?v.toFixed(0):v>=1?v.toFixed(1):v.toFixed(2);return v>0&&Number(text)===0?String(Number(v.toPrecision(2))):text;};
   const stamp=v=>new Date(v).toLocaleString();
@@ -52,8 +52,8 @@
     const btn=(text,fn)=>{const b=el('button','',text);b.type='button';b.addEventListener('click',fn);return b;};
     const inactive=c=>c.agent.revoked||c.agent.removal||c.agent.disabled_at;
     const effective=c=>!closed&&!c.dead&&c.active&&c.visible&&!doc.hidden&&c.node.isConnected&&!inactive(c);
-    const targets=c=>C.slots.map(slot=>(c.config?.targets||[]).find(t=>t.slot===slot&&t.family==='ipv4'&&t.protocol===c.protocol&&t.region===c.config.region_id)||{slot,status:'unavailable'});
-    const key=(c,t)=>JSON.stringify(['latency-mini',c.id,c.config.revision,c.config.region_id,identity(t)]);
+    const targets=c=>C.slots.map(slot=>(c.config?.targets||[]).find(t=>t.slot===slot&&t.family==='ipv4'&&t.protocol===c.protocol)||{slot,status:'unavailable'});
+    const key=(c,t)=>JSON.stringify(['latency-mini',c.id,c.config.revision,identity(t)]);
     const selected=c=>targets(c).filter(t=>c.isps.has(t.slot));
     function bounds(c){return {start:c.latest-DAY,end:c.latest};}
     function clamp(c){const b=bounds(c);c.end=Math.max(b.start+c.hours*HOUR,Math.min(b.end,c.end));}
@@ -63,7 +63,7 @@
       const parts=[`${stamp(view(c)[0])} — ${stamp(c.end)} · ${c.follow?'跟随现在':'历史位置'}\n5 分钟滑动 P50（每分钟一个点；悬停同时给出本分钟 P50/P95）· ${c.protocol==='tcp'?'纯 Connect，不含 DNS':'Echo Reply RTT，仅实际回包'} · 量化误差≤0.125ms`];
       for(const t of selected(c)){
         const entry=c.cache.get(t.id),p=entry?.data?.points.find(p=>epoch>=p.start&&epoch<Math.max(p.start+1,p.end));
-        parts.push(`${C.names[t.slot]}：${p?`${stamp(p.start)} — ${stamp(p.end)}\n${p.value===null?p.reason||'无有效 RTT':figures(p)+(p.value>CEIL?' · 超出刻度':'')}${p.partial?' · 存在有效 RTT，但该分钟覆盖不完整':''} · 有效 RTT ${p.valid} / 观测 ${p.count} · ${p.completeness}${p.provisional?' · 未最终封存':''}\n${c.protocol==='icmp'?`完整窗口分母：发送 ${p.sent} / 回包 ${p.received} · 丢包 ${p.sent?((p.sent-p.received)/p.sent*100).toFixed(1)+'%':'分母未知'} · `:''}未执行 ${p.notExecuted} · 配置 ${p.config.join('—')} / 槽位 ${p.slot.join('—')}\n分类 ${JSON.stringify(p.categories)}`:entry?.error||(!t.id?'没有匹配目标':!entry?.data?.supported?'无 staged_probe_v2 历史':'此时间无桶')}${entry?.error?' · 读取失败，旧历史':''}${c.agent.online===false?' · 离线历史':''}${t.status==='paused'?' · 检测暂停':''}`);
+        parts.push(`${C.slotLabel(c.config,t.slot)}：${p?`${stamp(p.start)} — ${stamp(p.end)}\n${p.value===null?p.reason||'无有效 RTT':figures(p)+(p.value>CEIL?' · 超出刻度':'')}${p.partial?' · 存在有效 RTT，但该分钟覆盖不完整':''} · 有效 RTT ${p.valid} / 观测 ${p.count} · ${p.completeness}${p.provisional?' · 未最终封存':''}\n${c.protocol==='icmp'?`完整窗口分母：发送 ${p.sent} / 回包 ${p.received} · 丢包 ${p.sent?((p.sent-p.received)/p.sent*100).toFixed(1)+'%':'分母未知'} · `:''}未执行 ${p.notExecuted} · 配置 ${p.config.join('—')} / 槽位 ${p.slot.join('—')}\n分类 ${JSON.stringify(p.categories)}`:entry?.error||(!t.id?'没有匹配目标':!entry?.data?.supported?'无 staged_probe_v2 历史':'此时间无桶')}${entry?.error?' · 读取失败，旧历史':''}${c.agent.online===false?' · 离线历史':''}${t.status==='paused'?' · 检测暂停':''}`);
       }
       c.note.textContent=parts.join('\n');
     }
@@ -71,8 +71,8 @@
       const [start,end]=view(c),rect=c.plot.getBoundingClientRect(),w=rect.width;if(!w)return;
       const h=rect.height,ph=h-12,values=[],rows=[];
       for(const t of selected(c)){const entry=c.cache.get(t.id),points=(entry?.data?.points||[]).filter(p=>p.start>=start&&p.start<=end);rows.push({t,entry,points});for(const p of points)if(p.value!==null)values.push(p.value);}
-      const scope=JSON.stringify([c.protocol,[...c.isps],c.hours,c.follow,c.config?.revision,c.config?.region_id]);if(scope!==c.axisScope){c.axisScope=scope;c.axisNeed=0;}
-      const alert=c.protocol==='tcp'&&c.tcpEvidence?.state==='alert',measure=c.measure||(c.measure=doc.createElement('canvas').getContext('2d'));
+      const scope=JSON.stringify([c.protocol,[...c.isps],c.hours,c.follow,c.config?.revision]);if(scope!==c.axisScope){c.axisScope=scope;c.axisNeed=0;}
+      const evidence=c.protocol==='tcp'&&c.tcpEvidence&&!c.tcpEvidenceError&&typeof c.tcpEvidence.current_tcp==='boolean'?C.tcpMiniNotice(c.tcpEvidence):null,alert=evidence?.kind==='alert',measure=c.measure||(c.measure=doc.createElement('canvas').getContext('2d'));
       const highLabel=String(CEIL);measure.font='9px Arial';const need=Math.ceil(measure.measureText(highLabel).width+5+2);
       c.axisNeed=Math.max(c.axisNeed||0,need);const left=axes?axes.fit(c.id,'C',c.plot,c.axisNeed,()=>{if(!closed&&!c.dead&&c.active)render(c);}):c.axisNeed;
       c.axisLeft=left;c.plot.dataset.axisLeft=String(left);c.plot.dataset.axisRequired=String(need);
@@ -87,9 +87,9 @@
       for(const drop of [500,300])if(crowded(labels))labels=labels.filter(v=>v!==drop);
       for(const v of labels)txt(left-5,base(v),String(v),'end',9).dataset.axisTick=String(v);
       for(const [i,v]of [start,(start+end)/2,end].entries()){const label=clock(v,false);txt(i===0?left:i===2?w:left+pw/2,h-1,label,i===0?'start':i===2?'end':'middle');}
-      if(alert){const mark=txt(w-2,9,'告警','end');mark.setAttribute('fill','#c42b32');mark.setAttribute('font-weight','700');mark.dataset.alert='true';const tip=doc.createElementNS(ns,'title');tip.textContent=`TCP 告警 · ${c.tcpEvidence.coverage||'告警覆盖不足'} · 告警来源日 ${c.tcpEvidence.source_day||'无可证明事件'}`;mark.append(tip);}
+      if(alert){const mark=txt(w-2,9,'告警','end');mark.setAttribute('fill','#c42b32');mark.setAttribute('font-weight','700');mark.dataset.alert='true';const tip=doc.createElementNS(ns,'title');tip.textContent=`TCP 告警 · ${evidence.detail}`;mark.append(tip);}
       for(const {t,points}of rows){
-        const color=colors[t.slot],name=C.names[t.slot];let d='',prev=null,run=null;
+        const color=colors[t.slot],name=C.slotLabel(c.config,t.slot);let d='',prev=null,run=null;
         // Minutes above the ruler are one dashed run on the top edge; the solid line joins it from, and back to, the scale.
         const flush=()=>{if(!run)return;const x1=x(run.first.start),x2=x(run.last.start)+Math.max(mw,3);
           const dash=add('path',{d:`M${x1.toFixed(2)},${topY}H${x2.toFixed(2)}`,fill:'none',stroke:color,'stroke-width':1.4,'stroke-dasharray':DASH,'data-boundary':'above-scale','data-start':run.first.start,'data-minutes':run.n});
@@ -110,15 +110,19 @@
         }
         flush();if(d.includes('L'))add('path',{d,fill:'none',stroke:color,'stroke-width':1.2});
       }
-      const notice=C.configNotice(c.config),lane=C.laneNotice(c.config,'ipv4',c.protocol),message=notice?.key==='region'?notice.text:!c.isps.size?'未选择 ISP':inactive(c)?'设备暂停/撤销':notice?notice.text:lane?lane.detail:!values.length?(c.loading.size?'读取历史…':rows.some(r=>r.entry?.error)?'历史读取失败':'暂无有效 RTT'):rows.some(r=>r.entry?.error)||c.agent.online===false?'旧历史':'';
+      const lanes=[...c.isps].map(slot=>C.laneNotice(c.config,slot,'ipv4',c.protocol)),stopped=lanes.filter(n=>n&&!n.measured),allStopped=c.config&&lanes.length>0&&stopped.length===lanes.length,
+        message=!c.isps.size?'未选择 ISP':inactive(c)?'设备暂停/撤销':!c.config?'等待配置':allStopped?stopped[0].text:!values.length?(c.loading.size?'读取历史…':rows.some(r=>r.entry?.error)?'历史读取失败':'暂无有效 RTT'):rows.some(r=>r.entry?.error)||c.agent.online===false?'旧历史':'';
       if(message)txt(left+pw/2,14,message,'middle');
-      if(c.protocol==='tcp'&&(!c.tcpEvidence||c.tcpEvidence.state==='unknown'||c.tcpEvidenceError))txt(left+3,ph-3,'告警覆盖不足');
-      c.plot.replaceChildren(svg);c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
-      c.plot.title=`${stamp(start)} — ${stamp(end)} · 5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${c.tcpEvidence?.coverage||'告警覆盖不足'}；告警来源日 ${c.tcpEvidence?.source_day||'无可证明事件'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
+      // N6: with no IPv4 TCP lane running, no old alert and no coverage warning is shown, only that there is none.
+      const alertText=c.protocol!=='tcp'?'':evidence?(evidence.kind==='none'||evidence.kind==='unknown'?evidence.text:''):'告警覆盖不足';
+      if(alertText)txt(left+3,ph-3,alertText).dataset.tcpMini=evidence?.kind||'unknown';
+      c.plot.replaceChildren(svg);c.alertNote.textContent=c.protocol==='tcp'&&evidence&&['alert','none','unknown'].includes(evidence.kind)?(evidence.text?evidence.text+'：':'')+evidence.detail:'';c.alertNote.hidden=!c.alertNote.textContent;c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
+      c.plot.title=`${stamp(start)} — ${stamp(end)} · 5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${evidence?evidence.detail||'无告警':'告警覆盖不足'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
       c.plot.setAttribute('aria-label',c.plot.title+(message?' · '+message:''));
       c.span.textContent=c.hours+'h';c.span.title='当前可视时间跨度：'+c.hours+'小时';c.slider.setAttribute('aria-valuetext',c.hours+'小时');c.now.setAttribute('aria-pressed',String(c.follow));
       for(const [protocol,b]of c.protocols)b.setAttribute('aria-pressed',String(protocol===c.protocol));
       for(const [slot,b]of c.legend)b.setAttribute('aria-pressed',String(c.isps.has(slot)));
+      for(const [slot,nodes]of c.legendNodes){const full=C.slotLabel(c.config,slot),short=C.slotShort(c.config,slot);nodes.nameNode.textContent=full;nodes.shortNode.textContent=short;nodes.b.title=full;nodes.b.setAttribute('aria-label',full+' RTT 曲线');}
       // Headline numbers follow "now", not the dragged window.
       const latest=new Map();for(const t of selected(c)){const v=recent(c.cache.get(t.id)?.data);if(v!==null)latest.set(t.slot,v);}
       const lowest=latest.size>1?Math.min(...latest.values()):null;
@@ -135,7 +139,7 @@
         c.evidenceLoading=true;const serial=c.serial,zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
         queue.request(JSON.stringify(['tcp-mini-state',c.id,zone]),c.owner,signal=>C.transportLease(tracked=>state.fetchJSON(`/api/v1/web/agents/${encodeURIComponent(c.id)}/network-quality/v3/tcp-mini?timezone=${encodeURIComponent(zone)}`,{signal,fetcher:tracked,unauthorized,timeoutMs:10000}),fetcher)).then(status=>{
           if(c.dead||serial!==c.serial)return;
-          if(!status||!['normal','alert','unknown'].includes(status.state)||!finite(status.level_ms)||status.level_ms<2000||!integer(status.now))throw Error('invalid TCP Mini state');
+          if(!status||!['normal','alert','unknown'].includes(status.state)||typeof status.current_tcp!=='boolean'||!finite(status.level_ms)||status.level_ms<2000||!integer(status.now))throw Error('invalid TCP Mini state');
           c.tcpEvidence=status;c.tcpEvidenceError=false;c.evidenceUpdated=now();render(c);
         }).catch(()=>{if(!c.dead&&serial===c.serial){c.tcpEvidenceError=true;c.tcpEvidence={...c.tcpEvidence,state:'unknown'};c.evidenceUpdated=now();render(c);}}).finally(()=>{c.evidenceLoading=false;if(serial!==c.serial&&effective(c))request(c);});
       }
@@ -159,14 +163,14 @@
     function mount(agent){
       let c=cards.get(agent.agent_id);
       if(!c){
-        const node=el('section','latency-mini'),top=el('div','lm-top'),legend=el('div','lm-legend'),plot=el('div','lm-plot'),bottom=el('div','lm-bottom'),slider=el('input'),span=el('span','lm-span','1h'),output=el('output','lm-note');
-        c={id:agent.agent_id,agent,node,plot,slider,span,note:output,owner:{},config:null,serial:0,dead:false,active:true,visible:false,nums:new Map(),cache:new Map(),loading:new Set(),protocol:'tcp',isps:new Set(C.slots),hours:1,follow:true,latest:now(),latestServer:null,end:now(),protocols:new Map(),legend:new Map(),drag:null,resize:null};
+        const alertNote=el('small','lm-alert-note'),node=el('section','latency-mini'),top=el('div','lm-top'),legend=el('div','lm-legend'),plot=el('div','lm-plot'),bottom=el('div','lm-bottom'),slider=el('input'),span=el('span','lm-span','1h'),output=el('output','lm-note');
+        c={id:agent.agent_id,agent,node,alertNote,plot,slider,span,note:output,owner:{},config:null,serial:0,dead:false,active:true,visible:false,nums:new Map(),cache:new Map(),loading:new Set(),protocol:'tcp',isps:new Set(C.slots),hours:1,follow:true,latest:now(),latestServer:null,end:now(),protocols:new Map(),legend:new Map(),legendNodes:new Map(),drag:null,resize:null};
         node.dataset.latencyAgent=c.id;plot.tabIndex=0;plot.dataset.focusKey='lm-plot';output.id='lm-note-'+c.id;plot.setAttribute('aria-describedby',output.id);
         for(const p of ['tcp','icmp']){const b=btn(p.toUpperCase(),()=>{if(c.protocol===p)return;invalidate(c);c.protocol=p;render(c);request(c);});b.dataset.focusKey='lm-'+p;c.protocols.set(p,b);top.append(b);}
-        for(const slot of C.slots){const b=btn('',()=>{invalidate(c);if(c.isps.has(slot))c.isps.delete(slot);else c.isps.add(slot);render(c);request(c);});const dot=el('span','lm-dot');dot.setAttribute('aria-hidden','true');const num=el('span','lm-num');c.nums.set(slot,num);b.title=C.names[slot];b.append(dot,el('span','lm-name',C.names[slot]),el('span','lm-short',C.names[slot][0]),num);b.style.setProperty('--lm-color',colors[slot]);b.setAttribute('aria-label',C.names[slot]+' RTT 曲线');b.dataset.focusKey='lm-'+slot;c.legend.set(slot,b);legend.append(b);}top.append(span,legend);
+        for(const slot of C.slots){const b=btn('',()=>{invalidate(c);if(c.isps.has(slot))c.isps.delete(slot);else c.isps.add(slot);render(c);request(c);});const dot=el('span','lm-dot');dot.setAttribute('aria-hidden','true');const num=el('span','lm-num');c.nums.set(slot,num);const nameNode=el('span','lm-name',C.names[slot]),shortNode=el('span','lm-short',C.names[slot][0]);c.legendNodes.set(slot,{b,nameNode,shortNode});b.title=C.names[slot];b.append(dot,nameNode,shortNode,num);b.style.setProperty('--lm-color',colors[slot]);b.setAttribute('aria-label',C.names[slot]+' RTT 曲线');b.dataset.focusKey='lm-'+slot;c.legend.set(slot,b);legend.append(b);}top.append(span,legend);
         slider.type='range';slider.min='1';slider.max='24';slider.step='1';slider.value='24';slider.setAttribute('aria-label','时间范围：左24小时，右1小时');slider.dataset.focusKey='lm-hours';
         slider.addEventListener('input',()=>{const center=c.end-c.hours*HOUR/2;c.hours=25-Number(slider.value);if(!c.follow)c.end=center+c.hours*HOUR/2;clamp(c);c.note.textContent='';render(c);});
-        c.now=btn('现在',()=>current(c));c.now.dataset.focusKey='lm-now';bottom.append(el('span','','24h'),slider,el('span','','1h'),c.now);node.append(top,plot,bottom,output);
+        c.now=btn('现在',()=>current(c));c.now.dataset.focusKey='lm-now';bottom.append(el('span','','24h'),slider,el('span','','1h'),c.now);alertNote.hidden=true;node.append(top,plot,alertNote,bottom,output);
         plot.addEventListener('pointerdown',e=>{if(e.isPrimary===false||e.button!==0||e.clientX<plot.getBoundingClientRect().left+(c.axisLeft||0))return;c.drag={id:e.pointerId,x:e.clientX,y:e.clientY,end:c.end,hours:c.hours,moved:false,touch:e.pointerType==='touch'};if(!c.drag.touch)plot.setPointerCapture(e.pointerId);});
         plot.addEventListener('pointermove',e=>{const r=plot.getBoundingClientRect(),d=c.drag;if(d&&d.id===e.pointerId){const dx=e.clientX-d.x,dy=e.clientY-d.y;if(!d.moved&&Math.abs(dx)<4)return;if(d.touch&&!d.moved&&Math.abs(dy)>Math.abs(dx)){c.drag=null;return;}d.moved=true;c.follow=false;c.end=d.end-dx/Math.max(1,r.width-(c.axisLeft||0))*d.hours*HOUR;clamp(c);c.note.textContent='';render(c);}else if(e.pointerType!=='touch')note(c,view(c)[0]+Math.max(0,Math.min(1,(e.clientX-r.left-(c.axisLeft||0))/Math.max(1,r.width-(c.axisLeft||0))))*c.hours*HOUR);});
         const endDrag=e=>{if(c.drag?.id!==e.pointerId)return;c.drag=null;if(plot.hasPointerCapture(e.pointerId))plot.releasePointerCapture(e.pointerId);};plot.addEventListener('pointerup',endDrag);plot.addEventListener('pointercancel',endDrag);
@@ -177,7 +181,7 @@
       }
       const was=inactive(c);c.agent=agent;if(!was&&inactive(c))invalidate(c,true);render(c);return c.node;
     }
-    function bindConfig(id,config){const c=cards.get(id);if(!c)return;const signature=JSON.stringify([config.revision,config.region_id,config.supported,config.enabled,config.targets]);if(signature===c.signature)return;invalidate(c,true);c.signature=signature;c.config=config;c.latestServer=null;render(c);request(c);}
+    function bindConfig(id,config){const c=cards.get(id);if(!c)return;const signature=JSON.stringify([config.revision,config.supported,config.enabled,config.targets.map(t=>[t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status,t.lane_status,t.condition])]);if(signature===c.signature){c.config=config;render(c);return;}invalidate(c,true);c.signature=signature;c.config=config;c.latestServer=null;render(c);request(c);}
     function retire(c){invalidate(c,true);c.dead=true;c.resize?.disconnect();observer?.unobserve(c.node);c.node.remove();cards.delete(c.id);}
     function tick(){if(closed||doc.hidden)return;fallback();queue.pump();for(const c of cards.values())request(c);}
     function visibility(){if(doc.hidden){for(const c of cards.values())invalidate(c);if(timer!==null)clear(timer);timer=null;}else{if(timer===null&&!closed)timer=interval(tick,30000);tick();}}
@@ -186,7 +190,7 @@
       setActive(id,value){const c=cards.get(id);if(!c||c.active===value)return;c.active=value;if(!value)invalidate(c);else{render(c);request(c);}},
       setVisible(id,value){const c=cards.get(id);if(c)setVisible(c,value);},
       close(){if(closed)return;closed=true;if(timer!==null)clear(timer);observer?.disconnect();for(const c of [...cards.values()])retire(c);doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
-      snapshot:()=>({cards:cards.size,requests:queue.snapshot(),views:[...cards.values()].map(c=>({id:c.id,protocol:c.protocol,isps:[...c.isps],hours:c.hours,follow:c.follow,start:view(c)[0],end:c.end,visible:c.visible,loading:c.loading.size,cachedTargets:c.cache.size,region:c.config?.region_id}))})};
+      snapshot:()=>({cards:cards.size,requests:queue.snapshot(),views:[...cards.values()].map(c=>({id:c.id,protocol:c.protocol,isps:[...c.isps],hours:c.hours,follow:c.follow,start:view(c)[0],end:c.end,visible:c.visible,loading:c.loading.size,cachedTargets:c.cache.size}))})};
   }
   const api={create,normalize,ratio,recent};if(typeof module==='object'&&module.exports)module.exports=api;else root.LatencyMini=api;
 })(globalThis);

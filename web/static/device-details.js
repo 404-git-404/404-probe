@@ -71,7 +71,7 @@
       if(!dialog.open)return;
       if(tab==='management')renderManagement();else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
       else if(tab==='resources'){pending=false;renderResourceFacts();renderPlot();request();}
-      else {network()?.ensureHistoryTargets?.(current);populateNetworkTargets();if(shouldRestoreNetwork&&networkIdentity)restoreNetwork();else if(!networkIdentity)networkChart.replaceChildren(el('p','','暂无有效网络历史目标；请检查现有地区配置。'));}
+      else {network()?.ensureHistoryTargets?.(current);populateNetworkTargets();if(shouldRestoreNetwork&&networkIdentity)restoreNetwork();else if(!networkIdentity)networkChart.replaceChildren(el('p','','暂无有效网络历史目标；请先在网络质量卡片的“设置”里填写并保存目标地址。'));}
     }
     function open(id,key='management',trigger=null,exact=null){if(dead||!agents.has(id))return;
       if(current!==id){conceal();leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';rangeError.textContent='';networkIdentity=null;current=id;}

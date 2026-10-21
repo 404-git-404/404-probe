@@ -38,3 +38,5 @@
 .agent-card .dv-c .lm-legend button .lm-num{color:#3b3936}
 .agent-card .dv-c .lm-legend button .lm-num.lm-over{color:#c42b32}
 .agent-card .dv-c .lm-legend button[aria-pressed=true] :is(.lm-name,.lm-short){color:var(--lm-color)}
+.agent-card .dv-c .lm-alert-note{display:block;margin:2px 0 0;color:#6b5f52;font-size:10px;line-height:1.35;overflow-wrap:anywhere}
+.agent-card .dv-c .lm-alert-note[hidden]{display:none}
