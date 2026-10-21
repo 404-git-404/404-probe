@@ -25,7 +25,21 @@ func qualityAddressSafe(ip netip.Addr) bool {
 	if ip.Is6() {
 		family = "ipv6"
 	}
-	return protocol.PublicDestinationIP(ip.String(), family)
+	if !protocol.PublicDestinationIP(ip.String(), family) {
+		return false
+	}
+	// An additional condition only: a discovered NAT64 prefix can refuse an address, never allow one.
+	return family == "ipv4" || nat64Allows(ip)
+}
+
+func qualityPublicIPv4(ip netip.Addr) bool {
+	return ip.Is4() && protocol.PublicEgressIP(ip.String(), "ipv4")
+}
+
+// isDNSNotFound is a definite "no such name or no record of that family" answer (NXDOMAIN or empty).
+func isDNSNotFound(err error) bool {
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
 }
 
 func qualityGuardControl(_, address string, _ syscall.RawConn) error {

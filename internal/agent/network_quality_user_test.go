@@ -154,6 +154,7 @@ func TestQualityTwoStepNegotiationAndWithdrawal(t *testing.T) {
 	defer server.Close()
 	r := n2bRunner(t, server.URL, "id", "token")
 	r.quality.ipv6 = &qualityIPv6Monitor{scan: func() (bool, error) { return false, nil }}
+	r.quality.nat64Resolver = fixedNAT64{}
 	ctx := context.Background()
 	var seq uint64
 	send := func() {
@@ -215,6 +216,7 @@ func TestQualityRejectedTargetsCapabilityFallsBack(t *testing.T) {
 	defer server.Close()
 	r := n2bRunner(t, server.URL, "id", "token")
 	r.quality.ipv6 = &qualityIPv6Monitor{scan: func() (bool, error) { return false, nil }}
+	r.quality.nat64Resolver = fixedNAT64{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var seq uint64
@@ -296,6 +298,7 @@ func TestQualityWithdrawalCancelsInFlightProbeAndDropsQueue(t *testing.T) {
 	defer server.Close()
 	r := n2bRunner(t, server.URL, "id", "token")
 	r.quality.ipv6 = &qualityIPv6Monitor{scan: func() (bool, error) { return false, nil }}
+	r.quality.nat64Resolver = fixedNAT64{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var seq uint64
@@ -375,6 +378,7 @@ func TestQualityPullUnsupportedDropsInstalledUserConfig(t *testing.T) {
 	defer server.Close()
 	r := n2bRunner(t, server.URL, "id", "token")
 	r.quality.ipv6 = &qualityIPv6Monitor{scan: func() (bool, error) { return false, nil }}
+	r.quality.nat64Resolver = fixedNAT64{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var seq uint64

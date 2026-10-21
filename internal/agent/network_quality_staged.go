@@ -36,7 +36,10 @@ func qualityResolve(ctx context.Context, resolver icmpResolver, t protocol.Quali
 	d.DNSMS = qualityMS(time.Since(start))
 	if err != nil {
 		d.DNSOutcome = "dns_error"
-		if ctx.Err() != nil {
+		if isDNSNotFound(err) && ctx.Err() == nil && t.Source == "user" {
+			// Only user-entered targets, which only a negotiated Server accepts, get the new value.
+			d.DNSOutcome = "not_found"
+		} else if ctx.Err() != nil {
 			d.DNSOutcome = "canceled"
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				d.DNSOutcome = "dns_timeout"

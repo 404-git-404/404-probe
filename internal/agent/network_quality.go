@@ -234,6 +234,7 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 		}
 		if allowed {
 			schedule.reconcile(config, now, random)
+			r.startNAT64Discovery(ctx, config)
 		} else {
 			schedule.reconcile(nil, now, random)
 		}

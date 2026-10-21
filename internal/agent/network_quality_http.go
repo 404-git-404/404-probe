@@ -38,6 +38,11 @@ type qualityControl struct {
 	// targets are accepted, and catalog targets are not (guarded by mu).
 	userTargets bool
 	ipv6        *qualityIPv6Monitor
+	// NAT64 discovery starts once, when the first user target is installed; the fields let tests
+	// inject the resolver and the clock.
+	nat64Started  bool
+	nat64Resolver nat64Lookup
+	nat64Wait     func(time.Duration) <-chan time.Time
 }
 
 func newQualityControl() *qualityControl {
