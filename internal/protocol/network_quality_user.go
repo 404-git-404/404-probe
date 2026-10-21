@@ -184,6 +184,13 @@ func NormalizeQualityHost(host string) (canonical, literal, code string) {
 	if len(host) > 253 {
 		return "", "", QualityErrInvalidHost
 	}
+	// Only ASCII is accepted (internationalized names are entered as punycode). This must come before
+	// any case conversion: Unicode lower-casing maps some non-ASCII letters (U+212A KELVIN SIGN) to ASCII.
+	for i := 0; i < len(host); i++ {
+		if host[i] >= 0x80 {
+			return "", "", QualityErrInvalidHost
+		}
+	}
 	// Brackets, zone identifiers, userinfo, paths and white space are never part of a host. A colon is
 	// left to the address parser (IPv6 literals); any other colon fails the name rules below.
 	if strings.ContainsAny(host, "[]%@/"+" \t\r\n") {

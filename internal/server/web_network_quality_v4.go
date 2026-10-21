@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -182,7 +183,7 @@ func (a *App) handleQualityV4Enabled(w http.ResponseWriter, r *http.Request) {
 
 var errQualityDNSBusy = errors.New("quality address checks are busy")
 
-// checkQualityNames resolves the changed names once, in parallel, under one shared 2 s budget, and
+// checkQualityNames resolves the changed names once, every name and family in parallel, under one shared 2 s budget, and
 // returns those with any non-public answer on either side. A name that fails to resolve on both
 // sides is allowed: the Agent checks again before every connection. Nothing that was resolved is
 // stored, logged or returned.
@@ -193,6 +194,8 @@ func (a *App) checkQualityNames(ctx context.Context, names []string) ([]string, 
 	if len(names) > qualityDNSMaxNames {
 		return nil, errQualityDNSBusy
 	}
+	// The limit counts saves (one ticket per request, at most three names, two lookups each), not
+	// single lookups: at most 4 x 3 x 2 lookups can run at once.
 	select {
 	case a.qualityDNSSlots <- struct{}{}:
 		defer func() { <-a.qualityDNSSlots }()
@@ -201,16 +204,18 @@ func (a *App) checkQualityNames(ctx context.Context, names []string) ([]string, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, qualityDNSCheckBudget)
 	defer cancel()
-	unsafe := make([]bool, len(names))
+	// Every name and every family is asked at the same time under the one shared budget, so a stalled
+	// family can neither use up the other's time nor hide a private answer it already gave.
+	unsafe := make([]atomic.Bool, len(names))
 	var wg sync.WaitGroup
 	for i, name := range names {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for _, network := range []string{"ip4", "ip6"} {
+		for _, network := range []string{"ip4", "ip6"} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				addrs, err := a.qualityLookup(ctx, network, name)
 				if err != nil {
-					continue
+					return
 				}
 				for _, addr := range addrs {
 					addr = addr.Unmap()
@@ -219,16 +224,16 @@ func (a *App) checkQualityNames(ctx context.Context, names []string) ([]string, 
 						family = "ipv4"
 					}
 					if !protocol.PublicDestinationIP(addr.WithZone("").String(), family) {
-						unsafe[i] = true
+						unsafe[i].Store(true)
 					}
 				}
-			}
-		}()
+			}()
+		}
 	}
 	wg.Wait()
 	var out []string
-	for i, bad := range unsafe {
-		if bad {
+	for i := range unsafe {
+		if unsafe[i].Load() {
 			out = append(out, names[i])
 		}
 	}

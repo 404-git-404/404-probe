@@ -306,7 +306,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	if version > currentSchemaVersion {
-		return unsupportedSchemaVersionError(version)
+		return unsupportedSchemaVersionError(version, currentSchemaVersion)
 	}
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS agents (
@@ -967,6 +967,11 @@ func (s *Store) GetOutboundSnapshot(ctx context.Context, agentID string) (Outbou
 }
 
 func checkSupportedSchemaVersion(ctx context.Context, db *sql.DB) error {
+	return checkSchemaVersionAtMost(ctx, db, currentSchemaVersion)
+}
+
+// checkSchemaVersionAtMost refuses a database newer than the given schema version.
+func checkSchemaVersionAtMost(ctx context.Context, db *sql.DB, supported int) error {
 	var exists bool
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'
@@ -980,14 +985,14 @@ func checkSupportedSchemaVersion(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > currentSchemaVersion {
-		return unsupportedSchemaVersionError(version)
+	if version > supported {
+		return unsupportedSchemaVersionError(version, supported)
 	}
 	return nil
 }
 
-func unsupportedSchemaVersionError(version int) error {
-	return fmt.Errorf("%w: database is version %d, binary supports up to version %d", ErrUnsupportedSchemaVersion, version, currentSchemaVersion)
+func unsupportedSchemaVersionError(version, supported int) error {
+	return fmt.Errorf("%w: database is version %d, binary supports up to version %d", ErrUnsupportedSchemaVersion, version, supported)
 }
 
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {

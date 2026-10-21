@@ -114,8 +114,11 @@ func migrateQualityUserTargetsTx(ctx context.Context, tx *sql.Tx) error {
 		return err
 	}
 	rows.Close()
-	// Defensive: a device with slot or interval rows but no configuration row.
-	orphans, err := tx.QueryContext(ctx, `SELECT agent_id,MAX(revision) FROM (SELECT agent_id,revision FROM quality_slots UNION ALL SELECT agent_id,revision FROM quality_intervals) GROUP BY agent_id`)
+	// Defensive: a device without a configuration row that has slot rows or an OPEN interval. Which
+	// devices are included is decided by that; the version it takes over counts every slot and every
+	// interval it ever had, ended ones too. A device with only ended history is left alone.
+	orphans, err := tx.QueryContext(ctx, `SELECT agent_id,MAX(revision) FROM (SELECT agent_id,revision FROM quality_slots UNION ALL SELECT agent_id,revision FROM quality_intervals)
+		WHERE agent_id IN (SELECT agent_id FROM quality_slots UNION SELECT agent_id FROM quality_intervals WHERE end_at IS NULL) GROUP BY agent_id`)
 	if err != nil {
 		return err
 	}

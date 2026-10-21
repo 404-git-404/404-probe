@@ -82,7 +82,15 @@ func (s *Store) ReconcileQualityAuthorization(ctx context.Context, id string, ev
 	}
 	switch {
 	case grant:
-		wire, err := json.Marshal(evidence.Caps)
+		// The device-level snapshot keeps the last determinate IPv6 state: unknown (or absent) is not
+		// evidence, so it neither closes nor reopens anything (design 11.1 G2). Evidence about the
+		// lanes themselves (ICMP, TCP) is always taken from the new report.
+		merged := *evidence.Caps
+		if (merged.IPv6Address == "" || merged.IPv6Address == protocol.QualityIPv6Unknown) && cfg.Snapshot != nil &&
+			(cfg.Snapshot.IPv6Address == protocol.QualityIPv6None || cfg.Snapshot.IPv6Address == protocol.QualityIPv6Present) {
+			merged.IPv6Address = cfg.Snapshot.IPv6Address
+		}
+		wire, err := json.Marshal(merged)
 		if err != nil {
 			return err
 		}
