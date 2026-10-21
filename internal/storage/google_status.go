@@ -77,13 +77,13 @@ func (s *Store) GetGoogleStatus(ctx context.Context, agentID string) (GoogleStat
 func readGoogleStatus(ctx context.Context, db googleStatusReader, agentID string) (GoogleStatusSnapshot, bool, error) {
 	var snapshot GoogleStatusSnapshot
 	var youtubeRegion, youtubeError, searchError, signinError, geminiRegion, geminiError sql.NullString
-	var sentToChina sql.NullInt64
+	var sentToChina, premiumNotice sql.NullInt64
 	err := db.QueryRowContext(ctx, `SELECT agent_id,youtube_status,youtube_region,sent_to_china,youtube_error,
 		search_status,search_error,signin_status,signin_error,gemini_status,gemini_region,gemini_error,
-		checked_at,unknown_streak,next_due_at FROM agent_google_status WHERE agent_id=?`, agentID).Scan(
+		checked_at,unknown_streak,next_due_at,youtube_premium_notice FROM agent_google_status WHERE agent_id=?`, agentID).Scan(
 		&snapshot.AgentID, &snapshot.Result.YouTube.Status, &youtubeRegion, &sentToChina, &youtubeError,
 		&snapshot.Result.Search.Status, &searchError, &snapshot.Result.SignIn.Status, &signinError,
-		&snapshot.Result.Gemini.Status, &geminiRegion, &geminiError, &snapshot.CheckedAt, &snapshot.UnknownStreak, &snapshot.NextDueAt)
+		&snapshot.Result.Gemini.Status, &geminiRegion, &geminiError, &snapshot.CheckedAt, &snapshot.UnknownStreak, &snapshot.NextDueAt, &premiumNotice)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GoogleStatusSnapshot{}, false, nil
 	}
@@ -94,6 +94,10 @@ func readGoogleStatus(ctx context.Context, db googleStatusReader, agentID string
 	if sentToChina.Valid {
 		value := sentToChina.Int64 == 1
 		snapshot.Result.YouTube.SentToChina = &value
+	}
+	if premiumNotice.Valid {
+		value := premiumNotice.Int64 == 1
+		snapshot.Result.YouTube.PremiumNotice = &value
 	}
 	snapshot.Result.YouTube.Error.Category = youtubeError.String
 	snapshot.Result.Search.Error.Category = searchError.String
@@ -234,15 +238,15 @@ func saveGoogleStatusTx(ctx context.Context, tx *sql.Tx, agentID string, result 
 		next = checkedAt + retry.Milliseconds()
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO agent_google_status(agent_id,youtube_status,youtube_region,sent_to_china,youtube_error,
-		search_status,search_error,signin_status,signin_error,gemini_status,gemini_region,gemini_error,checked_at,unknown_streak,next_due_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET
-		youtube_status=excluded.youtube_status,youtube_region=excluded.youtube_region,sent_to_china=excluded.sent_to_china,youtube_error=excluded.youtube_error,
+		search_status,search_error,signin_status,signin_error,gemini_status,gemini_region,gemini_error,checked_at,unknown_streak,next_due_at,youtube_premium_notice)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET
+		youtube_status=excluded.youtube_status,youtube_region=excluded.youtube_region,sent_to_china=excluded.sent_to_china,youtube_error=excluded.youtube_error,youtube_premium_notice=excluded.youtube_premium_notice,
 		search_status=excluded.search_status,search_error=excluded.search_error,signin_status=excluded.signin_status,signin_error=excluded.signin_error,
 		gemini_status=excluded.gemini_status,gemini_region=excluded.gemini_region,gemini_error=excluded.gemini_error,
 		checked_at=excluded.checked_at,unknown_streak=excluded.unknown_streak,next_due_at=excluded.next_due_at`,
 		agentID, result.YouTube.Status, nullableText(result.YouTube.Region), nullableBool(result.YouTube.SentToChina), nullableText(result.YouTube.Error.Category),
 		result.Search.Status, nullableText(result.Search.Error.Category), result.SignIn.Status, nullableText(result.SignIn.Error.Category),
-		result.Gemini.Status, nullableText(result.Gemini.Region), nullableText(result.Gemini.Error.Category), checkedAt, streak, next)
+		result.Gemini.Status, nullableText(result.Gemini.Region), nullableText(result.Gemini.Error.Category), checkedAt, streak, next, nullableBool(result.YouTube.PremiumNotice))
 	return err
 }
 

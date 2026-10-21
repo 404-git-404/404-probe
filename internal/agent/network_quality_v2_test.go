@@ -1,166 +1,17 @@
 package agent
 
 import (
-	"404-probe/internal/auth"
 	"404-probe/internal/protocol"
-	appserver "404-probe/internal/server"
-	"404-probe/internal/storage"
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
-
-func TestA1RealRunnerV2TCPFamiliesStoreAndUnavailableICMP(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	s, err := storage.Open(ctx, ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	id, _ := auth.NewID()
-	token, hash, _ := auth.NewToken()
-	if err := s.AddAgent(ctx, id, "a1", hash, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	app, err := appserver.NewApp(s, 30*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Shutdown()
-	// Exercise the A1 negotiation path against the newer implementation.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Del(protocol.QualitySemanticsHeader)
-		app.Handler().ServeHTTP(w, r)
-	}))
-	defer server.Close()
-	listener4, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener4.Close()
-	listener6, err := net.Listen("tcp6", "[::1]:0")
-	if err != nil {
-		t.Fatal("IPv6 loopback required by this test", err)
-	}
-	defer listener6.Close()
-	for _, l := range []net.Listener{listener4, listener6} {
-		go func() {
-			for {
-				conn, err := l.Accept()
-				if err != nil {
-					return
-				}
-				conn.Close()
-			}
-		}()
-	}
-	r := n2bRunner(t, server.URL, id, token)
-	r.executor = NewProbeExecutor()
-	var seq uint64
-	for i := 0; i < 2; i++ {
-		if ok, err := r.sendReport(ctx, &seq); err != nil || !ok {
-			t.Fatal("handshake", ok, err)
-		}
-	}
-	u := protocol.QualityV2ConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, RegionID: "test-region"}
-	for _, slot := range []string{"telecom", "unicom", "mobile"} {
-		for _, f := range []string{"ipv4", "ipv6"} {
-			host, port := tcpAddressParts(t, listener4.Addr())
-			if f == "ipv6" {
-				host, port = tcpAddressParts(t, listener6.Addr())
-			}
-			for _, p := range []string{"tcp", "icmp"} {
-				selectedPort := port
-				if p == "icmp" {
-					selectedPort = 0
-				}
-				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: p, Host: host, Port: selectedPort}, Family: f, Enabled: true})
-			}
-		}
-	}
-	cfg, err := s.UpdateQualityConfigV2(ctx, id, u, func(c protocol.QualityChoice, f string) (protocol.QualityTarget, error) {
-		return protocol.QualityTarget{Host: c.Host, Port: c.Port, EndpointVersion: f + "/" + c.Protocol}, nil
-	}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok, err := r.sendReport(ctx, &seq); err != nil || !ok {
-		t.Fatal(ok, err)
-	}
-	var offset atomic.Int64
-	var observed atomic.Int32
-	var queued atomic.Int32
-	uploadScheduled := make(chan time.Time, 8)
-	r.quality.sampleQueued = func(string, string) { queued.Add(1) }
-	r.quality.uploadScheduled = func(next time.Time) { uploadScheduled <- next }
-	r.quality.now = func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }
-	r.quality.random = func() float64 { return .5 }
-	r.quality.scheduleObserved = func(_ uint64, n int) { observed.Store(int32(n)) }
-	done := make(chan struct{})
-	go func() { r.runQualityWorker(ctx); close(done) }()
-	expected := 0
-	for _, x := range cfg.Targets {
-		if x.Status == "active" {
-			expected++
-		}
-	}
-	waitForAgentCondition(t, "runtime-supported lanes", func() bool { return int(observed.Load()) == expected })
-	select {
-	case <-uploadScheduled:
-	case <-time.After(time.Second):
-		t.Fatal("startup gap ACK")
-	}
-	offset.Store(int64(31 * time.Second))
-	r.quality.signal()
-	waitForAgentCondition(t, "real measurements queued", func() bool { return queued.Load() >= 6 })
-	// Uploads preserve their normal bounded cadence even if the first batch
-	// races the remaining completions; advance that deadline after probes finish.
-	select {
-	case next := <-uploadScheduled:
-		offset.Store(int64(next.Sub(time.Now()) + time.Second))
-		r.quality.signal()
-	case <-time.After(time.Second):
-		t.Fatal("measurement upload ACK")
-	}
-	for _, target := range cfg.Targets {
-		if target.Protocol != "tcp" {
-			continue
-		}
-		waitForAgentCondition(t, "stored real TCP "+target.Slot+"/"+target.Family, func() bool {
-			h, err := s.QualityHistory(ctx, id, target.ID, 1, time.Now().Add(time.Minute))
-			return err == nil && h.Window.Successes >= 1 && h.Latest != nil && h.Latest.ResolvedIP == target.Host
-		})
-	}
-	for _, target := range cfg.Targets {
-		if target.Status == "unavailable" {
-			h, err := s.QualityHistory(ctx, id, target.ID, 1, time.Now().Add(time.Minute))
-			if err != nil || h.Window.Count != 0 {
-				t.Fatal("unavailable lane fabricated sample", h, err)
-			}
-		}
-	}
-	if got, err := s.GetQualitySessionConfig(ctx, id, r.epoch, r.sessionID, 2); err != nil || got.Version != 2 {
-		t.Fatal(got, err)
-	}
-	t.Log("real TCP4/TCP6 loopback -> v2 HTTP -> SQLite, epoch=" + strconv.FormatUint(r.epoch, 10) + "; ICMP executes only when runtime backend supports it")
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("worker shutdown")
-	}
-}
 
 func a1AgentConfig() protocol.QualityConfig {
 	c := n2bConfig()

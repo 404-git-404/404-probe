@@ -103,6 +103,7 @@ body>header{padding-block:9px 7px}.agent-card .network-rx strong::before{content
 .agent-card .google-check .check-result[data-premium] { padding: 0 6px; border-radius: 4px; color: #fff; }
 .agent-card .google-check .check-result[data-premium="available"] { background: #2f8f5b; }
 .agent-card .google-check .check-result[data-premium="unavailable"] { background: #c62828; }
+.agent-card .google-check .check-result[data-premium="undetermined"] { background: #8a6d1d; }
 .agent-card .google-check .youtube-status-tip { display: none; position: fixed; z-index: 60; left: 8px; top: 8px; width: min(300px,calc(100vw - 68px)); box-sizing: border-box; padding: 9px; border: 1px solid #cfb99e; border-radius: 8px; background: #fff9ed; box-shadow: 0 4px 12px #695b442b; font: 12px/1.6 system-ui; color: #493b30; white-space: normal; overflow-wrap: anywhere; }
 .agent-card .google-check .check-result:is(:hover,:focus) + .youtube-status-tip,
 .agent-card .google-check .youtube-status-tip:hover { display: block; }

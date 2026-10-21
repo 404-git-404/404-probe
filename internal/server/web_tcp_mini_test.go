@@ -66,38 +66,20 @@ func TestTCPMiniChromiumRealAPI(t *testing.T) {
 	var clock atomic.Int64
 	clock.Store(start.UnixMilli())
 	ids := []string{controlAgentA, controlAgentB, webAgentC, "dddddddddddddddddddddddddddddddd"}
-	configs := map[string]protocol.QualityConfig{}
+	configs := map[string]protocol.QualityV4Config{}
 	var sequence int64
 	report := func(id string, seq uint64) {
-		r := reportFor(id, seq)
-		r.NetworkQuality = true
-		r.NetworkQualityV2 = a1ServerCapabilities()
-		r.NetworkQualityV2.Semantics = protocol.QualityStagedSemantics
+		r := userReport(id, seq)
 		r.CollectedAt = clock.Load()
 		r.Hostname = "m05-local"
 		r.OS = "Debian 13"
-		if _, ok, _, e := s.ProcessReport(ctx, id, r, time.UnixMilli(clock.Load())); e != nil || !ok {
-			t.Fatal("report", e, ok)
-		}
+		grantUserTargets(t, s, id, r, time.UnixMilli(clock.Load()))
 	}
 	for i, id := range ids {
 		addControlAgent(t, s, id, fmt.Sprintf("M05 VPS %d", i+1), start.Add(-48*time.Hour))
 		report(id, 1)
-		u := protocol.QualityV2ConfigUpdate{ExpectedRevision: "0", Enabled: true, RegionID: qualityDirectory.Regions[0].ID}
-		for _, slot := range []string{"telecom", "unicom", "mobile"} {
-			for _, p := range []string{"tcp", "icmp"} {
-				port := 80
-				if p == "icmp" {
-					port = 0
-				}
-				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: p, Host: "127.0.0.1", Port: port}, Family: "ipv4", Enabled: true})
-			}
-		}
-		c, e := s.UpdateQualityConfigV2(ctx, id, u, qualityResolverV2, start.Add(-6*time.Hour))
-		if e != nil {
-			t.Fatal(e)
-		}
-		configs[id] = c
+		configs[id] = configureUserTargets(t, s, id, start.Add(-6*time.Hour), defaultUserHosts, 443)
+		var e error
 		quota := uint64(1000000000000)
 		if _, e = s.PutAgentPlan(ctx, storage.AgentPlan{AgentID: id, TrafficMode: "sum", QuotaValue: "1", QuotaUnit: "TB", QuotaBytes: &quota, CycleKind: "monthly", CycleCount: 1, CycleAnchor: "2026-10-01", Timezone: "America/Los_Angeles", RenewalPrice: "9", RenewalPricePeriod: "monthly", Currency: "USD", RenewalDate: "2026-11-01"}, nil, start); e != nil {
 			t.Fatal(e)
@@ -116,19 +98,14 @@ func TestTCPMiniChromiumRealAPI(t *testing.T) {
 	}
 	save := func(id, slot string, at time.Time, value float64, outcome string) {
 		c := configs[id]
-		var target protocol.QualityTarget
-		for _, v := range c.Targets {
-			if v.Slot == slot && v.Protocol == "tcp" && v.Family == "ipv4" {
-				target = v
-			}
-		}
+		lane := userLane(t, c, slot, "ipv4", "tcp")
 		sequence++
 		duration := value
 		if duration < 20 {
 			duration = 20
 		}
-		sample := protocol.QualitySample{Sequence: strconv.FormatInt(sequence, 10), TargetID: target.ID, ConfigRevision: c.Revision, SlotRevision: target.SlotRevision, ScheduledAt: at.UnixMilli(), StartedAt: at.UnixMilli(), FinishedAt: at.UnixMilli() + int64(duration), DurationMS: duration, Outcome: outcome, ResolvedIP: "127.0.0.1"}
-		d := protocol.QualityDetails{Semantics: protocol.QualityStagedSemantics, DNSOutcome: "literal", ProbeComplete: true, ConnectAttempted: true, ConnectComplete: true, ConnectMS: &value, IntervalMS: 30000}
+		sample := protocol.QualitySample{Sequence: strconv.FormatInt(sequence, 10), TargetID: *lane.TargetID, ConfigRevision: c.ConfigRevision, SlotRevision: lane.SlotRevision, ScheduledAt: at.UnixMilli(), StartedAt: at.UnixMilli(), FinishedAt: at.UnixMilli() + int64(duration), DurationMS: duration, Outcome: outcome, ResolvedIP: "93.184.216.34"}
+		d := protocol.QualityDetails{Semantics: protocol.QualityStagedSemantics, DNSOutcome: "success", DNSMS: 5, ProbeComplete: true, ConnectAttempted: true, ConnectComplete: true, ConnectMS: &value, IntervalMS: 30000}
 		if outcome == "success" {
 			sample.LatencyMS = &value
 			d.ConnectMS = &value

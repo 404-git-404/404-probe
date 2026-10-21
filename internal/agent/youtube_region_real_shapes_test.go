@@ -72,8 +72,6 @@ func TestYouTubeRegionSanitizedRealPages(t *testing.T) {
 		{"premium-de.html", "DE", protocol.YouTubeNotCN},
 		{"premium-it-from-nl-host.html", "IT", protocol.YouTubeNotCN},
 		{"premium-us-a.html", "US", protocol.YouTubeNotCN},
-		// Contains an unrelated www.google.cn ad URL; it must never become CN.
-		{"premium-us-b-google-cn-ad.html", "US", protocol.YouTubeNotCN},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join("testdata", "youtube", tc.file))

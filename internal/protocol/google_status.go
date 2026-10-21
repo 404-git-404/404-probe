@@ -45,10 +45,14 @@ type GoogleServiceError struct {
 }
 
 type YouTubeResult struct {
-	Status      YouTubeStatus      `json:"status"`
-	Region      string             `json:"region,omitempty"`
-	SentToChina *bool              `json:"sent_to_china,omitempty"`
-	Error       GoogleServiceError `json:"error,omitempty"`
+	Status      YouTubeStatus `json:"status"`
+	Region      string        `json:"region,omitempty"`
+	SentToChina *bool         `json:"sent_to_china,omitempty"`
+	// PremiumNotice is only observed for a cn result: true when the page itself says YouTube
+	// Premium is not available in the visitor's country. It is supporting evidence, never a verdict.
+	// A Server that did not advertise ReportCapabilities.GoogleStatusChinaSignal never receives it.
+	PremiumNotice *bool              `json:"premium_unavailable_notice,omitempty"`
+	Error         GoogleServiceError `json:"error,omitempty"`
 }
 
 type GoogleSearchResult struct {
@@ -84,9 +88,12 @@ func (r GoogleStatusResult) Validate() error {
 		return errors.New("Google status classification is invalid")
 	}
 	if (r.YouTube.Status == YouTubeNotCN && (!validUpperRegion(r.YouTube.Region, 2) || r.YouTube.Region == "CN")) ||
-		(r.YouTube.Status == YouTubeCN && r.YouTube.Region != "CN") ||
+		(r.YouTube.Status == YouTubeCN && r.YouTube.Region != "" && !validUpperRegion(r.YouTube.Region, 2)) ||
 		(r.YouTube.Status == YouTubeUnknown && r.YouTube.Region != "") {
 		return errors.New("YouTube region is inconsistent with status")
+	}
+	if r.YouTube.PremiumNotice != nil && r.YouTube.Status != YouTubeCN {
+		return errors.New("YouTube premium notice requires a cn result")
 	}
 	if r.YouTube.Status == YouTubeUnknown {
 		if r.YouTube.SentToChina != nil {
@@ -143,7 +150,7 @@ func oneOf(value string, choices ...string) bool {
 // the identical JSON shape/enums. A new Server projects the allowlisted detail
 // into its existing youtube_error TEXT column; no schema/capability change.
 func YouTubeDiagnosticCategory(reason string) bool {
-	return oneOf(reason, "unsafe_address", "dns_error", "tls_error", "consent_page", "challenge_page", "region_conflict", "invalid_region", "invalid_configuration", "missing_evidence", "unexpected_page", "response_truncated", "http_forbidden", "rate_limited", "http_restricted", "http_server_error", "job_expired")
+	return oneOf(reason, "unsafe_address", "dns_error", "tls_error", "consent_page", "challenge_page", "region_conflict", "china_signal_unverified", "invalid_region", "invalid_configuration", "missing_evidence", "unexpected_page", "response_truncated", "http_forbidden", "rate_limited", "http_restricted", "http_server_error", "job_expired")
 }
 
 func CompatibleYouTubeCategory(reason string) string {

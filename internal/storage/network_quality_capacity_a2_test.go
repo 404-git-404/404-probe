@@ -170,7 +170,7 @@ func TestA2ControlledCapacityActualEnabledAgentsAndSQLite(t *testing.T) {
 			}
 			nearFull = true
 			s.qualityBudgetAt = time.Time{}
-			paused, err := s.GetQualitySessionConfig(ctx, ids[0], 1, "quality_session", 2)
+			paused, err := s.legacySessionConfig(ctx, ids[0], 1, "quality_session", 2)
 			if err != nil || paused.Enabled || paused.State != "storage_pressure" {
 				t.Fatal(paused, err)
 			}
@@ -182,13 +182,13 @@ func TestA2ControlledCapacityActualEnabledAgentsAndSQLite(t *testing.T) {
 			size = 2 << 30
 			s.qualityBudgetAt = time.Time{}
 			small := s.qualityBudget(ctx)
-			throttle, err := s.GetQualitySessionConfig(ctx, ids[0], 1, "quality_session", 2)
+			throttle, err := s.legacySessionConfig(ctx, ids[0], 1, "quality_session", 2)
 			if err != nil || throttle.IntervalMS != 30000*small.Scale {
 				t.Fatal(throttle, small, err)
 			}
 			size = 256 << 30
 			s.qualityBudgetAt = time.Time{}
-			recovered, err := s.GetQualitySessionConfig(ctx, ids[0], 1, "quality_session", 2)
+			recovered, err := s.legacySessionConfig(ctx, ids[0], 1, "quality_session", 2)
 			if err != nil || !recovered.Enabled || recovered.IntervalMS != 30000 {
 				t.Fatal("bounded recovery", recovered, err)
 			}

@@ -44,6 +44,8 @@ type App struct {
 	buildInfo                     buildinfo.Info
 	handler                       http.Handler
 	staticAssets                  *staticAssets
+	qualityLookup                 qualityLookupFunc
+	qualityDNSSlots               chan struct{}
 }
 
 const (
@@ -74,7 +76,7 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 		cancel()
 		return nil, err
 	}
-	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, removalReceiptCleanupInterval: 5 * time.Minute, walHealthInterval: sqliteWALHealthInterval, buildInfo: buildinfo.Current()}
+	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, removalReceiptCleanupInterval: 5 * time.Minute, walHealthInterval: sqliteWALHealthInterval, buildInfo: buildinfo.Current(), qualityLookup: systemQualityLookup, qualityDNSSlots: make(chan struct{}, qualityDNSCheckSlots)}
 	a.traffic = traffic
 	for _, option := range options {
 		if option == nil {
@@ -242,6 +244,8 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The header only tells a current Agent from an old one (design 4.2); it is not part of the body.
+	report.QualityTargetsHeader = r.Header.Get(protocol.QualityTargetsHeader) == protocol.QualityTargetsUserV1
 	received := a.now()
 	owner := a.traffic.capture(authenticatedID, received)
 	// Retired slots can be evicted; pending removal is authoritative even then.
@@ -269,8 +273,13 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if accepted {
 		a.publishReportedState(state, owner, received)
+		// A separate transaction after the report committed: a failure here never undoes the ACK, and
+		// the next report that carries the evidence retries it.
+		if err := a.store.ReconcileQualityAuthorization(r.Context(), authenticatedID, storage.QualityNegotiationFromReport(report), received); err != nil {
+			a.logger.Error("recalculate quality authorization", "agent_id", authenticatedID, "error", err)
+		}
 	}
-	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, PublicEgressJob: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
+	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, GoogleStatusChinaSignal: true, PublicEgressJob: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
 	// Agents of v1.0.3 run their own public IP monitor whenever this capability is true, whatever the
 	// Server does with the data. It is only advertised while detection is switched on for this Agent, so
 	// an Agent that never opted in makes no third-party request; v1.0.4 Agents ignore it (they use jobs).
@@ -282,6 +291,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	response.Capabilities.NetworkQuality = true
 	response.Capabilities.NetworkQualityV2 = r.Header.Get(protocol.QualityVersionHeader) == "2" || report.NetworkQualityV2 != nil
 	response.Capabilities.NetworkQualityStaged = r.Header.Get(protocol.QualitySemanticsHeader) == protocol.QualityStagedSemantics || report.NetworkQualityV2 != nil && report.NetworkQualityV2.Semantics == protocol.QualityStagedSemantics
+	response.Capabilities.NetworkQualityUserTargets = report.QualityTargetsHeader
 	response.Capabilities.AgentUpgradeV2 = true
 	writeJSON(w, http.StatusOK, a.qualityReportResponse(r, response, authenticatedID, report))
 }

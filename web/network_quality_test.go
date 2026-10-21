@@ -64,3 +64,53 @@ func TestN3EmbeddedFixedLocalQualityDependencies(t *testing.T) {
 		}
 	}
 }
+
+// R07: the page reads and writes the v4 API only, builds no markup from text, and carries the texts
+// the design requires. The behavior itself is tested by scripts/test-r07-network-quality.cjs.
+func TestR07QualityPageSources(t *testing.T) {
+	assets, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) string {
+		data, err := fs.ReadFile(assets, name)
+		if err != nil || len(data) == 0 {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return string(data)
+	}
+	for _, name := range []string{"network-quality.js", "network-quality-core.js", "latency-mini.js", "device-details.js"} {
+		source := read(name)
+		for _, forbidden := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "createContextualFragment", "DOMParser"} {
+			if strings.Contains(source, forbidden) {
+				t.Fatalf("%s builds markup: %s", name, forbidden)
+			}
+		}
+	}
+	for _, name := range []string{"network-quality.js", "network-quality-core.js", "latency-mini.js"} {
+		source := read(name)
+		for _, gone := range []string{"/network-quality/catalog", "card-config", "v2/config", "region_id", "chooseRegion", "V6 检测", "三网共用地区"} {
+			if strings.Contains(source, gone) {
+				t.Fatalf("%s still has the catalog era: %s", name, gone)
+			}
+		}
+	}
+	page := read("network-quality.js")
+	for _, need := range []string{"v4/config", "v4/enabled", "请仅检测你有权检测的目标", "放弃修改？", "保存并开启", "不保存，按上次保存的配置开启", "页面已过期，请刷新", "网络质量设置"} {
+		if !strings.Contains(page, need) {
+			t.Fatalf("network-quality.js lacks %q", need)
+		}
+	}
+	core := read("network-quality-core.js")
+	for _, need := range []string{"需升级 Agent", "本机无 IPv6", "不支持 ICMP", "目标异常", "未配置目标", "未启用", "已关闭", "无当前 TCP 检测", "告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标"} {
+		if !strings.Contains(core, need) {
+			t.Fatalf("network-quality-core.js lacks %q", need)
+		}
+	}
+	if !strings.Contains(read("network-quality.css"), ".nq-overlay") || !strings.Contains(read("network-quality.css"), ".nq-dialog") {
+		t.Fatal("dialog styles missing")
+	}
+	if !strings.Contains(read("latency-mini.css"), "lm-alert-note") {
+		t.Fatal("TCP Mini note style missing")
+	}
+}

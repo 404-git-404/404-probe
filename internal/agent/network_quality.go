@@ -18,6 +18,7 @@ type qualityLane struct {
 	cancel    context.CancelFunc
 	busy      bool
 	semantics string
+	interval  time.Duration // the nominal period this lane was scheduled with
 }
 type qualitySampleDone struct {
 	lane    *qualityLane
@@ -62,6 +63,13 @@ type qualityHTTPDone struct {
 }
 type qualitySchedule struct{ lanes map[string]*qualityLane }
 
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
 func qualityDelay(base time.Duration, random func() float64) time.Duration {
 	x := random()
 	if x < 0 {
@@ -99,9 +107,20 @@ func (s *qualitySchedule) reconcile(c *protocol.QualityConfig, now time.Time, ra
 			delete(s.lanes, key)
 		}
 	}
+	interval := time.Duration(0)
+	if c != nil {
+		interval = time.Duration(c.IntervalMS) * time.Millisecond
+	}
 	for key, t := range wanted {
-		if _, ok := s.lanes[key]; !ok {
-			s.lanes[key] = &qualityLane{target: t, semantics: c.Semantics, next: now.Add(qualityDelay(time.Duration(c.IntervalMS)*time.Millisecond, random))}
+		if l, ok := s.lanes[key]; !ok {
+			s.lanes[key] = &qualityLane{target: t, semantics: c.Semantics, interval: interval, next: now.Add(qualityDelay(interval, random))}
+		} else if interval != l.interval {
+			// A new frequency applies to a running lane without waiting out the old period: a shorter one
+			// pulls the next probe forward, a longer one takes effect after the one already scheduled.
+			if interval < l.interval {
+				l.next = minTime(l.next, now.Add(qualityDelay(interval, random)))
+			}
+			l.interval = interval
 		}
 	}
 }
@@ -233,7 +252,11 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 			}
 		}
 		if allowed {
-			schedule.reconcile(config, now, random)
+			if r.startNAT64Discovery(ctx, config) {
+				schedule.reconcile(config, now, random)
+			} else {
+				schedule.reconcile(nil, now, random) // user targets wait for the first discovery
+			}
 		} else {
 			schedule.reconcile(nil, now, random)
 		}

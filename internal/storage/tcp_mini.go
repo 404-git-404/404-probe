@@ -249,6 +249,9 @@ type TCPMiniStatus struct {
 	Peak          float64 `json:"peak_ms"`
 	Level         float64 `json:"level_ms"`
 	Revision      int64   `json:"revision"`
+	// CurrentTCP is read-only display gating (R07, N6): true while this Agent has an open IPv4 TCP
+	// authorization interval and is neither revoked nor paused. It never changes the alert rules.
+	CurrentTCP bool `json:"current_tcp"`
 }
 
 func tcpMiniLevel(v float64) float64 {
@@ -304,6 +307,10 @@ func (s *Store) TCPMini(ctx context.Context, id, zone string, now time.Time) (TC
 		return o, err
 	}
 	defer tx.Rollback()
+	// Computed first and independently, so every return path below carries it.
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quality_intervals i JOIN agents a ON a.id=i.agent_id WHERE i.agent_id=? AND i.family='ipv4' AND i.protocol='tcp' AND i.end_at IS NULL AND a.revoked=0 AND a.disabled_at IS NULL AND NOT EXISTS(SELECT 1 FROM agent_removal_operations o WHERE o.agent_id=a.id))`, id).Scan(&o.CurrentTCP); err != nil {
+		return o, err
+	}
 	var scan int64
 	var initialized bool
 	err = tx.QueryRowContext(ctx, `SELECT evidence_start,scanned_at,initialized,last_high,last_low,revision FROM tcp_mini_state WHERE agent_id=?`, id).Scan(&o.EvidenceStart, &scan, &initialized, &o.LastHigh, &o.LastLow, &o.Revision)

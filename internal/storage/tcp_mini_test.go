@@ -256,9 +256,56 @@ func TestTCPMiniDSTProofAndInitialization(t *testing.T) {
 		t.Log(v, tcpMiniLevel(v))
 	}
 }
+
+// withoutMigration34 makes the test see the schema as migrations up to 33 leave it.
+func withoutMigration34(t *testing.T) {
+	t.Helper()
+	migration34Skip = true
+	t.Cleanup(func() { migration34Skip = false })
+}
+
+// dropColumnIfPresent rewinds an added column; a table that a fixture already dropped is skipped.
+func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	var present int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+table+`') WHERE name=?`, column).Scan(&present); err != nil {
+		t.Fatal(err)
+	}
+	if present > 0 {
+		if _, err := db.Exec(`ALTER TABLE ` + table + ` DROP COLUMN ` + column); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// rewindQualityUserTargetsFixture returns a latest-schema database to schema 33 (before R07).
+func rewindQualityUserTargetsFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, q := range []string{`DELETE FROM schema_migrations WHERE version=34`, `DROP TABLE IF EXISTS quality_slot_settings`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, column := range [][2]string{{"quality_config", "settings_revision"}, {"quality_config", "interval_ms"}, {"quality_config", "targets_granted"}, {"quality_config", "capability_snapshot"},
+		{"quality_capability", "user_targets"}, {"quality_capability", "ipv6_address"}, {"quality_targets", "identity"}, {"quality_targets", "created_revision"}, {"quality_targets", "first_active_at"}} {
+		dropColumnIfPresent(t, db, column[0], column[1])
+	}
+}
+
 func dropPublicEgressControlFixtureSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	for _, q := range []string{`DELETE FROM schema_migrations WHERE version=32`, `DROP TABLE IF EXISTS agent_enrollment_tokens`, `DELETE FROM schema_migrations WHERE version=31`, `DROP INDEX IF EXISTS idx_probe_jobs_one_pending_public_egress`, `DROP TABLE IF EXISTS agent_public_egress_control`, `DELETE FROM schema_migrations WHERE version=30`} {
+	rewindQualityUserTargetsFixture(t, db)
+	// Migration 33 added the premium notice column; rewind it when the table is still there.
+	var hasPremiumNotice int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('agent_google_status') WHERE name='youtube_premium_notice'`).Scan(&hasPremiumNotice); err != nil {
+		t.Fatal(err)
+	}
+	if hasPremiumNotice > 0 {
+		if _, err := db.Exec(`ALTER TABLE agent_google_status DROP COLUMN youtube_premium_notice`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{`DELETE FROM schema_migrations WHERE version=33`, `DELETE FROM schema_migrations WHERE version=32`, `DROP TABLE IF EXISTS agent_enrollment_tokens`, `DELETE FROM schema_migrations WHERE version=31`, `DROP INDEX IF EXISTS idx_probe_jobs_one_pending_public_egress`, `DROP TABLE IF EXISTS agent_public_egress_control`, `DELETE FROM schema_migrations WHERE version=30`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}

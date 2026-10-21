@@ -1,0 +1,164 @@
+{
+  "settings_revision": "2",
+  "config_revision": "2",
+  "enabled": true,
+  "interval_ms": 60000,
+  "effective_interval_ms": 60000,
+  "state": "negotiating",
+  "agent_support": "negotiating",
+  "icmp_support": {
+    "ipv4": "unknown",
+    "ipv6": "unknown"
+  },
+  "slots": [
+    {
+      "slot": "telecom",
+      "kind": "builtin",
+      "region": "广东",
+      "isp": "telecom",
+      "host": "example.com",
+      "port": 443,
+      "slot_enabled": true,
+      "ipv4_tcp": true,
+      "ipv4_icmp": true,
+      "ipv6_tcp": true,
+      "ipv6_icmp": true
+    },
+    {
+      "slot": "unicom",
+      "kind": "custom",
+      "region": "Tokyo",
+      "isp": "NTT",
+      "host": "93.184.216.34",
+      "port": 80,
+      "slot_enabled": true,
+      "ipv4_tcp": true,
+      "ipv4_icmp": true,
+      "ipv6_tcp": false,
+      "ipv6_icmp": false
+    },
+    {
+      "slot": "mobile",
+      "kind": "builtin",
+      "region": "",
+      "isp": "mobile",
+      "host": "",
+      "port": 0,
+      "slot_enabled": false,
+      "ipv4_tcp": false,
+      "ipv4_icmp": false,
+      "ipv6_tcp": false,
+      "ipv6_icmp": false
+    }
+  ],
+  "lanes": [
+    {
+      "slot": "telecom",
+      "family": "ipv4",
+      "protocol": "tcp",
+      "target_id": "65a98cbe690054ef49645ef8119d4f07",
+      "slot_revision": "2",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "telecom",
+      "family": "ipv4",
+      "protocol": "icmp",
+      "target_id": "99d137bb1ae22e2366850ce0688992c3",
+      "slot_revision": "2",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "telecom",
+      "family": "ipv6",
+      "protocol": "tcp",
+      "target_id": "93f0c231e2676183169106c811c2ba1b",
+      "slot_revision": "2",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "telecom",
+      "family": "ipv6",
+      "protocol": "icmp",
+      "target_id": "3b87f9f6b13a6afe26195a2b6e938b50",
+      "slot_revision": "2",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv4",
+      "protocol": "tcp",
+      "target_id": "1df28eb348e46a2687c0d74024ad667f",
+      "slot_revision": "2",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv4",
+      "protocol": "icmp",
+      "target_id": "2676dd6d5d1a8605e7386ef1ee059e47",
+      "slot_revision": "2",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv6",
+      "protocol": "tcp",
+      "target_id": "4ec282ac27d0caa3f66d5da69919007f",
+      "slot_revision": "1",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "unicom",
+      "family": "ipv6",
+      "protocol": "icmp",
+      "target_id": "c397deec8640243e9e410048d48050b8",
+      "slot_revision": "1",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv4",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv4",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv6",
+      "protocol": "tcp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    },
+    {
+      "slot": "mobile",
+      "family": "ipv6",
+      "protocol": "icmp",
+      "target_id": null,
+      "slot_revision": "0",
+      "status": "agent_unavailable",
+      "condition": "negotiating"
+    }
+  ]
+}

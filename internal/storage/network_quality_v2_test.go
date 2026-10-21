@@ -73,7 +73,7 @@ func TestA1TwelveLanesIndependentRevisionLegacyFenceAndCAS(t *testing.T) {
 	if tcp.ID == icmp.ID {
 		t.Fatal("protocol identities collapsed")
 	}
-	legacy, err := s.GetQualitySessionConfig(ctx, id, 1, "quality_session")
+	legacy, err := s.legacySessionConfig(ctx, id, 1, "quality_session")
 	if err != nil || len(legacy.Targets) != 6 {
 		t.Fatal(legacy, err)
 	}
@@ -159,11 +159,11 @@ func TestA1TwelveLanesIndependentRevisionLegacyFenceAndCAS(t *testing.T) {
 func TestA1SessionCapabilityMixedRegionAlpineAndDetailsGates(t *testing.T) {
 	s, id, cfg, now := qualityFixture(t, ":memory:")
 	ctx := context.Background()
-	if _, err := s.GetQualitySessionConfig(ctx, id, 1, "quality_session", 2); !errors.Is(err, ErrQualityUnsupported) {
+	if _, err := s.legacySessionConfig(ctx, id, 1, "quality_session", 2); !errors.Is(err, ErrQualityUnsupported) {
 		t.Fatal("v2 before negotiation", err)
 	}
 	a1Report(t, s, id, 2, now, a1Capabilities(), "debian 13")
-	v2, err := s.GetQualitySessionConfig(ctx, id, 1, "quality_session", 2)
+	v2, err := s.legacySessionConfig(ctx, id, 1, "quality_session", 2)
 	if err != nil || v2.State != "region_selection_required" || v2.Enabled {
 		t.Fatal("legacy manual not explicitly mapped", v2, err)
 	}
@@ -181,7 +181,7 @@ func TestA1SessionCapabilityMixedRegionAlpineAndDetailsGates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v2, err = s.GetQualitySessionConfig(ctx, id, 1, "quality_session", 2)
+	v2, err = s.legacySessionConfig(ctx, id, 1, "quality_session", 2)
 	if err != nil || v2.Enabled || v2.State != "region_selection_required" {
 		t.Fatal(v2, err)
 	}
@@ -190,7 +190,7 @@ func TestA1SessionCapabilityMixedRegionAlpineAndDetailsGates(t *testing.T) {
 		t.Fatal("legacy mixed/protocol facts lost", legacy, err)
 	}
 	a1Report(t, s, id, 3, now, nil, "debian 13")
-	if _, err := s.GetQualitySessionConfig(ctx, id, 1, "quality_session", 2); !errors.Is(err, ErrQualityUnsupported) {
+	if _, err := s.legacySessionConfig(ctx, id, 1, "quality_session", 2); !errors.Is(err, ErrQualityUnsupported) {
 		t.Fatal("stale v2 retained after legacy report", err)
 	}
 	caps := a1Capabilities()
@@ -222,7 +222,7 @@ func TestA1SessionCapabilityMixedRegionAlpineAndDetailsGates(t *testing.T) {
 	}
 	a1Report(t, s, id, 5, now, nil, "Alpine 3.22")
 	for _, version := range []int{1, 2} {
-		c, err := s.getQualityConfig(ctx, id, 0, "", version)
+		c, err := s.legacyConfig(ctx, id, 0, "", version)
 		if err != nil || c.Enabled || len(c.Targets) != 0 {
 			t.Fatal("Alpine received work", c, err)
 		}
@@ -338,7 +338,9 @@ func TestA1Migration25MixedProtocolsPreservesRowsAndRollback(t *testing.T) {
 			if err := s.db.QueryRow(`SELECT rootpage FROM sqlite_master WHERE name='quality_raw'`).Scan(&rawRoot); err != nil {
 				t.Fatal(err)
 			}
+			migration34Skip = true // this test is about migrations up to 26
 			err = s.migrate(ctx)
+			migration34Skip = false
 			if fault != "" {
 				if err == nil {
 					t.Fatal("migration fault ignored")
@@ -381,6 +383,9 @@ func TestA1Migration25MixedProtocolsPreservesRowsAndRollback(t *testing.T) {
 				if a1Rows(t, s, table, columns[table]) != oldRows[table] {
 					t.Fatal("legacy column bytes/IDs/hashes changed", table)
 				}
+			}
+			if err := s.migrate(ctx); err != nil { // the rest of the checks need the latest schema
+				t.Fatal(err)
 			}
 			for i, target := range cfg.Targets {
 				sample := qualitySample(target, cfg.Revision, int64(i+1), now, 2, "success")
@@ -463,7 +468,7 @@ func TestICMPUnavailableLanesAreReportedWhileTCPStaysActive(t *testing.T) {
 	if _, err := s.UpdateQualityConfigV2(ctx, id, a1LaneConfig(old.Revision), qualityTestResolver, now); err != nil {
 		t.Fatal(err)
 	}
-	card, err := s.QualityCardConfiguration(ctx, id)
+	card, err := s.GetQualityConfigV2(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}

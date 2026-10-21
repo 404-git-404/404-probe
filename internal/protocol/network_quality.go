@@ -73,6 +73,10 @@ type QualityTarget struct {
 	Port            int    `json:"port,omitempty"`
 	EndpointVersion string `json:"endpoint_version,omitempty"`
 	Status          string `json:"status"`
+	// Kind and ISP are the slot's current user labels. They are added by the Server to history
+	// read models only; they are never part of a stored payload or of an Agent configuration.
+	Kind string `json:"kind,omitempty"`
+	ISP  string `json:"isp,omitempty"`
 }
 
 type QualityConfig struct {

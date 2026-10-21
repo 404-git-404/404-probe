@@ -38,7 +38,8 @@ func (a *App) handleAgentQualityConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	epoch, _ := protocol.QualityInteger(request.Epoch)
-	config, err := a.store.GetQualitySessionConfig(r.Context(), id, uint64(epoch), request.SessionID, request.Version)
+	version := max(1, request.Version) // an absent version is the first generation
+	config, err := a.store.GetQualitySessionConfig(r.Context(), id, uint64(epoch), request.SessionID, version, r.Header.Get(protocol.QualityTargetsHeader) == protocol.QualityTargetsUserV1)
 	if err != nil {
 		qualityHTTPError(w, err)
 		return
@@ -140,7 +141,7 @@ func (a *App) qualityReportResponse(r *http.Request, response protocol.ReportRes
 	if report.NetworkQualityV2 != nil {
 		version = 2
 	}
-	config, err := a.store.GetQualitySessionConfig(ctx, id, report.Epoch, report.SessionID, version)
+	config, err := a.store.GetQualitySessionConfig(ctx, id, report.Epoch, report.SessionID, version, report.QualityTargetsHeader)
 	if err == nil && config.Supported {
 		response.NetworkQuality = &config
 		wire, encodeErr := json.Marshal(response)

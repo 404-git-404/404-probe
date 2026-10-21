@@ -82,6 +82,13 @@ func saveQualityCapabilityTx(ctx context.Context, tx *sql.Tx, r protocol.Report)
 	if fields := strings.Fields(strings.ToLower(r.OS)); len(fields) > 0 && fields[0] == "alpine" {
 		reason = "platform_excluded:alpine"
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO quality_capability(agent_id,epoch,session_id,supported,v2_details,excluded_reason) VALUES(?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET epoch=excluded.epoch,session_id=excluded.session_id,supported=excluded.supported,v2_details=excluded.v2_details,excluded_reason=excluded.excluded_reason`, r.AgentID, int64(r.Epoch), r.SessionID, boolInt(r.NetworkQuality || r.NetworkQualityV2 != nil), details, reason)
+	// Step one of the negotiation grants nothing; user targets are accepted for this session only
+	// when the report carries the header and the second-step capability.
+	userTargets := r.QualityTargetsHeader && r.NetworkQualityV2 != nil && r.NetworkQualityV2.Targets == protocol.QualityTargetsUserV1
+	ipv6 := protocol.QualityIPv6Unknown
+	if userTargets && r.NetworkQualityV2.IPv6Address != "" {
+		ipv6 = r.NetworkQualityV2.IPv6Address
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO quality_capability(agent_id,epoch,session_id,supported,v2_details,excluded_reason,user_targets,ipv6_address) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET epoch=excluded.epoch,session_id=excluded.session_id,supported=excluded.supported,v2_details=excluded.v2_details,excluded_reason=excluded.excluded_reason,user_targets=excluded.user_targets,ipv6_address=excluded.ipv6_address`, r.AgentID, int64(r.Epoch), r.SessionID, boolInt(r.NetworkQuality || r.NetworkQualityV2 != nil), details, reason, userTargets, ipv6)
 	return err
 }
