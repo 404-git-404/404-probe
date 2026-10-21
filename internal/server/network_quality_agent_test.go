@@ -20,35 +20,29 @@ func TestN2bAgentConfigFallbackBudgetSessionAndBarriers(t *testing.T) {
 			a, s, id, token := testApp(t)
 			defer s.Close()
 			defer a.Shutdown()
-			report := reportFor(id, 1)
-			report.NetworkQuality = true
+			report := userReport(id, 1)
 			report.Management = &protocol.AgentManagementCapabilities{RemoteRemoval: true}
-			if w := postReport(t, a, token, report); w.Code != 200 {
+			if w := postWithHeaders(t, a, token, "/api/v1/report", report, userHeaders); w.Code != 200 {
 				t.Fatal(w.Code, w.Body.String())
 			}
-			choices := []protocol.QualityChoice{}
-			for _, slot := range []string{"telecom", "unicom", "mobile"} {
-				choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: "tcp", Host: strings.Repeat("&", 253), Port: 65535})
-			}
-			if _, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, Choices: choices}, qualityResolver, a.now()); err != nil {
-				t.Fatal(err)
-			}
+			long := strings.Repeat("a", 61) + "." + strings.Repeat("b", 61) + "." + strings.Repeat("c", 61) + "." + strings.Repeat("d", 61) + ".com"
+			configureUserTargets(t, s, id, a.now(), [3]string{long, long, long}, 65535)
 			report.Sequence = 2
-			compact := postReport(t, a, token, report)
+			compact := postWithHeaders(t, a, token, "/api/v1/report", report, userHeaders)
 			if compact.Code != 200 || strings.Contains(compact.Body.String(), `"targets"`) {
 				t.Fatal("oversized config not omitted", compact.Body.String())
 			}
 			path := "/api/v1/agent/network-quality/config"
-			body := protocol.QualityConfigRequest{Epoch: "1", SessionID: report.SessionID}
-			w := postAgentUpgrade(t, a, token, path, body)
+			body := protocol.QualityConfigRequest{Version: 2, Epoch: "1", SessionID: report.SessionID}
+			w := postWithHeaders(t, a, token, path, body, userHeaders)
 			if w.Code != 200 || w.Body.Len() > 16384 || w.Body.Len() <= 4096 {
 				t.Fatal(w.Code, w.Body.Len())
 			}
 			var cfg protocol.QualityConfig
-			if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || len(cfg.Targets) != 6 {
+			if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || len(cfg.Targets) != 12 {
 				t.Fatal(err, cfg)
 			}
-			t.Logf("actual six escaped maximum-host targets fallback bytes=%d (complete response)", w.Body.Len())
+			t.Logf("twelve escaped maximum-host targets fallback bytes=%d (complete response)", w.Body.Len())
 			if barrier == "disabled" {
 				otherID, _ := auth.NewID()
 				otherToken, otherHash, _ := auth.NewToken()
@@ -61,10 +55,10 @@ func TestN2bAgentConfigFallbackBudgetSessionAndBarriers(t *testing.T) {
 				if response := postReport(t, a, otherToken, other); response.Code != 200 {
 					t.Fatal(response.Code)
 				}
-				if response := postAgentUpgrade(t, a, otherToken, path, body); response.Code == 200 {
+				if response := postWithHeaders(t, a, otherToken, path, body, userHeaders); response.Code == 200 {
 					t.Fatal("cross-device session leaked config")
 				}
-				response := postAgentUpgrade(t, a, otherToken, path, protocol.QualityConfigRequest{Epoch: "1", SessionID: other.SessionID})
+				response := postWithHeaders(t, a, otherToken, path, protocol.QualityConfigRequest{Epoch: "1", SessionID: other.SessionID}, userHeaders)
 				if response.Code != 200 || strings.Contains(response.Body.String(), `"host"`) {
 					t.Fatal("other device read first-device config", response.Code, response.Body.String())
 				}
@@ -79,10 +73,10 @@ func TestN2bAgentConfigFallbackBudgetSessionAndBarriers(t *testing.T) {
 					t.Fatal("bad fallback accepted", bad)
 				}
 			}
-			if w := postAgentUpgrade(t, a, token, path+"?x=1", body); w.Code == 200 {
+			if w := postWithHeaders(t, a, token, path+"?x=1", body, userHeaders); w.Code == 200 {
 				t.Fatal("query accepted")
 			}
-			if w := postAgentUpgrade(t, a, "bad-token", path, body); w.Code == 200 {
+			if w := postWithHeaders(t, a, "bad-token", path, body, userHeaders); w.Code == 200 {
 				t.Fatal("wrong bearer accepted")
 			}
 			switch barrier {
@@ -102,14 +96,14 @@ func TestN2bAgentConfigFallbackBudgetSessionAndBarriers(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if w := postAgentUpgrade(t, a, token, path, body); w.Code == 200 {
+			if w := postWithHeaders(t, a, token, path, body, userHeaders); w.Code == 200 {
 				t.Fatal("barrier bypassed")
 			}
-			if _, err := s.GetQualitySessionConfig(context.Background(), id, 1, report.SessionID); err == nil {
+			if _, err := s.GetQualitySessionConfig(context.Background(), id, 1, report.SessionID, 2, true); err == nil {
 				t.Fatal("same tx session read bypassed barrier")
 			}
 			if barrier != "revoked" {
-				if _, err := s.GetQualityConfig(context.Background(), id); err != nil {
+				if _, err := s.GetQualityConfigV4(context.Background(), id, a.now()); err != nil {
 					t.Fatal("ordinary Web read changed", err)
 				}
 			}

@@ -2,10 +2,10 @@ package server
 
 import (
 	"404-probe/internal/protocol"
-	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -19,124 +19,202 @@ func a1ServerCapabilities() *protocol.QualityCapabilities {
 	}
 	return c
 }
-func TestA1QualityV2HTTPNegotiationUnifiedRegionAndAuth(t *testing.T) {
+
+// openLanes counts the lanes the Server currently authorizes to run.
+func openLanes(t *testing.T, a *App, id string) int {
+	t.Helper()
+	cfg, err := a.store.GetQualityConfigV4(context.Background(), id, a.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, l := range cfg.Lanes {
+		if l.Status == protocol.QualityLaneActive {
+			n++
+		}
+	}
+	return n
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	wire, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire
+}
+
+// An Agent only receives user-entered targets after the two-step negotiation of its current session,
+// and the resource report is acknowledged at every step (design 4.2, 10.1).
+func TestR07QualityNegotiationOverHTTP(t *testing.T) {
 	a, s, id, token := testApp(t)
 	defer s.Close()
 	defer a.Shutdown()
-	r := reportFor(id, 1)
-	r.NetworkQuality = true
-	w := postAgentUpgrade(t, a, token, "/api/v1/report", r)
-	if w.Code != 200 || strings.Contains(w.Body.String(), `"network_quality_v2"`) {
-		t.Fatal("new field sent to legacy Agent", w.Code, w.Body.String())
+	reportPath := "/api/v1/report"
+	configPath := "/api/v1/agent/network-quality/config"
+	oldHeaders := map[string]string{protocol.QualityVersionHeader: "2", protocol.QualitySemanticsHeader: protocol.QualityV2Semantics}
+	var seq, epoch uint64 = 0, 1
+	session := "session-1"
+	send := func(headers map[string]string, caps *protocol.QualityCapabilities) (protocol.ReportResponse, string) {
+		t.Helper()
+		seq++
+		r := reportFor(id, seq)
+		r.Epoch, r.SessionID = epoch, session
+		r.NetworkQuality = true
+		r.NetworkQualityV2 = caps
+		w := postWithHeaders(t, a, token, reportPath, r, headers)
+		response := decodeReportResponse(t, w)
+		if w.Code != 200 || !response.Accepted {
+			t.Fatalf("resource report not acknowledged: %d %s", w.Code, w.Body.String())
+		}
+		return response, w.Body.String()
 	}
-	r.Sequence = 2
-	bodyDiscovery, _ := json.Marshal(r)
-	requestDiscovery := httptest.NewRequest(http.MethodPost, "/api/v1/report", bytes.NewReader(bodyDiscovery))
-	requestDiscovery.Header.Set("Authorization", "Bearer "+token)
-	requestDiscovery.Header.Set("Content-Type", "application/json")
-	requestDiscovery.Header.Set(protocol.QualityVersionHeader, "2")
-	w = httptest.NewRecorder()
-	a.Handler().ServeHTTP(w, requestDiscovery)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"network_quality_v2":true`) {
-		t.Fatal("v2 not advertised", w.Code, w.Body.String())
+	restart := func() { epoch++; session = "session-" + strconv.FormatUint(epoch, 10); seq = 0 }
+	pull := func(headers map[string]string) (int, protocol.QualityConfig, string) {
+		t.Helper()
+		req := protocol.QualityConfigRequest{Version: 2, Epoch: strconv.FormatUint(epoch, 10), SessionID: session}
+		w := postWithHeaders(t, a, token, configPath, req, headers)
+		var cfg protocol.QualityConfig
+		_ = json.Unmarshal(w.Body.Bytes(), &cfg)
+		return w.Code, cfg, w.Body.String()
 	}
-	cfgReq := protocol.QualityConfigRequest{Version: 2, Epoch: "1", SessionID: r.SessionID}
-	w = postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality/config", cfgReq)
-	if w.Code != 409 {
-		t.Fatal("unnegotiated config accepted", w.Code, w.Body.String())
-	}
-	r.Sequence = 3
-	r.NetworkQualityV2 = a1ServerCapabilities()
-	w = postAgentUpgrade(t, a, token, "/api/v1/report", r)
-	if w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	region := qualityDirectory.Regions[0].ID
-	u := protocol.QualityV2ConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, RegionID: region}
-	for _, slot := range []string{"telecom", "unicom", "mobile"} {
-		for _, family := range []string{"ipv4", "ipv6"} {
-			for _, p := range []string{"tcp", "icmp"} {
-				host := "127.0.0.1"
-				port := 80
-				if family == "ipv6" {
-					host = "::1"
-				}
-				if p == "icmp" {
-					port = 0
-				}
-				u.Lanes = append(u.Lanes, protocol.QualityLaneChoice{QualityChoice: protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: p, Host: host, Port: port}, Family: family, Enabled: true})
-			}
+	assertOldFormat := func(t *testing.T, cfg protocol.QualityConfig, body string) {
+		t.Helper()
+		if cfg.Version != 2 || !cfg.Supported || cfg.Enabled || cfg.IPv6 || len(cfg.Targets) != 0 || cfg.State != "agent_upgrade_required" || cfg.RegionID != "" ||
+			cfg.IntervalMS != 30000 || strings.Contains(body, `"capabilities"`) || containsAny(body, "example.com", "example.org", "example.net", "443") {
+			t.Fatalf("not the old format: %s", body)
 		}
 	}
-	path := webAgentPathPrefix + id + "/network-quality/v2/config"
-	body, _ := json.Marshal(u)
-	w = qualityWebRequest(t, a, http.MethodPut, path, string(body))
-	if w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
+
+	// An Agent of the previous generation: v2 capability, no targets header.
+	response, _ := send(oldHeaders, a1ServerCapabilities())
+	if response.Capabilities.NetworkQualityUserTargets {
+		t.Fatal("user targets advertised to an Agent that did not ask")
 	}
-	var cfg protocol.QualityConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
-		t.Fatal(err)
+	cfg := configureUserTargets(t, s, id, a.now(), defaultUserHosts, 443)
+	if openLanes(t, a, id) != 0 || cfg.AgentSupport != protocol.QualitySupportUpgradeRequired {
+		t.Fatalf("an old Agent was given work: %+v", cfg)
 	}
-	if len(cfg.Targets) != 12 || cfg.RegionID != region || cfg.Semantics != protocol.QualityV2Semantics {
-		t.Fatal(cfg)
+	response, body := send(oldHeaders, a1ServerCapabilities())
+	if response.NetworkQuality == nil {
+		t.Fatal("no inline configuration for the old Agent", body)
 	}
-	for _, target := range cfg.Targets {
-		if target.Status != "active" || target.Region != region {
-			t.Fatal(target)
+	assertOldFormat(t, *response.NetworkQuality, string(mustJSON(t, *response.NetworkQuality)))
+	if code, got, body := pull(oldHeaders); code != 200 {
+		t.Fatal(code, body)
+	} else {
+		assertOldFormat(t, got, body)
+	}
+
+	// The Agent is upgraded and restarted: a new session starts over at step one.
+	restart()
+	response, _ = send(userHeaders, nil)
+	if !response.Capabilities.NetworkQualityUserTargets {
+		t.Fatal("step one did not get the user targets capability")
+	}
+	if code, _, body := pull(userHeaders); code != 409 {
+		t.Fatalf("pull before step two: %d %s", code, body)
+	}
+	if openLanes(t, a, id) != 0 {
+		t.Fatal("step one granted work")
+	}
+
+	// Step two: the full capability with targets=user_v1 completes the negotiation.
+	response, body = send(userHeaders, userCapabilities())
+	if openLanes(t, a, id) != 6 {
+		t.Fatalf("lanes after step two: %d", openLanes(t, a, id))
+	}
+	if response.NetworkQuality == nil || len(response.NetworkQuality.Targets) == 0 {
+		t.Fatalf("no inline user configuration: %s", body)
+	}
+	inline := *response.NetworkQuality
+	active := 0
+	for _, target := range inline.Targets {
+		if target.Source != "user" || target.Region != "" {
+			t.Fatalf("target %+v", target)
+		}
+		if target.Status == "active" {
+			active++
 		}
 	}
-	w = postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality/config", cfgReq)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"version":2`) {
-		t.Fatal(w.Code, w.Body.String())
+	if !inline.Enabled || active != 6 || inline.Capabilities == nil {
+		t.Fatalf("inline configuration: %s", body)
 	}
-	cfgReq.Version = 0
-	w = postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality/config", cfgReq)
-	var old protocol.QualityConfig
-	_ = json.Unmarshal(w.Body.Bytes(), &old)
-	if w.Code != 200 || len(old.Targets) != 6 || strings.Contains(w.Body.String(), `"semantics"`) {
-		t.Fatal("v1 shape/limit changed", w.Body.String())
+	// The pull path makes the same decision and gives the same result.
+	code, pulled, body := pull(userHeaders)
+	if code != 200 {
+		t.Fatal(code, body)
 	}
-	cfgReq.Version = 2
-	cfgReq.SessionID = "stale"
-	w = postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality/config", cfgReq)
-	if w.Code != 409 {
-		t.Fatal("stale session", w.Code)
+	if string(mustJSON(t, inline)) != string(mustJSON(t, pulled)) {
+		t.Fatalf("inline and pull differ:\n%s\n%s", mustJSON(t, inline), mustJSON(t, pulled))
 	}
-	u.ExpectedRevision = cfg.Revision
-	u.Lanes[0].Region = "other-region"
-	body, _ = json.Marshal(u)
-	w = qualityWebRequest(t, a, http.MethodPut, path, string(body))
-	if w.Code != 400 {
-		t.Fatal("mixed region accepted", w.Code)
+	// A pull that lost the header gets the stop configuration (a middlebox that strips it).
+	code, stripped, body := pull(oldHeaders)
+	if code != 200 {
+		t.Fatal(code, body)
 	}
-	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(string(body)))
-	session := addTestWebSession(t, a, req)
-	_ = session
-	req.Header.Set("Content-Type", "application/json")
-	unauth := httptest.NewRecorder()
-	a.Handler().ServeHTTP(unauth, req)
-	if unauth.Code == 200 {
-		t.Fatal("missing CSRF accepted")
+	assertOldFormat(t, stripped, body)
+
+	// A report without the header revokes: lanes close, resource ACKs continue.
+	response, body = send(oldHeaders, userCapabilities())
+	if openLanes(t, a, id) != 0 {
+		t.Fatal("a headerless report left the lanes running")
 	}
-	w = qualityWebRequest(t, a, http.MethodPut, path, `{"unexpected":true}`)
-	if w.Code != 400 {
-		t.Fatal("unknown fields accepted", w.Code)
+	if response.NetworkQuality == nil {
+		t.Fatal(body)
 	}
-	w = qualityWebRequest(t, a, http.MethodPut, path, strings.Repeat(" ", 16385))
-	if w.Code != 413 {
-		t.Fatal("body budget", w.Code)
+	assertOldFormat(t, *response.NetworkQuality, string(mustJSON(t, *response.NetworkQuality)))
+	if code, got, body := pull(userHeaders); code != 200 {
+		t.Fatal(code, body)
+	} else {
+		assertOldFormat(t, got, body)
 	}
-	r.Sequence = 4
+	// The header comes back with the capability: the saved configuration runs again.
+	send(userHeaders, userCapabilities())
+	if openLanes(t, a, id) != 6 {
+		t.Fatalf("lanes after regrant: %d", openLanes(t, a, id))
+	}
+	// A request for a session that is no longer current is refused.
+	stale := protocol.QualityConfigRequest{Version: 2, Epoch: "1", SessionID: "session-1"}
+	if w := postWithHeaders(t, a, token, configPath, stale, userHeaders); w.Code != http.StatusConflict {
+		t.Fatal("stale session", w.Code, w.Body.String())
+	}
+	// Alpine is excluded whatever the Agent says.
+	seq++
+	r := userReport(id, seq)
+	r.Epoch, r.SessionID = epoch, session
 	r.OS = "Alpine 3.22"
-	r.NetworkQualityV2 = nil
-	w = postAgentUpgrade(t, a, token, "/api/v1/report", r)
+	w := postWithHeaders(t, a, token, reportPath, r, userHeaders)
 	if w.Code != 200 {
 		t.Fatal("Alpine report", w.Code, w.Body.String())
 	}
-	var response protocol.ReportResponse
-	_ = json.Unmarshal(w.Body.Bytes(), &response)
-	if response.NetworkQuality == nil || response.NetworkQuality.Enabled || len(response.NetworkQuality.Targets) != 0 {
+	got := decodeReportResponse(t, w)
+	if got.NetworkQuality == nil || got.NetworkQuality.Enabled || len(got.NetworkQuality.Targets) != 0 {
 		t.Fatal("Server gave Alpine work", w.Body.String())
+	}
+}
+
+// Old routes of the catalog era answer 410 so that a page left open during a Server upgrade says so
+// instead of failing silently (design 4.1).
+func TestR07OldQualityRoutesAnswerClientOutdated(t *testing.T) {
+	a, s, id, _ := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	base := webAgentPathPrefix + id + "/network-quality/"
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/api/v1/web/network-quality/catalog"},
+		{"GET", base + "config"}, {"PUT", base + "config"},
+		{"GET", base + "v2/config"}, {"PUT", base + "v2/config"},
+		{"GET", base + "v3/card-config"},
+	} {
+		w := qualityWebRequest(t, a, tc.method, tc.path, `{"expected_revision":"0"}`)
+		var body struct {
+			Error struct{ Code, Message string }
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		if w.Code != http.StatusGone || body.Error.Code != "client_outdated" || body.Error.Message != "页面版本已过期，请刷新页面后重试" || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body.String())
+		}
 	}
 }

@@ -25,7 +25,7 @@ func migration34Stage(stage string) error {
 	return nil
 }
 
-// Migration 34 (R07): the built-in zstatic targets are retired and every card gets three empty
+// Migration 34 (R07): the built-in catalog targets are retired and every card gets three empty
 // user slots. It runs in the one transaction of migrate(), in four layers:
 //
 //	0 structure   new table and columns;

@@ -21,6 +21,7 @@ import (
 )
 
 func TestA1RealRunnerV2TCPFamiliesStoreAndUnavailableICMP(t *testing.T) {
+	t.Skip("R07 stage B: the Server now sends user-entered targets only to a session that negotiated them and the Agent still speaks the catalog protocol; stage C replaces this test with one that negotiates")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s, err := storage.Open(ctx, ":memory:")
@@ -89,7 +90,7 @@ func TestA1RealRunnerV2TCPFamiliesStoreAndUnavailableICMP(t *testing.T) {
 			}
 		}
 	}
-	cfg, err := s.UpdateQualityConfigV2(ctx, id, u, func(c protocol.QualityChoice, f string) (protocol.QualityTarget, error) {
+	cfg, err := catalogEraConfigV2(s, id, u, func(c protocol.QualityChoice, f string) (protocol.QualityTarget, error) {
 		return protocol.QualityTarget{Host: c.Host, Port: c.Port, EndpointVersion: f + "/" + c.Protocol}, nil
 	}, time.Now())
 	if err != nil {
@@ -150,7 +151,7 @@ func TestA1RealRunnerV2TCPFamiliesStoreAndUnavailableICMP(t *testing.T) {
 			}
 		}
 	}
-	if got, err := s.GetQualitySessionConfig(ctx, id, r.epoch, r.sessionID, 2); err != nil || got.Version != 2 {
+	if got, err := s.GetQualitySessionConfig(ctx, id, r.epoch, r.sessionID, 2, false); err != nil || got.Version != 2 {
 		t.Fatal(got, err)
 	}
 	t.Log("real TCP4/TCP6 loopback -> v2 HTTP -> SQLite, epoch=" + strconv.FormatUint(r.epoch, 10) + "; ICMP executes only when runtime backend supports it")

@@ -14,20 +14,14 @@ func TestS1RollupHTTPAuthViewsAndQueryContract(t *testing.T) {
 	a, s, id, token := testApp(t)
 	defer s.Close()
 	defer a.Shutdown()
-	r := reportFor(id, 1)
-	r.NetworkQuality = true
-	if w := postAgentUpgrade(t, a, token, "/api/v1/report", r); w.Code != 200 {
+	cfg := qualityServerConfig(t, a, s, id, token)
+	targetID := *userLane(t, cfg, "telecom", "ipv4", "tcp").TargetID
+	at := a.now().Add(-time.Second)
+	sample := userTCPSample(t, cfg, "telecom", 1, at, 10.13, "success")
+	if w := postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality", protocol.QualityBatch{Version: 2, Epoch: "1", SessionID: "session", Samples: []protocol.QualitySample{sample}}); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	cfg := qualityServerConfig(t, a, id)
-	target := cfg.Targets[0]
-	at := a.now().Add(-time.Second).UnixMilli()
-	latency := 10.13
-	sample := protocol.QualitySample{Sequence: "1", TargetID: target.ID, ConfigRevision: cfg.Revision, SlotRevision: target.SlotRevision, ScheduledAt: at, StartedAt: at, FinishedAt: at + 20, DurationMS: 20, Outcome: "success", ResolvedIP: "127.0.0.1", LatencyMS: &latency}
-	if w := postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality", protocol.QualityBatch{Version: 1, Epoch: "1", SessionID: r.SessionID, Samples: []protocol.QualitySample{sample}}); w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	path := webAgentPathPrefix + id + "/network-quality/v3/history?target_id=" + target.ID
+	path := webAgentPathPrefix + id + "/network-quality/v3/history?target_id=" + targetID
 	for _, view := range []string{"1day", "1week", "1mo"} {
 		w := qualityWebRequest(t, a, http.MethodGet, path+"&view="+view, "")
 		if w.Code != 200 {

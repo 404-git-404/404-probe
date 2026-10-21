@@ -198,7 +198,7 @@ func TestN2aQualityCapabilitiesFencesAndCommitFailure(t *testing.T) {
 	if _, ok, _, err := s.ProcessReport(ctx, id, r, now); err != nil || !ok {
 		t.Fatal(err)
 	}
-	if _, err := s.GetQualitySessionConfig(ctx, id, 1, "quality_session"); !errors.Is(err, ErrQualityUnsupported) {
+	if _, err := s.legacySessionConfig(ctx, id, 1, "quality_session"); !errors.Is(err, ErrQualityUnsupported) {
 		t.Fatal("stale capability accepted", err)
 	}
 	if _, err := s.SaveQualityBatch(ctx, id, protocol.QualityBatch{Version: 1, Epoch: "1", SessionID: "quality_session", Samples: []protocol.QualitySample{sample}}, now); !errors.Is(err, ErrQualityUnsupported) {

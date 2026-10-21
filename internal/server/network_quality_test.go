@@ -2,6 +2,7 @@ package server
 
 import (
 	"404-probe/internal/protocol"
+	"404-probe/internal/storage"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -28,19 +29,17 @@ func qualityWebRequest(t *testing.T, a *App, method, path, body string) *httptes
 	a.Handler().ServeHTTP(w, r)
 	return w
 }
-func qualityServerConfig(t *testing.T, a *App, id string) protocol.QualityConfig {
+
+// qualityServerConfig negotiates a current Agent session over HTTP and saves the default test targets.
+func qualityServerConfig(t *testing.T, a *App, s *storage.Store, id, token string) protocol.QualityV4Config {
 	t.Helper()
-	body := `{"expected_revision":"0","enabled":true,"ipv6":false,"choices":[{"slot":"telecom","source":"catalog","protocol":"tcp","host":"127.0.0.1","port":80},{"slot":"unicom","source":"catalog","protocol":"tcp","host":"127.0.0.1","port":80},{"slot":"mobile","source":"catalog","protocol":"tcp","host":"127.0.0.1","port":80}]}`
-	w := qualityWebRequest(t, a, http.MethodPut, webAgentPathPrefix+id+"/network-quality/config", body)
-	if w.Code != 200 {
+	r := userReport(id, 1)
+	if w := postWithHeaders(t, a, token, "/api/v1/report", r, userHeaders); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	var c protocol.QualityConfig
-	if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil {
-		t.Fatal(err)
-	}
-	return c
+	return configureUserTargets(t, s, id, a.now(), defaultUserHosts, 443)
 }
+
 func TestN2aQualityHTTPCompatibilityAuthAndPartialACK(t *testing.T) {
 	a, s, id, token := testApp(t)
 	defer s.Close()
@@ -55,17 +54,19 @@ func TestN2aQualityHTTPCompatibilityAuthAndPartialACK(t *testing.T) {
 	newReport.Sequence = 2
 	newReport.NetworkQuality = true
 	w = postAgentUpgrade(t, a, token, "/api/v1/report", newReport)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"targets"`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"targets"`) || strings.Contains(w.Body.String(), "network_quality_user_targets") {
 		t.Fatal("opt in", w.Body.String())
 	}
-	cfg := qualityServerConfig(t, a, id)
-	target := cfg.Targets[0]
-	latency := 5.0
-	sample := protocol.QualitySample{Sequence: "9007199254740993", TargetID: target.ID, ConfigRevision: cfg.Revision, SlotRevision: target.SlotRevision, ScheduledAt: now.UnixMilli(), StartedAt: now.UnixMilli(), FinishedAt: now.UnixMilli() + 5, DurationMS: 5, Outcome: "success", ResolvedIP: "127.0.0.1", LatencyMS: &latency}
-	invalid := sample
-	invalid.Sequence = "2"
-	invalid.ResolvedIP = "::1"
-	batch := protocol.QualityBatch{Version: 1, Epoch: "1", SessionID: legacy.SessionID, Samples: []protocol.QualitySample{sample, invalid}}
+	user := userReport(id, 3)
+	w = postWithHeaders(t, a, token, "/api/v1/report", user, userHeaders)
+	if w.Code != 200 || !decodeReportResponse(t, w).Capabilities.NetworkQualityUserTargets {
+		t.Fatal("user targets not advertised", w.Code, w.Body.String())
+	}
+	cfg := configureUserTargets(t, s, id, now, defaultUserHosts, 443)
+	sample := userTCPSample(t, cfg, "telecom", 9007199254740993, now, 5, "success")
+	invalid := userTCPSample(t, cfg, "telecom", 2, now, 5, "success")
+	invalid.ResolvedIP = "not-an-address"
+	batch := protocol.QualityBatch{Version: 2, Epoch: "1", SessionID: legacy.SessionID, Samples: []protocol.QualitySample{sample, invalid}}
 	w = postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality", batch)
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
@@ -79,7 +80,7 @@ func TestN2aQualityHTTPCompatibilityAuthAndPartialACK(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "duplicate") {
 		t.Fatal("lost ACK retry", w.Body.String())
 	}
-	r := httptest.NewRequest(http.MethodGet, webAgentPathPrefix+id+"/network-quality/config", nil)
+	r := httptest.NewRequest(http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/tcp-mini", nil)
 	unauth := httptest.NewRecorder()
 	a.Handler().ServeHTTP(unauth, r)
 	if unauth.Code == 200 {
@@ -91,12 +92,8 @@ func TestN2aQualityHTTPCompatibilityAuthAndPartialACK(t *testing.T) {
 	r.Header.Set("Origin", "https://evil.test")
 	unauth = httptest.NewRecorder()
 	a.Handler().ServeHTTP(unauth, r)
-	if unauth.Code == 200 {
-		t.Fatal("CSRF bypass")
-	}
-	catalog := qualityWebRequest(t, a, "GET", "/api/v1/web/network-quality/catalog", "")
-	if catalog.Code != 200 || strings.Contains(catalog.Body.String(), "zstaticcdn.com:80") {
-		t.Fatal("picker exposes endpoints")
+	if unauth.Code == 200 || unauth.Code == 410 {
+		t.Fatal("CSRF bypass", unauth.Code)
 	}
 }
 
@@ -104,10 +101,9 @@ func TestN2aQualityHTTPBodyAndResponseBudgets(t *testing.T) {
 	a, s, id, token := testApp(t)
 	defer s.Close()
 	defer a.Shutdown()
-	r := reportFor(id, 1)
-	r.NetworkQuality = true
-	if _, ok, _, err := s.ProcessReport(context.Background(), id, r, a.now()); err != nil || !ok {
-		t.Fatal(err)
+	r := userReport(id, 1)
+	if w := postWithHeaders(t, a, token, "/api/v1/report", r, userHeaders); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
 	}
 	for _, body := range []string{`{} {}`, `{"version":1,"epoch":1,"session_id":"x","samples":[]}`, strings.Repeat(" ", protocol.QualityBodyLimit+1)} {
 		request := httptest.NewRequest("POST", "/api/v1/agent/network-quality", strings.NewReader(body))
@@ -119,70 +115,25 @@ func TestN2aQualityHTTPBodyAndResponseBudgets(t *testing.T) {
 			t.Fatal("invalid body accepted")
 		}
 	}
-	batch := protocol.QualityBatch{Version: 1, Epoch: "1", SessionID: r.SessionID}
+	batch := protocol.QualityBatch{Version: 2, Epoch: "1", SessionID: r.SessionID}
 	for i := 0; i < 65; i++ {
 		batch.Samples = append(batch.Samples, protocol.QualitySample{})
 	}
 	if w := postAgentUpgrade(t, a, token, "/api/v1/agent/network-quality", batch); w.Code != 400 {
 		t.Fatal("65 accepted", w.Code)
 	}
-	configPath := webAgentPathPrefix + id + "/network-quality/config"
-	for _, body := range []string{`{} {}`, strings.Repeat(" ", 4097)} {
-		if w := qualityWebRequest(t, a, "PUT", configPath, body); w.Code == 200 {
-			t.Fatal("config body accepted")
-		}
-	}
-	longHost := strings.Repeat("a", 200) + ".invalid"
-	choices := []protocol.QualityChoice{}
-	for _, slot := range []string{"telecom", "unicom", "mobile"} {
-		choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: "tcp", Host: longHost, Port: 65535})
-	}
-	cfg, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, Choices: choices}, qualityResolver, a.now())
-	if err != nil || len(cfg.Targets) != 6 {
-		t.Fatal(err)
+	// Six long names fit the complete report response only if the configuration is left out of it.
+	long := strings.Repeat("a", 61) + "." + strings.Repeat("b", 61) + "." + strings.Repeat("c", 61) + "." + strings.Repeat("d", 61) + ".com"
+	cfg := configureUserTargets(t, s, id, a.now(), [3]string{long, long, long}, 65535)
+	if len(cfg.Lanes) != 12 {
+		t.Fatal(len(cfg.Lanes))
 	}
 	r.Sequence = 2
-	w := postAgentUpgrade(t, a, token, "/api/v1/report", r)
-	if w.Code != 200 || w.Body.Len() > 4096 {
-		t.Fatalf("report budget %d %d %s", w.Code, w.Body.Len(), w.Body.String())
+	w := postWithHeaders(t, a, token, "/api/v1/report", r, userHeaders)
+	if w.Code != 200 || w.Body.Len() > 4096 || !strings.Contains(w.Body.String(), `"accepted":true`) || strings.Contains(w.Body.String(), `"host"`) {
+		t.Fatalf("optional budget failure changed resource ACK %d %d %s", w.Code, w.Body.Len(), w.Body.String())
 	}
-	t.Logf("six long-host targets complete report response bytes=%d config_present=%t", w.Body.Len(), strings.Contains(w.Body.String(), "targets"))
-	// Oversized optional config cannot change a committed resource ACK.
-	for i := range choices {
-		choices[i].Host = strings.Repeat("&", 253)
-	}
-	oversized, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: cfg.Revision, Enabled: true, IPv6: true, Choices: choices}, qualityResolver, a.now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.Sequence = 3
-	w = postAgentUpgrade(t, a, token, "/api/v1/report", r)
-	if w.Code != 200 || w.Body.Len() > 4096 || !strings.Contains(w.Body.String(), `"accepted":true`) || strings.Contains(w.Body.String(), `"targets"`) {
-		t.Fatal("optional budget failure changed resource ACK", w.Code, w.Body.String())
-	}
-	for _, region := range qualityDirectory.Regions {
-		for slot, families := range region.Endpoints {
-			if families["ipv4"].Endpoint == nil {
-				target, err := resolveQualityTarget(protocol.QualityChoice{Slot: slot, Source: "catalog", Region: region.ID, Protocol: "tcp"}, "ipv4")
-				if err != nil || target.Host != "" {
-					t.Fatal("missing ISP guessed")
-				}
-				missing, err := s.UpdateQualityConfig(context.Background(), id, protocol.QualityConfigUpdate{ExpectedRevision: oversized.Revision, Enabled: true, Choices: []protocol.QualityChoice{{Slot: slot, Source: "catalog", Protocol: "tcp", Region: region.ID}}}, qualityResolver, a.now())
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, tgt := range missing.Targets {
-					if tgt.Slot == slot {
-						if tgt.Region != region.ID || tgt.Source != "catalog" || tgt.Protocol != "tcp" || tgt.Status != "unavailable" {
-							t.Fatal("missing selection lost", tgt)
-						}
-					}
-				}
-				return
-			}
-		}
-	}
-	t.Fatal("missing catalog fixture absent")
+	t.Logf("six long-host targets complete report response bytes=%d", w.Body.Len())
 }
 
 func TestN2aQualityRealHTTPFiveSecondSlowBodies(t *testing.T) {
@@ -194,7 +145,7 @@ func TestN2aQualityRealHTTPFiveSecondSlowBodies(t *testing.T) {
 	if _, ok, _, err := s.ProcessReport(context.Background(), id, report, a.now()); err != nil || !ok {
 		t.Fatal(err)
 	}
-	for _, method := range []string{"POST", "PUT"} {
+	for _, method := range []string{"POST"} {
 		t.Run(method, func(t *testing.T) {
 			completed := make(chan time.Duration, 1)
 			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -213,12 +164,6 @@ func TestN2aQualityRealHTTPFiveSecondSlowBodies(t *testing.T) {
 			connection.SetDeadline(time.Now().Add(8 * time.Second))
 			path := "/api/v1/agent/network-quality"
 			headers := "Authorization: Bearer " + token + "\r\n"
-			if method == "PUT" {
-				path = webAgentPathPrefix + id + "/network-quality/config"
-				request := httptest.NewRequest("PUT", path, nil)
-				session := addTestWebSession(t, a, request)
-				headers = "Cookie: " + request.Header.Get("Cookie") + "\r\nOrigin: https://probe.test\r\nSec-Fetch-Site: same-origin\r\nX-CSRF-Token: " + session.csrfToken + "\r\n"
-			}
 			fmt.Fprintf(connection, "%s %s HTTP/1.1\r\nHost: probe.test\r\nContent-Type: application/json\r\nContent-Length: 1000\r\nConnection: close\r\n%s\r\n{", method, path, headers)
 			select {
 			case elapsed := <-completed:

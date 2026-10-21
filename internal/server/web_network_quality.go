@@ -1,191 +1,39 @@
 package server
 
 import (
-	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
-	"crypto/sha256"
-	"embed"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 )
 
-//go:embed quality_catalog.json
-var qualityCatalogFiles embed.FS
-
-type qualityEndpoint struct {
-	Endpoint   *string `json:"endpoint"`
-	Provenance string  `json:"provenance"`
-}
-type qualityRegion struct {
-	ID        string                                `json:"id"`
-	Label     string                                `json:"label"`
-	Province  string                                `json:"province"`
-	City      *string                               `json:"city"`
-	Endpoints map[string]map[string]qualityEndpoint `json:"endpoints"`
-}
-type qualityCatalog struct {
-	Source       string          `json:"source"`
-	UpdatedAt    string          `json:"updated_at"`
-	RawSHA       string          `json:"raw_sha256"`
-	FrontendSHA  string          `json:"frontend_sha256"`
-	Connectivity string          `json:"connectivity"`
-	Regions      []qualityRegion `json:"regions"`
-}
-
-var qualityDirectory = loadQualityCatalog()
-
-func loadQualityCatalog() qualityCatalog {
-	raw, err := qualityCatalogFiles.ReadFile("quality_catalog.json")
-	if err != nil {
-		panic(err)
-	}
-	var catalog qualityCatalog
-	if err := json.Unmarshal(raw, &catalog); err != nil {
-		panic(err)
-	}
-	return catalog
-}
-
-// The resolvers are variables only so that tests can point catalog slots at loopback servers.
-var (
-	qualityResolver   = resolveQualityTarget
-	qualityResolverV2 = resolveQualityTargetV2
-)
-
-func resolveQualityTarget(c protocol.QualityChoice, family string) (protocol.QualityTarget, error) {
-	t := protocol.QualityTarget{}
-	if c.Source == "catalog" {
-		if c.Host != "" || c.Port != 0 {
-			return t, storage.ErrQualityInvalid
-		}
-		if c.Region == "" {
-			return t, nil
-		}
-		found := false
-		for _, region := range qualityDirectory.Regions {
-			if region.ID == c.Region {
-				found = true
-				fact := region.Endpoints[c.Slot][family]
-				if fact.Endpoint != nil {
-					host, port, err := net.SplitHostPort(*fact.Endpoint)
-					if err != nil {
-						return t, err
-					}
-					p, err := strconv.Atoi(port)
-					if err != nil {
-						return t, err
-					}
-					t.Host = host
-					t.Port = p
-				}
-				break
-			}
-		}
-		if !found {
-			return t, storage.ErrQualityInvalid
-		}
-	} else {
-		return t, storage.ErrQualityInvalid
-	}
-	if c.Protocol == "icmp" {
-		t.Port = 0
-	}
-	if t.Host != "" {
-		digest := sha256.Sum256([]byte(t.Host + ":" + strconv.Itoa(t.Port) + "/" + c.Protocol + "/" + family))
-		t.EndpointVersion = hex.EncodeToString(digest[:])[:16]
-	}
-	return t, nil
-}
-
 func (a *App) qualityRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/agent/network-quality", a.handleAgentQuality)
 	mux.HandleFunc("POST /api/v1/agent/network-quality/config", a.handleAgentQualityConfig)
-	mux.Handle("GET /api/v1/web/network-quality/catalog", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCatalog), true)))
 	path := "/api/v1/web/agents/{agent_id}/network-quality/"
 	mux.Handle("GET "+path+"v3/tcp-mini", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleTCPMini), true)))
-	mux.Handle("GET "+path+"config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityConfig), true)))
-	mux.Handle("PUT "+path+"config", qualityBudgetHandler(a.requireWebMutation(http.HandlerFunc(a.handleQualityConfig))))
-	mux.Handle("GET "+path+"v2/config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityConfigV2), true)))
-	mux.Handle("PUT "+path+"v2/config", qualityBudgetHandler(a.requireWebMutation(http.HandlerFunc(a.handleQualityConfigV2))))
 	mux.Handle("GET "+path+"history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistory), true)))
 	mux.Handle("GET "+path+"v2/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryV2), true)))
 	mux.Handle("GET "+path+"v3/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryRollup), true)))
 	mux.Handle("GET "+path+"v3/card-history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardHistory), true)))
-	mux.Handle("GET "+path+"v3/card-config", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardConfig), true)))
+	// Routes of the catalog era. The static files are embedded in the binary, but a page that was open
+	// during a Server upgrade still calls them, so they answer 410 instead of vanishing (R07 4.1).
+	outdated := http.HandlerFunc(a.handleQualityClientOutdated)
+	mux.Handle("GET /api/v1/web/network-quality/catalog", qualityBudgetHandler(a.requireWebSession(outdated, true)))
+	for _, suffix := range []string{"config", "v2/config"} {
+		mux.Handle("GET "+path+suffix, qualityBudgetHandler(a.requireWebSession(outdated, true)))
+		mux.Handle("PUT "+path+suffix, qualityBudgetHandler(a.requireWebMutation(outdated)))
+	}
+	mux.Handle("GET "+path+"v3/card-config", qualityBudgetHandler(a.requireWebSession(outdated, true)))
 }
-func (a *App) handleQualityCatalog(w http.ResponseWriter, r *http.Request) {
-	if r.URL.RawQuery != "" {
-		writeJobError(w, 400, "invalid_query", "query not allowed")
-		return
-	}
-	// Region picker publishes availability facts, not domain labels.
-	type option struct {
-		ID        string                     `json:"id"`
-		Label     string                     `json:"label"`
-		Province  string                     `json:"province"`
-		Available map[string]map[string]bool `json:"available"`
-	}
-	options := []option{}
-	for _, region := range qualityDirectory.Regions {
-		available := map[string]map[string]bool{}
-		for slot, families := range region.Endpoints {
-			available[slot] = map[string]bool{}
-			for family, fact := range families {
-				available[slot][family] = fact.Endpoint != nil
-			}
-		}
-		options = append(options, option{region.ID, region.Label, region.Province, available})
-	}
-	writeJSON(w, 200, struct {
-		Source       string   `json:"source"`
-		SHA          string   `json:"raw_sha256"`
-		Connectivity string   `json:"connectivity"`
-		Regions      []option `json:"regions"`
-	}{qualityDirectory.Source, qualityDirectory.RawSHA, "not_tested", options})
+
+func (a *App) handleQualityClientOutdated(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJobError(w, http.StatusGone, "client_outdated", "页面版本已过期，请刷新页面后重试")
 }
 func qualityWebPath(r *http.Request, suffix string) bool {
 	return validWebAgentID(r.PathValue("agent_id")) && r.URL.EscapedPath() == webAgentPathPrefix+r.PathValue("agent_id")+"/network-quality/"+suffix
-}
-func (a *App) handleQualityConfig(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	if !qualityWebPath(r, "config") || r.URL.RawQuery != "" {
-		writeJobError(w, 400, "invalid_request", "invalid quality path")
-		return
-	}
-	r, cancel := qualityHTTPBudget(w, r)
-	defer cancel()
-	ctx := r.Context()
-	var config protocol.QualityConfig
-	var err error
-	if r.Method == http.MethodGet {
-		config, err = a.store.GetQualityConfig(ctx, r.PathValue("agent_id"))
-	} else {
-		if !hasJSONContentType(r) {
-			writeJobError(w, 415, "invalid_content_type", "JSON required")
-			return
-		}
-		body, readErr := readBoundedBody(w, r, 4096)
-		if readErr != nil {
-			writeBodyError(w, readErr)
-			return
-		}
-		var request protocol.QualityConfigUpdate
-		if err := decodeAgentRemovalJSON(body, &request); err != nil {
-			writeJobError(w, 400, "invalid_request", "invalid config JSON")
-			return
-		}
-		config, err = a.store.UpdateQualityConfig(ctx, r.PathValue("agent_id"), request, qualityResolver, a.now())
-	}
-	if err != nil {
-		qualityHTTPError(w, err)
-		return
-	}
-	writeJSON(w, 200, config)
 }
 func (a *App) handleQualityHistory(w http.ResponseWriter, r *http.Request) {
 	a.qualityHistoryResponse(w, r, false)
@@ -220,19 +68,6 @@ func (a *App) handleQualityCardHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, history)
-}
-func (a *App) handleQualityCardConfig(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	if !qualityWebPath(r, "v3/card-config") || r.URL.RawQuery != "" {
-		writeJobError(w, 400, "invalid_query", "no query accepted")
-		return
-	}
-	config, err := a.store.QualityCardConfiguration(r.Context(), r.PathValue("agent_id"))
-	if err != nil {
-		qualityHTTPError(w, err)
-		return
-	}
-	writeJSON(w, 200, config)
 }
 func (a *App) qualityHistoryResponse(w http.ResponseWriter, r *http.Request, v2 bool) {
 	w.Header().Set("Cache-Control", "no-store")

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -531,5 +532,114 @@ func TestV4HistoryCarriesTheSlotsCurrentLabels(t *testing.T) {
 	}
 	if strings.Contains(payload, "New ISP") || strings.Contains(payload, "kind") {
 		t.Fatalf("labels leaked into the stored payload: %s", payload)
+	}
+}
+
+func (k *v4Kit) sessionConfig(version int, header bool) (protocol.QualityConfig, error) {
+	return k.s.GetQualitySessionConfig(k.ctx, k.id, k.epoch, k.session, version, header)
+}
+
+func TestV4SessionConfigFormats(t *testing.T) {
+	k := v4Base(t, true)
+	cfg := k.get()
+	t.Run("negotiated session with the header gets user targets", func(t *testing.T) {
+		got, err := k.sessionConfig(2, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.Enabled || !got.Supported || got.Revision != cfg.ConfigRevision || got.IntervalMS != 30000 || got.State != "ready" || got.Capabilities == nil || len(got.Targets) != 4 {
+			t.Fatalf("%+v", got)
+		}
+		for _, target := range got.Targets {
+			if target.Source != "user" || target.Status != "active" || target.Host != "example.com" || target.ID == "" || target.SlotRevision != "2" || target.Region != "" {
+				t.Fatalf("target %+v", target)
+			}
+			if target.Protocol == "icmp" && target.Port != 0 {
+				t.Fatalf("ICMP target carries a port: %+v", target)
+			}
+		}
+	})
+	oldFormat := func(t *testing.T, got protocol.QualityConfig, version int) {
+		t.Helper()
+		wire, _ := json.Marshal(got)
+		if got.Version != version || got.Revision != k.get().ConfigRevision || !got.Supported || got.Enabled || got.IPv6 || len(got.Targets) != 0 || got.Capabilities != nil || got.RegionID != "" ||
+			got.IntervalMS != 30000 || got.JitterPercent != 20 || got.TimeoutMS != 5000 {
+			t.Fatalf("old format: %s", wire)
+		}
+		if strings.Contains(string(wire), "example.com") || strings.Contains(string(wire), "443") {
+			t.Fatalf("old format leaks a user target: %s", wire)
+		}
+		if version == 2 && (got.State != "agent_upgrade_required" || got.Semantics != protocol.QualityStagedSemantics) {
+			t.Fatalf("old v2 format: %s", wire)
+		}
+	}
+	t.Run("a request without the header gets the old format", func(t *testing.T) {
+		got, err := k.sessionConfig(2, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldFormat(t, got, 2)
+	})
+	t.Run("version 1 never gets user targets", func(t *testing.T) {
+		got, err := k.sessionConfig(1, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldFormat(t, got, 1)
+	})
+	t.Run("a session that did not complete step two gets the old format", func(t *testing.T) {
+		k.restart()
+		k.reconcile(k.report(true, nil))
+		if _, err := k.sessionConfig(2, true); !errors.Is(err, ErrQualityUnsupported) {
+			t.Fatalf("no v2 capability yet: %v", err)
+		}
+		k.reconcile(k.report(false, v4Caps(protocol.QualityIPv6Present)))
+		got, err := k.sessionConfig(2, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldFormat(t, got, 2)
+	})
+	t.Run("a session other than the current one is refused", func(t *testing.T) {
+		if _, err := k.s.GetQualitySessionConfig(k.ctx, k.id, k.epoch+5, k.session, 2, true); !errors.Is(err, ErrQualityUnsupported) {
+			t.Fatalf("stale epoch: %v", err)
+		}
+		if _, err := k.s.GetQualitySessionConfig(k.ctx, k.id, k.epoch, "other", 2, true); !errors.Is(err, ErrQualityUnsupported) {
+			t.Fatalf("other session: %v", err)
+		}
+	})
+}
+
+func TestV4SessionConfigPausedTargetsAndInterval(t *testing.T) {
+	k := v4Base(t, false)
+	got, err := k.sessionConfig(2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled || len(got.Targets) != 4 {
+		t.Fatalf("%+v", got)
+	}
+	for _, target := range got.Targets {
+		if target.Status != "paused" {
+			t.Fatalf("target while the switch is off: %+v", target)
+		}
+	}
+	k.save(120000, v4Slot("telecom", "example.com", 443, "v4tcp"))
+	k.enable(true)
+	got, err = k.sessionConfig(2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.IntervalMS != 120000 || !got.Enabled {
+		t.Fatalf("the user's 120 s must reach the Agent: %+v", got)
+	}
+	active := 0
+	for _, target := range got.Targets {
+		if target.Status == "active" {
+			active++
+		}
+	}
+	if active != 1 {
+		t.Fatalf("active=%d", active)
 	}
 }

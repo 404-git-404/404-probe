@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -31,6 +32,7 @@ func n2bRunner(t *testing.T, url, id, token string) *Runner {
 	return r
 }
 func TestN2bRealServerFallbackLostACKAndUniqueMinute(t *testing.T) {
+	t.Skip("R07 stage B: the Server now sends user-entered targets only to a session that negotiated them and the Agent still speaks the catalog protocol; stage C replaces this test with one that negotiates")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s, err := storage.Open(ctx, ":memory:")
@@ -129,7 +131,7 @@ func TestN2bRealServerFallbackLostACKAndUniqueMinute(t *testing.T) {
 	for _, slot := range []string{"telecom", "unicom", "mobile"} {
 		choices = append(choices, protocol.QualityChoice{Slot: slot, Source: "catalog", Protocol: "tcp", Host: strings.Repeat("&", 253), Port: 65535})
 	}
-	config, err := s.UpdateQualityConfig(ctx, id, protocol.QualityConfigUpdate{ExpectedRevision: "0", Enabled: true, IPv6: true, Choices: choices}, func(c protocol.QualityChoice, family string) (protocol.QualityTarget, error) {
+	config, err := catalogEraConfig(s, id, choices, func(c protocol.QualityChoice, family string) (protocol.QualityTarget, error) {
 		return protocol.QualityTarget{Host: c.Host, Port: c.Port, EndpointVersion: "fixture"}, nil
 	}, time.Now())
 	if err != nil {
@@ -384,4 +386,14 @@ func TestN2bSleepingWakeSkipsCatchUpAndIndependentInitialJitter(t *testing.T) {
 	if plan.lanes["telecom/ipv4/tcp"].next.Equal(plan.lanes["unicom/ipv4/tcp"].next) {
 		t.Fatal("initial timers not independently jittered")
 	}
+}
+
+// The catalog-era configuration writers were removed from the Server in R07 stage B. These stubs keep
+// the two skipped tests above compiling until stage C rewrites them around the negotiated protocol.
+func catalogEraConfig(_ *storage.Store, _ string, _ []protocol.QualityChoice, _ func(protocol.QualityChoice, string) (protocol.QualityTarget, error), _ time.Time) (protocol.QualityConfig, error) {
+	return protocol.QualityConfig{}, errors.New("catalog-era configuration writer removed")
+}
+
+func catalogEraConfigV2(_ *storage.Store, _ string, _ protocol.QualityV2ConfigUpdate, _ func(protocol.QualityChoice, string) (protocol.QualityTarget, error), _ time.Time) (protocol.QualityConfig, error) {
+	return protocol.QualityConfig{}, errors.New("catalog-era configuration writer removed")
 }

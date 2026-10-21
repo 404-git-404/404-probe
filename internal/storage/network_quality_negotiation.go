@@ -42,6 +42,16 @@ func (s *Store) ReconcileQualityAuthorization(ctx context.Context, id string, ev
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	if revoke {
+		// Every report of an old Agent lands here; nothing was granted in nearly all of them.
+		var granted bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM quality_config WHERE agent_id=? AND targets_granted=1)`, id).Scan(&granted); err != nil {
+			return err
+		}
+		if !granted {
+			return nil
+		}
+	}
 	pressure := s.qualityPressure(ctx)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
