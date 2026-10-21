@@ -173,6 +173,8 @@ func TestN2bRealServerFallbackLostACKAndUniqueMinute(t *testing.T) {
 	var probes atomic.Int32
 	uploadDelays := make(chan time.Time, 4)
 	r.quality.uploadScheduled = func(next time.Time) { uploadDelays <- next }
+	var scheduledLanes atomic.Int32
+	r.quality.scheduleObserved = func(_ uint64, n int) { scheduledLanes.Store(int32(n)) }
 	r.quality.now = func() time.Time { return time.Now().Add(time.Duration(advance.Load())) }
 	r.quality.random = func() float64 { return .5 }
 	r.quality.probe = func(_ context.Context, target protocol.QualityTarget) qualityProbeResult {
@@ -200,6 +202,8 @@ func TestN2bRealServerFallbackLostACKAndUniqueMinute(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("initial known-startup gap ACK missing")
 	}
+	// The lanes appear once the first prefix discovery has finished; the clock moves only after that.
+	waitForAgentCondition(t, "six lanes scheduled", func() bool { return scheduledLanes.Load() == 6 })
 	advance.Store(int64(31 * time.Second))
 	r.quality.signal()
 	waitForAgentCondition(t, "six real lanes", func() bool { return probes.Load() == 6 })
