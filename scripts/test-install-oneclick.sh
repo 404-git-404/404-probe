@@ -101,8 +101,41 @@ for pair in 'enrollment_used|already used' 'enrollment_expired|expired' 'enrollm
   respond 409 "{\"error\":{\"code\":\"${code}\",\"message\":\"x\"}}"
   attempt oneclick_redeem_token
   [[ "${status}" -ne 0 && "${output}" == *"${phrase}"* && "${output}" != *"${token}"* ]] || { printf '%s: %s\n' "${code}" "${output}" >&2; exit 1; }
+  [[ "${output}" != *"注册 token 可能已被使用"* ]]
 done
 printf 'PASS used, expired, revoked, unknown and mismatched tokens give clear errors\n'
+
+# 7b. A response may arrive after the token was spent, before valid credentials were received.
+# Capture stdout via command substitution like install_agent: die runs in that subshell, where
+# ONECLICK_REDEEMED has not yet been set. Only stderr may carry the recovery hint.
+for body in '{}' "{\"agent_id\":\"${agent_id}\"}" "{\"agent_id\":\"${agent_id}\",\"agent_token\":\"short\"}" "{\"agent_token\":\"${agent_token}\"}"; do
+  reset; set_complete; oneclick_agent_requested; oneclick_load_inputs
+  respond 200 "${body}"
+  ONECLICK_REDEEMED=0; status=0
+  credentials="$(oneclick_redeem_token 2>"${temporary}/err")" || status=$?
+  error="$(cat "${temporary}/err")"
+  [[ "${status}" -ne 0 && -z "${credentials}" && "${error}" == *"unexpected registration response"* ]]
+  [[ "${error}" == *"token may already have been used; generate a new command in the panel"* && "${error}" == *"注册 token 可能已被使用，请在面板重新生成命令"* ]]
+  [[ "${error}" != *"${token}"* && "${error}" != *"${agent_token}"* ]]
+done
+printf 'PASS malformed successful responses explain that the token may be spent, on stderr only\n'
+
+# 7c. Unknown error codes and non-JSON HTTP failures carry the same recovery hint, without the body.
+for response_status in 409 503; do
+  reset; set_complete; oneclick_agent_requested; oneclick_load_inputs
+  if [[ "${response_status}" == 409 ]]; then
+    respond 409 "{\"error\":{\"code\":\"unexpected_failure\",\"message\":\"${token}\"}}"
+  else
+    respond 503 "unavailable ${agent_token}"
+  fi
+  ONECLICK_REDEEMED=0; status=0
+  credentials="$(oneclick_redeem_token 2>"${temporary}/err")" || status=$?
+  error="$(cat "${temporary}/err")"
+  [[ "${status}" -ne 0 && -z "${credentials}" && "${error}" == *"refused the registration (HTTP ${response_status})"* ]]
+  [[ "${error}" == *"token may already have been used; generate a new command in the panel"* && "${error}" == *"注册 token 可能已被使用，请在面板重新生成命令"* ]]
+  [[ "${error}" != *"${token}"* && "${error}" != *"${agent_token}"* ]]
+done
+printf 'PASS unknown registration failures explain that the token may be spent, without leaking response data\n'
 
 # 8. A token file is read, trailing newline stripped, and symlinks or bad content are refused.
 reset; set_complete; unset PROBE_404_ENROLL_TOKEN

@@ -245,9 +245,22 @@ done
 printf 'PASS probing precedes registration and every unit-writing path uses the result\n'
 
 # ---- 10. OpenRC has no such options and no probe ------------------------------------------------------------
-: >"${TRIALS}"; INSTALL_INIT=openrc sandbox_prepare
-[[ ! -s "${TRIALS}" ]]
+: >"${TRIALS}"; : >"${temporary}/notes"; INSTALL_INIT=openrc sandbox_prepare
+[[ ! -s "${TRIALS}" && ! -s "${temporary}/notes" ]]
 printf 'PASS OpenRC is untouched\n'
+
+# The progress message must be visible before any trial begins, including on fully supported hosts.
+(
+  : >"${temporary}/notes"
+  sandbox_probe() {
+    [[ "$(cat "${temporary}/notes")" == '正在检测运行环境… (Checking the runtime environment…)' ]]
+    printf 'probe started\n' >>"${temporary}/notes"
+    SANDBOX_REMOVED=""
+  }
+  INSTALL_INIT=systemd sandbox_prepare
+  [[ "$(wc -l <"${temporary}/notes")" -eq 2 ]]
+)
+printf 'PASS the bilingual progress message precedes the sandbox probe\n'
 
 # ---- 11. a working collector clears an earlier "unavailable" marker on every recovery path -------------------------
 for fn in setup_security_existing; do

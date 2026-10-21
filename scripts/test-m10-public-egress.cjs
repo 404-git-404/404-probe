@@ -184,15 +184,29 @@ test('M10 panel: ready when on, online, idle and out of cooldown', () => {
   assert.match(view.lines.join('\n'), /下次检测：/);
 });
 
-test('M10 panel: cooling down shows when the next check is possible, in local HH:MM', () => {
-  const until = T0 + 5 * 3600000;
-  const view = PublicEgressCheck.view(panelAgent({cooldown_until: until}), T0);
+test('M10 panel: cooling down always shows the local date and 24-hour time', () => {
+  const now = new Date(2026, 9, 20, 18, 0).getTime();
+  const until = new Date(2026, 9, 20, 23, 59).getTime();
+  const view = PublicEgressCheck.view(panelAgent({cooldown_until: until}), now);
   assert.equal(view.state, 'cooldown');
   assert.equal(view.buttonDisabled, true);
-  assert.equal(view.note, `可在 ${PublicEgressCheck.clock(until, T0)} 后再次检测`);
-  assert.match(view.note, /\d{2}:\d{2}/);
+  assert.equal(view.note, '可在 10-20 23:59 后再次检测');
   // A cooldown that has ended no longer blocks the button.
-  assert.equal(PublicEgressCheck.view(panelAgent({cooldown_until: T0 - 1}), T0).state, 'ready');
+  assert.equal(PublicEgressCheck.view(panelAgent({cooldown_until: now - 1}), now).state, 'ready');
+});
+
+test('M10 panel: cooling down across days includes the date and pads midnight', () => {
+  const now = new Date(2026, 9, 20, 23, 59).getTime();
+  const until = new Date(2026, 9, 21, 0, 5).getTime();
+  const view = PublicEgressCheck.view(panelAgent({cooldown_until: until}), now);
+  assert.equal(view.note, '可在 10-21 00:05 后再次检测');
+});
+
+test('M10 panel: cooling down across years includes the destination year', () => {
+  const now = new Date(2026, 11, 31, 23, 59).getTime();
+  const until = new Date(2027, 0, 1, 0, 0).getTime();
+  const view = PublicEgressCheck.view(panelAgent({cooldown_until: until}), now);
+  assert.equal(view.note, '可在 2027-01-01 00:00 后再次检测');
 });
 
 test('M10 panel: a check in flight shows 检测中, ahead of the cooldown', () => {

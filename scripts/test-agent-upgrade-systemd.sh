@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
+set +x
+umask 077
 
-[[ "${EUID}" -eq 0 ]] || { printf 'run as root\n' >&2; exit 1; }
-[[ $# -eq 5 ]] || {
-  printf 'usage: %s CURRENT_SERVER OFFICIAL_V093_AGENT V093_SOURCE_DIR V100_ASSET_DIR GO_BINARY\n' "$0" >&2
+# Stable schema-2/protocol-2 releases only (source >= v1.0.1), Linux amd64/arm64.
+# Both asset directories contain all seven build-release-assets.sh outputs.
+# SOURCE_REPOSITORY must contain the source metadata commit; HEAD is not changed.
+# Only the controlled updater is rebuilt, to isolate its account/service and use
+# loopback assets. Both Agents and the Server remain exact official binaries.
+# No GitHub/module downloads: populate the Go module/toolchain cache beforehand.
+[[ $# -eq 6 ]] || {
+  printf 'usage: %s FROM_VERSION TO_VERSION FROM_ASSETS TO_ASSETS SOURCE_REPOSITORY GO_BINARY\n' "$0" >&2
   exit 2
 }
+[[ "${EUID}" -eq 0 ]] || { printf 'run as root\n' >&2; exit 1; }
 
-current_server="$1"
-old_agent="$2"
-old_source="$3"
+readonly source_version="$1" target_version="$2"
+source_assets="$3"
 asset_directory="$4"
-go_binary="$5"
+source_repository="$5"
+go_binary="$6"
+script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly test_user="404-probe-agent-rehearsal"
 readonly test_root="/var/lib/404-probe-agent-upgrade-rehearsal"
@@ -26,8 +35,6 @@ readonly agent_unit="/etc/systemd/system/${agent_service}"
 readonly assets_unit="/etc/systemd/system/${assets_service}"
 readonly server_port="${PROBE_404_AGENT_REHEARSAL_SERVER_PORT:-33545}"
 readonly assets_port="${PROBE_404_AGENT_REHEARSAL_ASSETS_PORT:-33546}"
-readonly target_version="v1.0.0"
-readonly old_commit="b386b5eda434cd149762c7639b06dc9a4754b83a"
 
 created_user=0
 created_runtime_target=0
@@ -60,7 +67,6 @@ production_snapshot() {
     /usr/local/sbin/404-probe-install \
     /etc/404-probe/server.env \
     /etc/404-probe/agent.env \
-    /var/lib/404-probe/404-probe.db \
     /etc/systemd/system/404-probe-server.service \
     /etc/systemd/system/404-probe-agent.service \
     /etc/systemd/system/404-probe-agent-updater.service; do
@@ -71,10 +77,20 @@ production_snapshot() {
       printf '%s|absent\n' "${path}"
     fi
   done
+  # A running production Server writes SQLite continuously. Check its identity
+  # and protection, not mutable size/mtime/content; never open it for rehearsal.
+  for path in /var/lib/404-probe /var/lib/404-probe/404-probe.db; do
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      stat -c '%n|%F|%U:%G:%a|%d:%i' -- "${path}"
+    else
+      printf '%s|absent\n' "${path}"
+    fi
+  done
   for service in 404-probe-server.service 404-probe-agent.service 404-probe-agent-updater.service; do
     printf '%s|active=%s|enabled=%s\n' "${service}" \
       "$(systemctl is-active "${service}" 2>/dev/null || true)" \
       "$(systemctl is-enabled "${service}" 2>/dev/null || true)"
+    systemctl show "${service}" --property=MainPID,NRestarts --no-pager 2>/dev/null || true
   done
 }
 
@@ -85,13 +101,23 @@ cleanup() {
   systemctl disable "${agent_service}" "${updater_service}" "${server_service}" "${assets_service}" >/dev/null 2>&1 || true
   rm -f -- "${agent_unit}" "${updater_unit}" "${server_unit}" "${assets_unit}"
   systemctl daemon-reload >/dev/null 2>&1 || true
-  safe_remove_tree "${test_root}" || true
+  safe_remove_tree "${test_root}" || status=1
   if (( created_runtime_target != 0 )); then
     rmdir -- /run/404-probe >/dev/null 2>&1 || true
   fi
   if (( created_user != 0 )); then
-    userdel "${test_user}" >/dev/null 2>&1 || true
+    userdel "${test_user}" >/dev/null 2>&1 || status=1
     getent group "${test_user}" >/dev/null 2>&1 && groupdel "${test_user}" >/dev/null 2>&1 || true
+  fi
+  for path in "${test_root}" "${server_unit}" "${updater_unit}" "${agent_unit}" "${assets_unit}"; do
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      printf 'FAIL: cleanup residue: %s\n' "${path}" >&2
+      status=1
+    fi
+  done
+  if id "${test_user}" >/dev/null 2>&1 || getent group "${test_user}" >/dev/null 2>&1; then
+    printf 'FAIL: rehearsal account remains\n' >&2
+    status=1
   fi
   production_after="$(production_snapshot)"
   if [[ "${production_after}" == "${production_before}" ]]; then
@@ -101,25 +127,50 @@ cleanup() {
     diff -u <(printf '%s\n' "${production_before}") <(printf '%s\n' "${production_after}") >&2 || true
     status=1
   fi
+  (( status != 0 )) || printf 'REHEARSAL_CLEANUP=PASS\n'
   printf 'EXIT_CODE=%s\n' "${status}"
   exit "${status}"
 }
 
-for command in systemctl python3 curl install runuser sha256sum sed cmp; do
+for command in systemctl python3 curl install runuser sha256sum sed cmp git tar ss realpath mountpoint stat \
+  useradd userdel groupdel getent uname awk seq; do
   command -v "${command}" >/dev/null || fail "missing command: ${command}"
 done
-for path in "${current_server}" "${old_agent}" "${go_binary}"; do
-  [[ -f "${path}" && ! -L "${path}" ]] || fail "required regular file is missing: ${path}"
+[[ -x "${go_binary}" ]] || fail "Go binary is not executable"
+# Absolute, unit-safe paths avoid systemd/shell quoting ambiguity.
+for path in "${source_assets}" "${asset_directory}" "${source_repository}" "${go_binary}"; do
+  [[ "${path}" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "inputs require absolute paths without spaces or shell metacharacters"
 done
-[[ -d "${old_source}" && -f "${old_source}/go.mod" && -f "${old_source}/internal/updater/serve_linux.go" ]] \
-  || fail "invalid v0.9.3 source tree"
-for name in RELEASE-METADATA.json SHA256SUMS 404-probe-agent-linux-amd64; do
-  [[ -f "${asset_directory}/${name}" && ! -L "${asset_directory}/${name}" ]] || fail "missing release asset: ${name}"
+for port in "${server_port}" "${assets_port}"; do
+  [[ "${port}" =~ ^[1-9][0-9]{0,4}$ ]] && (( port <= 65535 )) || fail "invalid rehearsal port"
 done
-[[ "$("${old_agent}" version --json)" == *'"version":"v0.9.3"'* ]] || fail "old Agent is not v0.9.3"
-[[ "$("${current_server}" version --json)" == *'"version":"v1.0.0"'* ]] || fail "current Server is not v1.0.0"
-[[ "$("${asset_directory}/404-probe-agent-linux-amd64" version --json)" == *'"version":"v1.0.0"'* ]] \
-  || fail "candidate Agent is not v1.0.0"
+[[ "${server_port}" != "${assets_port}" ]] || fail "rehearsal ports must differ"
+commits="$(python3 "${script_directory}/agent-upgrade-assets.py" "${source_version}" "${target_version}" \
+  "${source_assets}" "${asset_directory}" "${go_binary}")" || fail "release assets rejected; no rehearsal resources created"
+read -r old_commit target_commit <<<"${commits}"
+[[ "$(git -C "${source_repository}" rev-parse --verify "${old_commit}^{commit}")" == "${old_commit}" ]] \
+  || fail "source repository does not contain the metadata commit"
+case "$(uname -m)" in
+  x86_64) architecture=amd64 ;;
+  aarch64|arm64) architecture=arm64 ;;
+  *) fail "unsupported host architecture" ;;
+esac
+old_agent="${source_assets}/404-probe-agent-linux-${architecture}"
+current_server="${asset_directory}/404-probe-server-linux-${architecture}"
+candidate_agent="${asset_directory}/404-probe-agent-linux-${architecture}"
+check_version() {
+  local binary="$1" version="$2" commit="$3"
+  "${binary}" version --json | python3 -c '
+import json, sys
+info = json.load(sys.stdin)
+if info != {"version": sys.argv[1], "commit": sys.argv[2], "dirty": False}:
+    raise SystemExit("binary runtime version/commit mismatch")
+' "${version}" "${commit}"
+}
+check_version "${old_agent}" "${source_version}" "${old_commit}"
+check_version "${current_server}" "${target_version}" "${target_commit}"
+check_version "${candidate_agent}" "${target_version}" "${target_commit}"
+printf 'RELEASE_PREFLIGHT=PASS FROM=%s TO=%s\n' "${source_version}" "${target_version}"
 
 production_before="$(production_snapshot)"
 for path in "${test_root}" "${agent_unit}" "${updater_unit}" "${server_unit}" "${assets_unit}"; do
@@ -130,7 +181,10 @@ getent group "${test_user}" >/dev/null 2>&1 && fail "isolated rehearsal group al
 [[ -z "$(ss -H -ltn "sport = :${server_port}")" ]] || fail "server rehearsal port is in use"
 [[ -z "$(ss -H -ltn "sport = :${assets_port}")" ]] || fail "asset rehearsal port is in use"
 
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 useradd --system --user-group --home-dir "${test_root}/home" --shell /usr/sbin/nologin "${test_user}"
 created_user=1
 
@@ -145,7 +199,6 @@ install -d -m 0755 -o root -g root \
   "${test_root}/rootfs/run/404-probe" \
   "${test_root}/assets/${target_version}" \
   "${test_root}/controlled-source" \
-  "${test_root}/systemctl-bin" \
   "${test_root}/build-cache" \
   "${test_root}/build-tmp"
 chown -R "${test_user}:${test_user}" "${test_root}/rootfs/var/lib/404-probe"
@@ -153,37 +206,39 @@ chmod 0700 "${test_root}/rootfs/var/lib/404-probe-updater"
 chmod 0755 "${test_root}/rootfs/run/404-probe"
 install -m 0755 -o root -g root "${old_agent}" "${test_root}/rootfs/usr/local/bin/404-probe-agent"
 install -m 0755 -o root -g root "${current_server}" "${test_root}/current-server"
-for name in RELEASE-METADATA.json SHA256SUMS 404-probe-agent-linux-amd64; do
+for name in RELEASE-METADATA.json SHA256SUMS "404-probe-agent-linux-${architecture}"; do
   install -m 0644 -o root -g root "${asset_directory}/${name}" "${test_root}/assets/${target_version}/${name}"
 done
-chmod 0755 "${test_root}/assets/${target_version}/404-probe-agent-linux-amd64"
+chmod 0755 "${test_root}/assets/${target_version}/404-probe-agent-linux-${architecture}"
 
-cp -a -- "${old_source}/." "${test_root}/controlled-source/"
-sed -i 's/serviceUserName       = "404-probe"/serviceUserName       = "404-probe-agent-rehearsal"/' \
-  "${test_root}/controlled-source/internal/updater/serve_linux.go"
-grep -Fq 'serviceUserName       = "404-probe-agent-rehearsal"' \
-  "${test_root}/controlled-source/internal/updater/serve_linux.go" || fail "could not isolate updater service account"
+# Extract the exact metadata commit, ignoring dirty/ignored files and the
+# repository's current branch. Transform only this disposable source copy.
+git -c core.autocrlf=false -C "${source_repository}" archive "${old_commit}" \
+  | tar -xf - -C "${test_root}/controlled-source"
+python3 - "${test_root}/controlled-source/internal/updater/paths_linux.go" "${test_user}" "${agent_service}" <<'PY'
+from pathlib import Path
+import re, sys
+path = Path(sys.argv[1])
+text = path.read_text()
+for key, before, after in (("serviceUserName", "404-probe", sys.argv[2]),
+                           ("agentServiceName", "404-probe-agent.service", sys.argv[3])):
+    text, count = re.subn(r'(\b' + key + r'\s*=\s*)"' + re.escape(before) + '"',
+                          lambda m: m[1] + '"' + after + '"', text)
+    if count != 1:
+        raise SystemExit("unsupported updater source layout: " + key)
+path.write_text(text)
+PY
 (
   cd "${test_root}/controlled-source"
-  env GOTOOLCHAIN=local GOCACHE="${test_root}/build-cache" GOTMPDIR="${test_root}/build-tmp" TMPDIR="${test_root}/build-tmp" \
+  env GOPROXY=off GOFLAGS=-mod=readonly CGO_ENABLED=0 GOOS=linux GOARCH="${architecture}" \
+    GOCACHE="${test_root}/build-cache" GOTMPDIR="${test_root}/build-tmp" TMPDIR="${test_root}/build-tmp" \
     "${go_binary}" build -buildvcs=false -trimpath \
-    -ldflags="-s -w -X 404-probe/internal/buildinfo.Version=v0.9.3 -X 404-probe/internal/buildinfo.Commit=${old_commit} -X 404-probe/internal/updater.officialReleaseBase=http://127.0.0.1:${assets_port}/" \
+    -ldflags="-s -w -X 404-probe/internal/buildinfo.Version=${source_version} -X 404-probe/internal/buildinfo.Commit=${old_commit} -X 404-probe/internal/updater.officialReleaseBase=http://127.0.0.1:${assets_port}/ -X 404-probe/internal/updater.officialReleaseAPIBase=http://127.0.0.1:${assets_port}/api/" \
     -o "${test_root}/controlled-updater" ./cmd/agent
 )
-[[ "$("${test_root}/controlled-updater" version --json)" == *'"version":"v0.9.3"'* ]] \
-  || fail "controlled updater has the wrong version"
+check_version "${test_root}/controlled-updater" "${source_version}" "${old_commit}"
 
-cat >"${test_root}/systemctl-bin/systemctl" <<EOF
-#!/usr/bin/env bash
-set -Eeuo pipefail
-if [[ \$# -eq 2 && "\$2" == "404-probe-agent.service" && ( "\$1" == restart || "\$1" == stop ) ]]; then
-  exec /bin/systemctl "\$1" "${agent_service}"
-fi
-exec /bin/systemctl "\$@"
-EOF
-chmod 0755 "${test_root}/systemctl-bin/systemctl"
-
-created="$(runuser -u "${test_user}" -- "${test_root}/current-server" agent add exact-v093-upgrade --db "${test_root}/server/404-probe.db")"
+created="$(runuser -u "${test_user}" -- "${test_root}/current-server" agent add exact-official-upgrade --db "${test_root}/server/404-probe.db")"
 agent_id="$(sed -n 's/^Agent ID: //p' <<<"${created}")"
 agent_token="$(sed -n 's/^Token: //p' <<<"${created}")"
 [[ "${agent_id}" =~ ^[0-9a-f]{32}$ && "${agent_token}" =~ ^[A-Za-z0-9_-]{43}$ ]] || fail "could not create isolated Agent"
@@ -197,7 +252,8 @@ PROBE_404_SECURITY_EXPORT=/var/lib/404-probe-security/export
 PROBE_404_SECURITY_ACKS=/var/lib/404-probe/agent.security-acks.json
 EOF
 chown "${test_user}:${test_user}" "${test_root}/rootfs/etc/404-probe/agent.env"
-chmod 0400 "${test_root}/rootfs/etc/404-probe/agent.env"
+chmod 0600 "${test_root}/rootfs/etc/404-probe/agent.env"
+unset created agent_token
 
 if [[ ! -e /run/404-probe ]]; then
   install -d -m 0755 -o root -g root /run/404-probe
@@ -239,7 +295,7 @@ EOF
 common_bind_paths="BindPaths=${test_root}/rootfs/usr/local/bin:/usr/local/bin ${test_root}/rootfs/etc/404-probe:/etc/404-probe ${test_root}/rootfs/var/lib/404-probe:/var/lib/404-probe ${test_root}/rootfs/var/lib/404-probe-updater:/var/lib/404-probe-updater ${test_root}/rootfs/var/lib/404-probe-security:/var/lib/404-probe-security ${test_root}/rootfs/run/404-probe:/run/404-probe"
 cat >"${updater_unit}" <<EOF
 [Unit]
-Description=404-probe controlled v0.9.3 updater rehearsal
+Description=404-probe controlled ${source_version} updater rehearsal
 After=network-online.target ${assets_service}
 Wants=network-online.target ${assets_service}
 
@@ -247,7 +303,8 @@ Wants=network-online.target ${assets_service}
 Type=simple
 User=root
 Group=root
-Environment=PATH=${test_root}/systemctl-bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= NO_PROXY=127.0.0.1
 ExecStart=${test_root}/controlled-updater updater
 Restart=always
 RestartSec=1s
@@ -263,7 +320,7 @@ EOF
 
 cat >"${agent_unit}" <<EOF
 [Unit]
-Description=404-probe exact official v0.9.3 Agent upgrade rehearsal
+Description=404-probe exact official ${source_version} Agent upgrade rehearsal
 After=network-online.target ${updater_service} ${server_service}
 Wants=network-online.target ${updater_service} ${server_service}
 
@@ -290,24 +347,24 @@ systemctl start "${assets_service}" "${server_service}" "${updater_service}" "${
 
 for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:${assets_port}/${target_version}/RELEASE-METADATA.json" >/dev/null 2>&1 \
-    && python3 - "${test_root}/server/404-probe.db" "${agent_id}" <<'PY'
+    && python3 - "${test_root}/server/404-probe.db" "${agent_id}" "${source_version}" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
 row = db.execute("SELECT agent_version,agent_upgrade_capable FROM agent_state WHERE agent_id=?", (sys.argv[2],)).fetchone()
 db.close()
-raise SystemExit(0 if row == ("v0.9.3", 1) else 1)
+raise SystemExit(0 if row == (sys.argv[3], 1) else 1)
 PY
   then
     break
   fi
   sleep 0.5
 done
-python3 - "${test_root}/server/404-probe.db" "${agent_id}" <<'PY'
+python3 - "${test_root}/server/404-probe.db" "${agent_id}" "${source_version}" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
 row = db.execute("SELECT agent_version,agent_upgrade_capable FROM agent_state WHERE agent_id=?", (sys.argv[2],)).fetchone()
 db.close()
-if row != ("v0.9.3", 1):
+if row != (sys.argv[3], 1):
     raise SystemExit(f"old Agent did not report upgrade readiness: {row!r}")
 print("OLD_AGENT_READY=PASS")
 PY
@@ -317,13 +374,15 @@ import secrets
 print(secrets.token_hex(16))
 PY
 )"
-python3 - "${test_root}/server/404-probe.db" "${operation_id}" "${agent_id}" <<'PY'
+python3 - "${test_root}/server/404-probe.db" "${operation_id}" "${agent_id}" \
+  "${source_version}" "${target_version}" "${target_commit}" <<'PY'
 import sqlite3, sys, time
 stamp = int(time.time() * 1000)
 db = sqlite3.connect(sys.argv[1])
 with db:
-    db.execute("INSERT INTO agent_upgrade_operations(operation_id,agent_id,from_version,target_version,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-               (sys.argv[2], sys.argv[3], "v0.9.3", "v1.0.0", "requested", stamp, stamp))
+    db.execute("INSERT INTO agent_upgrade_operations(operation_id,agent_id,from_version,target_version,status,created_at,updated_at,channel,required_protocol,target_commit,server_version,beta_confirmed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+               (sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], "requested", stamp, stamp,
+                "stable", 2, sys.argv[6], sys.argv[5], 0))
 db.close()
 PY
 
@@ -345,12 +404,12 @@ done
 [[ "${final_status}" == succeeded ]] || fail "upgrade timed out in ${final_status}"
 
 for _ in $(seq 1 60); do
-  if python3 - "${test_root}/server/404-probe.db" "${agent_id}" <<'PY'
+  if python3 - "${test_root}/server/404-probe.db" "${agent_id}" "${target_version}" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
 row = db.execute("SELECT agent_version,agent_upgrade_capable FROM agent_state WHERE agent_id=?", (sys.argv[2],)).fetchone()
 db.close()
-raise SystemExit(0 if row == ("v1.0.0", 1) else 1)
+raise SystemExit(0 if row == (sys.argv[3], 1) else 1)
 PY
   then
     break
@@ -358,18 +417,18 @@ PY
   sleep 0.5
 done
 
-python3 - "${test_root}/server/404-probe.db" "${agent_id}" "${operation_id}" <<'PY'
+python3 - "${test_root}/server/404-probe.db" "${agent_id}" "${operation_id}" "${source_version}" "${target_version}" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
 state = db.execute("SELECT agent_version,agent_upgrade_capable FROM agent_state WHERE agent_id=?", (sys.argv[2],)).fetchone()
 operation = db.execute("SELECT from_version,target_version,status,failure_code,failure_message FROM agent_upgrade_operations WHERE operation_id=?", (sys.argv[3],)).fetchone()
 agent = db.execute("SELECT id,name,revoked FROM agents WHERE id=?", (sys.argv[2],)).fetchone()
 db.close()
-if state != ("v1.0.0", 1):
+if state != (sys.argv[5], 1):
     raise SystemExit(f"unexpected final Agent state: {state!r}")
-if operation != ("v0.9.3", "v1.0.0", "succeeded", None, None):
+if operation != (sys.argv[4], sys.argv[5], "succeeded", None, None):
     raise SystemExit(f"unexpected final operation: {operation!r}")
-if agent != (sys.argv[2], "exact-v093-upgrade", 0):
+if agent != (sys.argv[2], "exact-official-upgrade", 0):
     raise SystemExit(f"Agent identity changed: {agent!r}")
 print("SERVER_OPERATION=PASS")
 print("AGENT_IDENTITY=PASS")
@@ -377,15 +436,15 @@ PY
 
 systemctl is-active --quiet "${agent_service}" || fail "upgraded Agent service is not active"
 systemctl is-active --quiet "${updater_service}" || fail "updater service is not active"
-[[ "$("${test_root}/rootfs/usr/local/bin/404-probe-agent" version --json)" == *'"version":"v1.0.0"'* ]] \
-  || fail "live Agent binary was not upgraded"
-cmp -s -- "${test_root}/rootfs/usr/local/bin/404-probe-agent" "${asset_directory}/404-probe-agent-linux-amd64" \
+check_version "${test_root}/rootfs/usr/local/bin/404-probe-agent" "${target_version}" "${target_commit}"
+cmp -s -- "${test_root}/rootfs/usr/local/bin/404-probe-agent" "${candidate_agent}" \
   || fail "live Agent binary does not match the release asset"
 [[ ! -e "${test_root}/rootfs/usr/local/bin/.404-probe-agent.candidate" ]] || fail "candidate residue remains"
 [[ ! -e "${test_root}/rootfs/usr/local/bin/.404-probe-agent.previous" ]] || fail "previous residue remains"
 
 printf 'OFFICIAL_OLD_AGENT_SHA256=%s\n' "$(sha256sum "${old_agent}" | awk '{print $1}')"
-printf 'CANDIDATE_AGENT_SHA256=%s\n' "$(sha256sum "${asset_directory}/404-probe-agent-linux-amd64" | awk '{print $1}')"
+printf 'CANDIDATE_AGENT_SHA256=%s\n' "$(sha256sum "${candidate_agent}" | awk '{print $1}')"
+printf 'SOURCE_COMMIT=%s\nTARGET_COMMIT=%s\n' "${old_commit}" "${target_commit}"
 printf 'AGENT_ID=%s\n' "${agent_id}"
 printf 'OPERATION_ID=%s\n' "${operation_id}"
 printf 'FINAL_STATUS=%s\n' "${final_status}"
