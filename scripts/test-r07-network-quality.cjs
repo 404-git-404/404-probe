@@ -857,3 +857,13 @@ test('M7: a refresh while the dialog is saving does not start, and writes are ne
   assert.ok(configReads(f) > reads);
   assert.equal(f.writes.length, 1, 'only the user\'s own save');
 });
+
+test('S2: a restarted Agent that was authorized shows "正在连接…"; a first upgrade whose first step has arrived still reads as not supported (the Server decides, the page maps)', async () => {
+  const negotiating = setup({raw: load('v4-negotiating')}); negotiating.ui.setVisible(AGENT, true); await flush();
+  assert.equal(load('v4-negotiating').agent_support, 'negotiating');
+  assert.equal(negotiating.node.querySelector('.nq-status').textContent, '正在连接…');
+  assert.ok(negotiating.node.all().some(n => n.dataset.laneState === 'negotiating'));
+  const first = setup({raw: load('v4-first-upgrade')}); first.ui.setVisible(AGENT, true); await flush();
+  assert.equal(load('v4-first-upgrade').agent_support, 'unsupported');
+  assert.equal(first.node.querySelector('.nq-status').textContent, 'Agent 尚未支持网络质量');
+});

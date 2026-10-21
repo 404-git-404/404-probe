@@ -14,8 +14,9 @@ import (
 )
 
 // The front-end tests of stage D use real responses of the Server, not hand-written DTOs. This test
-// writes them when R07_FIXTURES is set (a directory) and otherwise only checks that the committed
-// files still decode strictly into the Server's own types.
+// writes them when R07_FIXTURES is set (a directory). Otherwise it checks that the committed files decode strictly
+// into the Server's own types and that regenerating them gives the very same bytes, so a change of the Server's
+// answers cannot leave the front-end tests running on stale fixtures.
 //
 //	R07_FIXTURES=../../scripts/fixtures/r07 go test ./internal/storage -run TestFrontendFixtures
 const fixtureAgent = "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
@@ -55,10 +56,25 @@ func marshalFixture(t *testing.T, v any) []byte {
 func TestFrontendFixtures(t *testing.T) {
 	dir := os.Getenv("R07_FIXTURES")
 	if dir == "" {
-		dir = filepath.Join("..", "..", "scripts", "fixtures", "r07")
-		files, err := filepath.Glob(filepath.Join(dir, "v4-*.json"))
-		if err != nil || len(files) == 0 {
-			t.Skip("fixtures are not committed yet")
+		committed := filepath.Join("..", "..", "scripts", "fixtures", "r07")
+		dir = t.TempDir()
+		t.Cleanup(func() {
+			generated, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+			existing, _ := filepath.Glob(filepath.Join(committed, "*.json"))
+			if len(generated) != len(existing) || len(generated) < 11 {
+				t.Errorf("the generator wrote %d fixtures, %d are committed", len(generated), len(existing))
+			}
+			for _, file := range generated {
+				want, err := os.ReadFile(filepath.Join(committed, filepath.Base(file)))
+				got, _ := os.ReadFile(file)
+				if err != nil || !bytes.Equal(got, want) {
+					t.Errorf("%s is out of date: regenerate with R07_FIXTURES=../../scripts/fixtures/r07", filepath.Base(file))
+				}
+			}
+		})
+		files, err := filepath.Glob(filepath.Join(committed, "v4-*.json"))
+		if err != nil || len(files) < 8 {
+			t.Fatalf("committed v4 fixtures: %v %d", err, len(files))
 		}
 		for _, file := range files {
 			wire, err := os.ReadFile(file)
@@ -72,7 +88,7 @@ func TestFrontendFixtures(t *testing.T) {
 				t.Fatalf("%s: %v slots=%d lanes=%d", file, err, len(cfg.Slots), len(cfg.Lanes))
 			}
 		}
-		files, _ = filepath.Glob(filepath.Join(dir, "tcp-mini-*.json"))
+		files, _ = filepath.Glob(filepath.Join(committed, "tcp-mini-*.json"))
 		for _, file := range files {
 			wire, _ := os.ReadFile(file)
 			var status TCPMiniStatus
@@ -82,7 +98,6 @@ func TestFrontendFixtures(t *testing.T) {
 				t.Fatalf("%s: %v", file, err)
 			}
 		}
-		return
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
