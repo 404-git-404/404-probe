@@ -21,7 +21,7 @@ before(async () => { if (available) browser = await chromium.launch({headless: t
 after(async () => { await browser?.close(); });
 
 // A page with the production scripts and CSS; the Server answers from memory with the given v4 response.
-async function open(raw) {
+async function open(raw, {dialog = true} = {}) {
   const page = await browser.newPage({viewport: {width: 1000, height: 800}}), errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host"></div><dialog id="network-quality-history"></dialog></body></html>');
@@ -39,9 +39,11 @@ async function open(raw) {
   }, {raw, agent: AGENT});
   await page.waitForFunction(() => document.querySelector('.nq-link'));
   await page.waitForTimeout(150);
-  await page.click('.nq-link');
-  await page.waitForSelector('.nq-overlay');
-  await page.waitForTimeout(150);
+  if (dialog) {
+    await page.click('.nq-link');
+    await page.waitForSelector('.nq-overlay');
+    await page.waitForTimeout(150);
+  }
   return {page, errors};
 }
 const visibleGuards = page => page.evaluate(() => [...document.querySelectorAll('.nq-guard')].filter(n => n.getBoundingClientRect().height > 0 && getComputedStyle(n).display !== 'none').map(n => n.querySelector('p').textContent));
@@ -149,4 +151,28 @@ test('R2 (Chromium): an automatic refresh that is still queued when the card lea
     assert.equal(await page.evaluate(() => window.__gets), before + 1, 'one catch-up read when it is back');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
+});
+
+test('R3 (Chromium): a read the user asked for (opening the dialog) is adopted even when a queued automatic refresh is cancelled because the card left the viewport', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  for (let round = 1; round <= 3; round++) {
+    const {page, errors} = await open(load('v4-running'), {dialog: false});
+    try {
+      const before = await page.evaluate(() => window.__gets);
+      // 1. the automatic refresh is queued behind four busy slots
+      await page.evaluate(() => { const owner = {}; window.__release = []; window.__blockers = Array.from({length: 4}, (_, i) => window.__q.request('block-' + i, owner, () => new Promise(r => window.__release.push(r)))); window.__clock = 31000; window.__ui.tick(); });
+      // 2. another page changed the address; the user opens the settings, which queues the explicit read
+      await page.evaluate(() => { const r = structuredClone(window.__raw); r.settings_revision = String(BigInt(r.settings_revision) + 1n); r.slots[0].host = 'changed.example.net'; window.__raw = r; });
+      await page.click('.nq-link');
+      await page.waitForSelector('.nq-overlay');
+      // 3. the card leaves the viewport (the dialog stays), the slots are released
+      await page.evaluate(() => { document.getElementById('host').style.marginTop = '4000px'; window.__ui.tick(); });
+      await page.evaluate(() => { for (const r of window.__release) r('done'); });
+      await page.waitForTimeout(300);
+      assert.equal(await page.inputValue('[data-nq-field="telecom-host"]'), 'changed.example.net', 'round ' + round + ': the dialog shows what the user\'s own read returned');
+      assert.equal((await page.evaluate(() => window.__ui.snapshot().panel)).base, String(BigInt(load('v4-running').settings_revision) + 1n));
+      assert.equal(await page.evaluate(() => window.__gets), before + 1, 'only the user\'s read ran; the automatic one was dropped (R2 stays fixed)');
+      assert.equal(await page.evaluate(() => window.__writes.length), 0);
+      assert.deepEqual(errors, []);
+    } finally { await page.close(); }
+  }
 });

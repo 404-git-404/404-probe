@@ -23,7 +23,7 @@
       const changed=card.visible!==value;
       card.visible=value;
       if(!value&&changed){card.generation++;queue.release(card.historyOwner);card.loading.clear();queue.release(card.configOwner);
-        if(panel?.card!==card&&!historyHost?.active(card.id)){card.configSerial++;card.reading=false;}}
+        if(panel?.card!==card&&!historyHost?.active(card.id)){card.configSerial++;card.reading=false;card.refreshing=null;}}
       else if(value&&changed)refreshCard(card);
     }
     const observer=Observer?new Observer(entries=>{for(const e of entries){const c=cards.get(e.target.dataset.qualityAgent);if(c)setVisible(c,e.isIntersecting);}},{rootMargin:'0px'}):null;
@@ -52,16 +52,21 @@
     const readError=error=>error?.status===410?OUTDATED:error?.message?.startsWith('v4 配置契约')?'配置读取失败：响应不符合契约，保留上次可信状态':'配置读取失败，保留上次可信状态';
     // The v4 state (negotiation, abnormal targets, capacity) changes on the Server without any action of this page, so a visible
     // card reads it again every 30 seconds, the same pace as its bucket reads; failures back off to at most four minutes.
-    const configDue=card=>!card.reading&&!(panel?.card===card&&(panel.saving||panel.toggling))&&now()-(card.configAt||0)>=CONFIG_REFRESH_MS*2**Math.min(card.configFails||0,3);
+    const configDue=card=>!card.reading&&!card.refreshing&&!(panel?.card===card&&(panel.saving||panel.toggling))&&now()-(card.configAt||0)>=CONFIG_REFRESH_MS*2**Math.min(card.configFails||0,3);
     async function loadConfig(card,force=false,refresh=false) {
       if(closed||card.dead||(!force&&!refresh&&card.config))return;
       // The periodic refresh has its own job and the card's own owner: it dies with the card's visibility, whatever a dialog or an
       // earlier read of the same card still holds. Reads the user asked for keep the dialog's owner.
       const periodic=refresh&&!force,key=JSON.stringify([periodic?'config-refresh':'config',card.id]),owner=force?card.panelReadOwner:periodic?card.configOwner:panel?.card===card?card.panelReadOwner:card.configOwner;
       const gate=periodic?()=>effective(card)&&(!!observer||geometryVisible(card)):null;
-      if(card.reading){if(force)read(key,owner,path(card.id)+'v4/config').catch(()=>{});return;}
-      if(gate&&!gate())return;
-      card.reading=true;const serial=++card.configSerial;
+      // Two read paths with state of their own. A read the user asked for (first load, opening the dialog, reading back after a
+      // write) is numbered: only the newest one is adopted, and it never depends on any other read. The periodic refresh does not
+      // take a number of its own; it is adopted only if nothing numbered has started since, and it is dropped without a trace
+      // when its gate says nobody needs it.
+      const token={};
+      if(periodic){if(card.reading||card.refreshing||!gate())return;card.refreshing=token;}
+      else{if(card.reading&&!force)return;card.reading=true;++card.configSerial;}
+      const serial=card.configSerial;
       try {
         const raw=await read(key,owner,path(card.id)+'v4/config',gate),value=C.adapt(raw);
         if(closed||card.dead||serial!==card.configSerial)return;
@@ -69,7 +74,7 @@
         card.configAt=now();card.configFails=0;
         if(panel?.card===card)panelAdopt(panel,value);
       }catch(error){if(!card.dead&&serial===card.configSerial&&error.name!=='AbortError'){card.configAt=now();card.configFails=(card.configFails||0)+1;card.error=readError(error);if(panel?.card===card){panel.message=card.error;panel.outdated=error.status===410;renderPanel();}renderCard(card);}}
-      finally{if(serial===card.configSerial)card.reading=false;}
+      finally{if(periodic){if(card.refreshing===token)card.refreshing=null;}else if(serial===card.configSerial)card.reading=false;card.refreshing=null;}
     }
     function targets(card) {
       return C.slots.flatMap(slot=>['tcp','icmp'].map(protocol=>{
@@ -245,7 +250,7 @@
       if(!panel)return true;
       if((panel.saving||panel.toggling)&&!force){panel.message='正在提交，请等待结果';renderPanel();return false;}
       if(dirty(panel)&&!force){panel.guard='discard';renderPanel();return false;}
-      const old=panel;panel=null;queue.release(old.card.panelReadOwner);old.card.configSerial++;old.card.reading=false;
+      const old=panel;panel=null;queue.release(old.card.panelReadOwner);old.card.configSerial++;old.card.reading=false;old.card.refreshing=null;
       old.node.remove();if(old.trigger?.isConnected)old.trigger.focus({preventScroll:true});return true;
     }
     function changed(){if(panel){if(panel.guard==='conflict')panel.dismissed=panel.latest?.settings_revision;panel.guard=null;panel.message='';panel.errors={};renderPanel();}}
@@ -375,7 +380,7 @@
       for(const b of [p.saveTop,p.saveBottom]){b.textContent=p.saving?'保存中…':'保存';b.disabled=blocked;}
     }
     async function submit(p,suffix,payload) {
-      const card=p.card;card.configSerial++;card.reading=false;queue.release(card.configOwner);queue.release(card.panelReadOwner);
+      const card=p.card;card.configSerial++;card.reading=false;card.refreshing=null;queue.release(card.configOwner);queue.release(card.panelReadOwner);
       const raw=await write(card,suffix,payload);
       return {raw,config:C.adapt(raw)};
     }
@@ -480,7 +485,7 @@
       else if(event.shiftKey&&(active===first||active===panel.box)){event.preventDefault();last.focus();}else if(!event.shiftKey&&active===last){event.preventDefault();first.focus();}
     }}
     function tick(){if(doc.hidden||closed)return;fallbackVisibility();queue.pump();for(const card of cards.values())refreshCard(card);requestHistory();}
-    function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){for(const card of cards.values()){card.generation++;card.loading.clear();queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}
+    function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){for(const card of cards.values()){card.generation++;card.loading.clear();queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;card.refreshing=null;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}
       else{if(!timer)timer=interval(tick,30000);tick();}}
     const cancelDialog=event=>{event.preventDefault();closeHistory();};
     const dialogClosed=()=>closeHistory();const backdrop=event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeHistory();}};

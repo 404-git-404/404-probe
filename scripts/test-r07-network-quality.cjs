@@ -925,3 +925,48 @@ test('R2: an automatic refresh queued behind busy slots is dropped when the card
     assert.notEqual(f.ui.snapshot().panel, null, 'the dialog stayed open');
   }
 });
+
+const changedRemote = rev => { const r = clone(load('v4-running')); r.settings_revision = rev; r.slots[0].host = 'changed.example.net'; return r; };
+
+test('R3: the user\'s read is adopted when the queued automatic refresh is cancelled by the card leaving; both read paths keep their own state', async () => {
+  for (const how of ['setVisible', 'geometry', 'hidden']) {
+    screen(1000, 1000);
+    let offset = 0;
+    const q = C.coordinator({now: () => 1800000000000 + offset});
+    const f = setup({raw: load('v4-running'), clock: () => offset, coordinator: q});
+    f.ui.setVisible(AGENT, true); await flush();
+    const before = configReads(f);
+    const owner = {}, release = [];
+    const blockers = Array.from({length: 4}, (_, i) => q.request('block-' + i, owner, () => new Promise(r => release.push(r))));
+    offset = 31000; f.ui.tick(); await flush(); // the automatic refresh is queued
+    f.setRaw(changedRemote('7'));
+    f.node.querySelector('.nq-link').click(); await flush(); // the user's read is queued too
+    if (how === 'setVisible') f.ui.setVisible(AGENT, false);
+    else if (how === 'geometry') { screen(0, 0); f.ui.tick(); }
+    else { f.doc.hidden = true; f.doc.dispatch('visibilitychange'); }
+    for (const r of release) r('done'); await Promise.all(blockers); await flush();
+    if (how === 'hidden') { // the page hiding stops every read, the user's too (old policy); showing it again reads for the open dialog
+      f.doc.hidden = false; f.doc.dispatch('visibilitychange'); f.ui.setVisible(AGENT, true); await flush();
+    }
+    assert.equal(f.field('telecom-host').value, 'changed.example.net', how);
+    assert.equal(f.ui.snapshot().panel.base, '7', how);
+    assert.equal(f.writes.length, 0);
+    if (how !== 'hidden') assert.equal(configReads(f), before + 1, how + ': only the user\'s read ran');
+  }
+});
+
+test('R3: an older answer never overwrites a newer one, in either order, and a held automatic read does not block the user\'s', async () => {
+  screen(1000, 1000);
+  let offset = 0;
+  const hold = []; // the first GET after the initial ones is held
+  const f = setup({raw: load('v4-running'), clock: () => offset, holdRead: i => (i === 1 ? new Promise(r => hold.push(r)) : undefined)});
+  f.ui.setVisible(AGENT, true); await flush(); // GET 0: initial
+  offset = 31000; f.ui.tick(); await flush();    // GET 1: automatic, held (answers with the content of the moment it was asked: old)
+  f.setRaw(changedRemote('7'));
+  f.node.querySelector('.nq-link').click(); await flush(); // GET 2: the user's, new content, answered at once
+  assert.equal(f.field('telecom-host').value, 'changed.example.net');
+  hold[0](); await flush(); // the old automatic answer arrives late
+  assert.equal(f.field('telecom-host').value, 'changed.example.net', 'the late old answer is dropped');
+  assert.equal(f.ui.snapshot().panel.base, '7');
+  assert.equal(f.writes.length, 0);
+});

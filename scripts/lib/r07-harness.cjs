@@ -90,12 +90,13 @@ function cardHistory(target, now = 1800000000000) {
 // options.raw: the v4 response the Server gives; handlers answer the two writes.
 function setup(options = {}) {
   const {doc, dialog} = dom(), requests = [], writes = [];
-  let raw = clone(options.raw || load('v4-running'));
+  let raw = clone(options.raw || load('v4-running')), gets = 0;
   const fetcher = async (url, init = {}) => {
     const method = init.method || 'GET'; requests.push({url, method, body: init.body ? JSON.parse(init.body) : null});
     const reply = (status, value) => ({ok: status >= 200 && status < 300, status, statusText: String(status), json: async () => value});
     if (url.endsWith('/v4/config') && method === 'GET' && options.readFail?.()) return reply(503, {error: {code: 'unavailable'}});
-    if (url.endsWith('/v4/config') && method === 'GET') return options.readStatus ? reply(options.readStatus, {error: {code: 'client_outdated'}}) : reply(200, raw);
+    if (url.endsWith('/v4/config') && method === 'GET' && options.readStatus) return reply(options.readStatus, {error: {code: 'client_outdated'}});
+    if (url.endsWith('/v4/config') && method === 'GET') { const answer = clone(raw), hold = options.holdRead?.(gets++); if (hold) await hold; return reply(200, answer); }
     if (url.endsWith('/v4/config') && method === 'PUT') { writes.push({kind: 'save', body: JSON.parse(init.body)}); return (options.save || (() => reply(200, raw)))(JSON.parse(init.body), {reply, get raw() { return raw; }, set raw(v) { raw = v; }}); }
     if (url.endsWith('/v4/enabled') && method === 'PUT') { writes.push({kind: 'enable', body: JSON.parse(init.body)}); return (options.enable || (() => reply(200, raw)))(JSON.parse(init.body), {reply, get raw() { return raw; }, set raw(v) { raw = v; }}); }
     if (url.includes('card-history')) {
