@@ -14,7 +14,8 @@
     // Every user-supplied string (labels, host) reaches the page through textContent, value or title only.
     const el=(tag,className,text)=>{const n=doc.createElement(tag);if(className)n.className=className;if(text!=null)n.textContent=text;return n;};
     const button=(text,action,className='')=>{const b=el('button',className,text);b.type='button';b.addEventListener('click',action);return b;};
-    const read=(key,owner,path)=>queue.request(key,owner,signal=>C.transportLease(tracked=>state.fetchJSON(path,{signal,fetcher:tracked,unauthorized,timeoutMs:10000}),fetcher));
+    // gate: asked once more at the moment a queued read really starts; a read nobody needs any more is dropped there.
+    const read=(key,owner,path,gate=null)=>queue.request(key,owner,signal=>gate&&!gate()?Promise.reject(Object.assign(new Error('读取已取消'),{name:'AbortError'})):C.transportLease(tracked=>state.fetchJSON(path,{signal,fetcher:tracked,unauthorized,timeoutMs:10000}),fetcher));
     const path=id=>`/api/v1/web/agents/${encodeURIComponent(id)}/network-quality/`;
     const geometryVisible=card=>{const r=card.node.getBoundingClientRect();return card.node.isConnected&&r.bottom>0&&r.top<(root.innerHeight||0)&&r.right>0&&r.left<(root.innerWidth||0);};
     function fallbackVisibility(){if(!observer&&!doc.hidden)for(const card of cards.values())setVisible(card,geometryVisible(card));}
@@ -54,11 +55,15 @@
     const configDue=card=>!card.reading&&!(panel?.card===card&&(panel.saving||panel.toggling))&&now()-(card.configAt||0)>=CONFIG_REFRESH_MS*2**Math.min(card.configFails||0,3);
     async function loadConfig(card,force=false,refresh=false) {
       if(closed||card.dead||(!force&&!refresh&&card.config))return;
-      const key=JSON.stringify(['config',card.id]),owner=force||panel?.card===card?card.panelReadOwner:card.configOwner;
+      // The periodic refresh has its own job and the card's own owner: it dies with the card's visibility, whatever a dialog or an
+      // earlier read of the same card still holds. Reads the user asked for keep the dialog's owner.
+      const periodic=refresh&&!force,key=JSON.stringify([periodic?'config-refresh':'config',card.id]),owner=force?card.panelReadOwner:periodic?card.configOwner:panel?.card===card?card.panelReadOwner:card.configOwner;
+      const gate=periodic?()=>effective(card)&&(!!observer||geometryVisible(card)):null;
       if(card.reading){if(force)read(key,owner,path(card.id)+'v4/config').catch(()=>{});return;}
+      if(gate&&!gate())return;
       card.reading=true;const serial=++card.configSerial;
       try {
-        const raw=await read(key,owner,path(card.id)+'v4/config'),value=C.adapt(raw);
+        const raw=await read(key,owner,path(card.id)+'v4/config',gate),value=C.adapt(raw);
         if(closed||card.dead||serial!==card.configSerial)return;
         if(JSON.stringify(card.raw)!==JSON.stringify(raw)){card.raw=raw;bindConfig(card,value);}else card.error='';
         card.configAt=now();card.configFails=0;
@@ -359,8 +364,9 @@
         const lockLiteral=C.disabledSubs(s.host);
         for(const [key,,fam,proto] of C.subItems) {
           const box=v.checks.get(key),icmpBlocked=proto==='icmp'&&icmpOff.has(fam);
-          box.checked=!!s[key];box.disabled=(lockLiteral[key]&&!s[key])||icmpBlocked;
-          box.title=lockLiteral[key]?(s[key]?'地址是另一个地址族的字面量，请取消勾选':'地址是另一个地址族的字面量，不能勾选'):icmpBlocked?'当前环境不支持 ICMP':'';
+          // A box can always be unticked; only ticking is refused (other address family, ICMP the host cannot send).
+          box.checked=!!s[key];box.disabled=(lockLiteral[key]||icmpBlocked)&&!s[key];
+          box.title=lockLiteral[key]?(s[key]?'地址是另一个地址族的字面量，请取消勾选':'地址是另一个地址族的字面量，不能勾选'):icmpBlocked?(s[key]?'当前环境不支持 ICMP，可以取消勾选':'当前环境不支持 ICMP'):'';
           v.subNotes.get(key).textContent=icmpBlocked?'当前环境不支持 ICMP':fieldError(p,s.slot,key);
         }
       }

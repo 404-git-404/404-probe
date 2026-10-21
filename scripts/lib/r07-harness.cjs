@@ -106,7 +106,7 @@ function setup(options = {}) {
   };
   class Plot { constructor(opts, data) { this.opts = opts; this.data = data; } destroy() {} setSize() {} }
   let configs = 0;
-  const ui = UI.create({document: doc, fetcher, csrf: () => 'synthetic', state: State, management: Management, Plot, Observer: null, Resize: null, interval: () => 1, clear: () => {}, now: () => 1800000000000 + (options.clock?.() || 0), onConfig: () => { configs++; }});
+  const ui = UI.create({document: doc, coordinator: options.coordinator || null, fetcher, csrf: () => 'synthetic', state: State, management: Management, Plot, Observer: null, Resize: null, interval: () => 1, clear: () => {}, now: () => 1800000000000 + (options.clock?.() || 0), onConfig: () => { configs++; }});
   const agent = {agent_id: AGENT, name: '合成设备'}, node = ui.mount(agent); doc.body.append(node);
   const panel = () => doc.body.children.find(n => n.className === 'nq-overlay');
   const field = name => panel()?.querySelector(`[data-nq-field="${name}"]`);

@@ -218,27 +218,32 @@ test('a literal address of one family locks the sub-items of the other; kind swi
 });
 
 const withIcmp = (name, v4, v6) => { const r = clone(load(name)); if (v4 === undefined) delete r.icmp_support; else r.icmp_support = {ipv4: v4, ipv6: v6}; return r; };
+// The same response with every ICMP tick taken away: what a user sees on a device that never had them.
+const noIcmpTicks = raw => { const r = clone(raw); for (const s of r.slots) Object.assign(s, {ipv4_icmp: false, ipv6_icmp: false}); return r; };
 const icmpBoxes = (f, slot = 'telecom') => ({ipv4: f.field(`${slot}-ipv4_icmp`).disabled, ipv6: f.field(`${slot}-ipv6_icmp`).disabled, tcp4: f.field(`${slot}-ipv4_tcp`).disabled, tcp6: f.field(`${slot}-ipv6_tcp`).disabled});
 
 test('ICMP: the Server\'s capability answer disables the ICMP boxes of that family and says why, whatever the lanes say', async () => {
-  const f = setup({raw: load('v4-no-ipv6-no-icmp')});
-  await f.open();
   assert.deepEqual(load('v4-no-ipv6-no-icmp').icmp_support, {ipv4: 'unsupported', ipv6: 'unsupported'});
+  const f = setup({raw: noIcmpTicks(load('v4-no-ipv6-no-icmp'))});
+  await f.open();
   // (unicom's address is an IPv4 literal, which locks its IPv6 boxes on its own account; telecom is a name.)
   assert.deepEqual(icmpBoxes(f, 'telecom'), {ipv4: true, ipv6: true, tcp4: false, tcp6: false});
   assert.equal(f.field('unicom-ipv4_icmp').disabled, true); assert.equal(f.field('mobile-ipv6_icmp').disabled, true);
   assert.match(f.panel().all().map(n => n.textContent).join('|'), /当前环境不支持 ICMP/);
-  assert.equal(f.field('telecom-ipv4_icmp').checked, true, 'a saved tick on a disabled box is kept, not cleared');
-  assert.equal(f.field('telecom-ipv6_icmp').checked, true);
+  // A saved tick is kept, shown, and can be taken back - it only cannot be put there.
+  const g = setup({raw: load('v4-no-ipv6-no-icmp')});
+  await g.open();
+  for (const k of ['ipv4_icmp', 'ipv6_icmp']) { assert.equal(g.field(`telecom-${k}`).checked, true, k); assert.equal(g.field(`telecom-${k}`).disabled, false, k + ' can be unticked'); }
+  g.check('telecom-ipv4_icmp', false); assert.equal(g.field('telecom-ipv4_icmp').disabled, true);
 });
 
 test('ICMP matrix (review M5): the same unsupported answer disables the boxes with the switch off, nothing ticked, nothing configured, and only for the family it names', async () => {
   const cases = {
-    'switch off, configured': withIcmp('v4-saved-off', 'unsupported', 'unsupported'),
-    'switch on, nothing ticked': (() => { const r = withIcmp('v4-running', 'unsupported', 'unsupported'); for (const s of r.slots) Object.assign(s, {ipv4_icmp: false, ipv6_icmp: false}); return r; })(),
+    'switch off, configured': noIcmpTicks(withIcmp('v4-saved-off', 'unsupported', 'unsupported')),
+    'switch on, nothing ticked': noIcmpTicks(withIcmp('v4-running', 'unsupported', 'unsupported')),
     'nothing configured': withIcmp('v4-empty-unreported', 'unsupported', 'unsupported'),
-    'IPv6 only': withIcmp('v4-saved-off', 'supported', 'unsupported'),
-    'IPv4 only': withIcmp('v4-saved-off', 'unsupported', 'supported'),
+    'IPv6 only': noIcmpTicks(withIcmp('v4-saved-off', 'supported', 'unsupported')),
+    'IPv4 only': noIcmpTicks(withIcmp('v4-saved-off', 'unsupported', 'supported')),
   };
   const expect = {'switch off, configured': [true, true], 'switch on, nothing ticked': [true, true], 'nothing configured': [true, true], 'IPv6 only': [false, true], 'IPv4 only': [true, false]};
   for (const [what, raw] of Object.entries(cases)) {
@@ -263,13 +268,12 @@ test('ICMP matrix: "unknown", a missing field or a value we do not know never di
 
 test('ICMP: capability lost and recovered while the dialog is open follows the Server and keeps the ticks', async () => {
   let offset = 0; screen(1000, 1000);
-  const f = setup({raw: withIcmp('v4-saved-off', 'supported', 'supported'), clock: () => offset});
+  const f = setup({raw: noIcmpTicks(withIcmp('v4-saved-off', 'supported', 'supported')), clock: () => offset});
   await f.open();
   assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false});
-  f.setRaw(withIcmp('v4-saved-off', 'unsupported', 'unsupported')); offset += 31000; f.ui.tick(); await flush();
+  f.setRaw(noIcmpTicks(withIcmp('v4-saved-off', 'unsupported', 'unsupported'))); offset += 31000; f.ui.tick(); await flush();
   assert.deepEqual(icmpBoxes(f), {ipv4: true, ipv6: true, tcp4: false, tcp6: false});
-  assert.equal(f.field('telecom-ipv4_icmp').checked, true);
-  f.setRaw(withIcmp('v4-saved-off', 'supported', 'supported')); offset += 31000; f.ui.tick(); await flush();
+  f.setRaw(noIcmpTicks(withIcmp('v4-saved-off', 'supported', 'supported'))); offset += 31000; f.ui.tick(); await flush();
   assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false});
   assert.equal(f.ui.snapshot().panel.dirty, false, 'following the capability is not an edit');
 });
@@ -866,4 +870,58 @@ test('S2: a restarted Agent that was authorized shows "正在连接…"; a first
   const first = setup({raw: load('v4-first-upgrade')}); first.ui.setVisible(AGENT, true); await flush();
   assert.equal(load('v4-first-upgrade').agent_support, 'unsupported');
   assert.equal(first.node.querySelector('.nq-status').textContent, 'Agent 尚未支持网络质量');
+});
+
+test('R1: ICMP unsupported + a literal address of the other family: ticked boxes can always be unticked, the save succeeds, nothing wrong can be ticked again', async () => {
+  for (const [literal, clear, keep] of [['93.184.216.34', ['ipv6_tcp', 'ipv6_icmp'], ['ipv4_tcp', 'ipv4_icmp']], ['2606:4700::1111', ['ipv4_tcp', 'ipv4_icmp'], ['ipv6_tcp', 'ipv6_icmp']]]) {
+    const f = setup({raw: load('v4-no-ipv6-no-icmp'), save: saved});
+    await f.open();
+    f.type('telecom-host', literal);
+    for (const k of clear) { assert.equal(f.field(`telecom-${k}`).checked, true); assert.equal(f.field(`telecom-${k}`).disabled, false, `${literal}: ${k}`); }
+    f.field('save-bottom').click(); await flush();
+    assert.equal(f.writes.length, 0, 'the mismatch still blocks the save');
+    for (const k of clear) f.check(`telecom-${k}`, false);
+    for (const k of clear) { assert.equal(f.field(`telecom-${k}`).checked, false); assert.equal(f.field(`telecom-${k}`).disabled, true, 'not ticked again'); }
+    f.field('save-bottom').click(); await flush();
+    assert.equal(f.writes.length, 1, literal);
+    for (const k of clear) assert.equal(f.writes[0].body.slots[0][k], false, k);
+    for (const k of keep) assert.equal(f.writes[0].body.slots[0][k], true, k);
+  }
+});
+
+test('R1: an unsupported ICMP box that is ticked can be unticked (and is then closed again); an unticked one cannot be ticked', async () => {
+  const f = setup({raw: withIcmp('v4-saved-off', 'unsupported', 'supported')});
+  await f.open();
+  assert.equal(f.field('telecom-ipv4_icmp').checked, true);
+  assert.equal(f.field('telecom-ipv4_icmp').disabled, false, 'a tick can always be taken back');
+  f.check('telecom-ipv4_icmp', false);
+  assert.equal(f.field('telecom-ipv4_icmp').disabled, true);
+  assert.equal(f.ui.snapshot().panel.draft.slots[0].ipv4_icmp, false);
+  assert.equal(f.field('telecom-ipv6_icmp').disabled, false, 'the supported family is untouched');
+});
+
+test('R2: an automatic refresh queued behind busy slots is dropped when the card leaves the viewport or the page is hidden, and read once on return', async () => {
+  for (const how of ['setVisible', 'geometry', 'hidden']) {
+    screen(1000, 1000);
+    let offset = 0;
+    const q = C.coordinator({now: () => 1800000000000 + offset});
+    const f = setup({raw: load('v4-running'), clock: () => offset, coordinator: q});
+    await f.open();
+    const before = configReads(f);
+    const owner = {}, release = [];
+    const blockers = Array.from({length: 4}, (_, i) => q.request('block-' + i, owner, () => new Promise(r => release.push(r))));
+    offset = 31000; f.ui.tick(); await flush();
+    assert.equal(configReads(f), before, how + ': queued, not started');
+    if (how === 'setVisible') f.ui.setVisible(AGENT, false);
+    else if (how === 'geometry') { screen(0, 0); f.ui.tick(); }
+    else { f.doc.hidden = true; f.doc.dispatch('visibilitychange'); }
+    for (const r of release) r('done'); await Promise.all(blockers); await flush();
+    assert.equal(configReads(f), before, how + ': nothing is read after the card left');
+    assert.equal(f.writes.length, 0);
+    f.doc.hidden = false; screen(1000, 1000);
+    if (how === 'hidden') f.doc.dispatch('visibilitychange');
+    f.ui.setVisible(AGENT, true); offset += 1000; f.ui.tick(); await flush();
+    assert.equal(configReads(f), before + 1, how + ': one read on return');
+    assert.notEqual(f.ui.snapshot().panel, null, 'the dialog stayed open');
+  }
 });
