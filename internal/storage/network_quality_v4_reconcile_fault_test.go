@@ -66,6 +66,7 @@ func TestV4ReconcileFailureRecovers(t *testing.T) {
 				t.Fatalf("an active target was delivered without authorization: %+v", target)
 			}
 		}
+		k.assertNoUserTarget(2, true, "fully negotiated session whose grant failed")
 		k.assertNoUserTarget(2, false, "no header during the failure")
 		k.assertNoUserTarget(1, true, "version 1 during the failure")
 		k.invariants()
@@ -123,4 +124,62 @@ func TestV4ReconcileFailureRecovers(t *testing.T) {
 			t.Fatal("a stale grant arrived after the revocation")
 		}
 	})
+}
+
+// A session that finished both negotiation steps but whose device-level authorization failed to
+// record gets no user address in any request shape, paused targets included.
+func TestV4FailedGrantDeliversNoUserAddress(t *testing.T) {
+	k := newV4Kit(t)
+	k.report(false, v4Caps(protocol.QualityIPv6Present))
+	k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp", "v4icmp"))
+	k.enable(true)
+	k.restart()
+	k.reconcile(k.report(true, nil))
+	restore := k.failQualityConfigWrites()
+	step2 := k.report(true, v4Caps(protocol.QualityIPv6Present))
+	k.mustFailReconcile(step2)
+	for _, header := range []bool{true, false} {
+		for _, version := range []int{1, 2} {
+			got, err := k.sessionConfig(version, header)
+			if err != nil {
+				continue
+			}
+			wire, _ := json.Marshal(got)
+			if strings.Contains(string(wire), "example.com") || len(got.Targets) != 0 || got.Enabled {
+				t.Fatalf("version %d header %v: %s", version, header, wire)
+			}
+		}
+	}
+	restore()
+	k.reconcile(k.report(true, v4Caps(protocol.QualityIPv6Present)))
+	got, err := k.sessionConfig(2, true)
+	if err != nil || len(got.Targets) == 0 {
+		t.Fatalf("authorized session: %v %+v", err, got)
+	}
+}
+
+// The Web read model must not call a lane active while no authorization is recorded and nothing runs.
+func TestV4FailedGrantReadModelShowsNothingActive(t *testing.T) {
+	k := newV4Kit(t)
+	k.report(false, v4Caps(protocol.QualityIPv6Present))
+	k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp"))
+	k.enable(true)
+	k.restart()
+	k.reconcile(k.report(true, nil))
+	restore := k.failQualityConfigWrites()
+	k.mustFailReconcile(k.report(true, v4Caps(protocol.QualityIPv6Present)))
+	cfg := k.get()
+	if len(k.open()) != 0 {
+		t.Fatal("a lane is open")
+	}
+	for _, l := range cfg.Lanes {
+		if l.Status == protocol.QualityLaneActive {
+			t.Fatalf("lane %s/%s/%s is shown active with nothing running", l.Slot, l.Family, l.Protocol)
+		}
+	}
+	restore()
+	k.reconcile(k.report(true, v4Caps(protocol.QualityIPv6Present)))
+	if k.lane(k.get(), "telecom", "ipv4", "tcp").Status != protocol.QualityLaneActive {
+		t.Fatal("not active after recovery")
+	}
 }

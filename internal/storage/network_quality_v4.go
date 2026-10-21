@@ -345,6 +345,10 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 			lane.Status = protocol.QualityLaneExcluded
 		case support.state != protocol.QualitySupportUserTargets:
 			lane.Status, lane.Condition = protocol.QualityLaneAgentUnavailable, support.state
+		case !in.granted:
+			// The session negotiated but the device-level authorization is not recorded (the
+			// recalculation after the report failed): nothing runs yet, so nothing is "active".
+			lane.Status, lane.Condition = protocol.QualityLaneAgentUnavailable, protocol.QualitySupportNegotiating
 		case budget.Pressure:
 			lane.Status = protocol.QualityLaneStoragePressure
 		case !cfg.Enabled:

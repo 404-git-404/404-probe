@@ -100,7 +100,10 @@ func (s *Store) GetQualitySessionConfig(ctx context.Context, id string, epoch ui
 		}
 		return out, nil
 	}
-	if version != 2 || !header || !userTargets {
+	// Both halves are required: this session negotiated, and the device-level authorization was
+	// recorded. If the recalculation after the report failed, the session still gets the stop
+	// configuration, so not even a paused target carries a user address.
+	if version != 2 || !header || !userTargets || !cfg.Granted || cfg.Snapshot == nil {
 		if version == 2 {
 			out.State = "agent_upgrade_required"
 		}
