@@ -6,6 +6,10 @@
   "effective_interval_ms": 30000,
   "state": "unsupported",
   "agent_support": "unsupported",
+  "icmp_support": {
+    "ipv4": "unknown",
+    "ipv6": "unknown"
+  },
   "slots": [
     {
       "slot": "telecom",

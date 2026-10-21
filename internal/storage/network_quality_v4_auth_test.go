@@ -643,3 +643,106 @@ func TestV4SessionConfigPausedTargetsAndInterval(t *testing.T) {
 		t.Fatalf("active=%d", active)
 	}
 }
+
+// icmpWant is what the read model says about ICMP for both families.
+func icmpWant(t *testing.T, cfg protocol.QualityV4Config, v4, v6 string, what string) {
+	t.Helper()
+	if cfg.ICMPSupport.IPv4 != v4 || cfg.ICMPSupport.IPv6 != v6 {
+		t.Fatalf("%s: icmp_support %+v, want %s/%s", what, cfg.ICMPSupport, v4, v6)
+	}
+	// Whatever else the lanes say, a lane that reports "icmp_unsupported" must be backed by the field.
+	for _, l := range cfg.Lanes {
+		if l.Status == protocol.QualityLaneICMPUnsupported && (l.Family == "ipv4" && cfg.ICMPSupport.IPv4 != protocol.QualityICMPUnsupported || l.Family == "ipv6" && cfg.ICMPSupport.IPv6 != protocol.QualityICMPUnsupported) {
+			t.Fatalf("%s: lane %+v disagrees with %+v", what, l, cfg.ICMPSupport)
+		}
+	}
+}
+
+// The dialog disables the ICMP boxes from icmp_support alone, so it must not depend on the master switch, the slots,
+// the ticks or the IPv6 address (design 7.1, priority 8; review R07-D M5).
+func TestV4ICMPSupportDoesNotDependOnLaneStatus(t *testing.T) {
+	const unknown, yes, no = protocol.QualityICMPUnknown, protocol.QualityICMPSupported, protocol.QualityICMPUnsupported
+	t.Run("not yet known", func(t *testing.T) {
+		k := newV4Kit(t)
+		icmpWant(t, k.get(), unknown, unknown, "never reported")
+		k.report(false, v4Caps(protocol.QualityIPv6Present, "ipv4/icmp", "ipv6/icmp"))
+		icmpWant(t, k.get(), unknown, unknown, "an old Agent says nothing we may rely on")
+	})
+	t.Run("a container without raw sockets, whatever is configured", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6Present, "ipv4/icmp", "ipv6/icmp"))
+		icmpWant(t, k.get(), no, no, "nothing configured, switch off")
+		k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp")) // no ICMP ticked
+		icmpWant(t, k.get(), no, no, "saved without ICMP ticks, switch off")
+		icmpWant(t, k.enable(true), no, no, "switched on, no ICMP ticked")
+		k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp", "v4icmp", "v6icmp"))
+		cfg := k.get()
+		icmpWant(t, cfg, no, no, "ICMP ticked")
+		if k.lane(cfg, "telecom", "ipv4", "icmp").Status != protocol.QualityLaneICMPUnsupported {
+			t.Fatalf("lane: %+v", k.lane(cfg, "telecom", "ipv4", "icmp"))
+		}
+		icmpWant(t, k.enable(false), no, no, "switched off again")
+	})
+	t.Run("no IPv6 address hides the lane status but not the capability", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6None, "ipv4/icmp", "ipv6/icmp"))
+		k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp", "v4icmp", "v6tcp", "v6icmp"))
+		cfg := k.enable(true)
+		if k.lane(cfg, "telecom", "ipv6", "icmp").Status != protocol.QualityLaneNoIPv6 {
+			t.Fatalf("lane: %+v", k.lane(cfg, "telecom", "ipv6", "icmp"))
+		}
+		icmpWant(t, cfg, no, no, "no IPv6 outranks icmp_unsupported in the lane")
+	})
+	t.Run("families are independent, and a full capability is supported", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6Present, "ipv6/icmp"))
+		icmpWant(t, k.get(), yes, no, "only IPv6 ICMP lost")
+		k = newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6Present))
+		icmpWant(t, k.get(), yes, yes, "everything supported")
+	})
+	t.Run("a restart is unknown until the second step, then follows the new session", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6Present, "ipv4/icmp", "ipv6/icmp"))
+		k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp"))
+		k.enable(true)
+		icmpWant(t, k.get(), no, no, "before the restart")
+		k.restart()
+		k.reconcile(k.report(true, nil)) // step one: header, no capability; the grant of before stands
+		cfg := k.get()
+		if cfg.AgentSupport != protocol.QualitySupportNegotiating {
+			t.Fatalf("support %q", cfg.AgentSupport)
+		}
+		icmpWant(t, cfg, unknown, unknown, "negotiating: the old session's answer is not carried over")
+		k.reconcile(k.report(true, v4Caps(protocol.QualityIPv6Present))) // the container got CAP_NET_RAW
+		icmpWant(t, k.get(), yes, yes, "capability back")
+		k.restart()
+		k.negotiate(v4Caps(protocol.QualityIPv6Present, "ipv4/icmp"))
+		icmpWant(t, k.get(), no, yes, "lost again, IPv4 only")
+	})
+	t.Run("excluded and inactive devices are unknown", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6Present, "ipv4/icmp"))
+		icmpWant(t, k.get(), no, yes, "before")
+		if _, err := k.s.db.Exec(`UPDATE quality_capability SET excluded_reason='platform_excluded:alpine' WHERE agent_id=?`, k.id); err != nil {
+			t.Fatal(err)
+		}
+		icmpWant(t, k.get(), unknown, unknown, "excluded platform")
+		if _, err := k.s.db.Exec(`UPDATE quality_capability SET excluded_reason='' WHERE agent_id=?`, k.id); err != nil {
+			t.Fatal(err)
+		}
+		icmpWant(t, k.get(), no, yes, "restored")
+		if _, err := k.s.db.Exec(`UPDATE agents SET revoked=1 WHERE id=?`, k.id); err != nil {
+			t.Fatal(err)
+		}
+		icmpWant(t, k.get(), unknown, unknown, "revoked device")
+	})
+	t.Run("the field is on the wire", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6Present, "ipv4/icmp"))
+		wire, err := json.Marshal(k.get())
+		if err != nil || !strings.Contains(string(wire), `"icmp_support":{"ipv4":"unsupported","ipv6":"supported"}`) {
+			t.Fatalf("%v %s", err, wire)
+		}
+	})
+}

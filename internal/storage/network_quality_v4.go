@@ -218,6 +218,22 @@ func qualityEffectiveInterval(user, scale int) int {
 	return max(user, protocol.QualityMinIntervalMS*max(1, scale))
 }
 
+// qualityICMPSupport reads the same authorization snapshot the scheduler and the lane statuses use, so what the dialog shows
+// and what runs cannot differ. Anything that is not a negotiated, authorized session is "unknown", never "unsupported".
+func qualityICMPSupport(deviceInactive bool, support qualitySupportInfo, in qualityAuthInputs) protocol.QualityV4ICMP {
+	unknown := protocol.QualityV4ICMP{IPv4: protocol.QualityICMPUnknown, IPv6: protocol.QualityICMPUnknown}
+	if deviceInactive || support.state != protocol.QualitySupportUserTargets || !in.granted || in.caps == nil || in.excluded != "" {
+		return unknown
+	}
+	of := func(family string) string {
+		if qualityLaneSupported(in.caps, family, "icmp") {
+			return protocol.QualityICMPSupported
+		}
+		return protocol.QualityICMPUnsupported
+	}
+	return protocol.QualityV4ICMP{IPv4: of("ipv4"), IPv6: of("ipv6")}
+}
+
 func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time, budget qualityBudget) (protocol.QualityV4Config, error) {
 	out := protocol.QualityV4Config{Slots: []protocol.QualityV4Slot{}, Lanes: []protocol.QualityV4Lane{}}
 	cfg, err := qualityLoadConfigTx(ctx, tx, id)
@@ -248,6 +264,7 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 	out.IntervalMS = cfg.IntervalMS
 	out.EffectiveIntervalMS = qualityEffectiveInterval(cfg.IntervalMS, budget.Scale)
 	out.AgentSupport = support.state
+	out.ICMPSupport = qualityICMPSupport(deviceInactive, support, in)
 	slotByName := map[string]protocol.QualityV4Slot{}
 	anyHost := false
 	for _, row := range rows {

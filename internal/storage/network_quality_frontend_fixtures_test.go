@@ -104,6 +104,23 @@ func TestFrontendFixtures(t *testing.T) {
 	k.enable(true)
 	write("v4-old-agent.json", k.get())
 
+	// A restarted Agent whose earlier grant stands: step one done, step two (the capability) still to come.
+	k = fixtureKit(t)
+	k.negotiate(v4Caps(protocol.QualityIPv6Present))
+	k.save(60000, fixtureSlots()...)
+	k.enable(true)
+	k.restart()
+	k.reconcile(k.report(true, nil))
+	write("v4-negotiating.json", k.get())
+
+	// First upgrade from an old Agent: nothing was ever granted, so the same first step reads as unsupported.
+	k = fixtureKit(t)
+	k.report(false, v4Caps(protocol.QualityIPv6Present))
+	k.save(60000, fixtureSlots()...)
+	k.restart()
+	k.reconcile(k.report(true, nil))
+	write("v4-first-upgrade.json", k.get())
+
 	// A current Agent, configuration saved, detection off.
 	k = fixtureKit(t)
 	k.negotiate(v4Caps(protocol.QualityIPv6Present))

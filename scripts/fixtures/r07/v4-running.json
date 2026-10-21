@@ -6,6 +6,10 @@
   "effective_interval_ms": 60000,
   "state": "ready",
   "agent_support": "user_targets",
+  "icmp_support": {
+    "ipv4": "supported",
+    "ipv6": "supported"
+  },
   "slots": [
     {
       "slot": "telecom",

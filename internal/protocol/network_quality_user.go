@@ -130,6 +130,20 @@ type QualityV4Lane struct {
 	Condition    string  `json:"condition"`
 }
 
+// QualityV4ICMP tells, per address family, whether the Agent of the current session can send ICMP. It does not depend on the
+// master switch, the slots or the ticks, so the settings dialog can disable the ICMP boxes before anything is configured.
+// "unknown" means the Server cannot say yet (negotiating, upgrade needed, not authorized, excluded platform, inactive device).
+type QualityV4ICMP struct {
+	IPv4 string `json:"ipv4"`
+	IPv6 string `json:"ipv6"`
+}
+
+const (
+	QualityICMPSupported   = "supported"
+	QualityICMPUnsupported = "unsupported"
+	QualityICMPUnknown     = "unknown"
+)
+
 // QualityV4Config is the read model of a card's network quality configuration.
 type QualityV4Config struct {
 	SettingsRevision    string          `json:"settings_revision"`
@@ -139,6 +153,7 @@ type QualityV4Config struct {
 	EffectiveIntervalMS int             `json:"effective_interval_ms"`
 	State               string          `json:"state"`
 	AgentSupport        string          `json:"agent_support"`
+	ICMPSupport         QualityV4ICMP   `json:"icmp_support"`
 	Slots               []QualityV4Slot `json:"slots"`
 	Lanes               []QualityV4Lane `json:"lanes"`
 }
