@@ -200,9 +200,16 @@ func nat64NextGeneration() uint64 {
 	return nat64Newest
 }
 
+// nat64PublishDoneHook tells a test that a publish has finished and whether it stored; nil in production.
+var nat64PublishDoneHook func(stored bool)
+
 func nat64Publish(set *nat64Set, generation uint64) {
 	if nat64PublishHook != nil {
 		nat64PublishHook()
+	}
+	stored := false
+	if nat64PublishDoneHook != nil {
+		defer func() { nat64PublishDoneHook(stored) }()
 	}
 	nat64Mu.Lock()
 	defer nat64Mu.Unlock()
@@ -210,6 +217,7 @@ func nat64Publish(set *nat64Set, generation uint64) {
 		return
 	}
 	nat64Snapshot.Store(set)
+	stored = true
 }
 
 // nat64Delay is the wait before the next query: ten minutes after a success, then one minute doubling

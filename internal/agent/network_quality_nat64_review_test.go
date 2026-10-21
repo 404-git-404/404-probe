@@ -319,66 +319,85 @@ func (r *numberedNAT64) LookupNetIP(context.Context, string, string) ([]netip.Ad
 }
 
 // A loop that has been superseded can pass its cancellation check and still be late to publish. Its
-// result must not replace what a newer loop published (R07-C re-review).
+// result must not replace what a newer loop published (R07-C re-review). Loops 1 and 2 are stopped right
+// before they publish, loop 3 publishes, and the old ones are then released in both orders; the test waits
+// for each late publish to finish instead of sleeping.
 func TestSupersededNAT64LoopsNeverPublish(t *testing.T) {
-	setNAT64(t)
-	prefixOf := func(n int) netip.Prefix {
-		return netip.MustParsePrefix(fmt.Sprintf("2606:4700:%x:1234:5678:9abc::/96", n))
-	}
-	resolver := &numberedNAT64{prefix: prefixOf}
-	q := newQualityControl()
-	q.nat64Resolver = resolver
-	q.nat64Wait = func(time.Duration) <-chan time.Time { return make(chan time.Time) }
-	r := &Runner{quality: q}
-	config := userConfig(userTarget("telecom", "ipv4", "tcp", "example.com", 443))
+	for _, order := range [][2]int{{1, 2}, {2, 1}} {
+		t.Run(fmt.Sprintf("released %d then %d", order[0], order[1]), func(t *testing.T) {
+			setNAT64(t)
+			prefixOf := func(n int) netip.Prefix {
+				return netip.MustParsePrefix(fmt.Sprintf("2606:4700:%x:1234:5678:9abc::/96", n))
+			}
+			resolver := &numberedNAT64{prefix: prefixOf}
+			q := newQualityControl()
+			q.nat64Resolver = resolver
+			q.nat64Wait = func(time.Duration) <-chan time.Time { return make(chan time.Time) }
+			r := &Runner{quality: q}
+			config := userConfig(userTarget("telecom", "ipv4", "tcp", "example.com", 443))
 
-	// Loops 1 and 2 stop right before they publish; loop 3 is free.
-	reached := make(chan int, 8)
-	release := map[int]chan struct{}{1: make(chan struct{}), 2: make(chan struct{})}
-	var hooks atomic.Int32
-	var hookMu sync.Mutex
-	nat64PublishHook = func() {
-		n := int(hooks.Add(1))
-		reached <- n
-		hookMu.Lock()
-		gate := release[n]
-		hookMu.Unlock()
-		if gate != nil {
-			<-gate
-		}
-	}
-	t.Cleanup(func() { nat64PublishHook = nil })
+			reached := make(chan int, 8)
+			finished := make(chan bool, 8)
+			release := map[int]chan struct{}{1: make(chan struct{}), 2: make(chan struct{})}
+			var hooks atomic.Int32
+			nat64PublishHook = func() {
+				n := int(hooks.Add(1))
+				reached <- n
+				if gate := release[n]; gate != nil {
+					<-gate
+				}
+			}
+			nat64PublishDoneHook = func(stored bool) { finished <- stored }
+			t.Cleanup(func() { nat64PublishHook, nat64PublishDoneHook = nil, nil })
 
-	start := func() context.CancelFunc {
-		ctx, cancel := context.WithCancel(context.Background())
-		r.startNAT64Discovery(ctx, &config)
-		return cancel
-	}
-	cancel1 := start()
-	if n := <-reached; n != 1 {
-		t.Fatal(n)
-	}
-	cancel1() // stopped (device disabled) while it is about to publish
-	cancel2 := start()
-	if n := <-reached; n != 2 {
-		t.Fatal(n)
-	}
-	cancel2() // stopped again before the third resume
-	cancel3 := start()
-	defer cancel3()
-	if n := <-reached; n != 3 {
-		t.Fatal(n)
-	}
-	waitForAgentCondition(t, "newest loop published", func() bool {
-		set := nat64Snapshot.Load()
-		return set != nil && len(set.checked) == 1 && set.checked[0] == prefixOf(3)
-	})
-	// The old loops are released in both orders and publish late.
-	close(release[2])
-	close(release[1])
-	time.Sleep(100 * time.Millisecond)
-	set := nat64Snapshot.Load()
-	if set == nil || len(set.checked) != 1 || set.checked[0] != prefixOf(3) {
-		t.Fatalf("a superseded loop overwrote the newest result: %+v", set)
+			start := func() context.CancelFunc {
+				ctx, cancel := context.WithCancel(context.Background())
+				r.startNAT64Discovery(ctx, &config)
+				return cancel
+			}
+			expect := func(want int) {
+				t.Helper()
+				select {
+				case n := <-reached:
+					if n != want {
+						t.Fatalf("loop %d reached the publish, want %d", n, want)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("loop %d never reached the publish", want)
+				}
+			}
+			cancel1 := start()
+			expect(1)
+			cancel1() // stopped (device disabled) while it is about to publish
+			cancel2 := start()
+			expect(2)
+			cancel2() // stopped again before the third resume
+			cancel3 := start()
+			defer cancel3()
+			expect(3)
+			select {
+			case stored := <-finished: // loop 3
+				if !stored {
+					t.Fatal("the newest loop did not publish")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("the newest loop never finished")
+			}
+			for _, n := range order {
+				close(release[n])
+				select {
+				case stored := <-finished:
+					if stored {
+						t.Fatalf("superseded loop %d published", n)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatalf("superseded loop %d never finished", n)
+				}
+			}
+			set := nat64Snapshot.Load()
+			if set == nil || len(set.checked) != 1 || set.checked[0] != prefixOf(3) {
+				t.Fatalf("a superseded loop overwrote the newest result: %+v", set)
+			}
+		})
 	}
 }
