@@ -42,7 +42,7 @@ go test ./... -count=1
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
 5. **推送顺序（每一步推送都先让维护者确认）：**
-   1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `main` 拉出（`main` 只包含已正式发布的版本）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
+   1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
    2. 对发布提交打**带注释**的 tag `vX.Y.Z`，只推这个 tag。
    3. `gh release create vX.Y.Z --verify-tag --title "404-probe vX.Y.Z Stable" --notes-file RELEASE_NOTES_vX.Y.Z.md --latest=false`，附上这 7 个文件。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
    4. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。**升级前后各记录一次状态快照并对比（R05）**：升级前 `python3 -I scripts/agent-state-snapshot.py collect --label before --out <仓库外目录> <测试 Agent 的 SSH 别名…>`，升级后 `--label after`，再 `python3 -I scripts/agent-state-snapshot.py compare <目录> before after`。快照只读采集版本、二进制哈希、`agent.env` 的各项设置（密钥只记“已设置/为空”）、每个 systemd 单元（含 drop-in）或 OpenRC 脚本的哈希、实际生效的沙箱选项、服务状态；版本、二进制哈希、进程是升级预期会变的，其他任何差异（单元文件、沙箱、设置、权限、服务不再运行）都要查清，命令退出码为 1。快照放在仓库外（例如 `release-records` 的版本目录），不提交。
@@ -67,11 +67,11 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
 
 ## 测试机
 
-共 5 台测试机（DE、FR、NL 三台 Podman 已退役，不再使用），具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
+登记 5 台测试机，当前可用 4 台（东京 512M 不再使用；DE、FR、NL 三台 Podman 已退役，不再登记），具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
 
 - 1 台 Debian 12，作 Server。
 - 2 台 Debian Agent（Debian 12 和 Debian 13）。
-- 2 台 Alpine 3.24 Agent（OpenRC），**都是容器**（没有 D-Bus 系统总线，`systemd-run` 不可用，CAP_NET_RAW 等能力受限，安装器的沙箱探测 `sandbox_probe` 在这里才有意义）：一台 128 MiB 内存（arm64，cgroup 限制，用来验证内存是否稳定），另一台东京 512 MiB（SSH 经常超时，**不再使用**）。
+- 2 台 Alpine 3.24 Agent（OpenRC），**都是容器**（能力受限，例如没有 CAP_NET_RAW，ICMP 会被报告为不可用）。OpenRC 路径没有 systemd 沙箱：安装器的 `sandbox_prepare` 在 OpenRC 下直接返回，只有 systemd 路径才调用 `sandbox_probe`，后者现在只由 `scripts/test-install-sandbox.sh` 覆盖（原来由已退役的 Debian Podman 做过真机验证）：一台 128 MiB 内存（arm64，cgroup 限制，用来验证内存是否稳定），另一台东京 512 MiB（SSH 经常超时，**不再使用**）。
 
 使用规则：
 - 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；安装系统软件、改防火墙、重启机器要先问。
