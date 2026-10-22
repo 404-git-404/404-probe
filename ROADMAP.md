@@ -14,9 +14,9 @@
 6. 编号：M 系列是原始模块规划（M01–M19，可扩展到 M20+）；R 系列是后来新增的事项。编号一经分配不再复用。
 7. 每项的“施工方”为：待定、Claude Code 或 Codex，由维护者分配。
 
-## 当前状态（2026-10-19）
+## 当前状态（2026-10-22）
 
-- 最新正式版：v1.0.4（数据库 schema 32）。
+- 最新正式版：v1.0.4（数据库 schema 32）。v1.0.5 开发已全部完成（R01–R07、R20、R22、R23，数据库 schema 34），进入发布准备；R21 在正式发布并 Web 升级验证成功后执行。
 - M01–M12 已完成；M13-A 已完成，M13-Final 待做。
 - v1.0.3 发现的 M05（Mini 曲线）、M10（V4/V6 显示）、M11（YouTube 解析回归）已在 v1.0.4 修复。
 
@@ -25,17 +25,20 @@
 | 版本 | 内容 |
 |---|---|
 | v1.0.5 | R01–R07、R20–R23：收尾小修、双模型试运行、网络质量目标改造、第三方声明、YouTube 检测整理 |
-| v1.0.6 | R09 + M14：设备详情页改版、网络质量详情 |
+| v1.0.6 | R09 + M14：设备详情页改版、网络质量详情；R25：TCP Mini 告警重新设计（与 M14 一起做） |
 | v1.0.7 | M15 分类分组标签 + M16 顶部总览 + R19 全局网络质量开关 |
 | v1.0.8 | M17 紧凑列表 + R10–R13 面板管理 |
 | v1.1.0 | M13-Final → M18 → M19 |
-| 待定 | R08、R14–R18、R24、M20+ |
+| 待定 | R08、R14–R18、R24、R26、M20+ |
 
 ---
 
 ## v1.0.5 — 收尾、小修、双模型试运行、网络质量目标改造
 
-执行顺序：
+状态（2026-10-22）：**开发全部完成**，已验收：R01、R02、R03-1、R04、R05、R06、R07（阶段 A–E，含维护者亲自检查和 4 项反馈的修复）、R20、R22、R23；
+待做：发布准备（版本号、README、RELEASE_NOTES、独立 High 评审、发布流程）和发布后的 R21。
+
+执行顺序（原计划）：
 - 已完成：R01。
 - Claude Code：R22+R23 第 1 阶段（调查）→ R07 阶段 A（设计）→ R22+R23 第 2 阶段 → R07 阶段 B–E → R05 → 发布 → R21。
 - Codex：R06 修改 → R20 → R03-1 → R02 → R04，逐个验收。R03-1 如需修改 `app.js`，退回给 Claude Code。
@@ -46,7 +49,7 @@
 - R07（阶段 A 设计说明、阶段 B、阶段 C）和发布前的独立 High 评审：额外由 GPT（high）做独立评审。
 - R07 阶段 A 由 Claude Code 使用 Opus 或 high 档完成。
 
-### R01 双模型开发规则与 AGENTS.md（施工方：Claude Code）
+### R01 双模型开发规则与 AGENTS.md（施工方：Claude Code） — ✅ 已完成
 - 新增简短的 `AGENTS.md`，要求：先完整阅读 `CLAUDE.md` 和 `CLAUDE.local.md` 并遵守；只做已批准的范围和验收标准；不改无关模块；未经批准不开始下一个模块；不发布、不打 tag、不部署、不合并；遇到 `CLAUDE.md` 要求调用 Claude 专属子代理（如 `release-decider`）的地方，停下来交给维护者决定，不得声称已经调用；如实报告测试结果、失败和限制。
 - `CLAUDE.md`：删除“v1.0.5 及以后的待办”一节，改为指向本文件；加入双模型规则：
   - 每个施工方使用独立的 git worktree 和分支，不共用工作目录；
@@ -56,26 +59,26 @@
   - 测试 Server 同一时间只给一方使用，由维护者安排；
   - 模块完成后由另一方做只读交叉评审，以此代替一轮模块评审；发布前仍保留一次独立 High 评审。
 
-### R02 v1.0.4 评审建议（施工方：Codex）
+### R02 v1.0.4 评审建议（施工方：Codex） — ✅ 已完成
 - 一键安装在 `oneclick_redeem_token` 子 shell 中失败（响应解析失败或未知状态码）时，报错加上“token 可能已被使用，请在面板重新生成命令”。
 - 沙箱探测最坏情况会长时间没有输出：开头加提示“正在检测运行环境…”，并缩短单次超时。
 - 非法 UTF-8 下，Go 和 bash 的密码长度计数不一致（低优先级，Server 端会再次校验）。
 
-### R03 小的显示问题
+### R03 小的显示问题 — R03-1 ✅ 已完成；R03-2 并入 R07，✅ 已完成
 - R03-1（施工方：Codex）：公网 IP 冷却提示只写时间、不写日期（“可在 23:59 后”），改为带日期。如需修改 `app.js`，退回给 Claude Code。
 - R03-2（施工方：Claude Code，并入 R07-6）：网络质量关闭后，卡片仍显示地区和“暂无有效 RTT”，应显示“已关闭”。
 - 备注（不作为施工任务）：一键安装曾出现过笼统的“生成失败”，原因未查明。现在已有具体错误码，再出现时据此排查。
 
-### R04 Agent 升级演练脚本参数化（施工方：Codex）
+### R04 Agent 升级演练脚本参数化（施工方：Codex） — ✅ 已完成
 - `scripts/test-agent-upgrade-systemd.sh` 目前写死 v0.9.3→v1.0.0，跑不了。改为可以指定起始版本和目标版本，并支持本地产物目录。
 
-### R05 升级前状态快照（施工方：Claude Code）
+### R05 升级前状态快照（施工方：Claude Code） — ✅ 已完成（`scripts/agent-state-snapshot.py`，CLAUDE.md 发布流程已写入）
 - 在发布流程中加入：Web 升级验证前，记录各测试 Agent 的状态快照（版本、加固方式、开关、单元文件哈希），升级后逐项对比。
 
-### R06 第三方代码审计（施工方：Codex）
+### R06 第三方代码审计（施工方：Codex） — ✅ 已完成
 - 审计 Komari 以外的第三方代码，包括 `web/static/vendor`，新增 `THIRD_PARTY_NOTICES.md`。
 
-### R07 网络质量目标改造（施工方：Claude Code；分阶段授权、分阶段验收：A 设计 → B Server → C Agent → D 前端 → E 集成与真机验证）
+### R07 网络质量目标改造（施工方：Claude Code；分阶段授权、分阶段验收：A 设计 → B Server → C Agent → D 前端 → E 集成与真机验证） — ✅ 已完成（阶段 A–E，2026-10-22 验收）
 v1.0.4 已有的基础：
 - 迁移 31 删除了旧的手动目标（历史保留）；
 - Agent 拒绝非公网地址（unsafe_address），已接入实际的检测连接；
@@ -107,33 +110,33 @@ v1.0.4 已有的基础：
 - R07-8：升级：v1.0.4 的卡槽保留地区和 ISP 标签，转为“内置”类型，地址留空、全部不勾选；历史保留。
 - 验收：旧 Agent 兼容；历史数据保留；不改动 M14 详情页的图表。
 
-### R20 第三方声明嵌入二进制（施工方：Codex）
+### R20 第三方声明嵌入二进制（施工方：Codex） — ✅ 已完成
 - 把 `THIRD_PARTY_NOTICES.md` 嵌入 Server 和 Agent 二进制，加 `licenses` 子命令输出；不新增发布文件（发布清单仍是 7 个）。
 - 来源：R06 评审（release-decider 结论：发布前处理，嵌入二进制，不加第 8 个发布文件）。
 - 测试：嵌入内容非空、无 CR、含附录标题；构建后 `licenses` 输出与发布提交中的文件一致。
 - 不新增数据库迁移，不改 `app.js`。
 
-### R21 删除 v1.0.5 之前的所有 GitHub release（施工方：Claude Code）
+### R21 删除 v1.0.5 之前的所有 GitHub release（施工方：Claude Code） — ⏳ 发布后执行
 - 执行时机：v1.0.5 正式发布且 Web 升级验证成功之后。
 - 删除前，把全部 release 产物下载备份到 `D:\Claude-Github\release-archive\`。
 - 只删 release，保留 git tag。
 - 每删一个之前先由维护者确认。
 
-### R22 移除 gg-status 依赖，YouTube 检测只保留 YouTube 一项（施工方：Claude Code）
+### R22 移除 gg-status 依赖，YouTube 检测只保留 YouTube 一项（施工方：Claude Code） — ✅ 已完成
 - 移除测试中的 gg-status 原脚本拷贝（`testdata/gg-status.canonical`）和对照测试，改用项目自己的真实样本作为测试基准。
 - 删除 Google Search、Sign-in、Gemini 三项检测的残留代码，以及文件头的 gg-status 来源注释。
 - YouTube 检测逻辑保留，除 R23 的修复外行为不变。
 - 与 R23 合并，分 2 阶段：先调查（第 1 阶段），再修复（第 2 阶段）。
 
-### R23 YouTube 地区误判（施工方：Claude Code，与 R22 合并，分 2 阶段：调查 → 修复）
+### R23 YouTube 地区误判（施工方：Claude Code，与 R22 合并，分 2 阶段：调查 → 修复） — ✅ 已完成
 - 现象：gg-status 显示 CN，404-probe 显示 US。v1.0.3 有意去掉了 google.cn 判据。
 
 ### v1.0.5 发布时的事项
 - README 删除 zstatic 致谢。
-- 按最终的 `go.mod` 和代码复核 `THIRD_PARTY_NOTICES.md`；zstatic、gg-status 两节随 R07 和 R22 删除或更新。
-- 按 R06 评审的建议更新 `AGENTS.md`：报告中主动列出联网操作和临时环境变量；沙箱中 `GOCACHE` 可以用临时目录，不设置 `GOTOOLCHAIN`。
-- `CLAUDE.md` 发布流程写明：发布产物必须在主仓库 `D:\Claude-Github\404-probe` 或 `core.autocrlf=false` 的干净克隆中构建，不能在 git worktree 中构建（Windows 上 Go 1.26.8 不会为 worktree 写入 VCS 信息，构建门禁会失败；Linux worktree 尚未实测）。
-- `CLAUDE.md` 基线失败列表加入 `internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（Windows 下约 5% 偶发失败，v1.0.4 基准上同样存在，见 `release-records\v1.0.5\R20-supplement-20261020.md`）；是否修复这个测试见“待定”中的 R24。
+- ✅（2026-10-22 已做）按最终的 `go.mod` 和代码复核 `THIRD_PARTY_NOTICES.md`；zstatic、gg-status 两节随 R07 和 R22 删除或更新。
+- ✅（已做）按 R06 评审的建议更新 `AGENTS.md`：报告中主动列出联网操作和临时环境变量；沙箱中 `GOCACHE` 可以用临时目录，不设置 `GOTOOLCHAIN`。
+- ✅（已做）`CLAUDE.md` 发布流程写明：发布产物必须在主仓库 `D:\Claude-Github\404-probe` 或 `core.autocrlf=false` 的干净克隆中构建，不能在 git worktree 中构建（Windows 上 Go 1.26.8 不会为 worktree 写入 VCS 信息，构建门禁会失败；Linux worktree 尚未实测）。
+- ✅（已做）`CLAUDE.md` 基线失败列表加入 `internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（Windows 下约 5% 偶发失败，v1.0.4 基准上同样存在，见 `release-records\v1.0.5\R20-supplement-20261020.md`）；是否修复这个测试见“待定”中的 R24。
 
 ---
 
@@ -182,6 +185,16 @@ M14-C 网络指标
 M14-D SQLite/API
 - 现有历史粒度：最近 24 小时为 1 分钟桶，最近 7 天为 5 分钟桶，最近 30 天为 1 小时桶。不能从 1 小时桶反推出小时内部的分钟尖峰。
 - 核查现有历史接口和索引能否直接复用；设计任意 from/to 时间范围的查询；按时间跨度选择真实存在的粒度；支持查询历史目标和配置版本；避免前端一次加载大量不需要的数据；对查询时长和结果大小设置限制。
+
+
+### R25 TCP Mini 告警重新设计（与 M14 一起做；施工方：待定）
+- 现状：TCP Mini 用每分钟的 P95 判断告警（超过 2000 ms）。网络质量检测的频率是 30–300 秒，也就是每分钟只有约 2 个样本（30 秒频率时 2 个，60 秒时 1 个），此时 P95 实际就是最大值：**单次慢连接就会触发告警，并且持续到之后某一天出现正常 TCP 分钟为止，可能整天显示告警**。v1.0.5 的维护者检查里看到的就是这个现象（旧告警跨天保留）。
+- 方向（具体方案在 M14 设计阶段确认）：
+  - 样本不足（一分钟内样本数低于阈值）时不判断，既不是告警也不是正常；
+  - 看持续性：连续多个分钟、或同一线路多个样本都超阈值才算告警；
+  - 单次尖峰降级显示：只作为“出现过一次尖峰”的提示，不占用告警状态；
+  - 告警依据与曲线对应：告警说明里指出具体哪几分钟、哪条线路、多少样本，曲线上能找到同一批点。
+- 约束：不改变 v1.0.5 的 N6 规则（没有正在检测的 IPv4 TCP 线路时不显示旧告警）；Agent 协议和已存证据的迁移另行评估。
 
 ---
 
@@ -302,5 +315,6 @@ v1.0.5 起不再内置第三方目标，目标和地区、ISP 标签都由用户
 - R16：ASN 数据来源（IP→ASN 数据库或外部查询），涉及新依赖和隐私，需要单独讨论。
 - R17：性能基准测试（Agent 端跑分），是 M19 性能维度的前提。
 - R18：项目许可证，在公开推广或接受外部贡献之前确定。
-- R24：`internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint` 在 Windows 下约 5% 偶发失败（v1.0.4 基准上同样存在），是否修复，另行讨论。
+- R24：Windows 下偶发失败的两个测试是否修复，另行讨论：`internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（约 5%，v1.0.4 基准上同样存在）和 `internal/agent` 的 `TestRCHelperNegotiationDoesNotTrustOldV2`（约 25%，负载下超时）。两者在 Linux 上通过；已写入 CLAUDE.md 的基线失败列表。
+- R26（待定新增）：容器类 Agent（Alpine、Podman）直接隐藏网络质量功能。目前不添加目标即可，效果相同（没有目标就没有检测，卡片显示“未配置目标”），所以不急；是否值得做另行讨论。
 - M20+：未来新增的模块。
