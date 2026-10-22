@@ -43,16 +43,16 @@ func tcpMiniObserveMinuteTx(ctx context.Context, tx *sql.Tx, id string, series, 
 		return nil
 	}
 	var wire []byte
-	var targetJSON string
-	err := tx.QueryRowContext(ctx, `SELECT b.data,t.payload FROM quality_buckets b JOIN quality_series s ON s.id=b.series_id JOIN quality_targets t ON t.id=s.target_id WHERE b.series_id=? AND b.resolution=60000 AND b.bucket_start=? AND s.agent_id=? AND s.semantics='staged_probe_v2'`, series, minute, id).Scan(&wire, &targetJSON)
+	var targetID, targetJSON string
+	err := tx.QueryRowContext(ctx, `SELECT b.data,t.id,t.payload FROM quality_buckets b JOIN quality_series s ON s.id=b.series_id JOIN quality_targets t ON t.id=s.target_id WHERE b.series_id=? AND b.resolution=60000 AND b.bucket_start=? AND s.agent_id=? AND s.semantics='staged_probe_v2'`, series, minute, id).Scan(&wire, &targetID, &targetJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	var target protocol.QualityTarget
-	if err = json.Unmarshal([]byte(targetJSON), &target); err != nil {
+	target, err := qualityTargetFromPayload(targetID, targetJSON)
+	if err != nil {
 		return err
 	}
 	if target.Protocol != "tcp" || target.Family != "ipv4" {
