@@ -44,7 +44,9 @@
       const keep=new Set(config.targets.filter(t=>card.previous?.some(p=>p.id===t.id&&p.family===t.family&&p.protocol===t.protocol&&p.slot===t.slot&&p.slot_revision===t.slot_revision&&p.status===t.status)).map(t=>t.id));
       card.data=new Map([...card.data].filter(([id])=>keep.has(id)));
       card.generation++;card.loading.clear();queue.release(card.historyOwner);
-      if(history?.card===card)closeHistory();
+      // An open history is left alone when the target it shows is still there (the Server reports another lane differently,
+      // a state changes): closing it would throw away its place in the page. It closes when its target is gone or replaced.
+      if(history?.card===card){const kept=config.targets.find(t=>t.id===history.target.id&&t.slot===history.target.slot&&t.family===history.target.family&&t.protocol===history.target.protocol&&t.slot_revision===history.target.slot_revision);if(kept)history.target=kept;else closeHistory();}
       card.previous=config.targets;
       renderCard(card);refreshCard(card);
       onConfig?.(card.id,config);
@@ -449,6 +451,20 @@
       }catch(error){if(history===h&&h.generation===generation&&error.name!=='AbortError'){h.error='读取失败；保留上次结果，不代表当前状态';renderHistory();}}
       finally{if(history===h&&h.generation===generation)h.loading=false;}
     }
+    // One axis, one number of decimals (1.36 ... 1.52 ms must not read 1.5 / 1.52), and a width taken from the labels themselves.
+    const AXIS_FONT='12px system-ui,sans-serif';let measure;
+    const decimals=n=>{const t=String(+n.toFixed(6));return t.includes('.')?t.split('.')[1].length:0;};
+    function axisLabels(ticks,kind){
+      if(kind==='ratio')return ticks.map(v=>`${v}%`);
+      const d=Math.min(4,Math.max(0,...ticks.map(decimals)));
+      return ticks.map(v=>`${v.toFixed(d)} ms`);
+    }
+    function axisWidth(values){
+      measure=measure||(doc.createElement('canvas').getContext?.('2d')||null);
+      if(!measure||!values)return 64;
+      measure.font=AXIS_FONT;
+      return Math.ceil(Math.max(0,...values.filter(Boolean).map(t=>measure.measureText(t).width)))+18; // tick mark and gap
+    }
     function renderHistory(){
       if(!history||!historyActive(history))return;const dialog=historyContainer();if(!dialog)return;
       const h=history,focused=dialog.contains(doc.activeElement)?doc.activeElement?.dataset?.nqField:null;destroyPlot();
@@ -472,7 +488,7 @@
       const width=()=>Math.max(240,Math.floor(chart.getBoundingClientRect().width));
       plot=new Plot({width:width(),height:320,legend:{show:true},cursor:{drag:{x:false,y:false}},
         scales:{x:{time:true},y:h.kind==='ratio'?{range:()=>[0,100]}:{auto:true}},
-        axes:[{stroke:color,grid:{stroke:'#8883'}},{stroke:color,grid:{stroke:'#8883'},values:(_u,ticks)=>ticks.map(v=>h.kind==='ratio'?`${v}%`:`${v} ms`)}],
+        axes:[{stroke:color,grid:{stroke:'#8883'}},{stroke:color,font:AXIS_FONT,grid:{stroke:'#8883'},values:(_u,ticks)=>axisLabels(ticks,h.kind),size:(_u,values)=>axisWidth(values)}],
         series:[{},...data.slice(1).map((_col,i)=>({label:h.kind==='latency'?(i===0?'P50':'P95'):r.label,stroke:i===0?'#65b9a6':'#dfaa65',spanGaps:false,width:2}))],
         hooks:{setCursor:[u=>{const b=adapted.blocks[u.cursor.idx];tooltip.textContent=b?C.blockText(b,h.target.protocol):'';}]}
       },data,chart);
@@ -504,7 +520,10 @@
       // Production lifecycle hooks exposed for deterministic synthetic verification.
       snapshot:()=>({requests:queue.snapshot(),cards:cards.size,panel:panel?{dirty:dirty(panel),base:panel.base,draft:structuredClone(panel.draft),guard:panel.guard,message:panel.message,outdated:panel.outdated}:null,history:history?{target:history.target.id,family:history.target.family,hours:history.hours,kind:history.kind}:null}),
       releaseHistory:closeHistory,
-      openHistoryFor(id,targetId,family,kind,trigger){const card=cards.get(id),target=card?.config?.targets?.find(t=>t.id===targetId&&t.family===family);if(!target||!['latency','ratio'].includes(kind))return false;openHistory(card,target,kind,trigger);return true;},
+      openHistoryFor(id,targetId,family,kind,trigger){const card=cards.get(id),target=card?.config?.targets?.find(t=>t.id===targetId&&t.family===family);if(!target||!['latency','ratio'].includes(kind))return false;
+        // Asked for what is already open (the page restores its history after every configuration change): nothing to do.
+        if(history?.card===card&&history.target.id===target.id&&history.target.family===target.family&&history.kind===kind)return true;
+        openHistory(card,target,kind,trigger);return true;},
       setVisible:(id,value)=>{const card=cards.get(id);if(card)setVisible(card,value);},tick};
   }
   if(typeof module==='object'&&module.exports)module.exports={create};else root.NetworkQuality={create};

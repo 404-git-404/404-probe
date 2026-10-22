@@ -21,23 +21,27 @@ before(async () => { if (available) browser = await chromium.launch({headless: t
 after(async () => { await browser?.close(); });
 
 // A page with the production scripts and CSS; the Server answers from memory with the given v4 response.
-async function open(raw, {dialog = true, history = null} = {}) {
+async function open(raw, {dialog = true, history = null, plot = false, host = false} = {}) {
   const page = await browser.newPage({viewport: {width: 1000, height: 800}}), errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host"></div><dialog id="network-quality-history"></dialog></body></html>');
   for (const css of ['style.css', 'network-quality.css']) await page.addStyleTag({content: read(css)});
+  if (plot) { await page.addStyleTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.min.css'), 'utf8')}); await page.addScriptTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.iife.min.js'), 'utf8')}); }
   for (const js of ['agent-state.js', 'management.js', 'network-quality-core.js', 'network-quality.js']) await page.addScriptTag({content: read(js)});
-  await page.evaluate(({raw, agent, history}) => {
-    window.__hist = history;
+  await page.evaluate(({raw, agent, history, plot, host}) => {
+    window.__hist = history; window.__plots = [];
+    const Plot = plot ? function(opts, data, target) { const u = new window.uPlot(opts, data, target); window.__plots.push(u); return u; } : undefined;
+    // The device-details dialog hosts the history in a container that scrolls (its body): the same shape here.
+    const historyHost = host ? (() => { const wrap = document.createElement('div'); wrap.id = 'scroller'; wrap.style.cssText = 'height:300px;overflow:auto;width:700px'; const box = document.createElement('div'); box.id = 'history-box'; wrap.append(box); document.body.append(wrap); return {container: () => box, active: () => true, open() {}, close() {}}; })() : null;
     window.__raw = raw; window.__writes = []; window.__gets = 0; window.__clock = 0;
     const now = () => 1800000000000 + window.__clock;
     window.__q = window.NetworkQualityCore.coordinator({now});
-    window.__ui = window.NetworkQuality.create({coordinator: window.__q, now, fetcher: async (url, init = {}) => { if (window.__hist && url.includes('card-history')) return {ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(window.__hist.card)}; if (init.method === 'PUT') window.__writes.push(JSON.parse(init.body)); else if (url.endsWith('/v4/config')) window.__gets++; return {ok: true, status: 200, statusText: 'OK', json: async () => window.__raw}; },
+    window.__ui = window.NetworkQuality.create({coordinator: window.__q, now, ...(Plot ? {Plot} : {}), ...(historyHost ? {historyHost} : {}), onConfig: id => { if (window.__restoreTarget) window.__ui.openHistoryFor(id, window.__restoreTarget, 'ipv4', 'latency', document.body); }, fetcher: async (url, init = {}) => { if (window.__hist && url.includes('card-history')) return {ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(window.__hist.card)}; if (init.method === 'PUT') window.__writes.push(JSON.parse(init.body)); else if (url.endsWith('/v4/config')) window.__gets++; return {ok: true, status: 200, statusText: 'OK', json: async () => window.__raw}; },
       csrf: () => 'synthetic', interval: () => 0, clear() {}, Observer: null, Resize: null});
     const node = window.__ui.mount({agent_id: agent, name: '合成设备'});
     document.getElementById('host').append(node);
     window.__ui.setVisible(agent, true);
-  }, {raw, agent: AGENT, history});
+  }, {raw, agent: AGENT, history, plot, host});
   await page.waitForFunction(() => document.querySelector('.nq-link'));
   await page.waitForTimeout(150);
   if (dialog) {
@@ -186,6 +190,72 @@ test('D1 (Chromium): the card shows data from the real Server card-history answe
     const cells = await page.evaluate(() => [...document.querySelectorAll('.nq-row')[0].querySelectorAll('.nq-tcp-blocks .nq-block')].map(b => b.className));
     assert.equal(cells.length, 12);
     assert.ok(cells.some(c => /nq-low/.test(c)), cells.join(','));
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+// 1h answer of the Server with the latency of the maintainer's screenshot: P50 1.36 - 1.47 ms, P95 up to 1.52 ms.
+const narrowRange = () => { const h = load('history-card-tcp'), points = h.groups[0].points; points.forEach((p, i) => { p.p50_ms = 1.36 + i * 0.01; p.p95_ms = 1.4 + i * 0.01; p.count = 6; p.valid_rtts = 6; p.probe_attempts = 6; p.probe_successes = 6; p.connect_attempts = 6; p.connect_successes = 6; }); return h; };
+const openHistory = async (page, targetId) => page.evaluate(id => window.__ui.openHistoryFor('f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1', id, 'ipv4', 'latency', document.body), targetId);
+const laneId = raw => raw.lanes.find(l => l.slot === 'telecom' && l.family === 'ipv4' && l.protocol === 'tcp').target_id;
+
+test('O1 (Chromium): the Y axis of the history plot is wide enough for its labels and uses one number of decimals (1.36-1.52 ms)', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const raw = load('v4-running'), history = {card: narrowRange()};
+  const {page, errors} = await open(raw, {dialog: false, history, plot: true});
+  try {
+    await page.waitForFunction(() => document.querySelector('.nq-link'));
+    assert.equal(await openHistory(page, laneId(raw)), true);
+    await page.waitForFunction(() => window.__plots.length > 0, null, {timeout: 8000});
+    const axis = await page.evaluate(() => { const u = window.__plots.at(-1), y = u.axes[1], labels = y._values || [];
+      const ctx = document.createElement('canvas').getContext('2d'); ctx.font = (y.font && y.font[0]) || '12px system-ui';
+      return {labels, size: y._size, widest: Math.max(...labels.filter(Boolean).map(t => ctx.measureText(t).width)), font: ctx.font}; });
+    const shown = axis.labels.filter(Boolean);
+    assert.ok(shown.length >= 3, JSON.stringify(axis));
+    const decimals = new Set(shown.map(t => (t.match(/\.(\d+)/) || [, ''])[1].length));
+    assert.equal(decimals.size, 1, 'one number of decimals on the axis: ' + shown.join(' | '));
+    assert.ok(axis.size >= axis.widest, 'the axis is as wide as its widest label (' + axis.size + ' < ' + axis.widest + '): ' + shown.join(' | '));
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('Scroll (Chromium): a refresh of the history keeps the scroll position of the container it lives in', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const raw = load('v4-running'), history = {card: narrowRange()};
+  const {page, errors} = await open(raw, {dialog: false, history, plot: true, host: true});
+  try {
+    await page.waitForFunction(() => document.querySelector('.nq-link'));
+    assert.equal(await openHistory(page, laneId(raw)), true);
+    await page.waitForFunction(() => document.querySelector('#history-box .nq-plot canvas'), null, {timeout: 8000});
+    // Make it scroll, scroll down, then let the 30 s refresh bring a new answer.
+    await page.evaluate(() => { document.querySelector('#scroller').scrollTop = 10000; }); // as far down as it goes: the plot is below the fold
+    const before = await page.evaluate(() => document.querySelector('#scroller').scrollTop);
+    assert.ok(before > 50, 'the container scrolls: ' + before);
+    await page.evaluate(() => { window.__clock += 31000; window.__ui.tick(); });
+    await page.waitForTimeout(800);
+    const redrawn = await page.evaluate(() => window.__plots.length);
+    assert.ok(redrawn >= 2, 'the history was drawn again (' + redrawn + ' plots)');
+    assert.equal(await page.evaluate(() => document.querySelector('#scroller').scrollTop), before, 'the scroll position stays');
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('Scroll (Chromium): a change elsewhere in the configuration neither closes nor rebuilds the history that is open', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const raw = load('v4-running'), history = {card: narrowRange()};
+  const {page, errors} = await open(raw, {dialog: false, history, plot: true, host: true});
+  try {
+    await page.waitForFunction(() => document.querySelector('.nq-link'));
+    const id = laneId(raw);
+    await page.evaluate(id => { window.__restoreTarget = id; }, id);
+    assert.equal(await openHistory(page, id), true);
+    await page.waitForFunction(() => document.querySelector('#history-box .nq-plot canvas'), null, {timeout: 8000});
+    await page.evaluate(() => { document.querySelector('#scroller').scrollTop = 10000; });
+    const before = await page.evaluate(() => document.querySelector('#scroller').scrollTop);
+    assert.ok(before > 50, 'the container scrolls: ' + before);
+    // The Server reports another lane differently (the unicom target of the old fixture turns abnormal): the measurement
+    // signature of the card changes, the viewed telecom TCP target does not.
+    await page.evaluate(() => { const r = structuredClone(window.__raw); const lane = r.lanes.find(l => l.slot === 'unicom' && l.family === 'ipv4' && l.protocol === 'tcp'); lane.status = 'target_abnormal'; lane.condition = 'not_found'; window.__raw = r; window.__clock += 31000; window.__ui.tick(); });
+    await page.waitForTimeout(1200);
+    assert.equal(await page.evaluate(() => document.querySelector('#scroller').scrollTop), before, 'the scroll position stays');
+    assert.equal(await page.evaluate(() => /正在读取指定目标/.test(document.querySelector('#history-box').innerText)), false, 'the history was not rebuilt from scratch');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });
