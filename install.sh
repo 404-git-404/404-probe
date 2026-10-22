@@ -3447,13 +3447,14 @@ restore_server_upgrade() {
       ;;
     *) return 1 ;;
   esac
-  # The restored version itself must read its database without migration.
-  # This command also exists in the supported v0.9.3 Server. Older binaries
-  # without it fail closed, preserving backup/pending for manual recovery.
-  runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" database verify --db "${SERVER_DATABASE}" >/dev/null || {
-    printf '404-probe installer: restored Server cannot verify its database; recovery remains pending\n' >&2
-    return 1
-  }
+  # The restored files are the verified backup, byte for byte: restore_server_files_from_backup copied them and
+  # verify_restored_server_files has just compared the SHA-256 of the database, its WAL, its SHM and the Server
+  # binary with the backup, which itself passed verify_server_upgrade_backup (also SHA-256). A restored database
+  # that is identical to the backup is as readable as it was before the upgrade, so that is the success criterion.
+  # The restored (older) Server binary is no longer asked to read the database: its `database verify` has a fixed
+  # 30 second limit that a larger database exceeds, and failing there would leave a correct restore pending.
+  # The phases that restore nothing (prepared, stopped-unbacked) never touched the database: the migration starts
+  # only after backup-complete.
   if (( enabled != 0 )); then systemctl enable 404-probe-server.service >/dev/null || return 1
   else systemctl disable 404-probe-server.service >/dev/null || return 1; fi
   if (( active != 0 )); then

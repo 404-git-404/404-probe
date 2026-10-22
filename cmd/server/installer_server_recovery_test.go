@@ -70,6 +70,10 @@ func TestInstallerM12RecoveryPreservesPendingUntilHealthy(t *testing.T) {
 	if start < 0 || end < 0 {
 		t.Fatal("cannot isolate recovery functions")
 	}
+	restoreStart := strings.Index(s[start:start+end], "restore_server_upgrade() {")
+	if restoreStart < 0 || strings.Contains(s[start+restoreStart:start+end], "database verify --db") {
+		t.Fatal("recovery must not ask the restored Server binary for database verify (its fixed 30 second limit fails on a larger database)")
+	}
 	rootNative := t.TempDir()
 	root := shellTestPath(rootNative)
 	functions := filepath.Join(rootNative, "recovery.sh")
@@ -94,12 +98,14 @@ reject_openrc_deferred() { :; }
 release_version() { [[ "$1" == v1.0.3 ]]; }
 server_upgrade_state_value() { sed -n "s/^$1=//p" "${SERVER_UPGRADE_STATE}"; }
 verify_server_upgrade_backup() { [[ -f "${SERVER_UPGRADE_BACKUP}/complete" ]]; }
-sync() { :; }
+# A write after the copy, the way a failing disk or a stray process would leave the restored files differing from the backup.
+sync() { if [[ "${fault}" == corrupt && -f "${SERVER_DATABASE}" ]]; then printf x >>"${SERVER_DATABASE}"; fi; }
 clear_server_upgrade_state() { printf clear >>"${task_root}/events"; rm "${SERVER_UPGRADE_STATE}"; }
+# The restored (older) Server binary is never asked to verify the database: its fixed 30 second limit fails on a
+# larger database. Recovery is judged by the SHA-256 comparison with the backup alone.
 runuser() {
-  [[ "$4" == "${SERVER_BINARY}" && "$5 $6 $7" == 'database verify --db' && "$8" == "${SERVER_DATABASE}" ]]
-  printf verify >>"${task_root}/events"
-  [[ "${fault}" != unreadable && "$(cat "${SERVER_DATABASE}")" == old-db ]]
+  printf runuser >>"${task_root}/events"
+  return 97
 }
 systemctl() {
   case "$1" in
@@ -140,14 +146,14 @@ for active in 0 1; do
     [[ "$(cat "${SERVER_BINARY}")" == old-binary ]]
     [[ "$(cat "${SERVER_DATABASE}-wal")" == old-wal && "$(cat "${SERVER_DATABASE}-shm")" == old-shm ]]
     if (( active )); then
-      [[ "$(cat "${task_root}/events")" == verifystarthealthclear && "$(cat "${task_root}/active")" == active ]]
+      [[ "$(cat "${task_root}/events")" == starthealthclear && "$(cat "${task_root}/active")" == active ]]
     else
-      [[ "$(cat "${task_root}/events")" == verifyclear && "$(cat "${task_root}/active")" == inactive ]]
+      [[ "$(cat "${task_root}/events")" == clear && "$(cat "${task_root}/active")" == inactive ]]
     fi
     if (( enabled )); then [[ "$(cat "${task_root}/enabled")" == enable ]]; else [[ "$(cat "${task_root}/enabled")" == disable ]]; fi
   done
 done
-for fault in unreadable start health; do
+for fault in corrupt start health; do
   prepare 1 0
   if restore_server_upgrade; then printf 'fault unexpectedly passed: %s\n' "$fault"; exit 90; fi
   [[ -f "${SERVER_UPGRADE_STATE}" && -f "${SERVER_UPGRADE_BACKUP}/complete" && "$(cat "${task_root}/active")" == inactive ]]
@@ -156,7 +162,15 @@ for fault in unreadable start health; do
   restore_server_upgrade
   [[ ! -e "${SERVER_UPGRADE_STATE}" && "$(cat "${task_root}/active")" == active ]]
 done
-# Missing/extra/corrupt sidecars and a mismatched binary fail before SQLite.
+# Phases that restore nothing never touched the database and need no check of it either.
+fault=none
+for phase in prepared stopped-unbacked; do
+  prepare 0 1
+  sed -i "s/^phase=.*/phase=${phase}/" "${SERVER_UPGRADE_STATE}"
+  restore_server_upgrade
+  [[ ! -e "${SERVER_UPGRADE_STATE}" && "$(cat "${SERVER_DATABASE}")" == new-db && "$(cat "${task_root}/events")" == clear ]]
+done
+# Missing/extra/corrupt sidecars and a mismatched binary fail the SHA-256 comparison.
 fault=none
 prepare 0 0
 cp "${SERVER_UPGRADE_BACKUP}/server-binary" "${SERVER_BINARY}"

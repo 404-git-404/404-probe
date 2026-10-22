@@ -186,16 +186,20 @@ func databaseCommand(args []string) error {
 	mode := args[0]
 	flags := flag.NewFlagSet("database "+mode, flag.ContinueOnError)
 	dbPath := flags.String("db", "", "SQLite database path")
+	timeout := flags.Duration("timeout", 0, "time limit of the command (default: 1 second per MiB of database and WAL, at least 10 minutes, at most 2 hours)")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(*dbPath) == "" {
-		return errors.New("usage: 404-probe-server database <verify|migrate-copy|migrate-protected> --db path")
+		return errors.New("usage: 404-probe-server database <verify|migrate-copy|migrate-protected> --db path [--timeout duration]")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	limit, err := databaseTimeout(*dbPath, *timeout)
+	if err != nil {
+		return fmt.Errorf("database %s: %w", mode, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	var result storage.DatabaseVerification
-	var err error
 	if mode == "verify" {
 		result, err = storage.VerifyReadOnly(ctx, *dbPath)
 	} else if mode == "migrate-copy" {
@@ -207,6 +211,68 @@ func databaseCommand(args []string) error {
 		return fmt.Errorf("database %s: %w", mode, err)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+// The integrity check reads the whole database, so its time grows with the file: about 14 ms per MiB with
+// the bundled SQLite on a fast disk, several times that on a small VPS with a cold cache. A fixed limit made
+// the upgrade of a larger production database fail in its pre-check.
+const (
+	databaseTimeoutFloor   = 10 * time.Minute
+	databaseTimeoutCeiling = 2 * time.Hour
+	databaseTimeoutPerMiB  = time.Second
+)
+
+// databaseTimeoutForSize is 1 second per MiB of database plus WAL (a partial MiB counts as a whole one), at
+// least 10 minutes and at most 2 hours.
+func databaseTimeoutForSize(bytes int64) time.Duration {
+	if bytes < 0 {
+		bytes = 0
+	}
+	mebibytes := bytes / (1 << 20)
+	if bytes%(1<<20) != 0 {
+		mebibytes++
+	}
+	if mebibytes >= int64(databaseTimeoutCeiling/databaseTimeoutPerMiB) {
+		return databaseTimeoutCeiling
+	}
+	limit := time.Duration(mebibytes) * databaseTimeoutPerMiB
+	if limit < databaseTimeoutFloor {
+		return databaseTimeoutFloor
+	}
+	return limit
+}
+
+// databaseFilesSize is the size of the database file and its WAL; a file that does not exist counts as empty.
+func databaseFilesSize(path string) (int64, error) {
+	var total int64
+	for _, name := range []string{path, path + "-wal"} {
+		info, err := os.Stat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+		}
+	}
+	return total, nil
+}
+
+// databaseTimeout is the explicit --timeout when one is given, otherwise the size based default.
+func databaseTimeout(path string, explicit time.Duration) (time.Duration, error) {
+	if explicit < 0 {
+		return 0, errors.New("--timeout must be positive")
+	}
+	if explicit > 0 {
+		return explicit, nil
+	}
+	size, err := databaseFilesSize(path)
+	if err != nil {
+		return 0, err
+	}
+	return databaseTimeoutForSize(size), nil
 }
 
 func releaseCommand(args []string) error {
