@@ -502,7 +502,8 @@ test('N6: a running IPv4 TCP lane shows the alert with its source day and the pe
   assert.match(mark[0].textContent, new RegExp(`告警来源日 ${status.source_day}`));
   assert.match(mark[0].textContent, /告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标/);
   assert.equal(running.plot.dataset.warning, 'true');
-  assert.match(running.note.textContent, new RegExp(`告警：告警来源日 ${status.source_day}；告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标`));
+  assert.equal(running.note.textContent, '', 'the card carries only the word 告警; the explanation is its tooltip (above)');
+  assert.equal(running.note.hidden, true);
   assert.ok(!texts(running).includes('无当前 TCP 检测'));
 });
 
@@ -760,7 +761,7 @@ test('M6: switching detection off removes the old alert at once and the new answ
   c.api.bindConfig(AGENT, C.adapt(load('v4-saved-off')));
   assert.equal(c.plot.dataset.warning, 'false', 'no old alert while the new answer is awaited');
   assert.equal(c.svg().filter(n => n.dataset.alert === 'true').length, 0);
-  assert.ok(!texts(c).includes('告警') && !c.note.textContent.includes('告警来源日'));
+  assert.ok(!texts(c).includes('告警') && !c.svg().some(n => /告警来源日/.test(n.textContent)));
   for (let i = 0; i < 30; i++) { await new Promise(r => setImmediate(r)); c.api.tick(); }
   assert.ok(texts(c).includes('无当前 TCP 检测'));
   assert.equal(c.plot.dataset.warning, 'false');
