@@ -184,11 +184,10 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 		if err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
-		var target protocol.QualityTarget
-		if err := json.Unmarshal([]byte(targetJSON), &target); err != nil {
+		target, err := qualityTargetFromPayload(sample.TargetID, targetJSON)
+		if err != nil {
 			return protocol.QualityBatchResponse{}, err
 		}
-		target.ID = sample.TargetID
 		if target.Source == "user" && !userTargets {
 			ack[2] = "unauthorized"
 			out.Results = append(out.Results, ack)

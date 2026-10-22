@@ -67,12 +67,12 @@ func (s *Store) BackfillQualityBatch(ctx context.Context, now time.Time) (int, b
 		if !bytes.Equal(digest[:], r.hash) {
 			return 0, false, fmt.Errorf("quality backfill hash mismatch at raw %d", r.id)
 		}
-		var target protocol.QualityTarget
 		var wire string
 		if err = tx.QueryRowContext(ctx, `SELECT payload FROM quality_targets WHERE id=? AND agent_id=?`, r.sample.TargetID, r.agent).Scan(&wire); err != nil {
 			return 0, false, err
 		}
-		if err = json.Unmarshal([]byte(wire), &target); err != nil {
+		target, err := qualityTargetFromPayload(r.sample.TargetID, wire)
+		if err != nil {
 			return 0, false, err
 		}
 		if err = qualityRollupTx(ctx, tx, r.agent, r.epoch, r.session, r.id, r.sample, target, r.hash, len(payload), now); err != nil {
