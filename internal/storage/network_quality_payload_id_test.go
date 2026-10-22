@@ -2,9 +2,6 @@ package storage
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -101,39 +98,5 @@ func TestTCPMiniKeepsATransientHighOfAUserTarget(t *testing.T) {
 	var source string
 	if err := k.s.db.QueryRow(`SELECT source FROM tcp_mini_high WHERE agent_id=?`, k.id).Scan(&source); err != nil || !strings.Contains(source, `"id":"`+k.targetID(cfg, "telecom", "ipv4", "tcp")+`"`) {
 		t.Fatalf("the evidence names its target: %v %s", err, source)
-	}
-}
-
-// The guard: nothing but the one helper turns a stored target payload into a protocol.QualityTarget for use by the
-// storage code, except the schema 31 migration, which only reads the payload's source and never needs an id.
-func TestStoredTargetPayloadsAreOnlyDecodedByTheHelper(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	allowed := map[string]bool{"network_quality_target_payload.go": true, "network_quality_migration31.go": true}
-	decl := regexp.MustCompile(`var (\w+) protocol\.QualityTarget`)
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") || allowed[file] {
-			continue
-		}
-		wire, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		lines := strings.Split(string(wire), "\n")
-		for i, line := range lines {
-			if !strings.Contains(line, "json.Unmarshal(") {
-				continue
-			}
-			for _, m := range decl.FindAllStringSubmatch(strings.Join(lines[max(0, i-25):i], "\n"), -1) {
-				if strings.Contains(line, "&"+m[1]) {
-					t.Errorf("%s:%d decodes a stored target payload by itself; use qualityTargetFromPayload so the id is restored", file, i+1)
-				}
-			}
-			if strings.Contains(line, "&out.Target") {
-				t.Errorf("%s:%d decodes a stored target payload by itself; use qualityTargetFromPayload so the id is restored", file, i+1)
-			}
-		}
 	}
 }

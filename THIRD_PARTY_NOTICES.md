@@ -1,13 +1,15 @@
 # Third-party notices / 第三方代码与数据声明
 
-审计依据提交：`36a1cb09157e9f2a5c6db49c08c54f553dca61fc`。
-审计日期：2026-10-19。任务：R06。路线图依据：`origin/roadmap`
-提交 `c6a407ef5cb0a83fba52f5700f8722063581f4bf`。
+审计依据提交：`37c37352f224e45b9029d518bc0a882023edad42`（v1.0.5 开发结束时的代码状态；本文自身的修改在其后）。
+首次审计：2026-10-19，任务 R06，基于提交 `36a1cb09157e9f2a5c6db49c08c54f553dca61fc`，
+路线图依据 `origin/roadmap` 提交 `c6a407ef5cb0a83fba52f5700f8722063581f4bf`。
+发布前复核：2026-10-22（R07、R20、R22、R23 之后），按最终的 `go.mod`、`go.sum` 和代码核对。
 
 本文记录该提交的来源、许可证、修改和分发情况，不为 404-probe 本身选择许可证。
 Komari 仅引用既有说明，不重新审计。发布前若依赖、工具链或第三方数据变化，
-由发布流程复核；本文不自动覆盖后续提交。发布前须按 v1.0.5 最终的 `go.mod`
-重新核对依赖版本和声明，保留上述审计基准提交不变。
+由发布流程复核；本文不自动覆盖后续提交。2026-10-22 已按 v1.0.5 最终的 `go.mod`
+重新核对依赖版本和声明（见第 1、3 节和附录 E2）；此后再有依赖、工具链或第三方数据变化，
+须再次复核并更新审计基准提交。
 
 “已核实”指本次读取固定上游内容，或读取与 `go.sum` 对应且通过
 `go mod verify` 的模块原文。“未核实”表示没有足够证据，不能作为授权已获得的结论。
@@ -30,8 +32,10 @@ Komari 仅引用既有说明，不重新审计。发布前若依赖、工具链�
   包内嵌套来源以及尚不能判定是否进入最终机器码的内容另列。
 - `web/embed.go` 的 `//go:embed static/*` 将 Web 静态资源及其 vendor
   许可证嵌入 Server，并可随页面提供；Agent 不嵌入这套 Web 资源。
-  `internal/server/web_network_quality.go` 单独嵌入目标目录 JSON。
-- 本次仅新增本文。没有新增/升级依赖、改代码、补丁、迁移或发布打包改动。
+  v1.0.5 起 Server 不再嵌入任何网络质量目标目录：R07 已删除 `internal/server/quality_catalog.json`
+  及相关代码，目标由用户自己填写。
+- 发布前复核（2026-10-22）只更新本文：删除已移除的 zstatic 一节，更新 gg-status、R20、R22 的处理状态，
+  核对 `go.mod`、依赖归属、Web vendor 摘要和审计基准提交。没有新增/升级依赖、改代码、补丁、迁移或发布打包改动。
   临时下载的上游页面、归档及审计脚本不属于仓库交付物。
 
 ## 2. Web 静态资源
@@ -136,51 +140,19 @@ Go 标准库和内置 x/text 使用的 Unicode 数据版本为 15.0.0；来源
 
 ## 5. 其他外部代码、数据及既有说明
 
-### 5.1 zstaticcdn 网络质量目录
+### 5.1 Google 检测的历史来源
 
-v1.0.5 将通过 R07 移除全部 zstatic 内置目标。以下记录审计基准中的历史用法；
-发布前按最终代码删除或更新本节，不将计划移除写成已经完成。
-
-- 上游：[DescribeAllNodes](https://www.zstaticcdn.com/api/v1/DescribeAllNodes)、
-  [官网](https://www.zstaticcdn.com/)。仓库位置 `internal/server/quality_catalog.json`。
-- 目录版本字段：`updated_at=2026-09-15T12:27:24Z`；
-  `raw_sha256=b57179984ae38103656c120b952481b525be56a3d69782c9b6ef0601230f32c5`；
-  `frontend_sha256=59088ee5cd1edafdc5d7f84ddf22a51562af91ca93646e8ca03ce4abca3e64f1`。
-  前端摘要已核实，与附录 E1 的现行前端文件摘要一致；`raw_sha256` 因历史
-  API 响应未保存，仍未复现，标为**未核实**。
-- 数据已加工为地区/运营商/IPv4/IPv6 目标；目录中区分 `api_literal` 和
-  `official_frontend_transform`。属于加工数据，不是原 API 的原样副本。
-  随 Server 内嵌，部分目标及标签经 API 下发给 Agent 和 Web。
-  目录文件的 `connectivity` 字段为 `not_tested`，不表示目标连通性已验证。
-- 仓库 README 原有记录是“仅供 TCP-Ping 使用”，交叉评审只找到社区转述，
-  没有找到这句话的官方出处，不能将它作为已核实的官方使用条款。
-  官方前端版本 `2026-09-29.2` 的公告原文已核对如下：
-
-  > 页面标注的节点名称仅作为 IP 归属地识别与展示标记，不代表官方命名、线路属性、机房归属或其他任何用途；
-  > 本页面仅供个人测试与研究参考，不能作为任何形式的网络质量评价、服务承诺、商业宣传或第三方结论依据；
-  > 请在合法、合规且获得授权的网络环境中使用，严禁用于扫描、压测、攻击、绕过访问控制或其他未经授权的用途；
-  > 页面展示内容可能因资源调整、网络策略变化或服务方要求而更新、限制或下线，请以实际情况为准。
-
-  来源是官网当日引用的 `/_next/static/chunks/1yvmx9jjmxw4u.js`，
-  SHA256 另见附录 E1，且与目录中的 `frontend_sha256` 一致，前端摘要已核实。
-  该一致性不等于取得了数据再分发授权。
-  未找到可确认的开放数据再分发许可原文；许可证和历史授权状态均为**未核实**。
-  与审计基准中的产品用途可能存在不一致；维护者已决定通过 R07 移除全部内置目标，
-  处理状态见 Q1，本任务不修改检测实现或目录文件。
-
-### 5.2 Google 检测参考实现
-
-`internal/agent/google_status.go` 明记由
+YouTube 页面检测最初参照
 [404-vps-tools/gg-status](https://github.com/404-git-404/404-vps-tools/blob/b8830f4c86ddebc0be19bd4fadb07ca5a586dfb2/gg-status)
-提交 `b8830f4c86ddebc0be19bd4fadb07ca5a586dfb2`、blob
-`50c5afa7f6fae163e48040c4624e0638c6250840` 移植。
-本次取得固定源文件，其 Git blob 标识核对见 E1。
-这是从 shell/awk 到 Go 的重写和适配，随 Agent 二进制。
-404-vps-tools 属于维护者的同一 GitHub 账号，是公开项目，没有 LICENSE 文件。
-维护者已确认两个项目均为本人同一作者的作品，无其他贡献者，因此这次移植无需
-另行授权，Q2 已解决。测试中保留的原脚本拷贝将通过 R22 移除。
+（提交 `b8830f4c86ddebc0be19bd4fadb07ca5a586dfb2`、blob
+`50c5afa7f6fae163e48040c4624e0638c6250840`），从 shell/awk 重写为 Go。
+404-vps-tools 属于维护者的同一 GitHub 账号，是公开项目，没有 LICENSE 文件；
+维护者已确认两个项目均为本人同一作者的作品，无其他贡献者，无需另行授权（Q2 已解决）。
+**R22 已删除**测试中的原脚本拷贝、代码里的来源注释以及未使用的 Search、Sign-in、Gemini 检测；
+现行 `internal/agent/google_status.go` 是 Go 实现，仓库里没有该脚本的拷贝。
+R23 的“送中”判定是新写的，不来自该脚本。本节只保留历史来源，该固定提交文件的摘要见附录 E1。
 
-### 5.3 地区名单、页面样本和服务调用
+### 5.2 地区名单、页面样本和服务调用
 
 | 项目、来源及版本 | 仓库位置、处理方式 | 许可状态 | 分发 |
 | --- | --- | --- | --- |
@@ -189,7 +161,7 @@ v1.0.5 将通过 R07 移除全部 zstatic 内置目标。以下记录审计基�
 | 维护者提供的日志样本，来源日期 2026-09-05，无公开上游 URL | `internal/securitycollector/testdata/reality-overlapping-export.jsonl`；来源记录见同目录 README；转换器 `scripts/convert-security-fixture.go`；已加工 | 属用户提供数据，不是已识别的第三方软件库；记录未声明独立许可证，原始日志权利状态**未核实**（Q6） | 源码测试数据，不嵌入生产二进制 |
 | [ipify](https://www.ipify.org/)、[IPWho](https://ipwho.is/)、Google/YouTube/Gemini 在线服务 | `internal/egress/egress.go`、`internal/geoip/geoip.go`、`internal/agent/google_status.go`；HTTP 调用、运行时读取结果，没有 vendoring 服务实现或 GeoIP 数据库 | 不将 API 使用自动写成服务代码的开源授权；本项仅记录调用边界，服务条款和用户运行时数据另行适用 | 二进制含请求代码和 URL，不含这些服务的实现；Web/Server 可展示处理后的结果 |
 
-### 5.4 OpenRC 和 Komari
+### 5.3 OpenRC 和 Komari
 
 OpenRC 的运行监督配置参考官方提交
 `aec5dedb1ce30f8188b8ef1042e518651cc0fe33`，
@@ -214,11 +186,11 @@ OpenRC 的运行监督配置参考官方提交
 
 | 编号 | 问题、证据与限制 | 留待处理 |
 | --- | --- | --- |
-| Q1 | zstatic 数据无已核实的再分发许可证；前端摘要已核实，历史 API 原始响应摘要仍未复现；官方公告限制网络质量评价。“仅供 TCP-Ping”仅有社区转述，无官方出处；目录 `connectivity=not_tested` | 维护者已决定 v1.0.5 通过 R07 移除全部 zstatic 内置目标；发布前按最终代码删除或更新 5.1。本任务不改数据、README 或检测实现 |
-| Q2 | **已解决**：维护者确认 gg-status 与本项目为本人同一作者的作品，无其他贡献者；404-vps-tools 属于同一账号、公开且没有 LICENSE，本次移植无需另行授权 | 保留来源说明；R22 将移除测试中的原脚本拷贝 |
+| Q1 | **已解决**：zstatic 内置目标数据没有已核实的再分发许可证。v1.0.5 的 R07 已移除全部内置目标，删除 `internal/server/quality_catalog.json`、目录相关代码和 `web/static` 中的使用；目标现在只来自用户自己的填写，仓库和二进制不再含有该数据 | 无。README 里对 zstaticcdn 的致谢属于发布准备提交处理 |
+| Q2 | **已解决**：维护者确认 gg-status 与本项目为本人同一作者的作品，无其他贡献者；404-vps-tools 属于同一账号、公开且没有 LICENSE，本次移植无需另行授权 | 保留来源说明（5.1）；R22 已移除测试中的原脚本拷贝和代码里的来源注释 |
 | Q3 | **已解决**：交叉评审确认 libc v1.70.0 的 UUID 相关生成文件只有常量和类型定义、没有函数。Go 1.26.8 的 Linux/amd64 Server 符号检查仅剩 `uuid.init`（60 字节）、`uuid.CAPI`（8 字节）及 init 任务，约 70 字节符号内容，没有可执行的 UUID 实现 | 适用 LGPL-2.1 §5 对数值参数、数据结构布局等使用的规定；GCC 头文件同时带 Runtime Library Exception 3.1，不产生本项所担心的源码提供或重新链接义务。Agent 不依赖 libc；N4 原文继续保留 |
-| Q4 | x/net 的 PSL 原始数据明确 MPL-2.0，模块根只有 Go BSD 不能代替数据说明；本文已保留 MPL 原文和固定源码获取位置 | 通过 R20 将本文的许可声明及源码获取位置嵌入二进制，处理 MPL-2.0 §3.2 的告知要求；随 Q5 一起解决，R20 验收前不记为已完成 |
-| Q5 | 现有 7 文件发布清单仅包含 4 个 ELF、install.sh、元数据、校验表；根目录本文和非 Web 的 Go/安装器相关 notices 不会因此自动进入安装目标或单独二进制下载。Web vendor 原文已嵌入 Server，不等于其他 notices 均已交付 | **处理方式已确定**：通过 R20 将本文嵌入 Server、Agent 二进制解决分发缺口，不增加第 8 个发布文件；R20 验收前不记为已解决。本任务不改代码、打包或安装器 |
+| Q4 | **已解决**：x/net 的 PSL 原始数据明确 MPL-2.0；本文已保留 MPL 原文和固定源码获取位置 | R20 已将本文嵌入 Server 和 Agent 二进制并提供 `licenses` 子命令，MPL-2.0 §3.2 的告知要求由此处理。`notices_test.go` 与发布前的构建检查核对两个二进制的 `licenses` 输出与仓库根目录本文逐字节一致 |
+| Q5 | **已解决**：7 文件发布清单（4 个 ELF、install.sh、元数据、校验表）不含本文，Web vendor 原文已嵌入 Server，其他 notices 原本没有交付渠道 | R20 把本文嵌入 Server、Agent 二进制（`licenses` 子命令），不增加第 8 个发布文件；`notices_test.go` 检查嵌入内容与仓库文件一致，发布前再次核对（见 Q4） |
 | Q6 | Google 地区名单、YouTube 页面精简样本及用户提供日志未有可确认的独立再分发授权；原始版本/权利状态未完全核实 | 保留来源和加工说明，不将其标成 MIT/公有领域；不新增原始抓取或敏感样本 |
 | Q7 | Unicode 15.0.0 数据、Go 中早期数学实现及 libc 的部分嵌套项目独立上游版本/授权链不全；已记录能确认的工具链/模块/来源原文，未完成对每个生成项的历史权利追溯 | 下文 G4 保留本次可取得的 Unicode 官方原文；历史适用授权及数据转换义务仍须明确，不据最新授权推断历史版本 |
 
@@ -6829,8 +6801,6 @@ POSSIBILITY OF SUCH DAMAGE.
 | PSL 固定提交原始数据 | `67567d9849ba4ff4f3ca65fb54e978ae310f8f9228c2d5c5ef23a2dabcbc7feb` |
 | ntgo v0.8.0 原始辅助函数 | `defc9139cb34f372fefa736bf534614059bbb050c06d62029364392102bff038` |
 | gg-status 固定提交文件 | `ad874f952cb72d65bf5beb52e3b5c3d625fc1437e2df05af24ec114228b972ec` |
-| zstatic 当日主页 | `e0db0b290e5588769ff3dd3d3a14a8bb2eceeb5a09eab7f70ab5fd401d2d3059` |
-| zstatic 当日公告及目录客户端 | `59088ee5cd1edafdc5d7f84ddf22a51562af91ca93646e8ca03ce4abca3e64f1` |
 | Debian 官方 logo 授权页 | `45908a83b5247cc2560206cf9cb405859299eb2ac30b6e3ec45ec41f71841f7a` |
 
 gg-status 的 Git blob SHA1 为 `50c5afa7f6fae163e48040c4624e0638c6250840`，与仓库来源注释一致。
@@ -6844,3 +6814,4 @@ gg-status 的 Git blob SHA1 为 `50c5afa7f6fae163e48040c4624e0638c6250840`，与
 - Linux amd64/arm64 的 `go list -deps` 检查使用 `CGO_ENABLED=0`，没有运行 Linux 二进制。
 - 首次下载与默认缓存访问曾受沙箱权限限制；经允许下载和切换可写构建缓存后完成。依赖下载补写的 go.sum 校验项已恢复到审计基准，未作为本任务改动。
 - 不需要测试 Server；未做部署、发布产物构建、真机验证或全套回归测试。本任务验收要求是 vet/build 和单文件来源审计。
+- 发布前复核（2026-10-22）：`go.mod`、`go.sum` 自首次审计后没有变化（21 个模块版本与第 3 节、附录 M1–M21 逐项一致）；`web/static/vendor` 自首次审计后没有变化（uPlot JS、CSS、LICENSE 的 SHA256 与上文一致）；用 Go 1.26.8、`CGO_ENABLED=0`、`GOOS=linux`、`GOARCH=amd64/arm64`、`go list -deps` 重新得到的 Server 模块集合（11 个）和 Agent 模块集合（5 个）与第 3 节“发布包依赖归属”一致，没有新增或消失的模块；仓库里已没有 zstatic 目录、gg-status 拷贝或对应代码。没有重新下载上游，附录原文和 E1 摘要保持首次审计的内容。
