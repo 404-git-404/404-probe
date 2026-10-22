@@ -22,48 +22,118 @@ filemac() { if [ -f "$1" ]; then { printf '%s:' "$SNAPSHOT_KEY"; cat "$1"; } | s
 have() { command -v "$1" >/dev/null 2>&1; }
 mode() { if [ -e "$1" ]; then stat -c '%a %U:%G' "$1" 2>/dev/null || echo unknown; else echo missing; fi; }
 
-# Settings whose value may be shown (paths, addresses, identifiers, switches). A value with an "@" (credentials in a URL) never is.
-safe_setting() {
+# What a value must look like to be shown. A value that is allowlisted by name but is not exactly this shape is redacted: a URL is
+# only scheme, host and port (no user, path, query or fragment), a path is a path that names this project, a duration is digits.
+RE_DURATION='^[0-9]{1,6}(ns|us|ms|s|m|h)?$'
+RE_URL='^https?://([A-Za-z0-9.-]{1,100}|\[[0-9A-Fa-f:.]{2,45}\])(:[0-9]{1,5})?/?$'
+RE_LISTEN='^([A-Za-z0-9.-]{0,100}|\[[0-9A-Fa-f:.]{2,45}\]):[0-9]{1,5}$'
+RE_PROJECT_PATH='^/[A-Za-z0-9._/-]{0,150}404-probe[A-Za-z0-9._/-]{0,100}$'
+RE_ANY_PATH='^/[A-Za-z0-9._/-]{1,200}$'
+RE_BOOL='^(true|false|yes|no|1|0)$'
+RE_NAME='^[A-Z][A-Z0-9_]{0,63}$'
+# valid REGEX VALUE: the value, on a line of its own, matches the extended regular expression.
+valid() { [ "${#2}" -le 400 ] && printf '%s\n' "$2" | grep -Eq "$1"; }
+trim() { v=$1; v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}; printf '%s' "$v"; }
+# Strip the quotes of a shell assignment value (a pair; unquote_loose also takes a quote that has no partner, as on a continued line).
+unquote() {
+  v=$1
+  case "$v" in
+    \"*\") v=${v#\"}; v=${v%\"} ;;
+    \'*\') v=${v#\'}; v=${v%\'} ;;
+  esac
+  printf '%s' "$v"
+}
+unquote_loose() { v=$1; v=${v#[\"\']}; v=${v%[\"\']}; printf '%s' "$v"; }
+
+# Settings that may be shown, and the shape of the value of each. Any other name, and any other shape, is redacted.
+setting_ok() {
   case "$1" in
-    PROBE_404_SERVER|PROBE_404_AGENT_ID|PROBE_404_COUNTRY_CODE|PROBE_404_STATE|PROBE_404_SELECTOR_ORDER|PROBE_404_SECURITY_EXPORT|PROBE_404_SECURITY_ACKS|PROBE_404_WEB_PUBLIC_ORIGIN|PROBE_404_VERSION|PROBE_404_ALLOW_INSECURE_HTTP) ;;
+    PROBE_404_SERVER|PROBE_404_WEB_PUBLIC_ORIGIN) valid "$RE_URL" "$2" ;;
+    PROBE_404_AGENT_ID) valid '^[A-Za-z0-9._-]{1,64}$' "$2" ;;
+    PROBE_404_COUNTRY_CODE) valid '^[A-Za-z]{2}$' "$2" ;;
+    PROBE_404_STATE|PROBE_404_SELECTOR_ORDER|PROBE_404_SECURITY_EXPORT|PROBE_404_SECURITY_ACKS) valid "$RE_PROJECT_PATH" "$2" ;;
+    PROBE_404_VERSION) valid '^v?[0-9]{1,4}(\.[0-9]{1,4}){0,3}([-+.][0-9A-Za-z.-]{1,30})?$' "$2" ;;
+    PROBE_404_ALLOW_INSECURE_HTTP) valid "$RE_BOOL" "$2" ;;
     *) return 1 ;;
   esac
-  case "$2" in *@*) return 1 ;; esac
-  return 0
 }
-# Start-command flags whose value may be shown; every other value is redacted.
-safe_flag() {
+# Start-command flags that take a value, and the shape of it. The flag is shown only when this holds.
+flag_takes_value() {
+  case "$1" in --interval|--job-interval|--timeout|--offline-timeout|--listen|--db|--control-token-file|--web-password-hash-file|--server|--web-public-origin) return 0 ;; esac
+  return 1
+}
+flag_known() {
+  flag_takes_value "$1" && return 0
+  case "$1" in --allow-insecure-http|--web-allow-insecure-http) return 0 ;; esac
+  return 1
+}
+flag_ok() {
   case "$1" in
-    --interval|--job-interval|--timeout|--offline-timeout|--listen|--db|--control-token-file|--web-password-hash-file|--web-public-origin|--server|--allow-insecure-http|--web-allow-insecure-http) ;;
+    --interval|--job-interval|--timeout|--offline-timeout) valid "$RE_DURATION" "$2" ;;
+    --listen) valid "$RE_LISTEN" "$2" ;;
+    --db|--control-token-file|--web-password-hash-file) valid "$RE_PROJECT_PATH" "$2" ;;
+    --server) valid "$RE_URL" "$2" ;;
+    --web-public-origin) valid "$RE_URL" "$2" || [ "$2" = '${PROBE_404_WEB_PUBLIC_ORIGIN}' ] ;;
+    --allow-insecure-http|--web-allow-insecure-http) valid "$RE_BOOL" "$2" ;;
     *) return 1 ;;
   esac
-  case "$2" in *@*) return 1 ;; esac
-  return 0
 }
-# The words of a start command, without any value that is not allowlisted: "flag=value flag=<redacted> flag word <arg>".
+# The words of a start command, reduced to what is recognised: an allowlisted flag whose value has the right shape is shown as
+# "flag=value"; every other word - an unlisted flag, a value that starts with "-", a positional argument - is "<redacted>", the
+# name of an unlisted flag included, because a word that starts with "-" can be a flag or a value and nothing here can tell.
 summarize_args() {
   out=''; pending=''
   set -f
   for w in $1; do
     if [ -n "$pending" ]; then
-      case "$w" in -*) out="$out $pending"; pending='' ;; *)
-        if safe_flag "$pending" "$w"; then out="$out $pending=$w"; else out="$out $pending=<redacted>"; fi
-        pending=''; continue ;;
-      esac
+      # A flag that takes a value takes the next word whatever it starts with.
+      if flag_ok "$pending" "$w"; then out="$out $pending=$w"; else out="$out $pending=<redacted>"; fi
+      pending=''; continue
     fi
     case "$w" in
-      -*=*) name=${w%%=*}; value=${w#*=}; if safe_flag "$name" "$value"; then out="$out $name=$value"; else out="$out $name=<redacted>"; fi ;;
-      -*) pending=$w ;;
-      serve|agent|version|licenses|run) out="$out $w" ;;
-      *) out="$out <arg>" ;;
+      --allow-insecure-http|--web-allow-insecure-http) out="$out $w" ;;
+      --*=*) name=${w%%=*}; value=${w#*=}
+        if flag_known "$name"; then
+          if flag_ok "$name" "$value"; then out="$out $name=$value"; else out="$out $name=<redacted>"; fi
+        else out="$out <redacted>"; fi ;;
+      -*) if flag_takes_value "$w"; then pending=$w; else out="$out <redacted>"; fi ;;
+      serve|agent|version|licenses|run|updater|security-collect) out="$out $w" ;;
+      *) out="$out <redacted>" ;;
     esac
   done
-  [ -n "$pending" ] && out="$out $pending"
+  [ -n "$pending" ] && out="$out $pending=<none>"
   set +f
   printf '%s' "${out# }"
 }
-# Strip the quotes of a shell assignment value.
-unquote() { v=$1; v=${v#\"}; v=${v%\"}; v=${v#\'}; v=${v%\'}; printf '%s' "$v"; }
+# One "NAME=value" assignment (of an environment file or an init script) as facts under the prefix $1: an allowlisted name with a
+# value of the right shape is shown; anything else is redacted and only its keyed digest is kept. $2 is the assignment, $3 a counter.
+emit_assignment() {
+  item=$(trim "$2")
+  case "$item" in *=*) ;; *) return 0 ;; esac
+  aname=$(trim "${item%%=*}"); avalue=$(unquote "$(trim "${item#*=}")")
+  if valid "$RE_NAME" "$aname" && setting_ok "$aname" "$avalue"; then
+    emit "$1.$aname" "$avalue"
+  elif valid "$RE_NAME" "$aname"; then
+    if [ -n "$avalue" ]; then emit "$1.$aname" '<redacted>'; else emit "$1.$aname" '<empty>'; fi
+    emit "$1.$aname.mac" "$(mac "$avalue")"
+  else
+    # Not even a name: nothing of the line is shown, and it is counted so that a change still shows.
+    emit "$1.other.$3" '<redacted>'; emit "$1.other.$3.mac" "$(mac "$item")"
+  fi
+}
+# One of the plain settings of an init script, shown only when it has the shape its name promises.
+run_value_ok() {
+  case "$1" in
+    command) valid "$RE_ANY_PATH" "$2" ;;
+    command_user) valid '^[A-Za-z0-9._-]{1,32}(:[A-Za-z0-9._-]{1,32})?$' "$2" ;;
+    command_background) valid "$RE_BOOL" "$2" ;;
+    supervisor) valid '^[A-Za-z0-9._-]{1,40}$' "$2" ;;
+    capabilities) valid '^\^?[A-Za-z0-9_,+=-]{1,200}$' "$2" ;;
+    rc_ulimit) valid '^(-[A-Za-z] ([0-9]+|unlimited)( |$))+$' "$2" ;;
+    rc_cgroup_*) valid '^([a-z_.]+ [0-9]+|[0-9]+|max)$' "$2" ;;
+    *) return 1 ;;
+  esac
+}
 
 emit host.os "$(sed -n 's/^PRETTY_NAME=//p' "$R/etc/os-release" 2>/dev/null | tr -d '"')"
 emit host.arch "$(uname -m)"
@@ -81,15 +151,14 @@ ENVFILE="$R/etc/404-probe/agent.env"
 emit config.agent.env.mode "$(mode "$ENVFILE")"
 emit config.agent.env.mac "$(filemac "$ENVFILE")"
 if [ -f "$ENVFILE" ]; then
-  grep -v '^[[:space:]]*#' "$ENVFILE" | grep '=' | while IFS= read -r line; do
-    name=${line%%=*}; value=${line#*=}
-    if safe_setting "$name" "$value"; then
-      emit "config.env.$name" "$value"
-    else
-      if [ -n "$value" ]; then emit "config.env.$name" '<redacted>'; else emit "config.env.$name" '<empty>'; fi
-      emit "config.env.$name.mac" "$(mac "$value")"
-    fi
-  done
+  n=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=$(trim "$(printf '%s' "$line" | tr -d '\r')")
+    case "$line" in ''|'#'*) continue ;; esac
+    case "$line" in export|export[[:space:]]*) line=${line#export} ;; esac
+    n=$((n + 1))
+    emit_assignment config.env "$line" "$n"
+  done < "$ENVFILE"
 fi
 emit config.selector_order.sha256 "$(sha "$R/etc/404-probe/selector-order.json")"
 emit state.collector_unavailable_marker "$([ -e "$R/var/lib/404-probe-security/export/collector-unavailable" ] && echo present || echo absent)"
@@ -101,12 +170,15 @@ if [ "$INIT" = systemd ]; then
       # The unit with its drop-ins as systemd reads it, so a drop-in counts too; only a keyed digest of it is kept.
       emit "unit.$key.mac" "$(systemctl cat "$unit" 2>/dev/null | { printf '%s:' "$SNAPSHOT_KEY"; cat; } | sha256sum | cut -d' ' -f1 | tr -d '\\')"
       emit "unit.$key.file.mode" "$(mode "$R/etc/systemd/system/$unit")"
-      start=$(systemctl cat "$unit" 2>/dev/null | grep -E '^ExecStart=' | head -n 1)
-      start=${start#ExecStart=}; start=${start#[-@:+!]}
+      # The effective command: a drop-in resets ExecStart= with an empty line and sets its own, so it is the last non-empty one.
+      start=$(systemctl cat "$unit" 2>/dev/null | grep -E '^ExecStart=.' | tail -n 1)
+      start=${start#ExecStart=}
+      while :; do case "$start" in [-@:+!]*) start=${start#?} ;; *) break ;; esac; done
       set -f; set -- $start; set +f
-      emit "unit.$key.exec.argv0" "${1:-}"
+      if valid "$RE_ANY_PATH" "${1:-}"; then emit "unit.$key.exec.argv0" "${1:-}"; else emit "unit.$key.exec.argv0" '<redacted>'; fi
       [ $# -gt 0 ] && shift
       emit "unit.$key.exec.args" "$(summarize_args "$*")"
+      emit "unit.$key.exec.args.mac" "$(mac "$*")"
       emit "unit.$key.enabled" "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
       emit "runtime.$key.active" "$(systemctl is-active "$unit" 2>/dev/null || true)"
       # What the sandbox really is: the effective values, not the text of the file.
@@ -132,14 +204,16 @@ elif [ "$INIT" = openrc ]; then
     emit "unit.$svc.confd.mac" "$(filemac "$R/etc/conf.d/$svc")"
     if [ -f "$file" ]; then
       # How the service is run and with what it may do: the OpenRC counterpart of the sandbox lines. Allowlisted keys only.
-      run=''
-      while IFS= read -r line; do
+      run=''; n=0
+      while IFS= read -r line || [ -n "$line" ]; do
+        line=$(trim "$(printf '%s' "$line" | tr -d '\r')")
         case "$line" in
           command=*|command_user=*|command_background=*|supervisor=*|capabilities=*|rc_ulimit=*|rc_cgroup_*=*)
-            name=${line%%=*}; value=$(unquote "${line#*=}"); run="$run$name=$value;" ;;
-          command_args=*) emit "hardening.$svc.args" "$(summarize_args "$(unquote "${line#*=}")")" ;;
-          export\ *) item=${line#export }; ename=${item%%=*}; evalue=$(unquote "${item#*=}")
-            if safe_setting "$ename" "$evalue"; then emit "hardening.$svc.export.$ename" "$evalue"; else emit "hardening.$svc.export.$ename" '<redacted>'; emit "hardening.$svc.export.$ename.mac" "$(mac "$evalue")"; fi ;;
+            name=${line%%=*}; value=$(unquote "${line#*=}")
+            if run_value_ok "$name" "$value"; then run="$run$name=$value;"; else run="$run$name=<redacted>;"; fi ;;
+          command_args=*) args=$(unquote_loose "${line#*=}")
+            emit "hardening.$svc.args" "$(summarize_args "$args")"; emit "hardening.$svc.args.mac" "$(mac "$args")" ;;
+          export|export[[:space:]]*) n=$((n + 1)); emit_assignment "hardening.$svc.export" "${line#export}" "$n" ;;
         esac
       done < "$file"
       emit "hardening.$svc.run" "$run"
