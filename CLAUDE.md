@@ -35,7 +35,7 @@ go test ./... -count=1
    bash scripts/build-release-assets.sh vX.Y.Z
    ```
 
-   **构建必须在主仓库，或 `core.autocrlf=false` 的干净克隆中进行，不能在 git worktree 里构建**（worktree 的 `.git` 是一个文件，Go 读不到完整的 VCS 信息，产物的 `vcs.revision`/`vcs.modified` 会缺失或错误）。克隆用 `git -c core.autocrlf=false clone --no-hardlinks`，检出 detached 的发布提交，`git status` 必须干净。
+   **构建必须在主仓库，或 `core.autocrlf=false` 的干净克隆中进行，不能在 git worktree 里构建**（在 Windows 上用 go1.26.8 实测：worktree 的 `.git` 是一个文件，构建出的产物的 `vcs.revision`/`vcs.modified` 会缺失或错误；Linux 上没有实测。所以“发布构建一律用主仓库或干净克隆”是操作约束，不对其他环境作推断）。克隆用 `git -c core.autocrlf=false clone --no-hardlinks`，检出 detached 的发布提交，`git status` 必须干净。
 
    共 7 个文件：4 个 ELF（linux amd64/arm64 × server/agent）、`install.sh`、`RELEASE-METADATA.json`、`SHA256SUMS`。逐个核对 `vcs.revision`、`vcs.modified=false` 和 SHA256，并按字节确认三个文本文件都是 LF。
 

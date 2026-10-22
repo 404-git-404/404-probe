@@ -15,7 +15,7 @@ case "$1" in
   rev-parse)
     if [[ "$3" == HEAD ]]; then printf '%s\n' "${FIXTURE_HEAD}";
     else printf '%s\n' "${FIXTURE_TAG_COMMIT:-${FIXTURE_HEAD}}"; fi ;;
-  show) printf '#!/usr/bin/env bash\nreadonly DEFAULT_VERSION="%s"\n' "${FIXTURE_INSTALLER_VERSION:-v1.0.4}" ;;
+  show) printf '#!/usr/bin/env bash\nreadonly DEFAULT_VERSION="%s"\n' "${FIXTURE_INSTALLER_VERSION:-v1.0.5}" ;;
   *) exit 69 ;;
 esac
 SH
@@ -56,7 +56,7 @@ check() {
   printf '%s: %s\n' "${name}" "${expected}"
 }
 check 'dirty rejects explicit commit' 'clean git worktree' FIXTURE_DIRTY=' M install.sh' PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
-check 'default still requires tag' 'release tag v1.0.4 does not exist' PROBE_404_RELEASE_COMMIT=
+check 'default still requires tag' 'release tag v1.0.5 does not exist' PROBE_404_RELEASE_COMMIT=
 check 'short commit rejected' 'full clean HEAD commit' PROBE_404_RELEASE_COMMIT=0123456
 check 'wrong commit rejected' 'full clean HEAD commit' PROBE_404_RELEASE_COMMIT=ffffffffffffffffffffffffffffffffffffffff
 check 'conflicting existing tag rejected' 'existing release tag does not match' FIXTURE_TAG=1 FIXTURE_TAG_COMMIT=ffffffffffffffffffffffffffffffffffffffff PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
@@ -64,12 +64,12 @@ check 'wrong installer rejected' 'stable installer default does not match' FIXTU
 check 'clean exact commit reaches compiler without tag' COMPILE_GATE_REACHED PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
 check 'clean exact existing tag reaches compiler' COMPILE_GATE_REACHED FIXTURE_TAG=1 PROBE_404_RELEASE_COMMIT=
 check 'matching tag and explicit commit reaches compiler' COMPILE_GATE_REACHED FIXTURE_TAG=1 PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
-for version in v1.0.4-beta.1 v1.0.4-rc.1; do
+for version in v1.0.5-beta.1 v1.0.5-rc.1; do
   if env PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}" bash "${root}/scripts/build-release-assets.sh" "${version}" >"${temporary}/result" 2>&1; then exit 1; fi
   grep -Fq COMPILE_GATE_REACHED "${temporary}/result" || { cat "${temporary}/result"; exit 1; }
   printf '%s: explicit clean commit reaches compiler, no tag created\n' "${version}"
 done
-for version in v1.0.4-rc.0 v1.0.4-rc.01 v1.0.4-rc.18446744073709551616; do
+for version in v1.0.5-rc.0 v1.0.5-rc.01 v1.0.5-rc.18446744073709551616; do
   if env PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}" bash "${root}/scripts/build-release-assets.sh" "${version}" >"${temporary}/result" 2>&1; then exit 1; fi
   if grep -Fq COMPILE_GATE_REACHED "${temporary}/result"; then cat "${temporary}/result"; exit 1; fi
 done
