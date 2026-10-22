@@ -496,7 +496,7 @@ esac
             (['command="/usr/local/bin/404-probe-agent --token Qz17Kw"'], "Qz17Kw"),
             (['command=/usr/local/bin/404-probe-agent', 'command_user="404-probe:404-probe --pw Qz18Kw"'], "Qz18Kw"),
             (['supervisor="supervise-daemon --env PROBE_404_TOKEN=Qz19Kw"'], "Qz19Kw"),
-            (['capabilities="^cap_net_raw Qz20Kw"'], "Qz20Kw"),
+            (['capabilities="^cap_net_raw=Qz20Kw"'], "Qz20Kw"),
             (['rc_ulimit="-n Qz21Kw"'], "Qz21Kw"),
             (['rc_cgroup_memory="Qz22Kw"'], "Qz22Kw"),
             (["export PROBE_404_TOKEN=Qz23Kw"], "Qz23Kw"),
@@ -523,12 +523,27 @@ esac
 
     def test_what_is_shown_of_an_openrc_script_is_only_what_was_recognised(self):
         out = self.run_openrc('command="/usr/local/bin/404-probe-agent"', 'command_args="--interval 10s --token Qz1Kw --server http://127.0.0.1:18080 -t -Qz2Kw"', 'command_user="404-probe:404-probe"',
-                              "export PROBE_404_SERVER=http://127.0.0.1:18080", "export PROBE_404_TOKEN=Qz3Kw", "supervisor=supervise-daemon", 'rc_ulimit="-n 1024"', 'capabilities="^cap_net_raw+ep"')
+                              "export PROBE_404_SERVER=http://127.0.0.1:18080", "export PROBE_404_TOKEN=Qz3Kw", "supervisor=supervise-daemon", 'rc_ulimit="-n 1024"', 'capabilities="CAP_NET_RAW,CAP_NET_BIND_SERVICE"')
         facts = snapshot.parse(out)
         self.assertEqual(facts["hardening.404-probe-agent.args"], "--interval=10s <redacted> <redacted> --server=http://127.0.0.1:18080 <redacted> <redacted>")
         self.assertEqual(facts["hardening.404-probe-agent.export.PROBE_404_SERVER"], "http://127.0.0.1:18080")
         self.assertEqual(facts["hardening.404-probe-agent.export.PROBE_404_TOKEN"], "<redacted>")
-        self.assertEqual(facts["hardening.404-probe-agent.run"], "command=/usr/local/bin/404-probe-agent;command_user=404-probe:404-probe;supervisor=supervise-daemon;rc_ulimit=-n 1024;capabilities=^cap_net_raw+ep;")
+        self.assertEqual(facts["hardening.404-probe-agent.run"], "command=/usr/local/bin/404-probe-agent;command_user=404-probe:404-probe;supervisor=supervise-daemon;rc_ulimit=-n 1024;capabilities=CAP_NET_RAW,CAP_NET_BIND_SERVICE;")
+
+    def test_capabilities_are_shown_only_as_a_list_of_canonical_names(self):
+        for value in ("CAP_NET_RAW", "CAP_NET_RAW,CAP_NET_BIND_SERVICE", "CAP_BPF,CAP_PERFMON,CAP_CHECKPOINT_RESTORE"):
+            with self.subTest(shown=value):
+                out = self.run_openrc('command="/usr/local/bin/404-probe-agent"', 'capabilities="%s"' % value)
+                self.assertIn("capabilities=%s;" % value, snapshot.parse(out)["hardening.404-probe-agent.run"])
+        for value, secret in (("^cap_net_raw=Qz1Kw", "Qz1Kw"), ("^cap_net_raw+ep", "cap_net_raw"), ("cap_net_raw", "cap_net_raw"), ("CAP_NET_RAW=Qz2Kw", "Qz2Kw"), ("CAP_Qz3Kw", "Qz3Kw"),
+                              ("CAP_NET_RAW,Qz4Kw", "Qz4Kw"), ("CAP_NET_RAW,", "x"), (",CAP_NET_RAW", "x"), ("CAP_NET_RAW,,CAP_BPF", "x"), ("CAP_NET_RAW CAP_BPF", "x"), ("CAP_NET_RAW,CAP_Qz5Kw", "Qz5Kw"),
+                              ("CAP_NET_RAW+ep", "x"), ("cap_net_raw,CAP_NET_RAW", "x"), ("CAP_NET_RAW,-Qz6Kw", "Qz6Kw"), ("", "x")):
+            with self.subTest(redacted=value):
+                out = self.run_openrc('command="/usr/local/bin/404-probe-agent"', 'capabilities="%s"' % value)
+                run = snapshot.parse(out)["hardening.404-probe-agent.run"]
+                self.assertIn("capabilities=<redacted>;", run)
+                self.assertNotIn(secret, run)
+                self.assert_clean(out, secret) if secret != "x" and secret != "cap_net_raw" else None
 
     def test_an_openrc_value_that_is_not_what_its_name_says_is_not_shown(self):
         out = self.run_openrc('command="/usr/local/bin/404-probe-agent --token Qz1Kw"', 'command_user="Qz2Kw?x"', 'supervisor="Qz3Kw@host"')

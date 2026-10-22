@@ -121,6 +121,23 @@ emit_assignment() {
     emit "$1.other.$3" '<redacted>'; emit "$1.other.$3.mac" "$(mac "$item")"
   fi
 }
+# The Linux capability names, in their canonical upper-case form. A list is shown only when every item is one of these.
+known_capability() {
+  case "$1" in
+    CAP_CHOWN|CAP_DAC_OVERRIDE|CAP_DAC_READ_SEARCH|CAP_FOWNER|CAP_FSETID|CAP_KILL|CAP_SETGID|CAP_SETUID|CAP_SETPCAP|CAP_LINUX_IMMUTABLE|CAP_NET_BIND_SERVICE|CAP_NET_BROADCAST|CAP_NET_ADMIN|CAP_NET_RAW|CAP_IPC_LOCK|CAP_IPC_OWNER|CAP_SYS_MODULE|CAP_SYS_RAWIO|CAP_SYS_CHROOT|CAP_SYS_PTRACE|CAP_SYS_PACCT|CAP_SYS_ADMIN|CAP_SYS_BOOT|CAP_SYS_NICE|CAP_SYS_RESOURCE|CAP_SYS_TIME|CAP_SYS_TTY_CONFIG|CAP_MKNOD|CAP_LEASE|CAP_AUDIT_WRITE|CAP_AUDIT_CONTROL|CAP_SETFCAP|CAP_MAC_OVERRIDE|CAP_MAC_ADMIN|CAP_SYSLOG|CAP_WAKE_ALARM|CAP_BLOCK_SUSPEND|CAP_AUDIT_READ|CAP_PERFMON|CAP_BPF|CAP_CHECKPOINT_RESTORE) return 0 ;;
+  esac
+  return 1
+}
+# A comma separated list with no empty item, no space and nothing but canonical names.
+capabilities_ok() {
+  case "$1" in ''|,*|*,|*,,*|*[[:space:]]*) return 1 ;; esac
+  caps_ifs=$IFS; IFS=,; set -f
+  for cap in $1; do
+    if ! known_capability "$cap"; then IFS=$caps_ifs; set +f; return 1; fi
+  done
+  IFS=$caps_ifs; set +f
+  return 0
+}
 # One of the plain settings of an init script, shown only when it has the shape its name promises.
 run_value_ok() {
   case "$1" in
@@ -128,7 +145,7 @@ run_value_ok() {
     command_user) valid '^[A-Za-z0-9._-]{1,32}(:[A-Za-z0-9._-]{1,32})?$' "$2" ;;
     command_background) valid "$RE_BOOL" "$2" ;;
     supervisor) valid '^[A-Za-z0-9._-]{1,40}$' "$2" ;;
-    capabilities) valid '^\^?[A-Za-z0-9_,+=-]{1,200}$' "$2" ;;
+    capabilities) capabilities_ok "$2" ;;
     rc_ulimit) valid '^(-[A-Za-z] ([0-9]+|unlimited)( |$))+$' "$2" ;;
     rc_cgroup_*) valid '^([a-z_.]+ [0-9]+|[0-9]+|max)$' "$2" ;;
     *) return 1 ;;
