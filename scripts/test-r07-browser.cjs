@@ -21,18 +21,18 @@ before(async () => { if (available) browser = await chromium.launch({headless: t
 after(async () => { await browser?.close(); });
 
 // A page with the production scripts and CSS; the Server answers from memory with the given v4 response.
-async function open(raw, {dialog = true, history = null, plot = false, host = false} = {}) {
+async function open(raw, {dialog = true, history = null, plot = false, host = false, scrollerHeight = 300} = {}) {
   const page = await browser.newPage({viewport: {width: 1000, height: 800}}), errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host"></div><dialog id="network-quality-history"></dialog></body></html>');
   for (const css of ['style.css', 'network-quality.css']) await page.addStyleTag({content: read(css)});
   if (plot) { await page.addStyleTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.min.css'), 'utf8')}); await page.addScriptTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.iife.min.js'), 'utf8')}); }
   for (const js of ['agent-state.js', 'management.js', 'network-quality-core.js', 'network-quality.js']) await page.addScriptTag({content: read(js)});
-  await page.evaluate(({raw, agent, history, plot, host}) => {
-    window.__hist = history; window.__plots = [];
+  await page.evaluate(({raw, agent, history, plot, host, scrollerHeight}) => {
+    window.__hist = history; window.__plots = []; window.__scrollerHeight = scrollerHeight;
     const Plot = plot ? function(opts, data, target) { const u = new window.uPlot(opts, data, target); window.__plots.push(u); return u; } : undefined;
     // The device-details dialog hosts the history in a container that scrolls (its body): the same shape here.
-    const historyHost = host ? (() => { const wrap = document.createElement('div'); wrap.id = 'scroller'; wrap.style.cssText = 'height:300px;overflow:auto;width:700px'; const box = document.createElement('div'); box.id = 'history-box'; wrap.append(box); document.body.append(wrap); return {container: () => box, active: () => true, open() {}, close() {}}; })() : null;
+    const historyHost = host ? (() => { const wrap = document.createElement('div'); wrap.id = 'scroller'; wrap.style.cssText = 'height:' + (window.__scrollerHeight || 300) + 'px;overflow:auto;width:700px'; const box = document.createElement('div'); box.id = 'history-box'; wrap.append(box); document.body.append(wrap); return {container: () => box, active: () => true, open() {}, close() {}}; })() : null;
     window.__raw = raw; window.__writes = []; window.__gets = 0; window.__clock = 0;
     const now = () => 1800000000000 + window.__clock;
     window.__q = window.NetworkQualityCore.coordinator({now});
@@ -41,7 +41,7 @@ async function open(raw, {dialog = true, history = null, plot = false, host = fa
     const node = window.__ui.mount({agent_id: agent, name: '合成设备'});
     document.getElementById('host').append(node);
     window.__ui.setVisible(agent, true);
-  }, {raw, agent: AGENT, history, plot, host});
+  }, {raw, agent: AGENT, history, plot, host, scrollerHeight});
   await page.waitForFunction(() => document.querySelector('.nq-link'));
   await page.waitForTimeout(150);
   if (dialog) {
@@ -220,7 +220,7 @@ test('O1 (Chromium): the Y axis of the history plot is wide enough for its label
 
 test('Scroll (Chromium): a refresh of the history keeps the scroll position of the container it lives in', {skip: !available && 'Playwright/Chromium not available'}, async () => {
   const raw = load('v4-running'), history = {card: narrowRange()};
-  const {page, errors} = await open(raw, {dialog: false, history, plot: true, host: true});
+  const {page, errors} = await open(raw, {dialog: false, history, plot: true, host: true, scrollerHeight: 560});
   try {
     await page.waitForFunction(() => document.querySelector('.nq-link'));
     assert.equal(await openHistory(page, laneId(raw)), true);
@@ -240,7 +240,7 @@ test('Scroll (Chromium): a refresh of the history keeps the scroll position of t
 
 test('Scroll (Chromium): a change elsewhere in the configuration neither closes nor rebuilds the history that is open', {skip: !available && 'Playwright/Chromium not available'}, async () => {
   const raw = load('v4-running'), history = {card: narrowRange()};
-  const {page, errors} = await open(raw, {dialog: false, history, plot: true, host: true});
+  const {page, errors} = await open(raw, {dialog: false, history, plot: true, host: true, scrollerHeight: 560});
   try {
     await page.waitForFunction(() => document.querySelector('.nq-link'));
     const id = laneId(raw);
