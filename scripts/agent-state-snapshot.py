@@ -4,8 +4,14 @@
   agent-state-snapshot.py collect --label before --out DIR HOST [HOST ...]
   agent-state-snapshot.py compare DIR before after [HOST ...]
 
-collect runs scripts/agent-state-snapshot.sh on each host over ssh (read only: it changes nothing on the host and prints no secret)
-and writes DIR/<label>-<host>.json. DIR must be outside the repository: a snapshot names machines and settings.
+collect runs scripts/agent-state-snapshot.sh on each host over ssh (read only: it changes nothing on the host) and writes
+DIR/<label>-<host>.json. DIR must be outside the repository: a snapshot names machines and settings.
+
+A snapshot holds no secret, nor anything a secret can be recovered from. The host script shows a value only for a name on its
+allowlist; every other value is redacted or reduced to a keyed digest, sha256(KEY ":" value). KEY is 32 random bytes made once
+per directory (DIR/.snapshot-key, mode 600, never committed) and handed to the host on the standard input only, so a token and a
+low-entropy password are equally unguessable, and two snapshots of the same directory still show that a credential, a unit
+file or a start command changed. A value shaped like a token is refused here whatever field it arrived in.
 
 compare reads the two snapshots of every host and prints what differs. A difference in the version, the binary hash or the process
 (keys "agent.version", "binary.agent.sha256", "runtime.*") is what an upgrade is for. Anything else - unit file, sandbox, setting,
@@ -14,6 +20,7 @@ file mode, a service that no longer runs - is not, and makes the exit status 1.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -44,15 +51,56 @@ def parse(text):
     return facts
 
 
-def collect_host(host, runner=subprocess.run):
+KEY_FILE = ".snapshot-key"
+
+
+def snapshot_key(directory):
+    """The key of the keyed digests: random, made once per snapshot directory, kept only there (mode 600), never committed.
+    The digests of one directory can be compared with each other; without the key they cannot be checked against a guess."""
+    path = os.path.join(directory, KEY_FILE)
+    if os.path.exists(path):
+        with open(path, encoding="ascii") as handle:
+            key = handle.read().strip()
+        if len(key) == 64 and all(c in "0123456789abcdef" for c in key):
+            return key
+        raise ValueError("%s is not a snapshot key" % path)
+    key = os.urandom(32).hex()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii", newline="\n") as handle:
+        handle.write(key + "\n")
+    return key
+
+
+# Defence in depth behind the host script's allowlist: a value that looks like a token (a long run of letters of both cases,
+# digits, "_" or "-") is never written, whatever field it came in. Hex (hashes, ids, keyed digests) is not that shape.
+SECRET_SHAPE = re.compile(r"[A-Za-z0-9_-]{32,}")
+
+
+def looks_like_secret(value):
+    for run in SECRET_SHAPE.findall(value):
+        if any(c.islower() for c in run) and any(c.isupper() for c in run) and any(c.isdigit() for c in run):
+            return True
+    return False
+
+
+def check_no_secret(facts):
+    for key, value in facts.items():
+        if looks_like_secret(value):
+            raise RuntimeError("the value of %s looks like a credential; nothing is written" % key)
+
+
+def collect_host(host, key, runner=subprocess.run):
     with open(REMOTE_SCRIPT, "rb") as handle:
         script = handle.read()
-    done = runner(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host, "sh", "-s"], input=script, capture_output=True, timeout=120)
+    # The key goes in on the standard input, ahead of the script: not in an argument (ps), not in a file on the host.
+    stdin = ("SNAPSHOT_KEY=%s\nexport SNAPSHOT_KEY\n" % key).encode("ascii") + script
+    done = runner(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host, "sh", "-s"], input=stdin, capture_output=True, timeout=120)
     if done.returncode != 0:
         raise RuntimeError("%s: ssh exit %d: %s" % (host, done.returncode, done.stderr.decode(errors="replace").strip()[:200]))
     facts = parse(done.stdout.decode(errors="replace"))
     if "host.init" not in facts:
         raise RuntimeError("%s: the host did not answer like a snapshot" % host)
+    check_no_secret(facts)
     return facts
 
 
@@ -113,10 +161,11 @@ def main(argv=None, runner=subprocess.run):
             print("--out must be outside the repository", file=sys.stderr)
             return 2
         os.makedirs(args.out, exist_ok=True)
+        key = snapshot_key(args.out)
         failed = 0
         for host in args.hosts:
             try:
-                path = write_snapshot(args.out, args.label, host, collect_host(host, runner))
+                path = write_snapshot(args.out, args.label, host, collect_host(host, key, runner))
                 print("%s: %s" % (host, path))
             except Exception as error:  # one unreachable host must not hide the others
                 failed += 1

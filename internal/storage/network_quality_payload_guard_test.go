@@ -6,54 +6,93 @@ import (
 	"go/token"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 // The guard behind qualityTargetFromPayload: the stored payload of a user target has no id, so nothing but that helper may turn a
-// payload into a protocol.QualityTarget (D1, M1, M2 of R07 stage E were three places that forgot the id). It works on the syntax
-// tree and follows the target through every way of declaring it, and through both ways of decoding:
+// payload into a protocol.QualityTarget (D1, M1, M2 of R07 stage E were three places that forgot the id).
 //
-//	var t protocol.QualityTarget           t := protocol.QualityTarget{}      t := &protocol.QualityTarget{}
-//	t := new(protocol.QualityTarget)       var t = protocol.QualityTarget{}    a struct field of that type (out.Target)
-//	json.Unmarshal(b, &t) / (b, t)         json.NewDecoder(r).Decode(&t) / (t)
+// THIS IS A BEST-EFFORT CHECK. It reads the syntax tree, resolves the package names from the imports (so `import p ".../protocol"`
+// and `import js "encoding/json"` count), follows a QualityTarget through the usual ways of holding one, and flags a
+// json.Unmarshal or Decoder.Decode into it:
 //
-// The schema 31 migration only reads the payload's source and never needs an id; it is the one exception.
+//	var t protocol.QualityTarget      t := protocol.QualityTarget{}   t := &protocol.QualityTarget{}   t := new(protocol.QualityTarget)
+//	var t = protocol.QualityTarget{}  parameters and results          a struct field of that type (out.Target)
+//	dst := &t   c := t   (chains of them)                              dst := &out.Target
+//	json.Unmarshal(b, &t) / (b, t)    json.NewDecoder(r).Decode(&t) / (t)
+//
+// It cannot see everything: it does not follow a target through a function call, an interface, reflection, a map or a slice, nor
+// a local name that shadows an import. A new way of writing the decode will get past it. The real guarantee is the one function
+// everybody calls and code review; this test only catches the common ways of forgetting it again. The schema 31 migration only
+// reads the payload's source and never needs an id; it is the one exception.
 var storedTargetDecoders = map[string]bool{"network_quality_target_payload.go": true, "network_quality_migration31.go": true}
 
-func isQualityTargetType(e ast.Expr) bool {
+const (
+	guardProtocolPath = "404-probe/internal/protocol"
+	guardJSONPath     = "encoding/json"
+)
+
+// guardNames are the names a file gives to the packages of interest.
+type guardNames struct{ protocol, json map[string]bool }
+
+func importNames(file *ast.File) guardNames {
+	n := guardNames{protocol: map[string]bool{}, json: map[string]bool{}}
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := path[strings.LastIndex(path, "/")+1:]
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		switch path {
+		case guardProtocolPath:
+			n.protocol[name] = true
+		case guardJSONPath:
+			n.json[name] = true
+		}
+	}
+	return n
+}
+
+func (n guardNames) isTargetType(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.SelectorExpr:
 		pkg, ok := x.X.(*ast.Ident)
-		return ok && pkg.Name == "protocol" && x.Sel.Name == "QualityTarget"
+		return ok && n.protocol[pkg.Name] && x.Sel.Name == "QualityTarget"
 	case *ast.StarExpr:
-		return isQualityTargetType(x.X)
+		return n.isTargetType(x.X)
 	}
 	return false
 }
 
-// isQualityTargetValue is true for T{}, &T{} and new(T).
-func isQualityTargetValue(e ast.Expr) bool {
+// isTargetValue is true for T{}, &T{} and new(T).
+func (n guardNames) isTargetValue(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.CompositeLit:
-		return x.Type != nil && isQualityTargetType(x.Type)
+		return x.Type != nil && n.isTargetType(x.Type)
 	case *ast.UnaryExpr:
-		return x.Op == token.AND && isQualityTargetValue(x.X)
+		return x.Op == token.AND && n.isTargetValue(x.X)
 	case *ast.CallExpr:
 		fn, ok := x.Fun.(*ast.Ident)
-		return ok && fn.Name == "new" && len(x.Args) == 1 && isQualityTargetType(x.Args[0])
+		return ok && fn.Name == "new" && len(x.Args) == 1 && n.isTargetType(x.Args[0])
 	}
 	return false
 }
 
 // storedTargetDecodeViolations lists "file:line" of every decode into a protocol.QualityTarget in the given sources.
 func storedTargetDecodeViolations(fset *token.FileSet, files map[string]*ast.File) []string {
-	fields := map[string]bool{} // struct fields typed protocol.QualityTarget, in any file of the package
+	// Struct fields typed protocol.QualityTarget, in any file of the package.
+	fields := map[string]bool{}
 	for _, file := range files {
+		names := importNames(file)
 		ast.Inspect(file, func(n ast.Node) bool {
 			if st, ok := n.(*ast.StructType); ok {
 				for _, f := range st.Fields.List {
-					if isQualityTargetType(f.Type) {
+					if names.isTargetType(f.Type) {
 						for _, name := range f.Names {
 							fields[name.Name] = true
 						}
@@ -64,44 +103,70 @@ func storedTargetDecodeViolations(fset *token.FileSet, files map[string]*ast.Fil
 		})
 	}
 	var out []string
-	for name, file := range files {
-		if storedTargetDecoders[name] {
+	for fileName, file := range files {
+		if storedTargetDecoders[fileName] {
 			continue
 		}
+		names := importNames(file)
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
 				continue
 			}
 			locals := map[string]bool{}
-			ast.Inspect(fn, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.ValueSpec:
-					if x.Type != nil && isQualityTargetType(x.Type) {
-						for _, id := range x.Names {
-							locals[id.Name] = true
-						}
-					}
-					for i, v := range x.Values {
-						if i < len(x.Names) && isQualityTargetValue(v) {
-							locals[x.Names[i].Name] = true
-						}
-					}
-				case *ast.AssignStmt:
-					for i, v := range x.Rhs {
-						if id, ok := x.Lhs[min(i, len(x.Lhs)-1)].(*ast.Ident); ok && isQualityTargetValue(v) {
-							locals[id.Name] = true
-						}
-					}
-				case *ast.Field: // parameters and results
-					if isQualityTargetType(x.Type) {
-						for _, id := range x.Names {
-							locals[id.Name] = true
-						}
+			// holds is true when the expression is (a pointer to, or a copy of) something that holds a target.
+			var holds func(e ast.Expr) bool
+			holds = func(e ast.Expr) bool {
+				switch x := e.(type) {
+				case *ast.Ident:
+					return locals[x.Name]
+				case *ast.SelectorExpr:
+					return fields[x.Sel.Name]
+				case *ast.UnaryExpr:
+					return x.Op == token.AND && holds(x.X)
+				case *ast.ParenExpr:
+					return holds(x.X)
+				}
+				return names.isTargetValue(e)
+			}
+			// Declarations first, then the aliases of what is already known, until nothing new turns up.
+			for changed := true; changed; {
+				changed = false
+				add := func(id *ast.Ident) {
+					if id != nil && id.Name != "_" && !locals[id.Name] {
+						locals[id.Name] = true
+						changed = true
 					}
 				}
-				return true
-			})
+				ast.Inspect(fn, func(n ast.Node) bool {
+					switch x := n.(type) {
+					case *ast.ValueSpec:
+						if x.Type != nil && names.isTargetType(x.Type) {
+							for _, id := range x.Names {
+								add(id)
+							}
+						}
+						for i, v := range x.Values {
+							if i < len(x.Names) && holds(v) {
+								add(x.Names[i])
+							}
+						}
+					case *ast.AssignStmt:
+						for i, v := range x.Rhs {
+							if id, ok := x.Lhs[min(i, len(x.Lhs)-1)].(*ast.Ident); ok && holds(v) {
+								add(id)
+							}
+						}
+					case *ast.Field: // parameters and results
+						if names.isTargetType(x.Type) {
+							for _, id := range x.Names {
+								add(id)
+							}
+						}
+					}
+					return true
+				})
+			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
@@ -114,26 +179,13 @@ func storedTargetDecodeViolations(fset *token.FileSet, files map[string]*ast.Fil
 				var dest ast.Expr
 				switch {
 				case sel.Sel.Name == "Unmarshal" && len(call.Args) == 2:
-					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "json" {
+					if pkg, ok := sel.X.(*ast.Ident); ok && names.json[pkg.Name] {
 						dest = call.Args[1]
 					}
 				case sel.Sel.Name == "Decode" && len(call.Args) == 1:
 					dest = call.Args[0]
 				}
-				if dest == nil {
-					return true
-				}
-				if u, ok := dest.(*ast.UnaryExpr); ok && u.Op == token.AND {
-					dest = u.X
-				}
-				hit := false
-				switch d := dest.(type) {
-				case *ast.Ident:
-					hit = locals[d.Name]
-				case *ast.SelectorExpr:
-					hit = fields[d.Sel.Name]
-				}
-				if hit {
+				if dest != nil && holds(dest) {
 					out = append(out, fset.Position(call.Pos()).String())
 				}
 				return true
@@ -181,7 +233,8 @@ func TestStoredTargetPayloadsAreOnlyDecodedByTheHelper(t *testing.T) {
 	}
 }
 
-// The guard has to catch every way of writing the decode, or it only protects the way it was written for.
+// The guard has to catch the ways of writing the decode that it claims to, or it only protects the way it was written for.
+// (The ways it does not claim to see are listed in its comment; this test does not try to prove them.)
 func TestTheStoredTargetGuardCatchesEveryWayOfDecoding(t *testing.T) {
 	const head = "package storage\nimport (\"encoding/json\"; \"strings\"; \"404-probe/internal/protocol\")\nvar _ = strings.NewReader\nvar _ = json.Marshal\nvar _ protocol.QualityTarget\n"
 	bad := map[string]string{
@@ -196,11 +249,39 @@ func TestTheStoredTargetGuardCatchesEveryWayOfDecoding(t *testing.T) {
 		"struct field":           "type view struct{ Target protocol.QualityTarget }\nfunc f(b []byte, out *view) { json.Unmarshal(b, &out.Target) }",
 		"struct field decoder":   "type view struct{ Target protocol.QualityTarget }\nfunc f(r *strings.Reader, out *view) { json.NewDecoder(r).Decode(&out.Target) }",
 		"parameter":              "func f(b []byte, t *protocol.QualityTarget) { json.Unmarshal(b, t) }",
+		"pointer alias":          "func f(b []byte) { t := protocol.QualityTarget{}; dst := &t; json.Unmarshal(b, dst) }",
 	}
 	for name, body := range bad {
 		fset, files := parseGuardSources(t, map[string]string{"x.go": head + body})
 		if got := storedTargetDecodeViolations(fset, files); len(got) != 1 {
 			t.Errorf("%s: %d violations (%v), want 1", name, len(got), got)
+		}
+	}
+	// Imports under another name, and the target reached through another variable.
+	const aliasHead = "package storage\nimport (js \"encoding/json\"; p \"404-probe/internal/protocol\"; \"strings\")\nvar _ = strings.NewReader\nvar _ = js.Marshal\nvar _ p.QualityTarget\n"
+	badAliased := map[string]string{
+		"import alias":         "func f(b []byte) { t := p.QualityTarget{}; js.Unmarshal(b, &t) }",
+		"import alias decoder": "func f(r *strings.Reader) { var t p.QualityTarget; js.NewDecoder(r).Decode(&t) }",
+		"import alias pointer": "func f(b []byte) { t := p.QualityTarget{}; dst := &t; js.Unmarshal(b, dst) }",
+		"pointer alias var":    "func f(b []byte) { var t p.QualityTarget; var dst = &t; js.Unmarshal(b, dst) }",
+		"copy":                 "func f(b []byte) { t := p.QualityTarget{}; c := t; js.Unmarshal(b, &c) }",
+		"alias chain":          "func f(b []byte) { t := p.QualityTarget{}; a := &t; c := a; js.Unmarshal(b, c) }",
+		"alias of a field":     "type view struct{ Target p.QualityTarget }\nfunc f(b []byte, out *view) { dst := &out.Target; js.Unmarshal(b, dst) }",
+	}
+	for name, body := range badAliased {
+		fset, files := parseGuardSources(t, map[string]string{"x.go": aliasHead + body})
+		if got := storedTargetDecodeViolations(fset, files); len(got) != 1 {
+			t.Errorf("%s: %d violations (%v), want 1", name, len(got), got)
+		}
+	}
+	goodAliased := map[string]string{
+		"another type behind the alias": "func f(b []byte) { var v p.QualityConfig; js.Unmarshal(b, &v); w := &v; js.Unmarshal(b, w) }",
+		"the helper":                    "func f(id, payload string) { _, _ = qualityTargetFromPayload(id, payload) }",
+	}
+	for name, body := range goodAliased {
+		fset, files := parseGuardSources(t, map[string]string{"x.go": aliasHead + body})
+		if got := storedTargetDecodeViolations(fset, files); len(got) != 0 {
+			t.Errorf("%s: %v", name, got)
 		}
 	}
 	good := map[string]string{
