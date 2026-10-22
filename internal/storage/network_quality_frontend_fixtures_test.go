@@ -61,7 +61,7 @@ func TestFrontendFixtures(t *testing.T) {
 		t.Cleanup(func() {
 			generated, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 			existing, _ := filepath.Glob(filepath.Join(committed, "*.json"))
-			if len(generated) != len(existing) || len(generated) < 11 {
+			if len(generated) != len(existing) || len(generated) < 13 {
 				t.Errorf("the generator wrote %d fixtures, %d are committed", len(generated), len(existing))
 			}
 			for _, file := range generated {
@@ -86,6 +86,30 @@ func TestFrontendFixtures(t *testing.T) {
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&cfg); err != nil || len(cfg.Slots) != 3 || len(cfg.Lanes) != 12 {
 				t.Fatalf("%s: %v slots=%d lanes=%d", file, err, len(cfg.Slots), len(cfg.Lanes))
+			}
+		}
+		// The history answers carry the id of the lane they were read for.
+		var running protocol.QualityV4Config
+		wire, err := os.ReadFile(filepath.Join(committed, "v4-running.json"))
+		if err != nil || json.Unmarshal(wire, &running) != nil {
+			t.Fatalf("v4-running: %v", err)
+		}
+		var laneTarget string
+		for _, l := range running.Lanes {
+			if l.Slot == "telecom" && l.Family == "ipv4" && l.Protocol == "tcp" && l.TargetID != nil {
+				laneTarget = *l.TargetID
+			}
+		}
+		for _, name := range []string{"history-card-tcp.json", "history-1day-tcp.json"} {
+			wire, err := os.ReadFile(filepath.Join(committed, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var h QualityHistoryRollup
+			decoder := json.NewDecoder(bytes.NewReader(wire))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&h); err != nil || laneTarget == "" || h.Target.ID != laneTarget {
+				t.Fatalf("%s: %v target.id %q, lane target %q", name, err, h.Target.ID, laneTarget)
 			}
 		}
 		files, _ = filepath.Glob(filepath.Join(committed, "tcp-mini-*.json"))
@@ -145,6 +169,28 @@ func TestFrontendFixtures(t *testing.T) {
 	// Detection on and running.
 	k.enable(true)
 	write("v4-running.json", k.get())
+
+	// The history read models of the running telecom IPv4 TCP lane, exactly as the Server answers them: the page must
+	// accept these (R07 stage E, D1: they once came without the target id and every curve stayed empty).
+	running := k.get()
+	for i := 1; i <= 4; i++ {
+		at := k.now.Add(time.Duration(i) * time.Minute)
+		if acks := k.upload(at.Add(time.Second), k.sample(running, "telecom", "ipv4", "tcp", i, at, "success")); acks[0] != "committed" {
+			t.Fatal(acks)
+		}
+	}
+	historyNow := k.now.Add(5 * time.Minute)
+	runningTarget := k.targetID(running, "telecom", "ipv4", "tcp")
+	card, err := k.s.QualityCardHistory(k.ctx, k.id, runningTarget, historyNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("history-card-tcp.json", card)
+	day, err := k.s.QualityHistoryRollup(k.ctx, k.id, runningTarget, "1day", historyNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("history-1day-tcp.json", day)
 
 	// A host without IPv6 and without ICMP permission.
 	k = fixtureKit(t)

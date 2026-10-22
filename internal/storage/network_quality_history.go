@@ -81,6 +81,9 @@ func (s *Store) qualityHistoryRaw(ctx context.Context, id, targetID string, hour
 	if err := json.Unmarshal([]byte(targetJSON), &out.Target); err != nil {
 		return out, err
 	}
+	// A stored payload never carries its own id (user targets are identified by the row); every history read model
+	// names its target by it, and the page matches a response to a lane by that id.
+	out.Target.ID = targetID
 	if err := qualityLabelTargetTx(ctx, tx, id, &out.Target); err != nil {
 		return out, err
 	}

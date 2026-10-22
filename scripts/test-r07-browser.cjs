@@ -21,22 +21,23 @@ before(async () => { if (available) browser = await chromium.launch({headless: t
 after(async () => { await browser?.close(); });
 
 // A page with the production scripts and CSS; the Server answers from memory with the given v4 response.
-async function open(raw, {dialog = true} = {}) {
+async function open(raw, {dialog = true, history = null} = {}) {
   const page = await browser.newPage({viewport: {width: 1000, height: 800}}), errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host"></div><dialog id="network-quality-history"></dialog></body></html>');
   for (const css of ['style.css', 'network-quality.css']) await page.addStyleTag({content: read(css)});
   for (const js of ['agent-state.js', 'management.js', 'network-quality-core.js', 'network-quality.js']) await page.addScriptTag({content: read(js)});
-  await page.evaluate(({raw, agent}) => {
+  await page.evaluate(({raw, agent, history}) => {
+    window.__hist = history;
     window.__raw = raw; window.__writes = []; window.__gets = 0; window.__clock = 0;
     const now = () => 1800000000000 + window.__clock;
     window.__q = window.NetworkQualityCore.coordinator({now});
-    window.__ui = window.NetworkQuality.create({coordinator: window.__q, now, fetcher: async (url, init = {}) => { if (init.method === 'PUT') window.__writes.push(JSON.parse(init.body)); else if (url.endsWith('/v4/config')) window.__gets++; return {ok: true, status: 200, statusText: 'OK', json: async () => window.__raw}; },
+    window.__ui = window.NetworkQuality.create({coordinator: window.__q, now, fetcher: async (url, init = {}) => { if (window.__hist && url.includes('card-history')) return {ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(window.__hist.card)}; if (init.method === 'PUT') window.__writes.push(JSON.parse(init.body)); else if (url.endsWith('/v4/config')) window.__gets++; return {ok: true, status: 200, statusText: 'OK', json: async () => window.__raw}; },
       csrf: () => 'synthetic', interval: () => 0, clear() {}, Observer: null, Resize: null});
     const node = window.__ui.mount({agent_id: agent, name: '合成设备'});
     document.getElementById('host').append(node);
     window.__ui.setVisible(agent, true);
-  }, {raw, agent: AGENT});
+  }, {raw, agent: AGENT, history});
   await page.waitForFunction(() => document.querySelector('.nq-link'));
   await page.waitForTimeout(150);
   if (dialog) {
@@ -175,4 +176,16 @@ test('R3 (Chromium): a read the user asked for (opening the dialog) is adopted e
       assert.deepEqual(errors, []);
     } finally { await page.close(); }
   }
+});
+
+test('D1 (Chromium): the card shows data from the real Server card-history answer', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const raw = load('v4-running'), history = {card: load('history-card-tcp')};
+  const {page, errors} = await open(raw, {dialog: false, history});
+  try {
+    await page.waitForFunction(() => /^[0-9.]+ms$/.test(document.querySelector('.nq-tcp-value')?.textContent || ''), null, {timeout: 8000});
+    const cells = await page.evaluate(() => [...document.querySelectorAll('.nq-row')[0].querySelectorAll('.nq-tcp-blocks .nq-block')].map(b => b.className));
+    assert.equal(cells.length, 12);
+    assert.ok(cells.some(c => /nq-low/.test(c)), cells.join(','));
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });

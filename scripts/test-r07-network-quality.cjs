@@ -970,3 +970,45 @@ test('R3: an older answer never overwrites a newer one, in either order, and a h
   assert.equal(f.ui.snapshot().panel.base, '7');
   assert.equal(f.writes.length, 0);
 });
+
+// ---- D1 (stage E): the page and the Server's real history answers ----
+const serverHistory = () => ({card: load('history-card-tcp'), day: load('history-1day-tcp')});
+const laneTarget = (raw, slot, family, protocol) => raw.lanes.find(l => l.slot === slot && l.family === family && l.protocol === protocol).target_id;
+
+test('D1: the history answers of the real Server name the lane\'s target by its id', () => {
+  const raw = load('v4-running'), id = laneTarget(raw, 'telecom', 'ipv4', 'tcp'), h = serverHistory();
+  assert.equal(h.card.target.id, id); assert.equal(h.day.target.id, id);
+  assert.equal(h.card.target.slot_revision, raw.lanes.find(l => l.target_id === id).slot_revision);
+});
+
+test('D1: a card fed only by the Server\'s real history shows the current value and the five-minute cells', async () => {
+  screen(1000, 1000);
+  const f = setup({raw: load('v4-running'), serverHistory: serverHistory()});
+  f.ui.setVisible(AGENT, true); await flush();
+  const row = f.node.querySelectorAll('.nq-row')[0], tcp = row.querySelector('.nq-tcp-value');
+  assert.equal(tcp.dataset.laneState, 'measuring');
+  assert.match(tcp.textContent, /^[0-9.]+ms$/, 'the lane shows its latest connect time, not "未知": ' + tcp.textContent);
+  const cells = row.querySelector('.nq-tcp-blocks').querySelectorAll('.nq-block');
+  assert.equal(cells.length, 12);
+  assert.ok(cells.some(c => /nq-low/.test(c.className)), 'at least one cell carries the data of the four samples');
+});
+
+test('D1: the mini chart draws the real one-day answer instead of "历史读取失败"', async () => {
+  const raw = load('v4-running'), id = laneTarget(raw, 'telecom', 'ipv4', 'tcp'), day = load('history-1day-tcp');
+  const c = await chart(C.adapt(raw), load('tcp-mini-none'), {history: url => new URL(url, 'http://local').searchParams.get('target_id') === id ? Promise.resolve(JSON.parse(JSON.stringify(day))) : new Promise(() => {})});
+  assert.ok(!texts(c).includes('历史读取失败'), texts(c).join('|'));
+  assert.equal(Number(c.plot.dataset.pointCount) > 0, true, 'points drawn: ' + c.plot.dataset.pointCount);
+});
+
+test('D1: the history dialog opens on the Server\'s real answer and shows its statistics', async () => {
+  screen(1000, 1000);
+  const raw = load('v4-running'), id = laneTarget(raw, 'telecom', 'ipv4', 'tcp');
+  const f = setup({raw, serverHistory: serverHistory()});
+  f.ui.setVisible(AGENT, true); await flush();
+  assert.equal(f.ui.openHistoryFor(AGENT, id, 'ipv4', 'latency', f.node), true);
+  await flush();
+  const text = f.dialog.all().map(n => n.ownText).join('\n');
+  assert.match(text, /窗口统计：P50/);
+  assert.match(text, /样本 4/);
+  assert.doesNotMatch(text, /读取失败/);
+});
