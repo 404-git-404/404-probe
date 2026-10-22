@@ -259,3 +259,52 @@ test('Scroll (Chromium): a change elsewhere in the configuration neither closes 
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });
+
+// N6 on the card: alert, "no current TCP check" and normal read the same height - the explanation is a tooltip of the
+// words in the chart, never a paragraph that pushes the time slider down onto the YouTube row.
+async function miniCard(config, status) {
+  const page = await browser.newPage({viewport: {width: 900, height: 700}}), errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host" style="width:380px"></div></body></html>');
+  for (const css of ['style.css', 'card-layout.css', 'network-quality.css', 'latency-mini.css']) await page.addStyleTag({content: read(css)});
+  for (const js of ['agent-state.js', 'network-quality-core.js', 'latency-mini.js']) await page.addScriptTag({content: read(js)});
+  await page.evaluate(({config, status, agent}) => {
+    const C = window.NetworkQualityCore, state = {fetchJSON: async url => { if (url.includes('/tcp-mini')) return structuredClone(status); return new Promise(() => {}); }};
+    const api = window.LatencyMini.create({document, state, interval: () => 0, clear() {}, unauthorized() {}});
+    const card = document.createElement('section'); card.className = 'agent-card'; const quality = document.createElement('section'); quality.className = 'network-quality dv-c'; card.append(quality);
+    quality.append(api.mount({agent_id: agent, online: true})); document.getElementById('host').append(card);
+    api.bindConfig(agent, C.adapt(config)); api.setVisible(agent, true); window.__mini = api; window.__card = card;
+  }, {config, status, agent: AGENT});
+  await page.waitForFunction(() => document.querySelector('.lm-plot')?.dataset.scale === 'fixed-sqrt', null, {timeout: 8000});
+  await page.waitForTimeout(700); // the Server's tcp-mini answer
+  return {page, errors};
+}
+const miniFacts = page => page.evaluate(() => {
+  const note = document.querySelector('.lm-alert-note'), mini = document.querySelector('.latency-mini'), card = document.querySelector('.agent-card');
+  const words = [...document.querySelectorAll('.lm-plot svg text')].filter(t => t.dataset.tcpMini || t.dataset.alert).map(t => ({text: [...t.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(''), title: t.querySelector('title')?.textContent || ''}));
+  return {mini: mini.offsetHeight, card: card.offsetHeight, noteVisible: !!note && note.getBoundingClientRect().height > 0, noteText: note?.textContent || '', words, cardText: card.innerText};
+});
+
+test('N6 layout (Chromium): alert, no current TCP check and normal give the card the same height and no explanation paragraph', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const running = load('v4-running'), off = load('v4-saved-off');
+  const states = {
+    alert: [running, load('tcp-mini-alert-running')],
+    none: [off, load('tcp-mini-none')],
+    normal: [running, {...load('tcp-mini-none'), current_tcp: true, state: 'normal'}],
+  };
+  const facts = {};
+  for (const [name, [config, status]] of Object.entries(states)) {
+    const {page, errors} = await miniCard(config, status);
+    try { facts[name] = await miniFacts(page); assert.deepEqual(errors, [], name); } finally { await page.close(); }
+  }
+  for (const [name, f] of Object.entries(facts)) {
+    assert.equal(f.noteVisible, false, name + ': no paragraph under the chart: ' + f.noteText);
+    assert.doesNotMatch(f.cardText, /告警持续到之后某一天|没有正在检测的 IPv4 TCP 线路|来源日/, name + ': no N6 explanation in the card body');
+  }
+  assert.equal(facts.alert.words.length, 1); assert.equal(facts.alert.words[0].text, '告警');
+  assert.match(facts.alert.words[0].title, /告警来源日 2026-10-\d\d；告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标/, 'the explanation is the tooltip of the word');
+  assert.equal(facts.none.words[0].text, '无当前 TCP 检测'); assert.match(facts.none.words[0].title, /没有正在检测的 IPv4 TCP 线路/);
+  assert.equal(facts.normal.words.length, 0, 'normal shows no words');
+  assert.equal(new Set(Object.values(facts).map(f => f.mini)).size, 1, 'one height of the chart block: ' + JSON.stringify(Object.fromEntries(Object.entries(facts).map(([n, f]) => [n, f.mini]))));
+  assert.equal(new Set(Object.values(facts).map(f => f.card)).size, 1, 'one height of the card: ' + JSON.stringify(Object.fromEntries(Object.entries(facts).map(([n, f]) => [n, f.card]))));
+});
