@@ -19,7 +19,8 @@
   const euNote='遇到欧盟隐私同意页，具体国家未知；欧盟/欧洲经济区、英国、瑞士均在 Premium 可用名单内';
   function view(agent,now=Date.now()){
     const g=agent?.google_status,y=g?.result?.youtube;
-    // 送中: Google treats this IP as being in China. For such an IP the page region is only a default.
+    // 送中: Google treats this IP as being in China. It is shown like any other region without Premium ("地区 CN", red);
+    // the page region is only a default there and stays in the tooltip.
     const china=Boolean(y&&y.status==='cn');
     const known=Boolean(y&&y.status==='not_cn'&&countryCodes.has(y.region));
     const pageRegion=china&&y.region&&y.region!=='CN'&&countryCodes.has(y.region)?y.region:'';
@@ -32,9 +33,9 @@
     if(!g?.supported){label='不支持';state='当前 Agent 不支持检测';}
     else if(g.pending){label='检测中';tone='pending';state='检测正在进行，上次记录不是本次结论';}
     else if(!g.result){label='尚未检测';state='尚未检测';}
-    else if(old){label=`旧·${china?'送中':known?y.region:'未知'}`;tone='stale';state='Agent 离线或暂停，当前地区未知';}
-    else if(expired){label=`过期·${china?'送中':known?y.region:'未知'}`;tone='stale';state='结果已过期，当前地区未知';}
-    else if(china){label='送中';tone='warn';state='本次检测显示 Google 把本机 IP 当作中国';}
+    else if(old){label=`旧·${china?'CN':known?y.region:'未知'}`;tone='stale';state='Agent 离线或暂停，当前地区未知';}
+    else if(expired){label=`过期·${china?'CN':known?y.region:'未知'}`;tone='stale';state='结果已过期，当前地区未知';}
+    else if(china){label='地区 CN';tone='observed';state='本次检测显示 Google 把本机 IP 当作中国（送中）';}
     else if(known){label=`地区 ${y.region}`;tone='observed';state='本次页面地区已识别';}
     else if(consent){label='地区 EU';tone='observed';state='遇到欧盟隐私同意页，具体国家未知';}
     else {label='未知';state='本次结果未知';}
@@ -44,9 +45,9 @@
     // A 送中 IP is not judged by the official list: the page region is a default there. The page's own
     // 'not available in your country' message is supporting evidence only.
     const notice=china&&y.premium_unavailable_notice===true;
-    const premium=tone==='observed'?(consent?'available':premiumRegions.has(y.region)?'available':'unavailable'):(china&&tone==='warn'?(notice?'unavailable':'undetermined'):null);
-    const premiumNote=consent?'':china&&premium?(notice?'页面提示 Premium 不可用':'送中，无法判断 Premium 是否可用'):premium==='available'?'Premium 可用地区':premium==='unavailable'?`Premium 不可用地区（依据 YouTube 官方名单，核对日期 ${premiumCheckedAt}）`:'';
-    const prior=g?.result?`；${g.pending||old||expired?'上次记录':'结果记录'}：${china?'送中':known?'页面地区 '+y.region:'未知'}，${y?.error?.category==='job_expired'?'作业到期时间':'结果记录时间'} ${time}`:'';
+    const premium=tone==='observed'?(consent?'available':china?'unavailable':premiumRegions.has(y.region)?'available':'unavailable'):null;
+    const premiumNote=consent?'':china?(premium?(notice?'页面提示 Premium 不可用':'Premium 不可用地区（CN 不在 YouTube 官方名单内）'):''):premium==='available'?'Premium 可用地区':premium==='unavailable'?`Premium 不可用地区（依据 YouTube 官方名单，核对日期 ${premiumCheckedAt}）`:'';
+    const prior=g?.result?`；${g.pending||old||expired?'上次记录':'结果记录'}：${china?'地区 CN（送中）':known?'页面地区 '+y.region:'未知'}，${y?.error?.category==='job_expired'?'作业到期时间':'结果记录时间'} ${time}`:'';
     const description=`YouTube：${state}${prior}；${reason}。${premiumNote?premiumNote+'。':''}通过 IPv4 HTTPS 读取 Premium 页面；页面地区可能来自默认值、偏好或启发式判断，不代表出口 IP 归属，未验证视频播放或 Premium 解锁。`;
     return {label,tone,premium,state,description,reason,known,expired:expired||old};
   }

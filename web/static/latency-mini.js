@@ -115,8 +115,10 @@
       if(message)txt(left+pw/2,14,message,'middle');
       // N6: with no IPv4 TCP lane running, no old alert and no coverage warning is shown, only that there is none.
       const alertText=c.protocol!=='tcp'?'':evidence?(evidence.kind==='none'||evidence.kind==='unknown'?evidence.text:''):c.tcpEvidenceError?'告警覆盖不足':'';
-      if(alertText)txt(left+3,ph-3,alertText).dataset.tcpMini=evidence?.kind||'unknown';
-      c.plot.replaceChildren(svg);c.alertNote.textContent=c.protocol==='tcp'&&evidence&&['alert','none','unknown'].includes(evidence.kind)?(evidence.text?evidence.text+'：':'')+evidence.detail:'';c.alertNote.hidden=!c.alertNote.textContent;c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
+      if(alertText){const words=txt(left+3,ph-3,alertText);words.dataset.tcpMini=evidence?.kind||'unknown';
+        // The explanation of "no current TCP check" is a tooltip of these words, not a paragraph that squeezes the card.
+        if(evidence?.kind==='none'){const tip=doc.createElementNS(ns,'title');tip.textContent=evidence.detail;words.append(tip);}}
+      c.plot.replaceChildren(svg);c.alertNote.textContent=c.protocol==='tcp'&&evidence&&['alert','unknown'].includes(evidence.kind)?(evidence.text?evidence.text+'：':'')+evidence.detail:'';c.alertNote.hidden=!c.alertNote.textContent;c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.warning=String(alert);c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);
       c.plot.title=`${stamp(start)} — ${stamp(end)} · 5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示${c.protocol==='tcp'?`；${c.tcpEvidence?.timezone||'浏览器本地时区'}；${evidence?evidence.detail||'无告警':'告警覆盖不足'}`:''}；横拖平移，方向键平移，Enter 回到现在；滚轮只滚动页面`;
       c.plot.setAttribute('aria-label',c.plot.title+(message?' · '+message:''));
       c.span.textContent=c.hours+'h';c.span.title='当前可视时间跨度：'+c.hours+'小时';c.slider.setAttribute('aria-valuetext',c.hours+'小时');c.now.setAttribute('aria-pressed',String(c.follow));

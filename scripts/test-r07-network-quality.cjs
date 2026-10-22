@@ -483,7 +483,12 @@ test('N6: no TCP lane running -> "无当前 TCP 检测", no alert mark, no cover
   assert.ok(!texts(after).includes('告警') && !texts(after).includes('告警覆盖不足'));
   assert.equal(after.plot.dataset.warning, 'false');
   assert.doesNotMatch(after.plot.title, /告警来源日|峰值/);
-  assert.match(after.note.textContent, /无当前 TCP 检测/);
+  // The long explanation is a tooltip of the words in the chart, never a paragraph in the card.
+  assert.equal(after.note.textContent, '', 'no paragraph under the chart');
+  assert.equal(after.note.hidden, true);
+  const words = after.svg().find(n => n.tagName === 'text' && n.ownText === '无当前 TCP 检测');
+  assert.match(words.children.find(n => n.tagName === 'title').textContent, /没有正在检测的 IPv4 TCP 线路（总开关关闭、没有勾选 IPv4 TCP，或只剩 ICMP \/ IPv6）；不显示旧告警/);
+  assert.doesNotMatch(after.node.textContent, /不显示旧告警.*不显示旧告警/s);
   assert.doesNotMatch(after.note.textContent, /4700|2026-10/, 'no peak and no source day of the old alert');
   const none = await chart(C.adapt(load('v4-saved-off')), load('tcp-mini-none'));
   assert.ok(texts(none).includes('无当前 TCP 检测'));
