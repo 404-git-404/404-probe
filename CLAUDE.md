@@ -10,9 +10,9 @@ go build ./...
 go test ./... -count=1
 ```
 
-- 发布前的测试结果以 Linux 为准。`internal/agent` 的个别用例（如 `TestRCHelperNegotiationDoesNotTrustOldV2`）在 Windows 负载下会偶发超时，v1.0.2 上同样如此。
+- 发布前的测试结果以 Linux 为准。下面两个用例在 Windows 上会偶发失败，不是回归：`internal/agent` 的 `TestRCHelperNegotiationDoesNotTrustOldV2`（Windows 实测失败率约 25%，负载下超时，v1.0.2 上同样如此）和 `internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（Windows 约 5%）。遇到时单独重跑该用例，不要把重跑通过写成“首次全量通过”，要如实记下首次的失败。
 - `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-m02-real-chain.cjs`、`scripts/test-n3-network-quality.cjs`（19 过 4 败，v1.0.3 上相同）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。`scripts/test-p4b2-traffic-chart.cjs`（8 过 7 败）和 `scripts/test-p5a2-device-details.cjs`（3 败）同样是基线失败，v1.0.3 上相同。
-- `scripts/test-agent-upgrade-systemd.sh` 是为 v0.9.3→v1.0.0 迁移写的（Server、Agent 和资产版本都固定为 v1.0.0），目前跑不了。v1.0.4 用正式发布后的 Web 升级真机验证代替；脚本参数化放到 v1.0.5。
+- `scripts/test-agent-upgrade-systemd.sh` 可以使用（R04 已参数化）：`sudo bash scripts/test-agent-upgrade-systemd.sh <起始版本> <目标版本> <起始资产目录> <目标资产目录> <源码 git 目录> <go 路径>`，在隔离的 systemd 环境里演练一次 Agent 升级（官方起始 Agent → 目标 Server → 受控 updater → 官方目标 Agent）。**只接受正式版本号**（`vX.Y.Z`），不支持 beta/rc、同版本覆盖和降级；两个资产目录各需 `build-release-assets.sh` 输出的 7 个文件；只在 Linux amd64/arm64 且有 root 的机器上运行。它不覆盖官方 updater 本身、Web 操作入口和 GitHub release 的可用性发现，这些由 Web 升级真机验证补上。
 - 文档、说明和提交信息用中文或英文均可，提交信息采用 `type(scope): subject`，作者邮箱用 `305518817+404-git-404@users.noreply.github.com`。
 
 ## 换行（务必保持 LF）
@@ -35,6 +35,8 @@ go test ./... -count=1
    bash scripts/build-release-assets.sh vX.Y.Z
    ```
 
+   **构建必须在主仓库，或 `core.autocrlf=false` 的干净克隆中进行，不能在 git worktree 里构建**（worktree 的 `.git` 是一个文件，Go 读不到完整的 VCS 信息，产物的 `vcs.revision`/`vcs.modified` 会缺失或错误）。克隆用 `git -c core.autocrlf=false clone --no-hardlinks`，检出 detached 的发布提交，`git status` 必须干净。
+
    共 7 个文件：4 个 ELF（linux amd64/arm64 × server/agent）、`install.sh`、`RELEASE-METADATA.json`、`SHA256SUMS`。逐个核对 `vcs.revision`、`vcs.modified=false` 和 SHA256，并按字节确认三个文本文件都是 LF。
 
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
@@ -43,7 +45,7 @@ go test ./... -count=1
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `main` 拉出（`main` 只包含已正式发布的版本）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
    2. 对发布提交打**带注释**的 tag `vX.Y.Z`，只推这个 tag。
    3. `gh release create vX.Y.Z --verify-tag --title "404-probe vX.Y.Z Stable" --notes-file RELEASE_NOTES_vX.Y.Z.md --latest=false`，附上这 7 个文件。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
-   4. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。
+   4. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。**升级前后各记录一次状态快照并对比（R05）**：升级前 `python3 -I scripts/agent-state-snapshot.py collect --label before --out <仓库外目录> <测试 Agent 的 SSH 别名…>`，升级后 `--label after`，再 `python3 -I scripts/agent-state-snapshot.py compare <目录> before after`。快照只读采集版本、二进制哈希、`agent.env` 的各项设置（密钥只记“已设置/为空”）、每个 systemd 单元（含 drop-in）或 OpenRC 脚本的哈希、实际生效的沙箱选项、服务状态；版本、二进制哈希、进程是升级预期会变的，其他任何差异（单元文件、沙箱、设置、权限、服务不再运行）都要查清，命令退出码为 1。快照放在仓库外（例如 `release-records` 的版本目录），不提交。
    5. 成功后 `gh release edit vX.Y.Z --latest`；失败则改回草稿（`--draft=true`），不删除 release 或 tag，也不重新上传不同字节。
    6. 说明文件的后续修改在 tag 之后单独提交并推送。
    7. **最后一步**才把 `main` 快进到该发布分支（发布完成后 `main` 才前进）。
@@ -65,12 +67,11 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
 
 ## 测试机
 
-共 8 台测试机，具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
+共 5 台测试机（DE、FR、NL 三台 Podman 已退役，不再使用），具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
 
 - 1 台 Debian 12，作 Server。
 - 2 台 Debian Agent（Debian 12 和 Debian 13）。
-- 2 台 Alpine 3.24 Agent（OpenRC）：一台 128 MiB 内存（arm64，cgroup 限制，用来验证内存是否稳定），另一台 512 MiB（SSH 经常超时，已决定不再尝试）。
-- 3 台 Debian 13（DE、FR、NL），都是 Podman 容器（`systemd-detect-virt` 输出 `podman`），用于欧盟 YouTube 检测和容器环境兼容测试。容器里没有 D-Bus 系统总线（`systemd-run` 不可用），systemd 沙箱选项和 CAP_NET_RAW 也受限，安装器的沙箱探测（`sandbox_probe`）在这里才有意义。
+- 2 台 Alpine 3.24 Agent（OpenRC），**都是容器**（没有 D-Bus 系统总线，`systemd-run` 不可用，CAP_NET_RAW 等能力受限，安装器的沙箱探测 `sandbox_probe` 在这里才有意义）：一台 128 MiB 内存（arm64，cgroup 限制，用来验证内存是否稳定），另一台东京 512 MiB（SSH 经常超时，**不再使用**）。
 
 使用规则：
 - 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；安装系统软件、改防火墙、重启机器要先问。
@@ -98,6 +99,8 @@ v1.0.5 起试运行：Claude Code 和 Codex 各自施工，互相做只读交叉
 - `app.js` 等大型公共文件，同一版本内尽量只由一方修改（v1.0.5 为 Claude Code）；另一方的任务如果需要修改，先停下来报告。
 - 测试 Server 同一时间只给一方使用，由维护者安排。
 - 模块完成后由另一方做只读交叉评审，以此代替一轮模块评审；发布前仍保留一次独立 High 评审。
+- **评审分级**：低风险任务由施工方自测，另一方做只读交叉评审，维护者验收；高风险阶段（例如数据库迁移、Server/Agent 协议、授权与安全相关的阶段）和发布前的独立评审，额外由 GPT（high）做独立评审。
+- **评审收尾规则**：只有能复现的缺陷才阻塞验收（评审要附复现步骤或失败的测试）；不能复现的怀疑、风格、更好的写法、范围外的想法，一律作为建议记录（写进评审记录，由维护者决定是否排期），不阻塞，也不要在同一轮里无限追加新的“必须修改”。
 - 合并顺序：双方分支经验收后合入 `dev/vX.Y.Z`；发布时从 `dev/vX.Y.Z` 准备 `release/vX.Y.Z`。
 
 ## 后续任务
