@@ -465,7 +465,18 @@
       measure.font=AXIS_FONT;
       return Math.ceil(Math.max(0,...values.filter(Boolean).map(t=>measure.measureText(t).width)))+18; // tick mark and gap
     }
+    // Rebuilding the history empties its container for a moment; when the page that scrolls it is then shorter than its own
+    // viewport the browser drops the scroll position to the top, every 30 s. Every scrolled ancestor gets its position back.
     function renderHistory(){
+      const kept=[];
+      for(let n=history?historyContainer():null;n&&n.nodeType===1;n=n.parentNode)if(typeof n.scrollTop==='number'&&n.scrollTop>0)kept.push([n,n.scrollTop]);
+      drawHistory();
+      const restore=()=>{for(const [n,top] of kept)if(n.scrollTop!==top)n.scrollTop=top;};
+      restore();
+      // The chart's legend settles a frame later and makes the page taller again: put the position back once more then.
+      root.requestAnimationFrame?.(restore);
+    }
+    function drawHistory(){
       if(!history||!historyActive(history))return;const dialog=historyContainer();if(!dialog)return;
       const h=history,focused=dialog.contains(doc.activeElement)?doc.activeElement?.dataset?.nqField:null;destroyPlot();
       const header=el('div','nq-history-head');const title=el('div');const heading=el('h2','',historyHost?'网络质量':'设备详情');heading.id='nq-history-title';
