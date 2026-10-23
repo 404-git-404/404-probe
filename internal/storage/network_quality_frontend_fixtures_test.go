@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,7 +63,10 @@ func TestFrontendFixtures(t *testing.T) {
 		t.Cleanup(func() {
 			generated, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 			existing, _ := filepath.Glob(filepath.Join(committed, "*.json"))
-			if len(generated) != len(existing) || len(generated) < 13 {
+			// tcp-mini-*.json are static copies of the retired TCP Mini answers (schema 35). The v1.0.6 page
+			// scripts still load them until the card rewrite replaces those scripts.
+			existing = slices.DeleteFunc(existing, func(file string) bool { return strings.HasPrefix(filepath.Base(file), "tcp-mini-") })
+			if len(generated) != len(existing) || len(generated) < 10 {
 				t.Errorf("the generator wrote %d fixtures, %d are committed", len(generated), len(existing))
 			}
 			for _, file := range generated {
@@ -110,16 +115,6 @@ func TestFrontendFixtures(t *testing.T) {
 			decoder.DisallowUnknownFields()
 			if err := decoder.Decode(&h); err != nil || laneTarget == "" || h.Target.ID != laneTarget {
 				t.Fatalf("%s: %v target.id %q, lane target %q", name, err, h.Target.ID, laneTarget)
-			}
-		}
-		files, _ = filepath.Glob(filepath.Join(committed, "tcp-mini-*.json"))
-		for _, file := range files {
-			wire, _ := os.ReadFile(file)
-			var status TCPMiniStatus
-			decoder := json.NewDecoder(bytes.NewReader(wire))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&status); err != nil {
-				t.Fatalf("%s: %v", file, err)
 			}
 		}
 	}
@@ -212,41 +207,4 @@ func TestFrontendFixtures(t *testing.T) {
 		}
 	}
 	write("v4-target-abnormal.json", k.get())
-
-	// TCP Mini: an alert of a running TCP lane, and the same alert after detection was switched off
-	// (what an upgraded device shows: the evidence stays, no TCP lane is open).
-	k = fixtureKit(t)
-	k.negotiate(v4Caps(protocol.QualityIPv6Present))
-	k.save(30000, fixtureSlots()...)
-	k.enable(true)
-	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	lastHigh := now.Add(-26 * time.Hour)
-	for _, q := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO tcp_mini_state(agent_id,evidence_start,scanned_at,initialized,last_high,last_low,revision) VALUES(?,?,?,1,?,0,4)`, []any{k.id, now.Add(-120 * time.Hour).UnixMilli(), now.Add(-time.Hour).UnixMilli(), lastHigh.UnixMilli()}},
-		{`INSERT INTO tcp_mini_high(agent_id,minute,peak_ms,source) VALUES(?,?,?,'raw')`, []any{k.id, lastHigh.Truncate(time.Minute).UnixMilli(), 4700.0}},
-	} {
-		if _, err := k.s.db.Exec(q.query, q.args...); err != nil {
-			t.Fatal(err)
-		}
-	}
-	status, err := k.s.TCPMini(k.ctx, k.id, "UTC", now)
-	if err != nil || status.State != "alert" || !status.CurrentTCP {
-		t.Fatalf("%+v %v", status, err)
-	}
-	write("tcp-mini-alert-running.json", status)
-	k.enable(false)
-	status, err = k.s.TCPMini(k.ctx, k.id, "UTC", now)
-	if err != nil || status.State != "alert" || status.CurrentTCP {
-		t.Fatalf("%+v %v", status, err)
-	}
-	write("tcp-mini-alert-switched-off.json", status)
-	k = fixtureKit(t)
-	status, err = k.s.TCPMini(k.ctx, k.id, "UTC", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	write("tcp-mini-none.json", status)
 }

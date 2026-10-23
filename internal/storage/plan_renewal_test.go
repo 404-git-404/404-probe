@@ -483,8 +483,8 @@ func TestPlanRenewalMigration24BackfillAndAtomicFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "migration.db")
 	s, id := renewalSetup(t, path)
 	ctx := context.Background()
+	dropUpgradeV2FixtureSchema(t, s.db) // also takes the schema 35 columns off agent_plans
 	before := tableRenewalSnapshot(t, s, "agent_plans")
-	dropUpgradeV2FixtureSchema(t, s.db)
 	for _, statement := range []string{`DROP TABLE agent_plan_renewal_requests`, `DROP TABLE agent_plan_config`, `DELETE FROM schema_migrations WHERE version=24`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)

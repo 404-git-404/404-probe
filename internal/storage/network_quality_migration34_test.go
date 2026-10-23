@@ -260,7 +260,7 @@ func m34Snap(t *testing.T, s *Store) m34Snapshot {
 	snap := m34Snapshot{counts: map[string]int{}}
 	snap.closedIntervals = m34Query(t, s, `SELECT agent_id||'/'||slot||'/'||family||'/'||protocol||'/'||revision, end_at||'|'||config_until FROM quality_intervals WHERE end_at IS NOT NULL`)
 	snap.retiredAt = m34Query(t, s, `SELECT id, retired_at FROM quality_targets WHERE retired_at IS NOT NULL`)
-	for _, table := range []string{"quality_raw", "quality_minute", "quality_buckets", "quality_series", "quality_targets", "tcp_mini_state", "tcp_mini_high", "quality_gaps"} {
+	for _, table := range []string{"quality_raw", "quality_minute", "quality_buckets", "quality_series", "quality_targets", "quality_gaps"} {
 		var n int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -505,7 +505,7 @@ func TestMigration34FailureInjectionAndRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer s.Close()
-				if version, err := s.SchemaVersion(context.Background()); err != nil || version != 34 {
+				if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
 					t.Fatalf("retry version=%d err=%v", version, err)
 				}
 				var revision, settings int64

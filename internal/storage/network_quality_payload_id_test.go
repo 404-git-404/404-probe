@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -62,41 +60,5 @@ func TestBackfillRebuildsUserTargetsWithTheirID(t *testing.T) {
 	var series int
 	if err := k.s.db.QueryRow(`SELECT COUNT(*) FROM quality_series WHERE agent_id=? AND target_id=?`, k.id, id).Scan(&series); err != nil || series != 1 {
 		t.Fatalf("series for the target: %d %v", series, err)
-	}
-}
-
-// A transient high connect time is kept even when the rest of its minute is low (the 30 s cadence of the Agent:
-// a slow sample, then a quick one 30 s later). The open minute is rebuilt from the raw samples of the target.
-func TestTCPMiniKeepsATransientHighOfAUserTarget(t *testing.T) {
-	k := v4Base(t, true)
-	cfg := k.get()
-	minute := k.now.Truncate(time.Minute).Add(time.Minute)
-	if _, err := k.s.db.Exec(`INSERT OR REPLACE INTO tcp_mini_state(agent_id,evidence_start,scanned_at,initialized) VALUES(?,?,?,1)`, k.id, minute.Add(-48*time.Hour).UnixMilli(), minute.Add(-time.Hour).UnixMilli()); err != nil {
-		t.Fatal(err)
-	}
-	// 2100 ms taken at +20 s, received early (accepted future skew); at +25 s it has matured.
-	if acks := k.upload(minute.Add(5*time.Second), k.userTCPSample(cfg, 1, minute.Add(20*time.Second), 2100)); acks[0] != "committed" {
-		t.Fatalf("high sample: %v", acks)
-	}
-	if err := k.s.MaintainTCPMini(context.Background(), minute.Add(25*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	// The next sample, 30 s later, is quick; once the minute is complete its P95 is below the threshold.
-	if acks := k.upload(minute.Add(50*time.Second), k.userTCPSample(cfg, 2, minute.Add(50*time.Second), 1)); acks[0] != "committed" {
-		t.Fatalf("low sample: %v", acks)
-	}
-	if err := k.s.MaintainTCPMini(context.Background(), minute.Add(65*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	status, err := k.s.TCPMini(context.Background(), k.id, "UTC", minute.Add(70*time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Peak != 2100 || status.LastHigh == 0 {
-		t.Fatalf("the transient high of a user target was lost: %+v", status)
-	}
-	var source string
-	if err := k.s.db.QueryRow(`SELECT source FROM tcp_mini_high WHERE agent_id=?`, k.id).Scan(&source); err != nil || !strings.Contains(source, `"id":"`+k.targetID(cfg, "telecom", "ipv4", "tcp")+`"`) {
-		t.Fatalf("the evidence names its target: %v %s", err, source)
 	}
 }

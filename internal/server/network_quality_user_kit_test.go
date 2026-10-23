@@ -156,32 +156,13 @@ func containsAny(s string, needles ...string) bool {
 	return false
 }
 
-// The TCP Mini response carries current_tcp from the open IPv4 TCP intervals (R07 N6).
-func TestR07TCPMiniReportsCurrentTCP(t *testing.T) {
-	a, s, id, token := testApp(t)
+// Schema 35 retired the TCP Mini evidence; a page of v1.0.6 that is still open gets the "refresh" answer.
+func TestV107TCPMiniEndpointAnswersGone(t *testing.T) {
+	a, s, id, _ := testApp(t)
 	defer s.Close()
 	defer a.Shutdown()
-	read := func() bool {
-		t.Helper()
-		w := qualityWebRequest(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/tcp-mini?timezone=UTC", "")
-		if w.Code != 200 {
-			t.Fatal(w.Code, w.Body.String())
-		}
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
-			t.Fatal(err)
-		}
-		value, ok := raw["current_tcp"]
-		if !ok {
-			t.Fatalf("current_tcp missing: %s", w.Body.String())
-		}
-		return string(value) == "true"
-	}
-	if read() {
-		t.Fatal("current_tcp without any configuration")
-	}
-	qualityServerConfig(t, a, s, id, token)
-	if !read() {
-		t.Fatal("current_tcp with an open IPv4 TCP lane")
+	w := qualityWebRequest(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/tcp-mini?timezone=UTC", "")
+	if w.Code != http.StatusGone || !strings.Contains(w.Body.String(), "client_outdated") {
+		t.Fatal(w.Code, w.Body.String())
 	}
 }

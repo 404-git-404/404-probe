@@ -477,11 +477,11 @@ func TestV4CurrentTCPFollowsTheOpenIPv4TCPInterval(t *testing.T) {
 	k := v4Base(t, false)
 	status := func() bool {
 		t.Helper()
-		out, err := k.s.TCPMini(k.ctx, k.id, "UTC", k.now)
+		out, err := k.s.QualityAlertGate(k.ctx, k.id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return out.CurrentTCP
+		return out
 	}
 	if status() {
 		t.Fatal("current_tcp while the switch is off")

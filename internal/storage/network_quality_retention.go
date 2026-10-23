@@ -8,12 +8,6 @@ import (
 
 // One pass is bounded to 500 per table; cascades/counters share each statement's tx.
 func (s *Store) CleanupQualityBatch(ctx context.Context, now time.Time) (int64, bool, error) {
-	if err := s.MaintainTCPMini(ctx, now); err != nil {
-		return 0, false, err
-	}
-	if pending, err := s.tcpMiniPending(ctx, now); err != nil || pending {
-		return 0, pending, err
-	}
 	n, pending, err := s.BackfillQualityBatch(ctx, now)
 	if err != nil || pending {
 		return int64(n), pending, err

@@ -37,13 +37,6 @@ func TestV4LabelOnlySaveKeepsMeasurementContinuous(t *testing.T) {
 	}
 	feed(0, 40) // 20 minutes
 	k.now = start.Add(41 * step)
-	if err := k.s.MaintainTCPMini(k.ctx, k.now); err != nil {
-		t.Fatal(err)
-	}
-	var evidenceBefore int64
-	if err := k.s.db.QueryRow(`SELECT evidence_start FROM tcp_mini_state WHERE agent_id=?`, k.id).Scan(&evidenceBefore); err != nil {
-		t.Fatal(err)
-	}
 	beforeConfig := agentConfig()
 	settings, measurement := k.revisions()
 	slotRevision := k.lane(cfg, "telecom", "ipv4", "tcp").SlotRevision
@@ -65,9 +58,6 @@ func TestV4LabelOnlySaveKeepsMeasurementContinuous(t *testing.T) {
 	}
 	feed(40, 40) // 20 more minutes, uploaded with the old configuration the Agent still has
 	k.now = start.Add(81 * step)
-	if err := k.s.MaintainTCPMini(k.ctx, k.now); err != nil {
-		t.Fatal(err)
-	}
 
 	history, err := k.s.QualityCardHistory(k.ctx, k.id, target, k.now)
 	if err != nil {
@@ -99,20 +89,5 @@ func TestV4LabelOnlySaveKeepsMeasurementContinuous(t *testing.T) {
 	}
 	if filled < 7 {
 		t.Fatalf("only %d cells carry data", filled)
-	}
-	var evidenceAfter int64
-	var initialized bool
-	if err := k.s.db.QueryRow(`SELECT evidence_start,initialized FROM tcp_mini_state WHERE agent_id=?`, k.id).Scan(&evidenceAfter, &initialized); err != nil {
-		t.Fatal(err)
-	}
-	if evidenceAfter != evidenceBefore || !initialized {
-		t.Fatalf("TCP Mini evidence restarted: %d -> %d", evidenceBefore, evidenceAfter)
-	}
-	status, err := k.s.TCPMini(k.ctx, k.id, "UTC", k.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !status.CurrentTCP || status.EvidenceStart != evidenceBefore {
-		t.Fatalf("TCP Mini: %+v", status)
 	}
 }

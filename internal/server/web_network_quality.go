@@ -12,7 +12,6 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/agent/network-quality", a.handleAgentQuality)
 	mux.HandleFunc("POST /api/v1/agent/network-quality/config", a.handleAgentQualityConfig)
 	path := "/api/v1/web/agents/{agent_id}/network-quality/"
-	mux.Handle("GET "+path+"v3/tcp-mini", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleTCPMini), true)))
 	mux.Handle("GET "+path+"history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistory), true)))
 	mux.Handle("GET "+path+"v2/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryV2), true)))
 	mux.Handle("GET "+path+"v3/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryRollup), true)))
@@ -27,6 +26,8 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 		mux.Handle("PUT "+path+suffix, qualityBudgetHandler(a.requireWebMutation(outdated)))
 	}
 	mux.Handle("GET "+path+"v3/card-config", qualityBudgetHandler(a.requireWebSession(outdated, true)))
+	// Schema 35 retires the TCP Mini evidence tables; R25 judges the stored minute buckets instead.
+	mux.Handle("GET "+path+"v3/tcp-mini", qualityBudgetHandler(a.requireWebSession(outdated, true)))
 }
 
 func (a *App) handleQualityClientOutdated(w http.ResponseWriter, r *http.Request) {

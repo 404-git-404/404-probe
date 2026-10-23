@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // m34Preserved are the tables migration 34 must not touch, with the columns that exist from every start.
@@ -21,8 +20,6 @@ var m34Preserved = []struct{ table, columns, order string }{
 	{"quality_series", "*", "id"},
 	{"quality_buckets", "*", "series_id,resolution,bucket_start"},
 	{"quality_gaps", "*", "rowid"},
-	{"tcp_mini_state", "*", "agent_id"},
-	{"tcp_mini_high", "*", "agent_id,minute"},
 	{"agent_google_status", "agent_id,youtube_status,youtube_region,sent_to_china,youtube_error,search_status,search_error,signin_status,signin_error,gemini_status,gemini_region,gemini_error,checked_at,unknown_streak,next_due_at", "agent_id"},
 }
 
@@ -98,7 +95,7 @@ func TestMigration34KeepsR23DataAndHistory(t *testing.T) {
 				id := m34Seed(t, s, spec, 1)
 				m34SeedData(t, s, id, !from32)
 				before := m34Fingerprint(t, s.db)
-				for _, table := range []string{"quality_raw", "quality_series", "quality_buckets", "tcp_mini_high", "agent_google_status"} {
+				for _, table := range []string{"quality_raw", "quality_series", "quality_buckets", "agent_google_status"} {
 					if m34Rows(before, table) == "0" {
 						t.Fatalf("fixture has no rows in %s", table)
 					}
@@ -164,14 +161,15 @@ func TestMigration34KeepsR23DataAndHistory(t *testing.T) {
 	}
 }
 
-// A binary that supports schema 32 (v1.0.4) refuses a schema 34 database. Its check is the one in
-// storage.go of the v1.0.4 tag; the test runs the same comparison with that limit and, when the tag
-// is available, confirms the tag really has that limit and that comparison.
+// A binary that supports schema 32 (v1.0.4) or 34 (v1.0.6) refuses the current database, so a rollback
+// never runs an old binary on a newer schema: the installer must restore the matching backup. The check is
+// the one in storage.go of those tags; the test runs the same comparison with their limits and, when a tag
+// is available, confirms the tag really has that limit.
 func TestMigration34DatabaseIsRefusedBySchema32Binary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "refuse.db")
 	s, _, _ := testStore(t, path)
 	version, err := s.SchemaVersion(context.Background())
-	if err != nil || version != 34 {
+	if err != nil || version != currentSchemaVersion {
 		t.Fatalf("version %d %v", version, err)
 	}
 	s.Close()
@@ -180,82 +178,26 @@ func TestMigration34DatabaseIsRefusedBySchema32Binary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := checkSchemaVersionAtMost(context.Background(), db, 32); !errors.Is(err, ErrUnsupportedSchemaVersion) {
-		t.Fatalf("a schema 32 binary would open a schema 34 database: %v", err)
+	for _, older := range []int{32, 34} {
+		if err := checkSchemaVersionAtMost(context.Background(), db, older); !errors.Is(err, ErrUnsupportedSchemaVersion) {
+			t.Fatalf("a schema %d binary would open a schema %d database: %v", older, currentSchemaVersion, err)
+		}
 	}
-	if err := checkSchemaVersionAtMost(context.Background(), db, 34); err != nil {
+	if err := checkSchemaVersionAtMost(context.Background(), db, currentSchemaVersion); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("git", "show", "v1.0.4:internal/storage/storage.go").Output()
-	if err != nil {
-		t.Skip("the v1.0.4 tag is not available here: ", err)
-	}
-	text := string(out)
-	if !strings.Contains(text, "const currentSchemaVersion = 32") || !strings.Contains(text, "if version > currentSchemaVersion {\n\t\treturn unsupportedSchemaVersionError(version)") {
-		t.Fatal("v1.0.4 no longer has the schema limit this test assumes")
-	}
-}
-
-// Upgrading a device that had a TCP Mini alert: the alert stays what it was, only current_tcp turns
-// false because migration 34 closes the lanes. The 72-hour behaviour is unchanged as well.
-func TestMigration34TCPMiniAlertContractAcrossMigration(t *testing.T) {
-	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name     string
-		lastHigh time.Time
-		peak     float64
-		lastLow  time.Time
-	}{
-		{"fresh alert", now.Add(-26 * time.Hour), 4700, time.Time{}},
-		{"evidence older than 72 hours, no normal minute", now.Add(-80 * time.Hour), 4700, time.Time{}},
-		{"cleared by a later normal minute", now.Add(-50 * time.Hour), 3000, now.Add(-2 * time.Hour)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "alert.db")
-			s := m34Open(t, path, false)
-			_, intervals, targets := m34Catalog([]string{"telecom", "unicom", "mobile"}, 4)
-			id := m34Seed(t, s, m34Spec{name: "alerting", revision: 4, enabled: true, targets: targets, intervals: intervals,
-				slots: []m34Slot{{"telecom", "ipv4", "tcp", "telecomipv4", 4}}}, 1)
-			low := int64(0)
-			if !tc.lastLow.IsZero() {
-				low = tc.lastLow.UnixMilli()
-			}
-			evidenceStart := now.Add(-120 * time.Hour).UnixMilli()
-			for _, q := range []string{
-				fmt.Sprintf(`INSERT INTO tcp_mini_state(agent_id,evidence_start,scanned_at,initialized,last_high,last_low,revision) VALUES('%s',%d,%d,1,%d,%d,4)`, id, evidenceStart, now.Add(-time.Hour).UnixMilli(), tc.lastHigh.UnixMilli(), low),
-				fmt.Sprintf(`INSERT INTO tcp_mini_high(agent_id,minute,peak_ms,source) VALUES('%s',%d,%v,'raw')`, id, tc.lastHigh.Truncate(time.Minute).UnixMilli(), tc.peak),
-			} {
-				if _, err := s.db.Exec(q); err != nil {
-					t.Fatal(err)
-				}
-			}
-			read := func(s *Store) TCPMiniStatus {
-				status, err := s.TCPMini(context.Background(), id, "UTC", now)
-				if err != nil {
-					t.Fatal(err)
-				}
-				return status
-			}
-			before := read(s)
-			if !before.CurrentTCP {
-				t.Fatal("fixture: the v1.0.4 device has an open IPv4 TCP interval")
-			}
-			s.Close()
-			migration34Skip = false
-			s, err := Open(context.Background(), path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.Close()
-			after := read(s)
-			if after.CurrentTCP {
-				t.Fatal("current_tcp must be false after the migration closed the lanes")
-			}
-			if after.State != before.State || after.Coverage != before.Coverage || after.Level != before.Level || after.Peak != before.Peak ||
-				after.SourceDay != before.SourceDay || after.Today != before.Today || after.LastHigh != before.LastHigh || after.LastLow != before.LastLow {
-				t.Fatalf("the alert contract moved:\nbefore %+v\nafter  %+v", before, after)
-			}
-			t.Logf("%s: state=%s coverage=%s level=%v source_day=%s", tc.name, after.State, after.Coverage, after.Level, after.SourceDay)
-		})
+	for _, tag := range []struct {
+		name  string
+		limit int
+	}{{"v1.0.4", 32}, {"v1.0.6", 34}} {
+		out, err := exec.Command("git", "show", tag.name+":internal/storage/storage.go").Output()
+		if err != nil {
+			t.Logf("the %s tag is not available here: %v", tag.name, err)
+			continue
+		}
+		text := string(out)
+		if !strings.Contains(text, fmt.Sprintf("const currentSchemaVersion = %d", tag.limit)) || !strings.Contains(text, "if version > currentSchemaVersion {\n\t\treturn unsupportedSchemaVersionError(version") {
+			t.Fatalf("%s no longer has the schema limit this test assumes", tag.name)
+		}
 	}
 }

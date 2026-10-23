@@ -535,16 +535,6 @@ func qualityRollupTx(ctx context.Context, tx *sql.Tx, id string, epoch int64, se
 			return err
 		}
 	}
-	if sem == protocol.QualityStagedSemantics && target.Protocol == "tcp" && target.Family == "ipv4" {
-		if err := tcpMiniEnsureTx(ctx, tx, id, now.UnixMilli()); err != nil {
-			return err
-		}
-		if sample.StartedAt <= now.UnixMilli() {
-			if err := tcpMiniObserveMinuteTx(ctx, tx, id, series, sample.StartedAt/60000*60000, now.UnixMilli()); err != nil {
-				return err
-			}
-		}
-	}
 	if err = qualityEdgeTx(ctx, tx, prev, f, 1, false); err != nil {
 		return err
 	}

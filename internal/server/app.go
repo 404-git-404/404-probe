@@ -694,7 +694,6 @@ func (a *App) CleanupLoop() {
 	defer cleanupTicker.Stop()
 	defer historyTicker.Stop()
 	defer walHealthTicker.Stop()
-	a.maintainTCPMini()
 	a.cleanupExpiredRemovalReceipts()
 	a.cleanupPlanRenewalRequests()
 	for {
