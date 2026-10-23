@@ -373,7 +373,7 @@
     function trigger(agent) {
       if (!agent.outbounds?.configured) { triggers.delete(agent.agent_id); return null; }
       const choices=agent.outbounds.selectors||[],current=choices.length===1?choices[0].current:'';
-      const label='出站选择 ▾',hint=`出站选择${current?'：'+current:''}`;
+      const label='出口 ▾',hint=`出站选择${current?'：'+current:''}`;
       const existing = triggers.get(agent.agent_id);
       if (existing) { if(existing.textContent!==label)existing.textContent=label;existing.title=hint;existing.setAttribute('aria-label',hint);existing.setAttribute('aria-expanded', String(controller.model(agent.agent_id).open)); return existing; }
       const id = agent.agent_id, button = el('button', label, 'selector-trigger'); button.type = 'button';button.title=hint;button.setAttribute('aria-label',hint);

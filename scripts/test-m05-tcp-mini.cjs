@@ -59,16 +59,17 @@ class El{
 }
 const fakeDoc={hidden:false,createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
 const IDS={telecom:1,unicom:2,mobile:3};
-async function card({height=80,protocol='tcp',series,status={state:'normal',level_ms:2000,now:NOW,current_tcp:true},id='a'}){
+async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  // series: {slot: points => void}; slots absent from `series` get empty history.
  const histories={};
  for(const proto of ['tcp','icmp'])for(const slot of Object.keys(IDS)){const f=fixture(proto,slot);for(const p of f.points)Object.assign(p,{count:0,valid_rtts:0,p50_ms:null,p95_ms:null,completeness:'no_data'});if(proto===protocol)series[slot]?.(f.points);histories[f.target.id]=f.h;}
  const targets=['tcp','icmp'].flatMap(proto=>Object.keys(IDS).map(slot=>fixture(proto,slot).target));
  const lanes=new Map(targets.map(t=>[`${t.slot}/ipv4/${t.protocol}`,{slot:t.slot,family:'ipv4',protocol:t.protocol,status:'active',condition:''}]));
  const config={revision:'1',supported:true,enabled:true,targets,lanes,slots:Object.keys(IDS).map(slot=>({slot,kind:'builtin',region:'',isp:slot,host:'example.com',port:443}))};
- const state={};
+ const requests=[],state={};
  state.fetchJSON=async url=>{
-  if(url.includes('/tcp-mini'))return status;
+  requests.push(url);
+  if(url.includes('/v5/marks'))return {family:'ipv4',eval_end:NOW-30000,from:NOW-86400000,to:NOW-30000,lanes:Object.keys(IDS).map(slot=>({slot,runs:marks.filter(m=>m.slot===slot).map(({start,end,state})=>({start,end,state}))}))};
   const tid=decodeURIComponent(/target_id=([^&]+)/.exec(url)[1]);return histories[tid];};
  const api=L.create({document:fakeDoc,state,interval:()=>0,clear(){},now:()=>NOW,monotonicNow:()=>0,unauthorized(){}});
  const node=api.mount({agent_id:id,online:true});
@@ -78,52 +79,51 @@ async function card({height=80,protocol='tcp',series,status={state:'normal',leve
  if(protocol==='icmp'){node.all().find(n=>n.tagName==='button'&&n.textContent==='ICMP').dispatch('click');await flush();}
  const svg=()=>plot.children[0].all();
  const nums=()=>Object.fromEntries(node.all().filter(n=>n.className.startsWith('lm-num')).map((n,i)=>[Object.keys(IDS)[i],n]));
- return {api,node,plot,svg,nums,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
+ const strip=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.tagName==='rect')||[];
+ return {api,node,plot,svg,nums,strip,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
 }
-const solid=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.2');
+const solid=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.3');
 const dashed=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-dasharray']);
 const firstY=d=>Number(/^M[\d.]+,([\d.]+)/.exec(d)[1]);
-const yOf=(v,ph=68)=>ph-Math.min(1,L.ratio(v))*(ph-2); // plot height 80 => drawing height 68
+const yOf=(v,ph=78)=>ph-Math.min(1,L.ratio(v))*(ph-4)-1; // plot height 80 => drawing height 78
 const line=(points,from,to,fn)=>{for(let i=from;i<=to;i++)set(points,i,fn(i-from));};
+const caption=c=>c.node.all().find(n=>n.className==='lm7-caption').textContent;
 
 test('curve is drawn from the 5-minute P50, not the minute P50 or P95',async()=>{
  const c2=await card({series:{telecom:p=>{line(p,1420,1428,()=>100);for(let i=1420;i<=1428;i++){p[i].p95_ms=3000;p[i].p50_ms=2500;}}}});
  const d=solid(c2)[0].attributes.d;assert.ok(Math.abs(firstY(d)-yOf(100))<.01,d);
  assert.equal(dashed(c2).length,0,'a P95 of 3000ms must not appear on the curve');
  assert.equal(c2.plot.dataset.scale,'fixed-sqrt');
- assert.match(c2.plot.title,/5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms（单位 ms），超过 1000ms 用顶边虚线表示/);
+ assert.match(c2.plot.attributes['aria-label'],/5 分钟滑动 P50（每分钟一个点）；固定平方根刻度 0–1000ms，超过 1000ms 用顶边虚线表示/);
 });
 test('the same value has the same y on cards with completely different data ranges',async()=>{
  const a=await card({series:{telecom:p=>line(p,1420,1428,i=>i%2?100:120)}});
  const b=await card({id:'b',series:{telecom:p=>line(p,1420,1428,i=>i%2?100:290),unicom:p=>line(p,1420,1428,()=>5)}});
  const ya=firstY(solid(a)[0].attributes.d),yb=solid(b).map(n=>firstY(n.attributes.d));
  assert.ok(Math.abs(ya-yOf(120))<.01);
- // card b starts with 290 at index 1420 and 100 at 1421: both live on the same ruler.
  assert.ok(Math.abs(yb[0]-yOf(290))<.01);
  const grid=card2=>card2.svg().filter(n=>n.attributes['data-grid']).map(n=>n.attributes['data-grid']+':'+n.attributes.d);
- assert.deepEqual(grid(a),grid(b));assert.deepEqual(grid(a).map(x=>x.split(':')[0]),['50','100','200','300','500','700','1000']);
+ assert.deepEqual(grid(a),grid(b));assert.deepEqual(grid(a).map(x=>x.split(':')[0]),['100','300','1000']);
  for(const g of a.svg().filter(n=>n.attributes['data-grid'])){assert.equal(g.attributes.stroke,'#e6ddd1');assert.equal(g.attributes['stroke-width'],'0.6');}
  const ticks=card2=>card2.svg().filter(n=>n.dataset.axisTick).map(n=>n.dataset.axisTick+n.ownText);
- assert.deepEqual(ticks(a),ticks(b));assert.deepEqual(ticks(a),['10001000','300300','100100','500500'].sort((x,y)=>ticks(a).indexOf(x)-ticks(a).indexOf(y)));
- assert.deepEqual([...ticks(a)].sort(),['10001000','100100','300300','500500']);
+ assert.deepEqual(ticks(a),ticks(b));assert.deepEqual([...ticks(a)].sort(),['10001000','100100','300300']);
  for(const t of a.svg().filter(n=>n.dataset.axisTick))assert.equal(t.attributes['font-size'],'9');
 });
 test('a run above 1000ms is one dashed top-edge segment joined to the solid line',async()=>{
  const c=await card({series:{telecom:p=>{line(p,1420,1423,()=>100);line(p,1424,1428,()=>1500);p[1424].p95_ms=3010;line(p,1429,1432,()=>100);}}});
  const d=dashed(c);assert.equal(d.length,1);assert.equal(d[0].attributes['data-minutes'],'5');assert.equal(d[0].attributes['stroke-dasharray'],'3,2');
- assert.match(d[0].attributes.d,/^M[\d.]+,2H[\d.]+$/);
- const path=solid(c)[0].attributes.d;assert.match(path,/L[\d.]+,2/,'solid line reaches the top edge');
+ assert.match(d[0].attributes.d,/^M[\d.]+,3H[\d.]+$/);
+ const path=solid(c)[0].attributes.d;assert.match(path,/L[\d.]+,3/,'solid line reaches the top edge');
  assert.equal(c.svg().filter(n=>n.attributes['data-boundary']==='above-scale').length,1);
- assert.equal(c.svg().filter(n=>n.tagName==='text'&&/越界/.test(n.ownText)).length,0,'the old ▲历史越界 label is gone');
 });
 test('a single minute above 1000ms is a short dashed mark with the real values on hover',async()=>{
  const c=await card({series:{telecom:p=>{set(p,1435,1830,3010,1575);}}});
  const d=dashed(c);assert.equal(d.length,1);assert.equal(d[0].attributes['data-minutes'],'1');
- const m=/^M([\d.]+),2H([\d.]+)$/.exec(d[0].attributes.d);assert.ok(Number(m[2])-Number(m[1])>=3);
+ const m=/^M([\d.]+),3H([\d.]+)$/.exec(d[0].attributes.d);assert.ok(Number(m[2])-Number(m[1])>=3);
  const left=Number(c.plot.dataset.axisLeft),start=Number(c.plot.dataset.start),end=Number(c.plot.dataset.end),epoch=FIRST+1435*M+1000;
  c.plot.dispatch('pointermove',{pointerType:'mouse',pointerId:1,clientX:left+(epoch-start)/(end-start)*(300-left)});
  const note=c.node.all().find(n=>n.tagName==='output').textContent;
- assert.match(note,/电信：.*\n5 分钟 P50 1830ms · 本分钟 P50 1575ms · 本分钟 P95 3010ms · 超出刻度 · 有效 RTT 2 \/ 观测 2/);
+ assert.match(note,/电信：5 分钟 P50 1830ms · 本分钟 P50 1575ms · P95 3010ms · 超出刻度/);
 });
 test('top numbers: latest completed minute 5-minute P50, lowest bold, >1000 red, name only when missing',async()=>{
  const c=await card({series:{
@@ -137,9 +137,9 @@ test('top numbers: latest completed minute 5-minute P50, lowest bold, >1000 red,
  assert.equal(n.unicom.dataset.state,'none');
  for(const b of c.legend)assert.doesNotMatch(b.textContent,/—/);
  assert.ok(!c.node.all().some(x=>x.className==='lm-unit'||x.textContent==='ms'),'no trailing unit');
- // Panning away from "now" does not change the headline numbers.
- c.plot.dispatch('keydown',{key:'ArrowLeft'});c.plot.dispatch('keydown',{key:'ArrowLeft'});
- assert.equal(c.plot.dataset.end!==String(NOW),true);
+ // Moving the range away from "now" does not change the headline numbers.
+ const thumb=c.node.all().find(x=>x.dataset.thumb==='end');thumb.dispatch('keydown',{key:'ArrowLeft',shiftKey:true});
+ assert.notEqual(c.plot.dataset.end,String(NOW));
  assert.equal(c.nums().telecom.textContent,'140');
 });
 test('a lone value is not marked lowest; deselecting a line clears its number',async()=>{
@@ -148,68 +148,38 @@ test('a lone value is not marked lowest; deselecting a line clears its number',a
  const button=c.node.all().find(x=>x.tagName==='button'&&x.textContent.startsWith('联通'));button.dispatch('click');await c.flush();
  assert.equal(c.nums().unicom.textContent,'');
 });
-test('TCP alert shows a red 告警 mark with the evidence tooltip; normal hides it; unknown keeps the coverage hint',async()=>{
- const mark=c=>c.svg().filter(n=>n.dataset.alert==='true');
- const alert=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},status:{state:'alert',level_ms:5000,now:NOW,coverage:'覆盖完整',source_day:'2026-10-16',current_tcp:true}});
- assert.equal(mark(alert).length,1);assert.equal(mark(alert)[0].ownText,'告警');assert.equal(mark(alert)[0].attributes.fill,'#c42b32');assert.match(mark(alert)[0].textContent,/告警来源日 2026-10-16/);
- assert.equal(alert.plot.dataset.warning,'true');assert.match(alert.plot.title,/告警来源日 2026-10-16/);
- assert.equal(alert.svg().filter(n=>n.tagName==='text'&&/log/.test(n.ownText)).length,0);
- const normal=await card({series:{telecom:p=>line(p,1420,1428,()=>100)}});
- assert.equal(mark(normal).length,0);assert.equal(normal.plot.dataset.warning,'false');
- const unknown=await card({series:{},status:{state:'unknown',level_ms:2000,now:NOW,current_tcp:true}});
- assert.equal(mark(unknown).length,0);assert.ok(unknown.svg().some(n=>n.ownText==='告警覆盖不足'));
- // the old ceiling number turning red is gone: the top label no longer depends on the alert level.
- assert.equal(alert.svg().find(n=>n.dataset.axisTick==='1000').attributes.fill,'#4e5965');
-});
-test('ICMP uses the same fixed scale, ruler and top numbers, and never shows the TCP alert',async()=>{
- const t=await card({series:{telecom:p=>line(p,1420,1428,()=>150)},status:{state:'alert',level_ms:5000,now:NOW}});
- const i=await card({id:'i',protocol:'icmp',series:{telecom:p=>{line(p,1420,1428,()=>150);line(p,1430,1432,()=>2000);}},status:{state:'alert',level_ms:5000,now:NOW}});
+
+test('ICMP uses the same fixed scale, ruler and top numbers, and draws no slow / failed marks',async()=>{
+ const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'}];
+ const t=await card({series:{telecom:p=>line(p,1420,1428,()=>150)},marks});
+ const i=await card({id:'i',protocol:'icmp',series:{telecom:p=>{line(p,1420,1428,()=>150);line(p,1430,1432,()=>2000);}},marks});
  assert.equal(i.plot.dataset.scale,'fixed-sqrt');
  assert.ok(Math.abs(firstY(solid(i)[0].attributes.d)-firstY(solid(t)[0].attributes.d))<.01);
- assert.ok(Math.abs(firstY(solid(i)[0].attributes.d)-yOf(150))<.01);
  assert.equal(dashed(i).length,1);
- const ticks=card=>card.svg().filter(n=>n.dataset.axisTick).map(n=>n.dataset.axisTick);
- assert.deepEqual(ticks(i),ticks(t));
- assert.equal(i.svg().filter(n=>n.dataset.alert==='true').length,0);
- assert.doesNotMatch(i.plot.title,/告警来源日/);
+ assert.equal(t.strip().length>0,true);assert.equal(i.strip().length,0,'the ICMP view draws curves only');
 });
 
-test('left labels: 500 then 300 are dropped when closer than 10px; 100 and 1000 always stay',async()=>{
- const labels=async height=>(await card({height,series:{telecom:p=>line(p,1420,1428,()=>100)}})).svg().filter(n=>n.dataset.axisTick).map(n=>n.dataset.axisTick).sort((a,b)=>a-b);
- assert.deepEqual(await labels(80),['100','300','500','1000']);
- assert.deepEqual(await labels(60),['100','300','1000']);
- assert.deepEqual(await labels(42),['100','1000']);
- assert.deepEqual(await labels(20),['100','1000']);
-});
-test('top numbers: four-digit values, no unit, no dash placeholder',async()=>{
- const c=await card({series:{telecom:p=>line(p,1434,1438,()=>1234),unicom:p=>line(p,1434,1438,()=>1234),mobile:p=>line(p,1434,1438,()=>1234)}});
- const n=c.nums();for(const slot of Object.keys(n)){assert.equal(n[slot].textContent,'1234');assert.match(n[slot].className,/lm-over/);}
- const part=(b,cls)=>b.all().find(x=>x.className===cls).textContent;
- assert.deepEqual(c.legend.map(b=>[part(b,'lm-name'),part(b,'lm-short'),b.dataset.x,b.title,b.attributes['aria-label']]),[['电信','电',undefined,'电信','电信 RTT 曲线'],['联通','联',undefined,'联通','联通 RTT 曲线'],['移动','移',undefined,'移动','移动 RTT 曲线']],'short names keep the full name in title and aria-label');
- assert.deepEqual(c.legend.map(b=>b.all().find(x=>x.className.startsWith('lm-num')).textContent),['1234','1234','1234']);
-});
-
-test('the top row never clips its numbers: no overflow/ellipsis on the row, legend or numbers; narrow tiers only shrink or hide labels',()=>{
- const css=require('node:fs').readFileSync(require.resolve('../web/static/latency-mini.css'),'utf8');
- const rules=[...css.matchAll(/([^{}@]+)\{([^{}]*)\}/g)].map(m=>[m[1].trim(),m[2]]);
- assert.ok(rules.length>20);
- for(const [selector,body] of rules)if(/\.lm-(top|legend|num|name|short)/.test(selector))assert.doesNotMatch(body,/overflow\s*:\s*(hidden|clip)|text-overflow|line-clamp/,selector);
- // Concession order inside the container queries: dots, then one-character names and spacing, then the 1h label.
- const tiers=[...css.matchAll(/@container \(max-width:(\d+)px\)\{(.*)\}\s*$/gm)].map(m=>[Number(m[1]),m[2]]);
- assert.deepEqual(tiers.map(t=>t[0]),[262,234,200]);
- assert.match(tiers[0][1],/lm-dot\{display:none/);assert.match(tiers[1][1],/lm-name\{display:none\}.*lm-short\{display:inline/);assert.match(tiers[2][1],/lm-span\{display:none/);
- for(const [,body] of tiers)assert.doesNotMatch(body,/lm-num[^{]*\{[^}]*display\s*:\s*none/);
+test('each lane has its own thin mark strip, in the lane colour: red solid, yellow lighter',async()=>{
+ const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'},{slot:'mobile',start:NOW-1800000,end:NOW-1200000,state:'yellow'},{slot:'mobile',start:NOW-900000,end:NOW-720000,state:'red'}];
+ const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},marks});
+ const rects=c.strip();
+ assert.equal(rects.length,3);
+ const by=slot=>rects.filter(r=>r.attributes['data-slot']===slot);
+ assert.equal(by('telecom').length,1);assert.equal(by('unicom').length,0);assert.equal(by('mobile').length,2);
+ assert.deepEqual([by('telecom')[0].attributes.y,by('mobile')[0].attributes.y],['0','6'],'one row per lane, always the same row');
+ assert.equal(by('telecom')[0].attributes.fill,'#3D6FA8');assert.equal(by('mobile')[0].attributes.fill,'#4F5B62');
+ assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='yellow').attributes.opacity,'0.45');assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='red').attributes.opacity,'1');
+ assert.ok(rects.every(r=>r.attributes.height==='2'));
+ assert.ok(c.requests.some(u=>/v5\/marks\?family=ipv4&from=\d+&to=\d+/.test(u)));
 });
 
-test('every line keeps its curve colour at every width: dot when shown, otherwise the name text is in the curve colour',async()=>{
- const curve={telecom:'#007d83',unicom:'#8653b1',mobile:'#ae7017'};
- const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100),unicom:p=>line(p,1420,1428,()=>150),mobile:p=>line(p,1420,1428,()=>200)}});
- const slots=Object.keys(curve);
- c.legend.forEach((b,i)=>{assert.equal(b.style['--lm-color'],curve[slots[i]]);assert.ok(b.all().some(x=>x.className==='lm-dot'),'dot element exists');});
- assert.deepEqual(c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.2').map(n=>n.attributes.stroke).sort(),Object.values(curve).sort());
- const css=require('node:fs').readFileSync(require.resolve('../web/static/latency-mini.css'),'utf8');
- // Names (full and one-character) take --lm-color while pressed, with no width condition, so tiers that hide the dot keep the mapping.
- assert.match(css,/\.lm-legend button\[aria-pressed=true\] :is\(\.lm-name,\.lm-short\)\{color:var\(--lm-color\)\}/);
- assert.match(css,/\.lm-legend button \.lm-num\{color:#3b3936\}/,'numbers stay body colour');
- assert.doesNotMatch(css,/@container[^{]*\{[^@]*\.lm-(name|short)\{[^}]*color/,'no tier changes the name colour');
+test('the range slider drives the plotted window; the end handle at "now" means following',async()=>{
+ const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)}});
+ assert.match(caption(c),/跟随现在/);
+ assert.equal(Number(c.plot.dataset.end)-Number(c.plot.dataset.start),3600000,'the last hour by default');
+ const end=c.node.all().find(x=>x.dataset.thumb==='end');
+ end.dispatch('keydown',{key:'ArrowLeft',shiftKey:true});
+ assert.match(caption(c),/历史位置/);
+ end.dispatch('keydown',{key:'End'});
+ assert.match(caption(c),/跟随现在/);
 });

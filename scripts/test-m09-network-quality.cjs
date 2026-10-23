@@ -1,56 +1,69 @@
+// The card no longer judges anything (v1.0.7, R25): it checks the shape of the Server's v5/card answer and words it.
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const C=require('../web/static/network-quality-core.js');
-const target={id:'b'.repeat(32),slot:'telecom',family:'ipv4',protocol:'tcp',slot_revision:'9007199254740993',status:'active'};
-const point={start:300000,end:600000,count:3,valid_rtts:3,p95_ms:149,config_revision_min:'2',config_revision_max:'2',slot_revision_min:target.slot_revision,slot_revision_max:target.slot_revision,completeness:'complete',execution_coverage:'unverified',sent:3,received:3};
-const sample={target_id:target.id,config_revision:'2',slot_revision:target.slot_revision,started_at:599000,outcome:'success',sent:3,received:3,details:{semantics:'staged_probe_v2',probe_complete:true,connect_complete:true,connect_ms:152,requested:3,window_complete:true}};
-const h={now:600000,resolution_ms:300000,current:[{semantics:'staged_probe_v2',metric:'pure_connect',latest_probe:sample,stale:false,freshness_budget_ms:76000}],groups:[{semantics:'staged_probe_v2',metric:'pure_connect',points:[point]}]};
-test('TCP P95 strict 150/250 inclusive boundaries and explicit identities',()=>{
- for(const [v,tone]of [[149.999,'low'],[150,'mid'],[250,'mid'],[250.001,'high']])assert.equal(C.cardBlock({...point,p95_ms:v},target).tone,tone);
- assert.match(C.cardBlock(point,target).text,/P95.*149/);
- assert.equal(C.cardBlock({...point,config_revision_max:'3'},target).tone,'neutral');
- assert.equal(C.cardBlock({...point,slot_revision_min:'1',slot_revision_max:'1'},target).tone,'neutral');
- assert.equal(C.cardBlock({...point,execution_coverage:'known_gap'},target).tone,'neutral');
+const block=(i,state='green',extra={})=>({start:1800000000000+i*180000,state,judged:6,slow:0,failed:0,unjudged:0,in_progress:false,partial:false,...extra});
+const lane=(slot,extra={})=>({slot,tcp:{status:'active',condition:'',blocks:Array.from({length:20},(_,i)=>block(i)),red:{active:false}},icmp:{status:'active',condition:''},right:{kind:'icmp_loss',percent:3.3,numerator:12,denominator:360,samples:'ok'},...extra});
+const answer=(over={})=>({now:1800000300000,eval_end:1800000240000,family:'ipv4',settings_revision:'7',config_revision:'12',threshold_ms:500,interval_ms:30000,block_ms:180000,window_start:1800000000000,lanes:C.slots.map(s=>lane(s)),alert_active:false,...over});
+
+test('v5/card: a well-formed answer is adopted, a damaged one is refused',()=>{
+ const card=C.normalizeCard(answer(),'ipv4');
+ assert.equal(card.lanes.length,3);assert.equal(card.lanes[0].tcp.blocks.length,20);assert.equal(card.threshold_ms,500);
+ assert.throws(()=>C.normalizeCard(answer(),'ipv6'),/地址族/);
+ assert.throws(()=>C.normalizeCard(answer({lanes:[lane('telecom')]}),'ipv4'),/卡槽/);
+ assert.throws(()=>C.normalizeCard(answer({lanes:C.slots.map(s=>lane(s,{tcp:{status:'active',blocks:[block(0)]}}))}),'ipv4'),/方块数量/);
+ assert.throws(()=>C.normalizeCard(answer({lanes:C.slots.map(s=>lane(s,{tcp:{status:'active',blocks:Array.from({length:20},(_,i)=>block(i,'purple'))}}))}),'ipv4'),/方块/);
+ assert.throws(()=>C.normalizeCard(answer({alert_active:'yes'}),'ipv4'));
+ assert.throws(()=>C.normalizeCard(null,'ipv4'));
+ // a lane that does not run carries no blocks
+ const off=C.normalizeCard(answer({lanes:C.slots.map(s=>lane(s,{tcp:{status:'disabled',condition:''}}))}),'ipv4');
+ assert.equal(off.lanes[0].tcp.blocks,null);
 });
-test('latest Connect distinct from DNS and historical P95; failure/current stale',()=>{
- assert.equal(C.cardCurrent(h,target,{revision:'2'}).text,'152.0ms');
- assert.equal(C.cardCurrent({...h,current:[{...h.current[0],latest_probe:{...sample,outcome:'refused'}}]},target,{revision:'2'}).text,'失败');
- assert.equal(C.cardCurrent(h,target,{old:true}).text,'过期');
- assert.equal(C.cardCurrent(h,target,{elapsed:80000}).text,'过期');
- assert.equal(C.cardCurrent(h,target,{revision:'3'}).text,'未知');
- const legacy={...h,current:[{...h.current[0],semantics:'single_probe_v1',metric:'legacy_dial_including_dns'}],groups:[{...h.groups[0],semantics:'single_probe_v1',metric:'legacy_dial_including_dns'}]};
- assert.equal(C.cardCurrent(legacy,target).text,'未知');assert(C.cardPoints(legacy,target).every(p=>p.count===0));
+
+test('block text restates the Server numbers and nothing else',()=>{
+ const red=C.blockView(block(2,'red',{judged:6,slow:3,failed:2,max_ms:1840,in_progress:true,partial:true}),{label:'上海电信',threshold:500});
+ assert.equal(red.state,'red');
+ assert.match(red.text,/上海电信 · .*持续（告警）/);assert.match(red.text,/慢 3 · 失败 2 · 最高约 1840 ms/);assert.match(red.text,/门槛|超过 500 ms/);
+ assert.match(red.text,/数据仍在到达/);assert.match(red.text,/配置变更或缺测/);assert.match(red.text,/B 面曲线同一时间有对应标记/);
+ assert.doesNotMatch(C.blockView(block(0)).text,/B 面|慢 =/);
+ const gray=C.blockView(block(0,'gray',{judged:0}),{intervalMS:300000});
+ assert.match(gray.text,/没有可用样本/);assert.match(gray.text,/检测间隔较长，部分方块没有样本/);
+ assert.match(C.blockView(block(0,'gray',{judged:1})).text,/样本不足/);
 });
-test('ICMP latest complete three Echo denominator, cancellation cannot fabricate loss',()=>{
- const t={...target,protocol:'icmp'},history={...h,current:[{...h.current[0],metric:'echo_rtt'}]};
- for(const [received,text]of [[3,'0%'],[2,'33.3%'],[1,'66.7%'],[0,'100%']]) {
-  const v={...history,current:[{...history.current[0],latest_probe:{...sample,received}}]};assert.equal(C.cardCurrent(v,t).text,text);
- }
- assert.equal(C.cardCurrent({...history,current:[{...history.current[0],latest_probe:{...sample,details:{...sample.details,window_complete:false},outcome:'canceled'}}]},t).text,'未知');
- assert.equal(C.cardBlock(point,t).tone,'low');assert.equal(C.cardBlock({...point,received:2},t).tone,'loss');
- assert.match(C.cardBlock({...point,received:2},t).text,/33.3%.*发送 3 \/ 接收 2/);
- assert.equal(C.cardBlock({...point,sent:0,received:0},t).tone,'neutral');
+
+test('the number at the right: ICMP loss, or TCP failure; TCP is never called loss',()=>{
+ assert.deepEqual(C.rightView({kind:'icmp_loss',percent:0,numerator:0,denominator:360,samples:'ok'}),{text:'丢包 0%',tone:'muted',title:'近 1 小时 360 个 Echo，丢 0 个'});
+ assert.equal(C.rightView({kind:'icmp_loss',percent:3.33,numerator:12,denominator:360,samples:'ok'}).text,'丢包 3.3%');
+ assert.equal(C.rightView({kind:'icmp_loss',percent:3.33,numerator:12,denominator:360,samples:'ok'}).tone,'warn');
+ assert.equal(C.rightView({kind:'tcp_failure',percent:12,numerator:15,denominator:120,samples:'ok'}).text,'失败 12%'.replace('12%','12.0%'));
+ assert.equal(C.rightView({kind:'tcp_failure',percent:12,numerator:15,denominator:120,samples:'ok'}).tone,'crit');
+ const few=C.rightView({kind:'tcp_failure',percent:0,numerator:0,denominator:8,samples:'few'});
+ assert.match(few.text,/·少$/);assert.match(few.title,/样本较少/);
+ for(const right of [{kind:'none',percent:null,numerator:0,denominator:0,samples:'none'},{kind:'icmp_loss',percent:null,numerator:0,denominator:0,samples:'none'}])assert.equal(C.rightView(right).text,'—');
 });
-test('historical completed colors survive global stale/offline/request failure',()=>{
- const before=C.cardPoints(h,target).map(p=>C.cardBlock(p,target));
- for(const old of [true,false]) {C.cardCurrent(h,target,{old});assert.deepEqual(C.cardPoints(h,target).map(p=>C.cardBlock(p,target)),before);}
- assert.equal(before.length,12);
+
+test('what stands in place of the blocks',()=>{
+ const l=(tcp,icmp={status:'disabled'})=>({tcp,icmp,right:{kind:'none'}});
+ assert.equal(C.laneView(l({status:'active',blocks:[block(0)],red:true})).kind,'blocks');
+ assert.equal(C.laneView(l({status:'active',blocks:[block(0)],dns_failing:true})).text,'解析失败');
+ assert.match(C.laneView(l({status:'inactive'},{status:'active'})).text,/^未测 TCP/);
+ assert.equal(C.laneView(l({status:'inactive'},{status:'disabled'})).text,'未启用');
+ assert.equal(C.laneView(l({status:'disabled'})).text,'已关闭');
+ assert.equal(C.laneView(l({status:'unset'})).text,'未配置目标');
+ assert.equal(C.laneView(l({status:'no_ipv6'})).text,'本机无 IPv6');
+ assert.equal(C.laneView(l({status:'target_abnormal',condition:'not_found'})).text,'目标异常');
+ assert.equal(C.laneView(l({status:'device_inactive'})).text,'设备已撤销/暂停');
 });
+
+test('card label: region + carrier for a built-in slot, what the user typed for a custom one',()=>{
+ const config={slots:[{slot:'telecom',kind:'builtin',region:'上海',isp:'telecom'},{slot:'unicom',kind:'custom',region:'Tokyo',isp:'NTT'},{slot:'mobile',kind:'builtin',region:'',isp:''}]};
+ assert.equal(C.cardLabel(config,'telecom'),'上海电信');assert.equal(C.cardLabel(config,'unicom'),'Tokyo NTT');assert.equal(C.cardLabel(config,'mobile'),'卡槽 3（未标注）');
+});
+
+test('the slow threshold is a whole number of milliseconds from 50 to 3000',()=>{
+ for(const [v,bad] of [['500',false],['50',false],['3000',false],['49',true],['3001',true],['12.5',true],['',true],['x',true]])assert.equal(C.thresholdHint({slow_threshold_ms:v})==='invalid_threshold',bad,v);
+});
+
 test('v3 detail ratios use exact Connect denominator; probe attempts remain separate',()=>{
  const r=C.ratio({connect_attempts:4,connect_successes:3,probe_attempts:6,probe_successes:3},'tcp');assert.equal(r.value,25);assert.equal(r.fraction,'1 / 4');
  assert.equal(C.ratio({connect_attempts:0,connect_successes:0},'tcp').value,null);
-});
-test('M09 R1 legacy unsupported and unknown statuses never imply user pause',()=>{
- for(const protocol of ['tcp','icmp']) {
-  for(const status of ['not_scheduled_legacy','unsupported']) {
-   const result=C.cardCurrent(h,{...target,protocol,status});
-   assert.equal(result.text,'不支持');assert.match(result.detail,new RegExp(status));
-   assert.match(result.detail,/不支持 staged_probe_v2/);assert.match(result.detail,/不使用旧 DNS-inclusive/);
-  }
-  assert.equal(C.cardCurrent(h,{...target,protocol,status:'paused'}).text,'暂停');
-  for(const status of ['unavailable','unrecognized',undefined])assert.equal(C.cardCurrent(h,{...target,protocol,status}).text,'未知');
- }
- assert.equal(C.cardCurrent(h,null).text,'未知');
- assert.equal(C.cardCurrent(h,{...target,id:null,status:'not_scheduled_legacy'}).text,'不支持');
- assert.equal(C.cardCurrent(h,target,{revision:'2'}).text,'152.0ms');
- assert.deepEqual(C.cardPoints(h,target).map(p=>C.cardBlock(p,target)),C.cardPoints(h,{...target,status:'not_scheduled_legacy'}).map(p=>C.cardBlock(p,target)));
 });

@@ -13,17 +13,17 @@ func TestTrafficChartEmbeddedSharedMonitorContract(t *testing.T) {
 	}
 	html, _ := fs.ReadFile(assets, "index.html")
 	previous := -1
-	for _, name := range []string{"vendor/uplot/uPlot.iife.min.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "latency-mini.js", "app.js"} {
+	for _, name := range []string{"vendor/uplot/uPlot.iife.min.js", "range-slider.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "latency-mini.js", "card.js", "app.js"} {
 		index := strings.Index(string(html), `<script src="/`+name+`" defer>`)
 		if index <= previous {
 			t.Fatalf("script order: %s", name)
 		}
 		previous = index
 	}
-	if !strings.Contains(string(html), `href="/traffic-chart.css"`) {
-		t.Fatal("traffic CSS not embedded")
+	if !strings.Contains(string(html), `href="/card-v7.css"`) {
+		t.Fatal("card CSS not embedded")
 	}
-	for _, name := range []string{"traffic-chart.js", "traffic-chart.css"} {
+	for _, name := range []string{"traffic-chart.js", "card-v7.css"} {
 		data, err := fs.ReadFile(assets, name)
 		if err != nil {
 			t.Fatal(err)
@@ -35,7 +35,7 @@ func TestTrafficChartEmbeddedSharedMonitorContract(t *testing.T) {
 		}
 	}
 	app, _ := fs.ReadFile(assets, "app.js")
-	for _, contract := range []string{"const monitorCoordinator = NetworkQualityCore.coordinator()", "coordinator: monitorCoordinator", "trafficCharts.sync(", "latencyCharts.sync(", "trafficNode=trafficCharts.mount(agent)", "networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close()"} {
+	for _, contract := range []string{"const monitorCoordinator = NetworkQualityCore.coordinator()", "coordinator: monitorCoordinator", "trafficCharts.sync(", "latencyCharts.sync(", "const trafficNode = trafficCharts.mount(agent)", "networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close()"} {
 		if !strings.Contains(string(app), contract) {
 			t.Fatalf("missing shared lifecycle: %s", contract)
 		}

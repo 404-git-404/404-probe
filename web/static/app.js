@@ -39,13 +39,15 @@ const planTrafficFields = document.querySelector('#plan-traffic-fields');
 const planError = document.querySelector('#plan-error');
 const agentState = AgentState.create();
 const monitorCoordinator = NetworkQualityCore.coordinator();
-const chartAxes = NetworkQualityCore.plotAxes();
 const networkQuality = NetworkQuality.create({csrf: () => mutationCSRFToken, coordinator: monitorCoordinator,
   onConfig: (id,config) => {latencyCharts.bindConfig(id,config);deviceDetails.networkChanged(id);},
+  onFamily: id => latencyCharts.familyChanged(id),
   historyHost: {open: (id,trigger,exact) => deviceDetails.open(id,'network',trigger,exact), container: () => deviceDetails.networkContainer(),
     active: id => deviceDetails.active('network',id), close: () => deviceDetails.close()}});
-const latencyCharts = LatencyMini.create({coordinator: monitorCoordinator,axes:chartAxes});
-const trafficCharts = TrafficChart.create({coordinator: monitorCoordinator,axes:chartAxes});
+const latencyCharts = LatencyMini.create({coordinator: monitorCoordinator,
+  family: id => networkQuality.familyOf(id), setFamily: (id,value) => networkQuality.setFamily(id,value), openSettings: (id,trigger) => networkQuality.openSettings(id,trigger)});
+const trafficCharts = TrafficChart.create({coordinator: monitorCoordinator});
+const cardFaces = Card.createFaceStore();
 const cardObservations = CardMetrics.createObserver();
 const agents = agentState.agents;
 let overviewReady = false;
@@ -715,11 +717,6 @@ function diskBusyTone(percent) {
   return utilizationTone(percent, 60, 85);
 }
 
-function bandwidthTone(rate, plan) {
-  if (!plan?.bandwidth_bps || rate == null) return 'neutral';
-  return utilizationTone(Number(rate) * 8 / Number(plan.bandwidth_bps) * 100, 70, 90);
-}
-
 function metricTile(kind, icon, label, value, detail, percent, tone, extra) {
   const tile = document.createElement('section');
   tile.className = `metric-tile metric-${kind} tone-${tone || 'unknown'}`;
@@ -808,10 +805,6 @@ function compactPrice(plan) {
   return CardMetrics.price(plan);
 }
 
-function compactBandwidth(plan) {
-  return plan?.bandwidth_value ? `${plan.bandwidth_value} ${plan.bandwidth_unit}` : '未设带宽';
-}
-
 function planDeadline(plan) {
   if (!plan) return {label: '未设续费日', tone: ''};
   const date = plan.renewal_date || plan.expiry_date;
@@ -836,39 +829,6 @@ function detailFact(label, value) {
   content.textContent = value || '—';
   item.append(name, content);
   return item;
-}
-
-function planPanel(plan) {
-  const panel = document.createElement('section');
-  panel.className = 'plan-summary';
-  if (plan.traffic_mode) {
-    const traffic = document.createElement('div');
-    traffic.className = 'traffic-plan';
-    const heading = document.createElement('div');
-    heading.className = 'section-label';
-    const title = document.createElement('span');
-    title.textContent = `本周期流量 · ${{rx: 'RX', tx: 'TX', sum: 'RX + TX'}[plan.traffic_mode]}`;
-    const value = document.createElement('strong');
-    const quota = PlanUnits.display(plan.quota_value,plan.quota_unit);
-    value.textContent = plan.quota_bytes == null ? bytes(plan.usage_bytes) : `${bytes(plan.usage_bytes)} / ${quota.value} ${quota.unit}`;
-    heading.append(title, value);
-    traffic.append(heading);
-    if (plan.quota_bytes != null) {
-      const usedPercent = Number(plan.usage_bytes) / Number(plan.quota_bytes) * 100;
-      value.textContent += ` · ${usedPercent.toFixed(1)}%`;
-      traffic.append(progressBar(usedPercent, usedPercent >= 100 ? 'critical' : usedPercent >= 80 ? 'warning' : 'healthy'));
-    }
-    traffic.title = plan.usage_status === 'calibrated'
-      ? '人工校准值，不补齐历史'
-      : '仅统计可观测增量，存在缺测';
-    panel.append(traffic);
-  } else {
-    const note = document.createElement('span');
-    note.className = 'plan-empty';
-    note.textContent = '未设置周期流量';
-    panel.append(note);
-  }
-  return panel;
 }
 
 function setReadableText(element, value, accessibleValue = value) {
@@ -1142,7 +1102,7 @@ function setCardText(node, value) {
 function render() {
   overview.update(agents,overviewReady);
   const ids = [...agents.keys()];
-  networkQuality.sync(ids); latencyCharts.sync(ids); trafficCharts.sync(ids); cardObservations.sync(ids); selectorView.sync(ids);
+  networkQuality.sync(ids); latencyCharts.sync(ids); trafficCharts.sync(ids); cardObservations.sync(ids); selectorView.sync(ids); cardFaces.sync(ids);
   for (const [id, view] of agentCards) {
     if (!agents.has(id)) { view.card.remove(); view.detailPanel.remove(); agentCards.delete(id); }
   }
@@ -1226,6 +1186,10 @@ function createPublicEgress(agentID) {
   return {element:egress,update};
 }
 
+function planActionBlocked(agent) {
+  return !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'plan') || agentState.blocked(agent.agent_id) || planRenewal.unconfirmed(agent.agent_id);
+}
+
 function createAgentCard(initialAgent) {
     let agent = initialAgent;
     const state = agent.state || {};
@@ -1233,113 +1197,98 @@ function createAgentCard(initialAgent) {
     const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
     const observed = cardObservations.observe(agent);
     const oldMetrics = metricsStale || observed.stale;
+    const lifecycleLabels = {online:'在线',offline:'离线',paused:'暂停',revoked:'已撤销',unknown:'状态未知'};
     const card = document.createElement('article');
-    card.className = 'card agent-card';
+    card.className = 'card agent-card c7';
     card.dataset.agentId = agent.agent_id;
-    card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}`);
     const head = document.createElement('div');
-    head.className = 'card-head';
-    const title = document.createElement('div');
-    title.className = 'card-identity';
-    const titleLine = document.createElement('div');
-    titleLine.className = 'card-title-line';
-    const name = document.createElement('div');
-    name.className = 'name';
+    head.className = 'card-head c7-head';
+    const identity = document.createElement('div');
+    identity.className = 'c7-id';
+    const sub = document.createElement('div');
+    sub.className = 'name c7-sub';
+    const status = document.createElement('span');
+    const stateName = cardLifecycle(agent);
+    card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
+    status.className = `status ${stateName}`;
+    status.dataset.agentState = stateName;
+    status.textContent = lifecycleLabels[stateName];
+    // Online shows nothing and offline is the dimmed card; the other states are named in front of the system line.
+    status.hidden = stateName === 'online' || stateName === 'offline';
     const system = CardMetrics.os(state.os);
     const logo = document.createElement('img');
     logo.src = `/vendor/card-icons/${system.icon}.svg`;
     logo.alt = '';
     logo.setAttribute('aria-hidden', 'true');
     const systemText = document.createElement('span');
+    systemText.className = 'c7-system';
     setReadableText(systemText, system.text);
     const publicEgress = createPublicEgress(agent.agent_id);
     const egress = publicEgress.element, updateEgress = publicEgress.update;
     updateEgress(agent);
-    name.append(logo, systemText, egress);
-    const identityText = document.createElement('div');
-    identityText.className = 'identity-text';
-    let nameControl = agentNameControl(agent, state);
-    identityText.append(nameControl, name);
-    const mark = countryMark(agent.country_code, agent.country_source);
-    titleLine.append(mark, identityText);
     const runtime = document.createElement('small');
-    runtime.className = 'card-runtime';
+    runtime.className = 'card-runtime c7-runtime';
     setReadableText(runtime, cardRuntimeText(agent, oldMetrics));
-    title.append(titleLine, runtime);
-    const status = document.createElement('span');
-    const stateName = cardLifecycle(agent);
-    card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${{online:'在线',offline:'离线',paused:'暂停',revoked:'已撤销',unknown:'状态未知'}[stateName]}`);
-    status.className = `status ${stateName}`;
-    status.dataset.agentState = stateName;
-    status.textContent = {online:'在线',offline:'离线',paused:'暂停',revoked:'已撤销',unknown:'状态未知'}[stateName];
-    head.append(title, status);
+    sub.append(status, logo, systemText, egress, runtime);
+    let nameControl = agentNameControl(agent, state);
+    const mark = countryMark(agent.country_code, agent.country_source);
+    identity.append(nameControl, sub);
+    head.append(mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
 
-    const metrics = document.createElement('div');
-    metrics.className = 'resource-grid';
-    const metricTone = percent => oldMetrics ? 'unknown' : CardMetrics.tone(percent);
-    metrics.append(
-      CardMetrics.tile('cpu', 'CPU', hasState ? state.cpu_percent : null, state.cpu_cores ? `${state.cpu_cores} 核` : '核心数未知', observed.cpu, `steal ${CardMetrics.pct(state.cpu_steal_percent)}`, oldMetrics),
-      CardMetrics.tile('memory', '内存', hasState ? state.ram_percent : null, `${CardMetrics.size(state.ram_used,false,true)} / ${CardMetrics.size(state.ram_total,false,true)}`, metricTone(state.ram_percent), `Swap ${CardMetrics.size(state.swap_used,false,true)} / ${CardMetrics.size(state.swap_total,false,true)}`, oldMetrics),
-      CardMetrics.tile('disk', '磁盘', hasState ? state.disk_percent : null, `${CardMetrics.size(state.disk_used,false,true)} / ${CardMetrics.size(state.disk_total,false,true)}`, metricTone(state.disk_percent), `I/O 最忙 ${CardMetrics.pct(state.disk_busy_percent)} · 读 ${CardMetrics.size(state.disk_read_rate,true,true)} · 写 ${CardMetrics.size(state.disk_write_rate,true,true)}`, oldMetrics, observed.io),
-    );
-    const resources=document.createElement('section');resources.className='card-resources';resources.setAttribute('aria-label','资源与流量');
-    const resourceModule=document.createElement('section');resourceModule.className='dv-a';resourceModule.dataset.module='A';
-    const resourceDetail=document.createElement('div');resourceDetail.className='dv-a-details';
-    const resourceRows=['cpu','memory','disk'].map((kind,i)=>{const row=document.createElement('button');row.type='button';row.className='dv-a-row';row.dataset.dvToggle='A';row.dataset.focusKey='resource-detail-'+kind;
-      const label=document.createElement('strong');label.textContent=['CPU','RAM','DISK'][i];const percentage=document.createElement('span');percentage.className='dv-resource-percent';const bar=document.createElement('span');bar.className='dv-load-track';bar.append(document.createElement('span'));const extra=document.createElement('small');row.append(label,percentage,bar,extra);resourceDetail.append(row);return row;});
-    function updateResourceDetail(state,hasState,old,observed){
-      const known=value=>typeof value==='number'&&Number.isFinite(value);const load=['load1','load5','load15'].map(k=>known(state[k])?state[k].toFixed(2):'—').join('/');
-      const descriptions=[`${state.cpu_cores||'未知'}核 · Load ${load}`,`${CardMetrics.size(state.ram_used,false,true)} / ${CardMetrics.size(state.ram_total,false,true)}`,`${CardMetrics.size(state.disk_used,false,true)} / ${CardMetrics.size(state.disk_total,false,true)}`];
-      const extras=[`Steal ${CardMetrics.pct(state.cpu_steal_percent)}`,`Swap ${CardMetrics.size(state.swap_used,false,true)} / ${CardMetrics.size(state.swap_total,false,true)}`,`I/O 最忙 ${CardMetrics.pct(state.disk_busy_percent)} · 读 ${CardMetrics.size(state.disk_read_rate,true,true)} · 写 ${CardMetrics.size(state.disk_write_rate,true,true)}`];
-      const kinds=['cpu','memory','disk'],values=[state.cpu_percent,state.ram_percent,state.disk_percent],tones=[observed.cpu,old?'unknown':CardMetrics.tone(state.ram_percent),old?'unknown':CardMetrics.tone(state.disk_percent)];
-      resourceRows.forEach((row,i)=>{const value=hasState?values[i]:null,tone=old?'unknown':tones[i],annotation=CardMetrics.annotation(kinds[i],value,tone,old,i===2?observed.io:null);row.className='dv-a-row tone-'+tone;row.children[1].textContent=CardMetrics.pct(value)+(old&&hasState?'旧':'');row.children[2].firstElementChild.style.width=(old?0:CardMetrics.percent(value)||0)+'%';row.children[3].textContent=(annotation.reason&&annotation.reason!=='旧数据'&&annotation.reason!=='未知'?'! ':'')+descriptions[i];row.title=`${row.children[0].textContent} ${CardMetrics.pct(value)} · ${descriptions[i]} · ${extras[i]}${annotation.capacity?' · '+annotation.capacity:''}${annotation.io?' · '+annotation.io:''}${old?' · 旧观测，不是当前负载':''}；切换资源视图`;row.setAttribute('aria-label',row.title);});
-    }
-    updateResourceDetail(state,hasState,oldMetrics,observed);resourceModule.append(metrics,resourceDetail);resources.append(resourceModule);card.append(resources);
+    // ---- machine ----
+    const machine = Card.machineFaces(document);
+    machine.update(Card.machineView(agent, observed, oldMetrics));
+    const machineModule = Card.createModule({document, key: 'machine', label: '机器', host: document.createElement('section'), a: machine.a, b: machine.b});
 
-    const network = document.createElement('div');
-    network.className = 'network dv-b';network.dataset.module='B';
-    const networkDetail=document.createElement('div');networkDetail.className='dv-b-details';
-    const networkHeader=document.createElement('div');networkHeader.className='dv-b-head';const networkTitle=document.createElement('button');networkTitle.type='button';networkTitle.className='dv-switch';networkTitle.dataset.dvToggle='B';networkTitle.textContent='流量';networkHeader.append(networkTitle);
-    const trafficCounterMeaning='设备累计统计，不等于套餐本周期用量，也不代表 VPS 自购买以来的总量';
-    const rateBoxes=[],networkValues=document.createElement('div');networkValues.className='dv-b-values';networkDetail.append(networkHeader,networkValues);
-    for (const [label, arrow, rate, total] of [['下载', '↓', state.rx_rate, state.rx_total], ['上传', '↑', state.tx_rate, state.tx_total]]) {
-      const box = document.createElement('div');
-      const directionTone = oldMetrics ? 'unknown' : bandwidthTone(rate, agent.plan);
-      box.className = `${label === '下载' ? 'network-rx' : 'network-tx'} tone-${directionTone}`;
-      const networkName = document.createElement('span');
-      networkName.textContent = `${arrow} ${label}${oldMetrics ? ' · 旧数据' : ''}`;
-      const strong = document.createElement('strong');
-      setReadableText(strong, oldMetrics ? '—' : CardMetrics.size(rate, true));
-      const small = document.createElement('small');
-      setReadableText(small, `${label === '下载' ? '入站' : '出站'} ${hasState ? CardMetrics.size(total) : '—'}${oldMetrics && hasState ? ' · 旧值' : ''}`);
-      small.title=small.textContent+'；'+trafficCounterMeaning;small.setAttribute('aria-label',small.title);
-      box.append(networkName, strong, small);
-      rateBoxes.push(box);networkValues.append(box);
-    }
-    const bandwidth = document.createElement('span');
-    bandwidth.className = 'network-bandwidth';
-    bandwidth.textContent = `带宽 ${compactBandwidth(agent.plan)}`;
-    bandwidth.title=bandwidth.textContent+'；配置带宽，不是实时测速结果';bandwidth.setAttribute('aria-label',bandwidth.title);networkHeader.append(bandwidth);const trafficNode=trafficCharts.mount(agent);network.append(trafficNode,networkDetail);
-    resources.append(network);
+    // ---- traffic ----
+    const trafficNode = trafficCharts.mount(agent);
+    const quotaDisplay = plan => { try { return plan?.quota_value ? PlanUnits.display(plan.quota_value, plan.quota_unit) : null; } catch (_) { return null; } };
+    const trafficFaces = Card.trafficFaces(document, {chart: trafficNode, onEditPlan: trigger => openPlanDialog(agent, trigger)});
+    const updateTraffic = () => {
+      const old = Boolean(!agent.online || agent.disabled_at || agent.state?.stale || cardObservations.observe(agent).stale);
+      trafficFaces.update(Card.trafficView(agent, {old, quotaDisplay: quotaDisplay(agent.plan)}), Card.trafficDetail(agent));
+      trafficFaces.emptyButton.disabled = planActionBlocked(agent);
+    };
+    const trafficModule = Card.createModule({document, key: 'traffic', label: '流量', host: document.createElement('section'), a: trafficFaces.a, b: trafficFaces.b,
+      onFace: face => trafficCharts.setActive(agent.agent_id, face === 'B')});
 
+    // ---- network ----
+    const qualityNode = networkQuality.mount(agent);
+    const latencyNode = latencyCharts.mount(agent);
+    const networkModule = Card.createModule({document, key: 'network', label: '网络', host: qualityNode, a: networkQuality.faceNode(agent.agent_id), b: latencyNode,
+      onFace: face => { networkQuality.setFace(agent.agent_id, face); latencyCharts.setActive(agent.agent_id, face === 'B'); }});
+    updateTraffic();
+    card.append(machineModule.node, trafficModule.node, qualityNode);
+
+    // ---- which face each module shows; kept in this browser ----
+    const modules = [machineModule, trafficModule, networkModule];
+    const remember = () => cardFaces.write(agent.agent_id, modules.map(m => m.face).join(''));
+    const flip = document.createElement('button');
+    flip.type = 'button'; flip.className = 'c7-flip dv-all'; flip.dataset.focusKey = 'dv-all';
+    flip.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h14l-4-4"></path><path d="M20 16H6l4 4"></path></svg>';
+    const describeFlip = () => {
+      const faces = modules.map(m => m.face), allA = !faces.includes('B'), allB = !faces.includes('A');
+      flip.title = allB ? '切换这张卡的三个模块为简要' : '切换这张卡的三个模块为详细';
+      flip.setAttribute('aria-label', flip.title);
+      flip.dataset.preset = allA ? 'A' : allB ? 'B' : 'mixed';
+    };
+    const initialFaces = cardFaces.read(agent.agent_id);
+    modules.forEach((module, index) => module.set(initialFaces[index]));
+    describeFlip();
+    modules.forEach(module => Card.attachFlip(module.node, {toggle: () => { module.toggle(); remember(); describeFlip(); }}));
+    flip.addEventListener('click', () => { const next = Card.flipAll(modules.map(m => m.face)); modules.forEach((module, index) => module.set(next[index])); remember(); describeFlip(); });
+    head.append(flip);
+
+    // ---- footer: YouTube and the exit choice, then the money ----
     const googleTools = document.createElement('div');
-    googleTools.className = 'google-selector-tools';
+    googleTools.className = 'google-selector-tools c7-foot1';
     googleTools.append(googleStatusPanel(agent));
     let selectorTrigger = selectorView.trigger(agent);
     if (selectorTrigger) googleTools.append(selectorTrigger);
-    const qualityNode=networkQuality.mount(agent);qualityNode.classList.add('dv-c');qualityNode.dataset.module='C';
-    const latencyNode=latencyCharts.mount(agent),latencyTop=latencyNode.querySelector('.lm-top');qualityNode.querySelector('.nq-head').append(latencyTop);qualityNode.append(latencyNode);card.append(qualityNode);
     card.append(googleTools);
     selectorView.refresh(agent.agent_id);
-    const planSummary = planPanel(agent.plan || {});
-    card.append(planSummary);
-
-    const deadline = planDeadline(agent.plan);
-    const due = document.createElement('span');
-    due.className = deadline.tone;
-    due.textContent = deadline.label;
 
     const remove = document.createElement('button');
     remove.className = 'remove-agent';
@@ -1375,21 +1324,22 @@ function createAgentCard(initialAgent) {
     detailPanel.hidden = true;
     const facts = document.createElement('div');
     facts.className = 'card-detail-facts';
-    facts.append(
-      detailFact('主机名', state.hostname),
-      detailFact('系统', [state.os, state.arch].filter(Boolean).join(' · ')),
-      detailFact('负载', hasState ? `${Number(state.load1 || 0).toFixed(2)} / ${Number(state.load5 || 0).toFixed(2)} / ${Number(state.load15 || 0).toFixed(2)}` : '—'),
-      detailFact('CPU steal', state.cpu_steal_percent == null || metricsStale ? '—' : `${pct(state.cpu_steal_percent)} · 等待宿主机 CPU`),
-      detailFact('Swap', hasState ? `${bytes(state.swap_used,false,true)} / ${bytes(state.swap_total,false,true)}` : '—'),
-      detailFact('磁盘 I/O', state.disk_busy_percent == null || metricsStale ? '—' : `最忙 ${pct(state.disk_busy_percent)} · 读 ${bytes(state.disk_read_rate,true,true)} · 写 ${bytes(state.disk_write_rate,true,true)}`),
+    const detailFacts = () => [
+      detailFact('主机名', agent.state?.hostname),
+      detailFact('系统', [agent.state?.os, agent.state?.arch].filter(Boolean).join(' · ')),
+      detailFact('负载', agent.state ? `${Number(agent.state.load1 || 0).toFixed(2)} / ${Number(agent.state.load5 || 0).toFixed(2)} / ${Number(agent.state.load15 || 0).toFixed(2)}` : '—'),
+      detailFact('CPU steal', agent.state?.cpu_steal_percent == null || !agent.state || !agent.online || agent.disabled_at || agent.state.stale ? '—' : `${pct(agent.state.cpu_steal_percent)} · 等待宿主机 CPU`),
+      detailFact('Swap', agent.state ? `${bytes(agent.state.swap_used,false,true)} / ${bytes(agent.state.swap_total,false,true)}` : '—'),
+      detailFact('磁盘 I/O', agent.state?.disk_busy_percent == null || !agent.online || agent.disabled_at || agent.state.stale ? '—' : `最忙 ${pct(agent.state.disk_busy_percent)} · 读 ${bytes(agent.state.disk_read_rate,true,true)} · 写 ${bytes(agent.state.disk_write_rate,true,true)}`),
       detailFact('Agent 版本', agent.version),
-      detailFact(cardUptimeLabel(agent), hasState ? duration(state.uptime) : '—'),
+      detailFact(cardUptimeLabel(agent), agent.state ? duration(agent.state.uptime) : '—'),
       detailFact('最近上报', seen(agent.last_seen)),
       detailFact('检测时间', agent.google_status?.checked_at ? seen(agent.google_status.checked_at) : '尚未检测'),
       detailFact('流量周期截止', agent.plan?.cycle_end ? dateInTimezone(agent.plan.cycle_end, agent.plan.timezone || 'UTC') : '未配置或尚未开始'),
       detailFact('续费日期', agent.plan?.renewal_date || '未配置'),
       detailFact('到期日期', agent.plan?.expiry_date || '未配置'),
-    );
+    ];
+    facts.append(...detailFacts());
     detailPanel.append(facts);
     const detailActions = document.createElement('div');
     detailActions.className = 'card-detail-actions';
@@ -1431,71 +1381,68 @@ function createAgentCard(initialAgent) {
     card.append(detailPanel);
 
     const detailToggle = document.createElement('button');
-    detailToggle.className = 'detail-toggle';
+    detailToggle.className = 'detail-toggle score-detail c7-detail';
     detailToggle.type = 'button';
     detailToggle.textContent = '详情';
     detailToggle.dataset.focusKey = 'manage';
     detailToggle.setAttribute('aria-haspopup', 'dialog');
+    detailToggle.title = '设备详情';
     detailToggle.addEventListener('click', () => {planRenewal.close();deviceDetails.open(agent.agent_id,'management',detailToggle);});
-    detailToggle.classList.add('score-detail');detailToggle.title='设备详情 · 尚无真实评分';head.append(detailToggle);
+    head.append(detailToggle);
+
+    const deadline = planDeadline(agent.plan);
     const editPlan = document.createElement('button');
-    editPlan.className = 'edit-plan';
+    editPlan.className = 'edit-plan c7-money';
     editPlan.type = 'button';
-    editPlan.textContent = agent.plan ? '编辑套餐' : '添加套餐';
     editPlan.dataset.focusKey = 'plan';
-    editPlan.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'plan') || agentState.blocked(agent.agent_id) || planRenewal.unconfirmed(agent.agent_id);
-    editPlan.dataset.focusKey = 'plan';
+    const price = document.createElement('span');
+    price.className = 'footer-price c7-money-main';
+    price.textContent = compactPrice(agent.plan);
+    const editHint = document.createElement('span');
+    editHint.className = 'c7-money-side';
+    editHint.textContent = agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎';
+    editPlan.title = agent.plan ? '编辑套餐' : '添加套餐';
+    editPlan.append(price, editHint);
+    editPlan.disabled = planActionBlocked(agent);
     editPlan.addEventListener('click', () => openPlanDialog(agent,editPlan));
     const renewPlan = document.createElement('button');
-    renewPlan.type='button';renewPlan.className='renew-plan';renewPlan.textContent='已续费';renewPlan.dataset.focusKey='renewal';
+    renewPlan.type='button';renewPlan.className=`renew-plan c7-money ${deadline.tone}`;renewPlan.dataset.focusKey='renewal';
     renewPlan.setAttribute('aria-haspopup','dialog');
+    const due = document.createElement('span');
+    due.className = 'c7-money-main';
+    due.textContent = deadline.label;
+    const renewHint = document.createElement('span');
+    renewHint.className = 'c7-money-side';
+    renewHint.textContent = '标记已续费';
+    renewPlan.append(due, renewHint);
     renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
     renewPlan.addEventListener('click',()=>openPlanRenewal(agent,renewPlan));
-    const actions = document.createElement('div');
-    actions.className = 'card-actions';
-    const price = document.createElement('span');
-    price.className = 'footer-price';
-    price.textContent = compactPrice(agent.plan);
-    const planCost=document.createElement('div');planCost.className='footer-cost';planCost.append(price,due);
-    const planControls=document.createElement('div');planControls.className='plan-controls';planControls.append(renewPlan,editPlan);
-    actions.append(planCost, planControls);
-    card.append(actions);
     renewPlan.title='记录本次已续费，需确认；此按钮不是已确认状态';renewPlan.setAttribute('aria-label','记录已续费');
-    const modes={A:'graph',B:'graph',C:'graph'},modules={A:resourceModule,B:network,C:qualityNode};
-    const allViews=document.createElement('button');allViews.type='button';allViews.className='dv-all';allViews.dataset.focusKey='dv-all';allViews.textContent='⇄';head.append(allViews);
-    function applyMode(key,value){modes[key]=value;const graph=value==='graph',module=modules[key],focused=module.contains(document.activeElement)?document.activeElement:null;module.dataset.view=value;
-      const hide=(node,hidden)=>{node.hidden=hidden;node.inert=hidden;};
-      if(key==='A'){hide(metrics,!graph);hide(resourceDetail,graph);}
-      if(key==='B'){hide(trafficNode,!graph);hide(networkDetail,graph);trafficCharts.setActive(agent.agent_id,graph);}
-      if(key==='C'){hide(latencyNode,!graph);hide(latencyTop,!graph);latencyCharts.setActive(agent.agent_id,graph);networkQuality.setCardView(agent.agent_id,graph);}
-      module.querySelectorAll('[data-dv-toggle]:not(.dv-a-row)').forEach(b=>{b.title=`${key} 当前${graph?'图形':'详细'}视图；切换为${graph?'详细':'图形'}`;b.setAttribute('aria-label',b.title);});
-      if(focused&&focused.closest('[hidden]')){const target=module.querySelector(graph?'.metric-tile,.dv-switch':'.dv-a-row,.dv-switch');target?.focus({preventScroll:true});}
-      const fullGraph=Object.values(modes).every(m=>m==='graph'),mixed=!fullGraph&&!Object.values(modes).every(m=>m==='detail');allViews.title=fullGraph?'全部切换为详细视图':mixed?'混合视图；恢复本卡全部图形视图':'全部切换为图形视图';allViews.setAttribute('aria-label',allViews.title);allViews.dataset.preset=fullGraph?'graph':mixed?'mixed':'detail';
-    }
-    function toggleModule(key){applyMode(key,modes[key]==='graph'?'detail':'graph');}
-    for(const [key,module]of Object.entries(modules)){
-      let gesture=null,suppressClick=false;
-      module.addEventListener('pointerdown',e=>{gesture={id:e.pointerId,x:e.clientX,y:e.clientY};suppressClick=false;},true);
-      module.addEventListener('pointermove',e=>{if(gesture?.id===e.pointerId&&Math.hypot(e.clientX-gesture.x,e.clientY-gesture.y)>5)suppressClick=true;},true);
-      module.addEventListener('pointercancel',()=>{suppressClick=true;gesture=null;},true);
-      module.addEventListener('pointerup',()=>{gesture=null;},true);
-      module.addEventListener('click',e=>{if(suppressClick&&e.detail!==0){suppressClick=false;return;}const explicit=e.target.closest('[data-dv-toggle]');if(explicit){toggleModule(key);return;}if(e.target.closest('button,input,select,a,summary,[contenteditable],output,[role=tooltip],.metric-meaning,.metric-io-alert,.nq-bucket-note')||window.getSelection?.().toString())return;toggleModule(key);});
-      module.addEventListener('keydown',e=>{if(key==='A'&&['Enter',' '].includes(e.key)&&e.target.matches('.metric-tile')){e.preventDefault();toggleModule(key);}});
-    }
-    allViews.addEventListener('click',()=>{const next=Object.values(modes).every(m=>m==='graph')?'detail':'graph';for(const key of ['A','B','C'])applyMode(key,next);});
-    for(const key of ['A','B','C'])applyMode(key,'graph');
+    const actions = document.createElement('div');
+    actions.className = 'card-actions c7-foot2';
+    actions.append(editPlan, renewPlan);
+    card.append(actions);
+    const offline = document.createElement('div');
+    offline.className = 'c7-offline';
+    const offlinePill = document.createElement('span'); offlinePill.className = 'c7-offline-pill'; offlinePill.textContent = '离线';
+    const offlineNote = document.createElement('span'); offlineNote.className = 'c7-offline-note';
+    offline.append(offlinePill, offlineNote);
+    const showOffline = () => { offline.hidden = cardLifecycle(agent) !== 'offline'; setCardText(offlineNote, '最后在线 ' + Card.agoText(agent.last_seen)); };
+    showOffline();
+    card.append(offline);
 
-    return {card, detailPanel, egressPanel, modes, setView:applyMode, update(next) {
+    return {card, detailPanel, egressPanel, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
       egressPanel.update(agent);
       const state = agent.state || {}, hasState = Boolean(agent.state);
       const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
       const stateName = cardLifecycle(agent);
-      card.className = `card agent-card state-${stateName}`;
-      card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${{online:'在线',offline:'离线',paused:'暂停',revoked:'已撤销',unknown:'状态未知'}[stateName]}`);
+      card.className = `card agent-card c7 state-${stateName}`;
+      card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
       status.className = `status ${stateName}`; status.dataset.agentState = stateName;
-      setCardText(status, {online:'在线',offline:'离线',paused:'暂停',revoked:'已撤销',unknown:'状态未知'}[stateName]);
+      setCardText(status, lifecycleLabels[stateName]);
+      status.hidden = stateName === 'online' || stateName === 'offline';
       const system = CardMetrics.os(state.os);
       if (logo.getAttribute('src') !== `/vendor/card-icons/${system.icon}.svg`) logo.src = `/vendor/card-icons/${system.icon}.svg`;
       setReadableText(systemText, system.text);
@@ -1515,44 +1462,18 @@ function createAgentCard(initialAgent) {
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }
       setReadableText(runtime, cardRuntimeText(agent, oldMetrics));
-      const metricTone = percent => oldMetrics ? 'unknown' : CardMetrics.tone(percent);
-      const tiles = [
-        CardMetrics.tile('cpu', 'CPU', hasState ? state.cpu_percent : null, state.cpu_cores ? `${state.cpu_cores} 核` : '核心数未知', observed.cpu, `steal ${CardMetrics.pct(state.cpu_steal_percent)}`, oldMetrics),
-        CardMetrics.tile('memory', '内存', hasState ? state.ram_percent : null, `${CardMetrics.size(state.ram_used,false,true)} / ${CardMetrics.size(state.ram_total,false,true)}`, metricTone(state.ram_percent), `Swap ${CardMetrics.size(state.swap_used,false,true)} / ${CardMetrics.size(state.swap_total,false,true)}`, oldMetrics),
-        CardMetrics.tile('disk', '磁盘', hasState ? state.disk_percent : null, `${CardMetrics.size(state.disk_used,false,true)} / ${CardMetrics.size(state.disk_total,false,true)}`, metricTone(state.disk_percent), `I/O 最忙 ${CardMetrics.pct(state.disk_busy_percent)} · 读 ${CardMetrics.size(state.disk_read_rate,true,true)} · 写 ${CardMetrics.size(state.disk_write_rate,true,true)}`, oldMetrics, observed.io),
-      ];
-      tiles.forEach((tile, index) => updateDisplay(metrics.children[index], tile));
-      updateResourceDetail(state,hasState,oldMetrics,observed);
-      for (const [index, label, arrow, rate, total] of [[0, '下载', '↓', state.rx_rate, state.rx_total], [1, '上传', '↑', state.tx_rate, state.tx_total]]) {
-        const box = rateBoxes[index];
-        box.className = `${index === 0 ? 'network-rx' : 'network-tx'} tone-${oldMetrics ? 'unknown' : bandwidthTone(rate, agent.plan)}`;
-        setCardText(box.querySelector('span'), `${arrow} ${label}${oldMetrics ? ' · 旧数据' : ''}`);
-        setReadableText(box.querySelector('strong'), oldMetrics ? '—' : CardMetrics.size(rate, true));
-        setReadableText(box.querySelector('small'), `${index === 0 ? '入站' : '出站'} ${hasState ? CardMetrics.size(total) : '—'}${oldMetrics && hasState ? ' · 旧值' : ''}`);
-      }
-      for(const box of rateBoxes){const small=box.querySelector('small');small.title=small.textContent+'；'+trafficCounterMeaning;small.setAttribute('aria-label',small.title);}
-      setCardText(bandwidth, `带宽 ${compactBandwidth(agent.plan)}`);bandwidth.title=bandwidth.textContent+'；配置带宽，不是实时测速结果';bandwidth.setAttribute('aria-label',bandwidth.title);
+      machine.update(Card.machineView(agent, observed, oldMetrics));
+      updateTraffic();
       trafficCharts.mount(agent); latencyCharts.mount(agent); networkQuality.mount(agent);
       updateDisplay(googleTools.querySelector('.google-checks'), googleStatusPanel(agent));
       positionYouTubeTooltip();
       const nextTrigger = selectorView.trigger(agent);
       if (nextTrigger !== selectorTrigger) { selectorTrigger?.remove(); if (nextTrigger) googleTools.append(nextTrigger); selectorTrigger = nextTrigger; }
       selectorView.refresh(agent.agent_id);
-      updateDisplay(planSummary, planPanel(agent.plan || {}));
-      const deadline = planDeadline(agent.plan); due.className = deadline.tone; setCardText(due, deadline.label);
+      const deadline = planDeadline(agent.plan); renewPlan.className = `renew-plan c7-money ${deadline.tone}`; setCardText(due, deadline.label);
       setCardText(price, compactPrice(agent.plan));
-      const nextFacts = [
-        detailFact('主机名', state.hostname), detailFact('系统', [state.os, state.arch].filter(Boolean).join(' · ')),
-        detailFact('负载', hasState ? `${Number(state.load1 || 0).toFixed(2)} / ${Number(state.load5 || 0).toFixed(2)} / ${Number(state.load15 || 0).toFixed(2)}` : '—'),
-        detailFact('CPU steal', state.cpu_steal_percent == null || metricsStale ? '—' : `${pct(state.cpu_steal_percent)} · 等待宿主机 CPU`),
-        detailFact('Swap', hasState ? `${bytes(state.swap_used,false,true)} / ${bytes(state.swap_total,false,true)}` : '—'),
-        detailFact('磁盘 I/O', state.disk_busy_percent == null || metricsStale ? '—' : `最忙 ${pct(state.disk_busy_percent)} · 读 ${bytes(state.disk_read_rate,true,true)} · 写 ${bytes(state.disk_write_rate,true,true)}`),
-        detailFact('Agent 版本', agent.version), detailFact(cardUptimeLabel(agent), hasState ? duration(state.uptime) : '—'),
-        detailFact('最近上报', seen(agent.last_seen)), detailFact('检测时间', agent.google_status?.checked_at ? seen(agent.google_status.checked_at) : '尚未检测'),
-        detailFact('流量周期截止', agent.plan?.cycle_end ? dateInTimezone(agent.plan.cycle_end, agent.plan.timezone || 'UTC') : '未配置或尚未开始'),
-        detailFact('续费日期', agent.plan?.renewal_date || '未配置'), detailFact('到期日期', agent.plan?.expiry_date || '未配置'),
-      ];
-      nextFacts.forEach((fact, index) => updateDisplay(facts.children[index], fact));
+      setCardText(editHint, agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎'); editPlan.title = agent.plan ? '编辑套餐' : '添加套餐';
+      detailFacts().forEach((fact, index) => updateDisplay(facts.children[index], fact));
       const currentParts = versionParts(agent.version), targetParts = versionParts(serverBuild.version);
       const newer = currentParts && targetParts && targetParts.some((part, index) => part > currentParts[index] && targetParts.slice(0, index).every((value, prior) => value === currentParts[prior]));
       remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
@@ -1567,14 +1488,14 @@ function createAgentCard(initialAgent) {
       setCardText(resetTraffic, trafficResetRequests.has(agent.agent_id) ? '用原请求核实累计起点' : '重新开始累计统计');
       resetTraffic.disabled = !canResetTraffic(agent);
       setCardText(resetFeedback, trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量');
-      setCardText(editPlan, agent.plan ? '编辑套餐' : '添加套餐');
-      editPlan.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'plan') || agentState.blocked(agent.agent_id) || planRenewal.unconfirmed(agent.agent_id);
+      editPlan.disabled = planActionBlocked(agent);
       renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
       for (const control of [upgrade, stateAction]) {
         if (agent.revoked) control.remove();
         else if (control.parentNode !== management) management.insertBefore(control, remove);
       }
       countryControls.update(agent);
+      showOffline();
     }};
 }
 
@@ -1702,7 +1623,7 @@ loadMutationSession();
 refresh();
 let suspended = false;
 setInterval(() => { if (suspended) return; reconciliation.retry(); if (!agentState.refreshing()) refresh(); }, 15000);
-addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); chartAxes.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
+addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 

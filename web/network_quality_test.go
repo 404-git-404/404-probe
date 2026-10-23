@@ -102,7 +102,7 @@ func TestR07QualityPageSources(t *testing.T) {
 		}
 	}
 	core := read("network-quality-core.js")
-	for _, need := range []string{"需升级 Agent", "本机无 IPv6", "不支持 ICMP", "目标异常", "未配置目标", "未启用", "已关闭", "无当前 TCP 检测", "告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标"} {
+	for _, need := range []string{"需升级 Agent", "本机无 IPv6", "不支持 ICMP", "目标异常", "未配置目标", "未启用", "已关闭", "未测 TCP（只开了 ICMP）", "解析失败", "v5 卡片契约不匹配"} {
 		if !strings.Contains(core, need) {
 			t.Fatalf("network-quality-core.js lacks %q", need)
 		}
@@ -110,7 +110,12 @@ func TestR07QualityPageSources(t *testing.T) {
 	if !strings.Contains(read("network-quality.css"), ".nq-overlay") || !strings.Contains(read("network-quality.css"), ".nq-dialog") {
 		t.Fatal("dialog styles missing")
 	}
-	if !strings.Contains(read("latency-mini.css"), "lm-alert-note") {
-		t.Fatal("TCP Mini note style missing")
+	if !strings.Contains(read("card-v7.css"), "lm7-marks") {
+		t.Fatal("mark strip style missing")
+	}
+	for _, name := range []string{"network-quality.js", "network-quality-core.js", "latency-mini.js"} {
+		if strings.Contains(read(name), "tcp-mini") || strings.Contains(read(name), "card-history") {
+			t.Fatalf("%s still calls a retired route", name)
+		}
 	}
 }

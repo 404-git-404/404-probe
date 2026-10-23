@@ -2,6 +2,7 @@
 // test-r07-network-quality.cjs knows neither CSS nor browser focus rules; these checks are what it cannot see.
 // Needs Playwright and a Chromium build (M02_PLAYWRIGHT / M02_CHROMIUM, as test-m02-real-chain.cjs); skipped without them.
 'use strict';
+const {v5Card} = require('./lib/r07-harness.cjs');
 const {test, before, after} = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
 
@@ -21,27 +22,27 @@ before(async () => { if (available) browser = await chromium.launch({headless: t
 after(async () => { await browser?.close(); });
 
 // A page with the production scripts and CSS; the Server answers from memory with the given v4 response.
-async function open(raw, {dialog = true, history = null, plot = false, host = false, scrollerHeight = 300} = {}) {
+async function open(raw, {dialog = true, history = null, plot = false, host = false, scrollerHeight = 300, v5 = null} = {}) {
   const page = await browser.newPage({viewport: {width: 1000, height: 800}}), errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host"></div><dialog id="network-quality-history"></dialog></body></html>');
-  for (const css of ['style.css', 'network-quality.css']) await page.addStyleTag({content: read(css)});
+  await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host" class="c7"></div><dialog id="network-quality-history"></dialog></body></html>');
+  for (const css of ['style.css', 'network-quality.css', 'card-v7.css']) await page.addStyleTag({content: read(css)});
   if (plot) { await page.addStyleTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.min.css'), 'utf8')}); await page.addScriptTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.iife.min.js'), 'utf8')}); }
   for (const js of ['agent-state.js', 'management.js', 'network-quality-core.js', 'network-quality.js']) await page.addScriptTag({content: read(js)});
-  await page.evaluate(({raw, agent, history, plot, host, scrollerHeight}) => {
-    window.__hist = history; window.__plots = []; window.__scrollerHeight = scrollerHeight;
+  await page.evaluate(({raw, agent, history, plot, host, scrollerHeight, v5}) => {
+    window.__hist = history; window.__v5 = v5; window.__plots = []; window.__scrollerHeight = scrollerHeight;
     const Plot = plot ? function(opts, data, target) { const u = new window.uPlot(opts, data, target); window.__plots.push(u); return u; } : undefined;
     // The device-details dialog hosts the history in a container that scrolls (its body): the same shape here.
     const historyHost = host ? (() => { const wrap = document.createElement('div'); wrap.id = 'scroller'; wrap.style.cssText = 'height:' + (window.__scrollerHeight || 300) + 'px;overflow:auto;width:700px'; const box = document.createElement('div'); box.id = 'history-box'; wrap.append(box); document.body.append(wrap); return {container: () => box, active: () => true, open() {}, close() {}}; })() : null;
     window.__raw = raw; window.__writes = []; window.__gets = 0; window.__clock = 0;
     const now = () => 1800000000000 + window.__clock;
     window.__q = window.NetworkQualityCore.coordinator({now});
-    window.__ui = window.NetworkQuality.create({coordinator: window.__q, now, ...(Plot ? {Plot} : {}), ...(historyHost ? {historyHost} : {}), onConfig: id => { if (window.__restoreTarget) window.__ui.openHistoryFor(id, window.__restoreTarget, 'ipv4', 'latency', document.body); }, fetcher: async (url, init = {}) => { if (window.__hist && url.includes('card-history')) return {ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(window.__hist.card)}; if (init.method === 'PUT') window.__writes.push(JSON.parse(init.body)); else if (url.endsWith('/v4/config')) window.__gets++; return {ok: true, status: 200, statusText: 'OK', json: async () => window.__raw}; },
+    window.__ui = window.NetworkQuality.create({coordinator: window.__q, now, ...(Plot ? {Plot} : {}), ...(historyHost ? {historyHost} : {}), onConfig: id => { if (window.__restoreTarget) window.__ui.openHistoryFor(id, window.__restoreTarget, 'ipv4', 'latency', document.body); }, fetcher: async (url, init = {}) => { if (window.__v5 && url.includes('/v5/card')) return {ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(window.__v5)}; if (window.__hist && url.includes('v3/history') && url.includes('view=1hour')) return {ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(window.__hist.card)}; if (init.method === 'PUT') window.__writes.push(JSON.parse(init.body)); else if (url.endsWith('/v4/config')) window.__gets++; return {ok: true, status: 200, statusText: 'OK', json: async () => window.__raw}; },
       csrf: () => 'synthetic', interval: () => 0, clear() {}, Observer: null, Resize: null});
     const node = window.__ui.mount({agent_id: agent, name: '合成设备'});
     document.getElementById('host').append(node);
     window.__ui.setVisible(agent, true);
-  }, {raw, agent: AGENT, history, plot, host, scrollerHeight});
+  }, {raw, agent: AGENT, history, plot, host, scrollerHeight, v5});
   await page.waitForFunction(() => document.querySelector('.nq-link'));
   await page.waitForTimeout(150);
   if (dialog) {
@@ -182,14 +183,20 @@ test('R3 (Chromium): a read the user asked for (opening the dialog) is adopted e
   }
 });
 
-test('D1 (Chromium): the card shows data from the real Server card-history answer', {skip: !available && 'Playwright/Chromium not available'}, async () => {
-  const raw = load('v4-running'), history = {card: load('history-card-tcp')};
-  const {page, errors} = await open(raw, {dialog: false, history});
+test('D1 (Chromium): the card draws the v5/card answer of the Server: twenty blocks per lane, the shapes of yellow and red, the number at the right', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const raw = load('v4-running'), v5 = v5Card(raw, 'ipv4');
+  const blocks = v5.lanes[0].tcp.blocks; blocks[3].state = 'yellow'; blocks[4].state = 'red'; blocks[5].state = 'gray';
+  const {page, errors} = await open(raw, {dialog: false, v5});
   try {
-    await page.waitForFunction(() => /^[0-9.]+ms$/.test(document.querySelector('.nq-tcp-value')?.textContent || ''), null, {timeout: 8000});
-    const cells = await page.evaluate(() => [...document.querySelectorAll('.nq-row')[0].querySelectorAll('.nq-tcp-blocks .nq-block')].map(b => b.className));
-    assert.equal(cells.length, 12);
-    assert.ok(cells.some(c => /nq-low/.test(c)), cells.join(','));
+    await page.waitForFunction(() => document.querySelectorAll('.nq7-row')[0]?.querySelectorAll('.nq7-b').length === 20, null, {timeout: 8000});
+    const facts = await page.evaluate(() => { const cells = [...document.querySelectorAll('.nq7-row')[0].querySelectorAll('.nq7-b')], px = (el, p) => getComputedStyle(el, '::after')[p];
+      return {n: cells.length, green: getComputedStyle(cells[0]).backgroundColor, greenEdge: getComputedStyle(cells[0]).borderTopColor, h: cells[0].getBoundingClientRect().height,
+        yellowBar: [px(cells[3], 'width'), px(cells[3], 'height')], redDot: [px(cells[4], 'width'), px(cells[4], 'height'), px(cells[4], 'backgroundColor')], grayAfter: px(cells[5], 'content'), greenAfter: px(cells[0], 'content'),
+        right: document.querySelector('.nq7-right').textContent}; });
+    assert.equal(facts.n, 20); assert.equal(facts.green, 'rgb(140, 197, 181)'); assert.equal(facts.greenEdge, 'rgb(62, 156, 134)'); assert.equal(facts.h, 16);
+    assert.deepEqual(facts.yellowBar, ['8px', '2px']); assert.deepEqual(facts.redDot, ['3px', '3px', 'rgb(255, 255, 255)']);
+    assert.ok(facts.grayAfter === 'none' && facts.greenAfter === 'none', 'green and gray carry no mark');
+    assert.equal(facts.right, '丢包 0%');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });
@@ -260,51 +267,3 @@ test('Scroll (Chromium): a change elsewhere in the configuration neither closes 
   } finally { await page.close(); }
 });
 
-// N6 on the card: alert, "no current TCP check" and normal read the same height - the explanation is a tooltip of the
-// words in the chart, never a paragraph that pushes the time slider down onto the YouTube row.
-async function miniCard(config, status) {
-  const page = await browser.newPage({viewport: {width: 900, height: 700}}), errors = [];
-  page.on('pageerror', e => errors.push(e.message));
-  await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host" style="width:380px"></div></body></html>');
-  for (const css of ['style.css', 'card-layout.css', 'network-quality.css', 'latency-mini.css']) await page.addStyleTag({content: read(css)});
-  for (const js of ['agent-state.js', 'network-quality-core.js', 'latency-mini.js']) await page.addScriptTag({content: read(js)});
-  await page.evaluate(({config, status, agent}) => {
-    const C = window.NetworkQualityCore, state = {fetchJSON: async url => { if (url.includes('/tcp-mini')) return structuredClone(status); return new Promise(() => {}); }};
-    const api = window.LatencyMini.create({document, state, interval: () => 0, clear() {}, unauthorized() {}});
-    const card = document.createElement('section'); card.className = 'agent-card'; const quality = document.createElement('section'); quality.className = 'network-quality dv-c'; card.append(quality);
-    quality.append(api.mount({agent_id: agent, online: true})); document.getElementById('host').append(card);
-    api.bindConfig(agent, C.adapt(config)); api.setVisible(agent, true); window.__mini = api; window.__card = card;
-  }, {config, status, agent: AGENT});
-  await page.waitForFunction(() => document.querySelector('.lm-plot')?.dataset.scale === 'fixed-sqrt', null, {timeout: 8000});
-  await page.waitForTimeout(700); // the Server's tcp-mini answer
-  return {page, errors};
-}
-const miniFacts = page => page.evaluate(() => {
-  const note = document.querySelector('.lm-alert-note'), mini = document.querySelector('.latency-mini'), card = document.querySelector('.agent-card');
-  const words = [...document.querySelectorAll('.lm-plot svg text')].filter(t => t.dataset.tcpMini || t.dataset.alert).map(t => ({text: [...t.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(''), title: t.querySelector('title')?.textContent || ''}));
-  return {mini: mini.offsetHeight, card: card.offsetHeight, noteVisible: !!note && note.getBoundingClientRect().height > 0, noteText: note?.textContent || '', words, cardText: card.innerText};
-});
-
-test('N6 layout (Chromium): alert, no current TCP check and normal give the card the same height and no explanation paragraph', {skip: !available && 'Playwright/Chromium not available'}, async () => {
-  const running = load('v4-running'), off = load('v4-saved-off');
-  const states = {
-    alert: [running, load('tcp-mini-alert-running')],
-    none: [off, load('tcp-mini-none')],
-    normal: [running, {...load('tcp-mini-none'), current_tcp: true, state: 'normal'}],
-  };
-  const facts = {};
-  for (const [name, [config, status]] of Object.entries(states)) {
-    const {page, errors} = await miniCard(config, status);
-    try { facts[name] = await miniFacts(page); assert.deepEqual(errors, [], name); } finally { await page.close(); }
-  }
-  for (const [name, f] of Object.entries(facts)) {
-    assert.equal(f.noteVisible, false, name + ': no paragraph under the chart: ' + f.noteText);
-    assert.doesNotMatch(f.cardText, /告警持续到之后某一天|没有正在检测的 IPv4 TCP 线路|来源日/, name + ': no N6 explanation in the card body');
-  }
-  assert.equal(facts.alert.words.length, 1); assert.equal(facts.alert.words[0].text, '告警');
-  assert.match(facts.alert.words[0].title, /告警来源日 2026-10-\d\d；告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标/, 'the explanation is the tooltip of the word');
-  assert.equal(facts.none.words[0].text, '无当前 TCP 检测'); assert.match(facts.none.words[0].title, /没有正在检测的 IPv4 TCP 线路/);
-  assert.equal(facts.normal.words.length, 0, 'normal shows no words');
-  assert.equal(new Set(Object.values(facts).map(f => f.mini)).size, 1, 'one height of the chart block: ' + JSON.stringify(Object.fromEntries(Object.entries(facts).map(([n, f]) => [n, f.mini]))));
-  assert.equal(new Set(Object.values(facts).map(f => f.card)).size, 1, 'one height of the card: ' + JSON.stringify(Object.fromEntries(Object.entries(facts).map(([n, f]) => [n, f.card]))));
-});

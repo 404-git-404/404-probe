@@ -98,16 +98,16 @@ test('N3 coordinator bounded failure backoff no tight loop and retired key clean
  await assert.rejects(q.request('x',o,run));await flush();await assert.rejects(q.request('x',o,run),{name:'BackoffError'});assert.equal(calls,1);
  at+=30000;await assert.rejects(q.request('x',o,run));await flush();assert.equal(calls,2);q.release(o);assert.equal(q.snapshot().keys,0);q.close();
 });
-test('N3 actual card callbacks: visible first, current family three targets, no config on metadata refresh, hidden stops',async(t)=>{
- const f=fixture();assert.equal(f.requests.length,0);f.visible();await flush();assert.equal(f.requests.filter(r=>r.url.includes('history')).length,4);
+test('N3 actual card callbacks: visible first, one v5 card read for the shown family, no config on metadata refresh, hidden stops',async(t)=>{
+ const f=fixture();assert.equal(f.requests.length,0);f.visible();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/v5/card')).length,1);
  const reads=f.requests.filter(r=>r.url.endsWith('/v4/config')).length;assert.equal(f.ui.mount({...f.agent,name:'新名字'}),f.node);await flush();assert.equal(f.requests.filter(r=>r.url.endsWith('/v4/config')).length,reads);
- f.byText(f.node,'IPv6').click();await flush();assert.equal(f.requests.filter(r=>r.url.includes('history')).length,6);
+ f.byText(f.node,'IPv6').click();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/v5/card')).length,2);
  f.doc.hidden=true;f.doc.dispatch('visibilitychange');const count=f.requests.length;f.ui.tick();await flush();assert.equal(f.requests.length,count);
  t.diagnostic(JSON.stringify({initialVisibleHistory:4,switchedFamilyHistoryTotal:6,hiddenExtraRequests:f.requests.length-count,configReadsAcrossMetadataRefresh:reads}));f.ui.close();
 });
 test('N3 no IntersectionObserver fallback does not read offscreen cards',async()=>{
  const oldW=global.innerWidth,oldH=global.innerHeight;global.innerWidth=800;global.innerHeight=600;const f=fixture();f.node.rect.top=900;f.node.rect.bottom=1000;f.ui.tick();await flush();assert.equal(f.requests.length,0);
- f.node.rect.top=10;f.node.rect.bottom=100;f.ui.tick();await flush();assert.equal(f.requests.filter(r=>r.url.includes('history')).length,4);f.ui.close();global.innerWidth=oldW;global.innerHeight=oldH;
+ f.node.rect.top=10;f.node.rect.bottom=100;f.ui.tick();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/v5/card')).length,1);f.ui.close();global.innerWidth=oldW;global.innerHeight=oldH;
 });
 test('N3 actual queued config leaves viewport before starting: zero hidden reads and re-visible recovers',async()=>{
  const first=Array.from({length:4},deferred);let starts=0;

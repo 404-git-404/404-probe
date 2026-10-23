@@ -2,10 +2,10 @@
 (function(root) {
   'use strict';
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
-  const OUTDATED='页面已过期，请刷新',CONFLICT='配置已被其他页面修改',CONFIG_REFRESH_MS=30000;
+  const OUTDATED='页面已过期，请刷新',CONFLICT='配置已被其他页面修改',CONFIG_REFRESH_MS=30000,SUMMARY_FRESH_MS=25000;
   function create({document:doc=root.document,fetcher=(...args)=>root.fetch(...args),csrf=()=>'',unauthorized=()=>root.location.assign('/login'),
     state=root.AgentState,management=root.Management,Plot=root.uPlot,Observer=root.IntersectionObserver,Resize=root.ResizeObserver,
-    interval=root.setInterval,clear=root.clearInterval,now=()=>Date.now(),coordinator=null,historyHost=null,onConfig=null}={}) {
+    interval=root.setInterval,clear=root.clearInterval,now=()=>Date.now(),coordinator=null,historyHost=null,onConfig=null,onFamily=null}={}) {
     const cards=new Map(),queue=coordinator||C.coordinator({now}),dialogOwner={};
     let closed=false,panel=null,history=null,plot=null,resize=null,timer=null,wasHidden=doc.hidden;
     const dialog=doc.querySelector('#network-quality-history');
@@ -22,7 +22,7 @@
     function setVisible(card,value) {
       const changed=card.visible!==value;
       card.visible=value;
-      if(!value&&changed){card.generation++;queue.release(card.historyOwner);card.loading.clear();queue.release(card.configOwner);
+      if(!value&&changed){card.generation++;queue.release(card.historyOwner);card.summaryLoading=false;queue.release(card.configOwner);
         if(panel?.card!==card&&!historyHost?.active(card.id)){card.configSerial++;card.reading=false;card.refreshing=null;}}
       else if(value&&changed)refreshCard(card);
     }
@@ -35,15 +35,14 @@
       const sameSeries=card.config&&measurement(card.config)===measurement(config);
       card.config=config;card.error='';
       if(sameSeries) {
-        // Only labels, kind or settings changed: curves and the twelve cells stay, nothing is read again.
+        // Only labels, kind or settings changed. The blocks are judged against the threshold, so a new settings revision reads them again.
         renderCard(card);
+        if(card.summary&&card.summary.settings_revision!==config.settings_revision)readSummary(card,true);
         if(history?.card===card)renderHistory();
         onConfig?.(card.id,config);
         return;
       }
-      const keep=new Set(config.targets.filter(t=>card.previous?.some(p=>p.id===t.id&&p.family===t.family&&p.protocol===t.protocol&&p.slot===t.slot&&p.slot_revision===t.slot_revision&&p.status===t.status)).map(t=>t.id));
-      card.data=new Map([...card.data].filter(([id])=>keep.has(id)));
-      card.generation++;card.loading.clear();queue.release(card.historyOwner);
+      card.generation++;card.summary=null;card.summaryAt=0;card.summaryLoading=false;queue.release(card.historyOwner);
       // An open history is left alone when the target it shows is still there (the Server reports another lane differently,
       // a state changes): closing it would throw away its place in the page. It closes when its target is gone or replaced.
       if(history?.card===card){const kept=config.targets.find(t=>t.id===history.target.id&&t.slot===history.target.slot&&t.family===history.target.family&&t.protocol===history.target.protocol&&t.slot_revision===history.target.slot_revision);if(kept)history.target=kept;else closeHistory();}
@@ -87,112 +86,137 @@
     async function refreshCard(card) {
       if(!effective(card)||closed||card.dead)return;
       if(!card.config){loadConfig(card);return;}
-      if(configDue(card))loadConfig(card,false,true);
-      if(card.graph)return; // Shared configuration remains live while bucket reads sleep.
-      const generation=card.generation;
-      // Only a lane that is measuring has a series worth reading; a switched-off or unset one shows its reason.
-      for(const target of targets(card).filter(t=>t.id&&t.status==='active')) {
-        if(card.loading.has(target.id))continue;
-        const cached=card.data.get(target.id);if(cached&&now()-cached.updated<30000)continue;
-        const key=JSON.stringify(['card-history',card.id,target.id,card.family]);card.loading.add(target.id);
-        read(key,card.historyOwner,`${path(card.id)}v3/card-history?target_id=${encodeURIComponent(target.id)}`).then(value=>{
-          if(card.dead||generation!==card.generation||!effective(card)||value.target?.id!==target.id||value.target?.family!==card.family||value.target?.protocol!==target.protocol||value.target?.slot!==target.slot)return;
-          card.data.set(target.id,{value,updated:now(),error:''});renderCard(card);
-        }).catch(error=>{
-          if(!card.dead&&generation===card.generation&&error.name!=='AbortError'){
-            const old=card.data.get(target.id);card.data.set(target.id,{...old,updated:now(),error:error.status===410?OUTDATED:'历史读取失败，显示上次结果（非当前）'});renderCard(card);
-          }
-        }).finally(()=>{if(generation===card.generation)card.loading.delete(target.id);});
-      }
+      if(configDue(card))loadConfig(card,false,true); // Shared configuration remains live while face B is shown.
+      if(card.face==='A')readSummary(card);
+    }
+    // The v5 answer is the whole of face A: 20 blocks per lane, the numbers at the right and the alert flag, all judged by the
+    // Server. The page keeps the last good answer and says so when a read fails.
+    function readSummary(card,force=false) {
+      if(card.face!=='A'||!effective(card)||card.dead||card.summaryLoading)return;
+      if(!force&&card.summary&&now()-card.summaryAt<SUMMARY_FRESH_MS)return;
+      const generation=card.generation,family=card.family;card.summaryLoading=true;
+      read(JSON.stringify(['card-v5',card.id,family]),card.historyOwner,`${path(card.id)}v5/card?family=${family}`).then(raw=>{
+        if(card.dead||generation!==card.generation||card.family!==family)return;
+        card.summary=C.normalizeCard(raw,family);card.summaryAt=now();card.summaryError='';renderCard(card);
+      }).catch(error=>{
+        if(card.dead||generation!==card.generation||error.name==='AbortError'||error.name==='BackoffError')return;
+        card.summaryAt=now();
+        card.summaryError=error.status===410?OUTDATED:error.message?.startsWith('v5 卡片契约')?'读取失败：响应不符合契约，显示上次结果（非当前）':'读取失败，显示上次结果（非当前）';
+        renderCard(card);
+      }).finally(()=>{if(generation===card.generation)card.summaryLoading=false;});
     }
     function family(card,value) {
       if(value===card.family)return;
       try{root.localStorage?.setItem('404-probe:nq-family:'+card.id,value);}catch{}
-      card.family=value;card.generation++;card.data.clear();card.loading.clear();queue.release(card.historyOwner);
-      if(history?.card===card)closeHistory();renderCard(card);refreshCard(card);
+      card.family=value;card.generation++;card.summary=null;card.summaryError='';card.summaryLoading=false;queue.release(card.historyOwner);
+      if(history?.card===card)closeHistory();renderCard(card);refreshCard(card);onFamily?.(card.id,value);
     }
-    function updateStrip(row,blocks,target,kind) {
-      const incoming=(blocks||[]).slice(-12);
-      row.setAttribute('aria-label',`${kind==='latency'?'TCP Connect P95':'ICMP 真实丢包'}，最近12个五分钟桶，最后一桶进行中`);
-      if(!incoming.length){if(!row.querySelector('.nq-unknown-slot'))row.replaceChildren(el('small','nq-muted nq-unknown-slot','未知'));return;}
-      row.querySelector('.nq-muted')?.remove();
-      for(let i=0;i<incoming.length;i++) {
-        const block=incoming[i],display=C.cardBlock(block,target);
-        let wrap=row.children[i];
-        if(!wrap){
-          wrap=el('span','nq-block-wrap');const square=button('',()=>{square.focus();note.textContent=square.title;}),note=el('span','nq-bucket-note');
-          square.addEventListener('focus',()=>{note.textContent=square.title;});square.addEventListener('blur',()=>{note.textContent='';});
-          square.addEventListener('pointerenter',()=>{note.textContent=square.title;});square.addEventListener('pointerleave',()=>{if(doc.activeElement!==square)note.textContent='';});
-          wrap.append(square,note);row.append(wrap);
-        }
-        const square=wrap.firstElementChild,text=display.text;square.className=`nq-block nq-${display.tone}`;square.textContent=display.mark;square.dataset.bucketStart=String(block.start);
-        if(square.title!==text){square.title=text;square.setAttribute('aria-label',text);if(doc.activeElement===square)wrap.lastElementChild.textContent=text;}
-      }
-      while(row.children.length>incoming.length)row.lastElementChild.remove();
+    // ---- face A ----------------------------------------------------------------------------------
+    function showTip(card,cell) {
+      const text=cell?.tipText;
+      if(!text){card.tip.hidden=true;return;}
+      card.tip.textContent=text;card.tip.hidden=false;
+      const box=card.faceA.getBoundingClientRect(),at=cell.getBoundingClientRect(),width=Math.min(220,Math.max(120,box.width-8));
+      card.tip.style.width=width+'px';
+      card.tip.style.left=Math.max(0,Math.min(box.width-width,at.left-box.left+at.width/2-width/2))+'px';
+      card.tip.style.top=(at.bottom-box.top+4)+'px';
+    }
+    function buildFaceA(card) {
+      const faceA=el('div','nq7-face nq7-a');faceA.dataset.face='A';
+      const head=el('div','nq7-head'),title=el('span','nq7-title'),sub=el('span','nq7-sub');
+      title.append(el('strong','','网络质量'));
+      const tabs=el('div','nq7-seg nq-tabs');for(const [v,text]of [['ipv4','IPv4'],['ipv6','IPv6']]){const b=button(text,()=>family(card,v));b.dataset.focusKey=`nq-${v}`;tabs.append(b);}
+      const settings=button('设置',event=>openPanel(card,event.currentTarget),'nq7-btn nq-link');settings.dataset.focusKey='nq-settings';
+      head.append(title,sub,tabs,settings);
+      const content=el('div','nq7-rows');card.rows=new Map();
+      const legend=el('div','nq7-legend');
+      for(const [state,text] of [['green','正常'],['yellow','偶发慢 / 失败'],['red','持续（告警）'],['gray','无数据']]){const key=el('span','nq7-key');key.append(el('span',`nq7-b nq7-b-${state}`),el('span','',text));legend.append(key);}
+      const note=el('span','nq7-note','每格 3 分钟');legend.append(note);
+      const tip=el('div','nq7-tip');tip.hidden=true;tip.setAttribute('role','tooltip');
+      content.addEventListener('pointerover',event=>{const cell=event.target?.closest?.('.nq7-b[data-i]');if(cell)showTip(card,cell);});
+      content.addEventListener('pointerleave',()=>{tip.hidden=true;});
+      faceA.append(head,content,legend,tip);
+      Object.assign(card,{faceA,head,sub,tabs,content,legend,note,tip});
+      card.node.append(faceA);
+    }
+    function buildRow(card,key) {
+      const node=el('button','nq7-row'),label=el('span','nq7-label'),mid=el('span','nq7-mid'),blocks=el('span','nq7-blocks'),text=el('span','nq7-text'),right=el('span','nq7-right');
+      node.type='button';node.dataset.slot=key;node.dataset.focusKey=`nq-row-${key}`;node.title='点击进入详情页的这条线路';
+      const cells=Array.from({length:20},(_,i)=>{const c=el('span','nq7-b');c.dataset.i=String(i);blocks.append(c);return c;});
+      mid.append(blocks,text);node.append(label,mid,right);
+      const view={node,label,blocks,text,right,cells,tcp:null,icmp:null};
+      node.addEventListener('click',()=>{const t=view.tcp?.id?view.tcp:view.icmp?.id?view.icmp:null;if(t)openHistory(card,t,t.protocol==='tcp'?'latency':'ratio',node);});
+      return view;
+    }
+    // Before the first answer, or when the device is gone: a lane described by the configuration alone.
+    function configLane(card,key) {
+      const device=card.agent.revoked||card.agent.disabled_at;
+      const notice=protocol=>device?{status:'device_inactive',condition:''}:(l=>l?{status:l.status,condition:l.condition||''}:{status:'unset',condition:''})(card.config?.lanes?.get(`${key}/${card.family}/${protocol}`));
+      return {slot:key,tcp:{...notice('tcp'),blocks:null,red:false,dns_failing:false},icmp:notice('icmp'),right:{kind:'none',percent:null,numerator:0,denominator:0,samples:'none'}};
     }
     function renderCard(card) {
-      if(!card.head) {
-        const head=el('div','nq-head'),title=el('button','nq-title dv-switch');title.type='button';title.dataset.dvToggle='C';title.append(el('strong','','网络质量'),el('span','nq-subtitle','TCP 延迟 | ICMP 丢包'));head.append(title);
-        const settings=button('设置',event=>openPanel(card,event.currentTarget),'nq-link');settings.dataset.focusKey='nq-settings';head.append(settings);
-        const tabs=el('div','nq-tabs');for(const [v,text]of [['ipv4','IPv4'],['ipv6','IPv6']]){const b=button(text,()=>family(card,v));b.dataset.focusKey=`nq-${v}`;tabs.append(b);}head.append(tabs);
-        card.head=head;card.reason=el('p','nq-status');card.reason.id='nq-status-'+card.id;card.title=title;
-        title.tabIndex=0;title.dataset.focusKey='nq-status';title.setAttribute('aria-describedby',card.reason.id);
-        card.content=el('div','nq-rows');card.rows=new Map();
-        card.node.append(head,card.reason,card.content);
-      }
-      for(const b of card.head.querySelectorAll('.nq-tabs button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
+      if(!card.head)buildFaceA(card);
+      const device=!!(card.agent.revoked||card.agent.disabled_at),summary=device?null:card.summary;
+      for(const b of card.tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
+      const threshold=summary?.threshold_ms??card.config?.slow_threshold_ms??C.THRESHOLD_DEFAULT,interval=summary?.interval_ms??card.config?.effective_interval_ms??30000;
+      const subText=`TCP · 近 1h · 门槛 ${threshold} ms`;
+      if(card.sub.textContent!==subText)card.sub.textContent=subText;
+      card.sub.title=`只看 TCP 线路（当前所选地址族）· 最近 1 小时，每格 3 分钟 · 慢 = 连接时间超过 ${threshold} ms · 检测间隔 ${interval/1000} 秒${interval>=240000?'；检测间隔较长，部分方块没有样本':''}`;
       const live=new Set();let position=card.content.firstElementChild;
       const selected=targets(card);
       for(const key of C.slots) {
-        const tcp=selected.find(t=>t.slot===key&&t.protocol==='tcp'),icmp=selected.find(t=>t.slot===key&&t.protocol==='icmp');
         live.add(key);let view=card.rows.get(key);
-        if(!view){
-          view={node:el('section','nq-row'),label:el('div','nq-target'),latencyStrip:el('div','nq-blocks nq-tcp-blocks'),ratioStrip:el('div','nq-blocks nq-icmp-blocks'),note:el('small','nq-muted'),divider:el('span','nq-divider')};
-          view.divider.setAttribute('aria-hidden','true');
-          view.latency=el('span','nq-metric nq-tcp-value');
-          view.ratio=el('span','nq-metric nq-icmp-value');
-          view.latency.dataset.focusKey=`nq-${key}-latency`;view.ratio.dataset.focusKey=`nq-${key}-ratio`;
-          view.node.append(view.label,view.latency,view.latencyStrip,view.divider,view.ratioStrip,view.ratio,view.note);card.rows.set(key,view);
-        }
-        view.tcp=tcp;view.icmp=icmp;
+        if(!view){view=buildRow(card,key);card.rows.set(key,view);}
+        view.tcp=selected.find(t=>t.slot===key&&t.protocol==='tcp');view.icmp=selected.find(t=>t.slot===key&&t.protocol==='icmp');
         if(view.node!==position)card.content.insertBefore(view.node,position);position=view.node.nextElementSibling;
-        const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
-        const rowLabel=C.slotLabel(card.config,key);
-        text(view.label,rowLabel);view.label.title=`${rowLabel} · TCP/ICMP 各自 target`;
-        for(const [target,metric,strip,kind] of [[tcp,view.latency,view.latencyStrip,'latency'],[icmp,view.ratio,view.ratioStrip,'ratio']]) {
-          const cached=card.data.get(target.id),h=cached?.value,old=!!cached?.error||card.agent.online===false||!!card.agent.state?.stale;
-          const notice=card.config?C.laneNotice(card.config,key,card.family,target.protocol):{key:'waiting',text:'等待配置',detail:'配置尚未读取'};
-          // A lane that is not measuring says why; an abnormal target says so and keeps its history.
-          const display=notice&&!notice.measured?notice:notice?{...notice}:C.cardCurrent(h,target,{old,revision:card.config?.revision,elapsed:cached?now()-cached.updated:0});
-          text(metric,display.text);metric.title=display.detail;metric.setAttribute('aria-label',`${rowLabel} ${target.protocol.toUpperCase()} ${display.text}；${display.detail}`);metric.disabled=!target.id||(!!notice&&!notice.measured);
-          metric.dataset.laneState=notice?notice.key:'measuring';
-          if(history?.card===card&&history.target.id===target.id)history.trigger=metric;
-          // Freshness is a current-probe property, never a historical palette mask.
-          updateStrip(strip,notice&&!notice.measured?[]:C.cardPoints(h,target),target,kind);
+        const label=C.cardLabel(card.config,key),lane=summary?.lanes.find(l=>l.slot===key)||configLane(card,key);
+        let shown=C.laneView(lane);
+        if(shown.kind==='blocks'&&!lane.tcp.blocks)shown={kind:'text',key:'loading',text:'读取中…',title:'正在读取最近 1 小时的判断'};
+        if(lane.tcp.status==='active'&&!summary&&!device)shown={kind:'text',key:'loading',text:card.summaryError||'读取中…',title:card.summaryError||'正在读取最近 1 小时的判断'};
+        const right=C.rightView(lane.right);
+        const set=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
+        set(view.label,label);view.label.title=label;
+        view.blocks.hidden=shown.kind!=='blocks';view.text.hidden=shown.kind==='blocks';
+        view.node.dataset.lane=shown.kind==='blocks'?(shown.red?'red':'blocks'):shown.key;
+        if(shown.kind==='blocks') {
+          const counts={green:0,yellow:0,red:0,gray:0};
+          shown.blocks.forEach((block,i)=>{
+            const cell=view.cells[i],cls=`nq7-b nq7-b-${block.state}${block.in_progress?' is-live':''}`;
+            if(cell.className!==cls)cell.className=cls;
+            cell.tipText=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms}).text;counts[block.state]++;
+          });
+          view.text.title='';
+          view.node.setAttribute('aria-label',`${label}，TCP 最近 1 小时：正常 ${counts.green} 格，偶发慢或失败 ${counts.yellow} 格，持续告警 ${counts.red} 格，无数据 ${counts.gray} 格；${right.text}`);
+        } else {
+          set(view.text,shown.text);view.text.title=shown.title;
+          view.node.setAttribute('aria-label',`${label}，${shown.text}；${right.text}`);
         }
-        text(view.note,'最近1小时：12×5分钟；TCP历史为Connect P95，右侧为最新完整三Echo丢包。');
+        set(view.right,right.text);view.right.title=right.title;view.right.dataset.tone=right.tone;
+        view.node.disabled=!(view.tcp?.id||view.icmp?.id);
+        view.node.dataset.stale=String(!!card.summaryError&&!!summary);
       }
       for(const [key,view]of card.rows)if(!live.has(key)){view.node.remove();card.rows.delete(key);}
-      let reason=card.error||C.cardNotice(card.config);
-      if(card.agent.revoked||card.agent.disabled_at)reason='设备已撤销/暂停，当前数据不可用';
-      card.reason.hidden=!reason;if(card.reason.textContent!==reason)card.reason.textContent=reason;
-      card.title.querySelector('.nq-subtitle').textContent='TCP 延迟 | ICMP 丢包';
-      const settings=card.head.querySelector('.nq-link');settings.title='网络质量设置：目标地址、检测频率、总开关';
-      card.title.title=`网络质量 (${card.graph?'TCP/ICMP RTT 历史':'TCP 延迟/ICMP 丢包'})；切换本模块视图${reason?' · '+reason:''}`;
-      card.title.setAttribute('aria-label',card.title.title);
-      card.title.dataset.hasStatus=String(!!reason);
+      // One line for the whole card: a failed read says so (the old blocks stay, marked as not current).
+      let reason=card.summaryError||card.error||C.cardNotice(card.config);
+      if(device)reason='设备已撤销/暂停，当前数据不可用';
+      const note=reason||'每格 3 分钟';
+      if(card.note.textContent!==note)card.note.textContent=note;
+      card.note.title=reason||`每格 3 分钟 · 检测间隔 ${interval/1000} 秒`;card.note.dataset.alert=String(!!reason);
+      card.node.dataset.alertActive=String(!!summary?.alert_active);
+      const settings=card.head.querySelector('.nq-link');settings.title='网络质量设置：目标地址、检测频率、慢连接门槛、总开关';
     }
     function mount(agent) {
       let card=cards.get(agent.agent_id);
       if(!card){
         const node=el('section','network-quality');node.dataset.qualityAgent=agent.agent_id;
         let saved='ipv4';try{if(root.localStorage?.getItem('404-probe:nq-family:'+agent.agent_id)==='ipv6')saved='ipv6';}catch{}
-        card={id:agent.agent_id,agent,node,family:saved,config:null,raw:null,previous:[],graph:false,generation:0,configSerial:0,visible:false,
-          data:new Map(),loading:new Set(),historyOwner:{},configOwner:{},panelReadOwner:{},writeOwner:{},reading:false,dead:false,error:''};
+        card={id:agent.agent_id,agent,node,family:saved,face:'A',config:null,raw:null,previous:[],generation:0,configSerial:0,visible:false,
+          summary:null,summaryAt:0,summaryError:'',summaryLoading:false,
+          historyOwner:{},configOwner:{},panelReadOwner:{},writeOwner:{},reading:false,dead:false,error:''};
         cards.set(card.id,card);renderCard(card);observer?.observe(node);
       }
       card.agent=agent;
-      if(agent.revoked){queue.release(card.historyOwner);card.generation++;card.loading.clear();}
+      if(agent.revoked){queue.release(card.historyOwner);card.generation++;card.summaryLoading=false;}
       // Metadata/resource refresh never starts a quality config read or resets a draft.
       if(history?.card===card){const machine=historyContainer()?.querySelector('.nq-machine');if(machine)machine.textContent=agent.name||agent.state?.hostname||'未命名设备';}
       renderCard(card);
@@ -200,7 +224,7 @@
     }
     function retire(card) {
       card.dead=true;card.generation++;card.configSerial++;observer?.unobserve(card.node);
-      queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);queue.release(card.writeOwner);card.data.clear();
+      queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);queue.release(card.writeOwner);
       if(panel?.card===card)closePanel(true);if(history?.card===card)closeHistory();cards.delete(card.id);
     }
     function sync(ids){const live=new Set(ids);for(const card of cards.values())if(!live.has(card.id))retire(card);}
@@ -225,7 +249,7 @@
     function openPanel(card,trigger) {
       if(panel&&!closePanel(false))return;
       const config=card.config;
-      panel={card,trigger,config,draft:config?C.draftOf(config):{interval_ms:30000,slots:C.slots.map(slot=>C.slotDraft({slot,kind:'builtin',region:'',isp:slot,host:'',port:0,slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false}))},
+      panel={card,trigger,config,draft:config?C.draftOf(config):{interval_ms:30000,slow_threshold_ms:String(C.THRESHOLD_DEFAULT),slots:C.slots.map(slot=>C.slotDraft({slot,kind:'builtin',region:'',isp:slot,host:'',port:0,slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false}))},
         baseDraft:null,base:config?.settings_revision,loaded:!!config,saving:false,toggling:false,guard:null,message:'',outdated:false,errors:{},node:el('div','nq-overlay')};
       panel.baseDraft=C.clone(panel.draft);
       panel.node.dataset.nqPanel='open';
@@ -289,7 +313,11 @@
       p.interval.addEventListener('change',()=>{p.draft.interval_ms=Number(p.interval.value);changed();});
       freq.append(el('span','','检测频率'),p.interval,el('small','nq-muted','30–300 秒，每档 30 秒，3 个卡槽共用'));
       p.frequencyNote=el('small','nq-muted');
-      body.append(master,p.masterNote,freq,p.frequencyNote,el('p','nq-notice','请仅检测你有权检测的目标'));
+      const slow=el('label','nq-field');p.threshold=el('input');p.threshold.dataset.nqField='threshold';p.threshold.inputMode='numeric';p.threshold.maxLength=4;p.threshold.autocomplete='off';
+      p.thresholdError=el('small','nq-field-error');p.thresholdError.setAttribute('role','alert');
+      p.threshold.addEventListener('input',()=>{p.draft.slow_threshold_ms=p.threshold.value;p.guard=null;p.message='';delete p.errors.threshold;renderPanel();});
+      slow.append(el('span','','慢连接门槛（毫秒）'),p.threshold,p.thresholdError,el('small','nq-muted','连接时间超过它算“慢”，50–3000 的整数，3 个卡槽共用，默认 500'));
+      body.append(master,p.masterNote,freq,p.frequencyNote,slow,el('p','nq-notice','请仅检测你有权检测的目标'));
       p.slots=new Map();
       for(const [index,slot] of C.slots.entries()) {
         const set=el('fieldset','nq-slot'),legend=el('legend');
@@ -349,6 +377,8 @@
       p.enabled.checked=!!config?.enabled;p.enabled.disabled=p.toggling||p.saving||p.outdated||!config||!config.supported&&!config.enabled;
       p.masterNote.textContent=!config?'配置尚未读取':!config.supported?C.cardNotice(config)||'Agent 尚未支持':'';
       value(p.interval,String(p.draft.interval_ms));
+      if(doc.activeElement!==p.threshold)value(p.threshold,String(p.draft.slow_threshold_ms));
+      p.thresholdError.textContent=(code=>code?(C.errorText[code]||code):'')(p.errors.threshold||C.thresholdHint(p.draft));
       p.frequencyNote.textContent=config&&config.effective_interval_ms!==config.interval_ms?`实际间隔 ${config.effective_interval_ms/1000} 秒（Server 容量限制）`:'';
       const hints=C.hints(p.draft);
       // Only the Server's capability answer disables an ICMP box; "unknown" (not negotiated yet, no session) leaves it open.
@@ -396,7 +426,7 @@
       else if(error.status===503&&error.code==='storage_pressure')p.message='Server 存储压力大，暂时不能保存';
       else if(error.status===503)p.message='地址检查繁忙，请稍后重试';
       else if(error.status===400) {
-        p.errors={};for(const d of error.details||[]){if(d.slot){(p.errors[d.slot]||(p.errors[d.slot]={}))[d.field]=d.code;}}
+        p.errors={};for(const d of error.details||[]){if(d.slot){(p.errors[d.slot]||(p.errors[d.slot]={}))[d.field]=d.code;}else if(d.field==='slow_threshold_ms')p.errors.threshold=d.code;}
         p.message=Object.keys(p.errors).length?'请检查标出的输入':`保存失败：${C.errorText[error.details?.[0]?.code]||error.message}`;
       }
       else {p.message=`未确认保存成功：${error.message||'网络错误'}`;loadConfig(p.card,true);}
@@ -404,7 +434,7 @@
     }
     async function savePanel({thenEnable=false}={}) {
       const p=panel;if(!p||p.saving||p.toggling||p.outdated||!p.base||!csrf())return;
-      const found=C.hints(p.draft);if(Object.values(found).some(e=>Object.keys(e).length)){p.errors={};p.message='请检查标出的输入';p.guard=null;renderPanel();return;}
+      const found=C.hints(p.draft);if(Object.values(found).some(e=>Object.keys(e).length)||C.thresholdHint(p.draft)){p.errors={};p.message='请检查标出的输入';p.guard=null;renderPanel();return;}
       let data;try{data=C.savePayload(p.draft,p.base);if(new TextEncoder().encode(JSON.stringify(data)).length>16384)throw Error('配置超过 16384 字节');}
       catch(error){p.message=error.message;renderPanel();return;}
       p.saving=true;p.guard=null;p.message='';p.errors={};renderPanel();
@@ -444,7 +474,7 @@
     async function requestHistory(){
       const h=history;if(!h||h.loading||!historyActive(h)||closed)return;h.loading=true;const generation=h.generation;
       try {
-        const value=await read(C.historyKey(h.card.id,h.target.id,h.target.family,h.hours),dialogOwner,h.hours===1?`${path(h.card.id)}v3/card-history?target_id=${encodeURIComponent(h.target.id)}`:`${path(h.card.id)}v3/history?target_id=${encodeURIComponent(h.target.id)}&view=1day`);
+        const value=await read(C.historyKey(h.card.id,h.target.id,h.target.family,h.hours),dialogOwner,`${path(h.card.id)}v3/history?target_id=${encodeURIComponent(h.target.id)}&view=${h.hours===1?'1hour':'1day'}`);
         if(history!==h||h.generation!==generation||!historyActive(h)||value.target?.id!==h.target.id||value.target?.family!==h.target.family)return;
         const group=value.groups?.find(g=>g.semantics==='staged_probe_v2'&&g.metric===(h.target.protocol==='tcp'?'pure_connect':'echo_rtt'));
         h.data={...value,window:group?.window||{},blocks:(group?.points||[]).map(p=>({...p,gap:p.execution_coverage==='known_gap'}))};h.error='';renderHistory();
@@ -512,7 +542,7 @@
       else if(event.shiftKey&&(active===first||active===panel.box)){event.preventDefault();last.focus();}else if(!event.shiftKey&&active===last){event.preventDefault();first.focus();}
     }}
     function tick(){if(doc.hidden||closed)return;fallbackVisibility();queue.pump();for(const card of cards.values())refreshCard(card);requestHistory();}
-    function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){for(const card of cards.values()){card.generation++;card.loading.clear();queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;card.refreshing=null;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}
+    function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){for(const card of cards.values()){card.generation++;card.summaryLoading=false;queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;card.refreshing=null;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}
       else{if(!timer)timer=interval(tick,30000);tick();}}
     const cancelDialog=event=>{event.preventDefault();closeHistory();};
     const dialogClosed=()=>closeHistory();const backdrop=event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeHistory();}};
@@ -521,7 +551,15 @@
     dialog.addEventListener('cancel',cancelDialog);dialog.addEventListener('close',dialogClosed);dialog.addEventListener('click',backdrop);
     if(!doc.hidden)timer=interval(tick,30000);
     return {mount,sync,
-      setCardView(id,graph){const c=cards.get(id);if(!c)return;c.graph=graph;c.node.dataset.view=graph?'graph':'detail';c.content.hidden=graph;c.content.inert=graph;c.head.querySelector('.nq-tabs').hidden=graph;c.head.querySelector('.nq-tabs').inert=graph;c.generation++;c.loading.clear();queue.release(c.historyOwner);renderCard(c);refreshCard(c);},
+      // Face A reads the v5 answer only while it is shown; the shared configuration stays live on either face.
+      setFace(id,face){const c=cards.get(id);if(!c||c.face===face)return;c.face=face;c.node.dataset.face=face;
+        c.faceA.hidden=face!=='A';c.faceA.inert=face!=='A';c.tip.hidden=true;c.generation++;c.summaryLoading=false;queue.release(c.historyOwner);
+        if(face==='A')refreshCard(c);},
+      faceNode:id=>cards.get(id)?.faceA,
+      familyOf:id=>cards.get(id)?.family||'ipv4',
+      setFamily(id,value){const c=cards.get(id);if(c&&['ipv4','ipv6'].includes(value))family(c,value);},
+      configOf:id=>cards.get(id)?.config||null,
+      openSettings(id,trigger){const c=cards.get(id);if(c)openPanel(c,trigger);},
       historyTargets(id){const c=cards.get(id);return (c?.config?.targets||[]).filter(t=>t.id).map(t=>({...t,label:`${C.slotLabel(c.config,t.slot)} · ${t.protocol.toUpperCase()} · ${t.family==='ipv4'?'V4':'V6'}${t.status==='active'?'':' · 当前未检测'}`}));},
       ensureHistoryTargets(id){const c=cards.get(id);return c&&!c.config?loadConfig(c,true):Promise.resolve();},
       close(){closed=true;if(timer)clear(timer);observer?.disconnect();closePanel(true);closeHistory();for(const c of [...cards.values()])retire(c);queue.release(dialogOwner);if(!coordinator)queue.close();

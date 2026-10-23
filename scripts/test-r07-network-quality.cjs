@@ -2,7 +2,7 @@
 // (scripts/fixtures/r07), not from hand-written DTOs.
 const {test} = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
-const {C, UI, load, clone, flush, setup, cardHistory, allowedTags, tags, AGENT} = require('./lib/r07-harness.cjs');
+const {v5Card, C, UI, load, clone, flush, setup, cardHistory, allowedTags, tags, AGENT} = require('./lib/r07-harness.cjs');
 
 const screen = (w, h) => { globalThis.innerWidth = w; globalThis.innerHeight = h; };
 const inc = v => String(BigInt(v) + 1n);
@@ -53,8 +53,10 @@ test('save payload carries exactly the Server fields; ports and hosts are normal
   const config = C.adapt(load('v4-saved-off')), draft = C.draftOf(config);
   draft.slots[2].host = '  Example.NET '; draft.slots[2].port = ' 8443 '; draft.slots[2].kind = 'custom'; draft.slots[2].region = 'a'; draft.slots[2].isp = 'b';
   const out = C.savePayload(draft, config.settings_revision);
-  assert.deepEqual(Object.keys(out), ['expected_revision', 'interval_ms', 'slots']);
-  assert.equal(out.expected_revision, '1');
+  assert.deepEqual(Object.keys(out), ['expected_revision', 'interval_ms', 'slow_threshold_ms', 'slots']);
+  assert.equal(out.expected_revision, '1'); assert.equal(out.slow_threshold_ms, 500);
+  for (const bad of ['', '49', '3001', '12.5', 'abc', '1e3']) { draft.slow_threshold_ms = bad; assert.equal(C.thresholdHint(draft), 'invalid_threshold', bad); assert.throws(() => C.savePayload(draft, '1'), /门槛/); }
+  draft.slow_threshold_ms = ' 800 '; assert.equal(C.savePayload(draft, '1').slow_threshold_ms, 800); draft.slow_threshold_ms = '500';
   assert.deepEqual(Object.keys(out.slots[0]), ['slot', 'kind', 'region', 'isp', 'host', 'port', 'slot_enabled', 'ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']);
   assert.equal(out.slots[2].host, 'Example.NET'); assert.equal(out.slots[2].port, 8443);
   assert.equal(out.slots[1].port, 80); assert.equal(typeof out.slots[1].port, 'number');
@@ -319,7 +321,7 @@ test('an answer to the master switch that carries other content replaces the bas
 test('an old page gets 410: the card and the dialog say the page is out of date and nothing can be saved', async () => {
   const f = setup({readStatus: 410});
   f.ui.setVisible(AGENT, true); await flush();
-  assert.equal(f.node.querySelector('.nq-status').textContent, '页面已过期，请刷新');
+  assert.equal(f.node.querySelector('.nq7-note').textContent, '页面已过期，请刷新');
   const g = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(410, {error: {code: 'client_outdated', message: '页面版本已过期，请刷新页面后重试'}})});
   const panel = await g.open();
   g.type('telecom-port', '444'); g.field('save-top').click(); await flush();
@@ -331,60 +333,61 @@ test('cards: every state the Server can report is shown as text, never inferred'
   const lanes = async (name, family = 'ipv4') => {
     const f = setup({raw: load(name)}); f.ui.setVisible(AGENT, true); await flush();
     if (family === 'ipv6') { f.node.querySelectorAll('button').find(b => b.textContent === 'IPv6').click(); await flush(); }
-    const rows = f.node.querySelectorAll('.nq-row');
-    return {f, rows, text: rows.map(r => [r.querySelector('.nq-target').textContent, r.querySelector('.nq-tcp-value').textContent, r.querySelector('.nq-icmp-value').textContent]), status: f.node.querySelector('.nq-status').textContent};
+    const rows = f.node.querySelectorAll('.nq7-row');
+    return {f, rows, text: rows.map(r => [r.querySelector('.nq7-label').textContent, r.dataset.lane, r.querySelector('.nq7-text').textContent, r.querySelector('.nq7-right').textContent]), status: f.node.querySelector('.nq7-note').textContent};
   };
   const running = await lanes('v4-running');
-  assert.equal(running.text[0][0], '电信 · 广东'); assert.equal(running.text[1][0], 'NTT · Tokyo'); assert.equal(running.text[2][0], '移动');
-  assert.match(running.text[0][1], /ms$/); assert.match(running.text[0][2], /%$/);
-  assert.deepEqual(running.text[2].slice(1), ['未配置目标', '未配置目标'], 'a slot without an address');
+  assert.equal(running.text[0][0], '广东电信'); assert.equal(running.text[1][0], 'Tokyo NTT'); assert.equal(running.text[2][0], '移动');
+  assert.equal(running.text[0][1], 'blocks'); assert.match(running.text[0][3], /^丢包 0%$/);
+  assert.deepEqual(running.text[2].slice(1, 3), ['unset', '未配置目标'], 'a slot without an address');
   const v6 = await lanes('v4-running', 'ipv6');
-  assert.deepEqual(v6.text[1].slice(1), ['未启用', '未启用'], 'ticked for IPv4 only');
+  assert.deepEqual(v6.text[1].slice(1, 3), ['inactive', '未启用'], 'ticked for IPv4 only');
   const off = await lanes('v4-saved-off');
-  assert.deepEqual(off.text[0].slice(1), ['已关闭', '已关闭']); assert.equal(off.status, '已关闭');
+  assert.deepEqual(off.text[0].slice(1, 3), ['off', '已关闭']);
   const old = await lanes('v4-old-agent');
-  assert.deepEqual(old.text[0].slice(1), ['需升级 Agent', '需升级 Agent']); assert.match(old.status, /需升级 Agent/);
+  assert.deepEqual(old.text[0].slice(1, 3), ['upgrade', '需升级 Agent']); assert.match(old.status, /需升级 Agent/);
   const noV6 = await lanes('v4-no-ipv6-no-icmp', 'ipv6');
-  assert.equal(noV6.text[0][1], '本机无 IPv6');
+  assert.equal(noV6.text[0][2], '本机无 IPv6');
   const noIcmp = await lanes('v4-no-ipv6-no-icmp');
-  assert.equal(noIcmp.text[0][2], '不支持 ICMP'); assert.match(noIcmp.text[0][1], /ms$/, 'TCP keeps working');
+  assert.equal(noIcmp.text[0][1], 'blocks', 'TCP keeps working without ICMP'); assert.equal(noIcmp.text[0][3], '失败 0%', 'no ICMP: the number is a TCP failure rate, never called loss');
   const abnormal = await lanes('v4-target-abnormal');
-  assert.equal(abnormal.text[0][1], '目标异常');
-  assert.match(abnormal.f.node.querySelectorAll('.nq-tcp-value')[0].title, /域名不存在.*不计入失败率/);
-  assert.match(abnormal.text[0][2], /%$/, 'the other lane of the slot is untouched');
+  assert.equal(abnormal.text[0][2], '目标异常');
   const empty = await lanes('v4-empty-unreported');
-  assert.deepEqual(empty.text[0].slice(1), ['Agent 不支持', 'Agent 不支持']);
+  assert.equal(empty.text[0][2], 'Agent 不支持');
 });
 
-test('cards: only measuring lanes read history; a changed address starts a new series, a changed label does not', async () => {
+test('cards: the v5 answer is read for the shown family; blocks come from it, a changed label does not read again', async () => {
   const f = setup({raw: load('v4-running')});
   f.ui.setVisible(AGENT, true); await flush();
-  const history = () => f.requests.filter(r => r.url.includes('card-history')).map(r => new URL(r.url, 'http://x').searchParams.get('target_id'));
-  const config = C.adapt(f.raw());
-  const running = config.targets.filter(t => t.family === 'ipv4' && t.status === 'active').map(t => t.id).sort();
-  assert.deepEqual([...new Set(history())].sort(), running, 'one read per running IPv4 lane');
-  const squares = f.node.querySelectorAll('.nq-block');
-  assert.equal(squares.length, 12 * running.length);
-  const before = history().length, configsBefore = f.configs();
-  // Only the labels change: same targets, same revisions.
+  const reads = () => f.requests.filter(r => r.url.includes('/v5/card')).map(r => new URL(r.url, 'http://x').searchParams.get('family'));
+  assert.deepEqual(reads(), ['ipv4'], 'one read for the whole card, not one per lane');
+  assert.ok(!f.requests.some(r => r.url.includes('card-history')), 'the retired per-lane read is gone');
+  const cells = f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-blocks').querySelectorAll('.nq7-b');
+  assert.equal(cells.length, 20); assert.ok(cells.every(c => /nq7-b-green/.test(c.className)));
+  assert.match(cells[0].tipText, /正常/); assert.match(cells[19].tipText, /数据仍在到达/);
+  assert.match(f.node.querySelector('.nq7-sub').textContent, /门槛 500 ms/);
   const relabelled = clone(f.raw()); relabelled.settings_revision = inc(relabelled.settings_revision);
-  relabelled.slots[0].region = '浙江'; relabelled.slots[0].isp = 'unicom'; relabelled.slots[1].kind = 'builtin'; relabelled.slots[1].region = '北京'; relabelled.slots[1].isp = 'mobile';
-  f.setRaw(relabelled); f.ui.openHistoryFor; // keep the API surface referenced
+  relabelled.slots[0].region = '浙江'; relabelled.slots[0].isp = 'unicom';
+  f.setRaw(relabelled);
   await f.open(); f.field('close').click(); await flush();
-  assert.equal(f.node.querySelectorAll('.nq-row')[0].querySelector('.nq-target').textContent, '联通 · 浙江', 'row label follows the slot labels');
-  assert.equal(f.node.querySelectorAll('.nq-row')[1].querySelector('.nq-target').textContent, '移动 · 北京');
-  assert.equal(history().length, before, 'no history was read again');
-  assert.deepEqual(f.node.querySelectorAll('.nq-block'), squares, 'the same twelve cells, not rebuilt');
-  assert.ok(f.configs() > configsBefore, 'the latency chart is told (it relabels its legend and keeps its curves)');
-  // The address of slot 1 changes: new target ids, the old series is gone from the card.
-  const moved = clone(f.raw()); moved.settings_revision = inc(moved.settings_revision); moved.config_revision = inc(moved.config_revision);
-  for (const lane of moved.lanes) if (lane.slot === 'telecom' && lane.target_id) { lane.target_id = lane.target_id.replace(/^./, c => c === 'a' ? 'b' : 'a'); lane.slot_revision = moved.config_revision; }
-  f.setRaw(moved); await f.open(); f.field('close').click(); await flush();
-  const after = C.adapt(moved).targets.filter(t => t.slot === 'telecom' && t.family === 'ipv4' && t.status === 'active').map(t => t.id);
-  assert.ok(after.every(id => history().includes(id)), 'the new targets were read');
-  assert.ok(history().length > before);
-  const oldIds = config.targets.filter(t => t.slot === 'telecom' && t.family === 'ipv4').map(t => t.id);
-  assert.ok(f.node.all().every(n => !oldIds.some(id => (n.title || '').includes(id))), 'no cell of the old target is left');
+  assert.equal(f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-label').textContent, '浙江联通', 'row label follows the slot labels');
+  assert.deepEqual(f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-blocks').querySelectorAll('.nq7-b'), cells, 'the same twenty cells, not rebuilt');
+  // A new settings revision (the threshold may have changed) reads the judgement again.
+  assert.equal(reads().length, 2);
+  f.node.querySelectorAll('button').find(b => b.textContent === 'IPv6').click(); await flush();
+  assert.deepEqual(reads().slice(-1), ['ipv6']);
+});
+
+test('cards: a failed v5 read keeps the last answer and says it is not current; 410 asks for a refresh', async () => {
+  screen(1000, 1000);
+  let offset = 0, failing = 0;
+  const f = setup({raw: load('v4-running'), clock: () => offset, cardFail: () => failing});
+  f.ui.setVisible(AGENT, true); await flush();
+  assert.equal(f.node.querySelector('.nq7-row').dataset.lane, 'blocks');
+  failing = 503; offset += 31000; f.ui.tick(); await flush();
+  assert.match(f.node.querySelector('.nq7-note').textContent, /读取失败，显示上次结果（非当前）/);
+  assert.equal(f.node.querySelector('.nq7-row').dataset.lane, 'blocks', 'the last answer stays');
+  assert.equal(f.node.querySelector('.nq7-row').dataset.stale, 'true');
 });
 
 test('history opens for the current targets with the slot label, and the device-details list uses the same labels', async () => {
@@ -411,9 +414,9 @@ test('hostile labels and addresses are text everywhere: card, tooltips, dialog f
     raw.slots[1] = {...raw.slots[1], kind: 'custom', region: 'x' + evil, isp: evil + 'y'};
     const f = setup({raw});
     f.ui.setVisible(AGENT, true); await flush();
-    const expected = `${evil} · ${evil}`;
-    assert.equal(f.node.querySelectorAll('.nq-row')[0].querySelector('.nq-target').textContent, expected);
-    assert.equal(f.node.querySelectorAll('.nq-row')[0].querySelector('.nq-target').title, `${expected} · TCP/ICMP 各自 target`);
+    const expected = `${evil} · ${evil}`, shown = `${evil} ${evil}`;
+    assert.equal(f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-label').textContent, shown);
+    assert.equal(f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-label').title, shown);
     for (const n of f.node.all()) assert.ok(allowedTags.has(n.tagName), `${n.tagName} appeared`);
     const panel = await f.open();
     assert.equal(f.field('telecom-region-text').value, evil); assert.equal(f.field('telecom-host').value, evil);
@@ -475,47 +478,6 @@ async function chart(config, status, opts = {}) {
 }
 const texts = c => c.svg().filter(n => n.tagName === 'text').map(n => n.ownText);
 
-test('N6: no TCP lane running -> "无当前 TCP 检测", no alert mark, no coverage warning, whatever the old evidence says', async () => {
-  const after = await chart(C.adapt(load('v4-saved-off')), load('tcp-mini-alert-switched-off'));
-  assert.equal(load('tcp-mini-alert-switched-off').state, 'alert'); assert.equal(load('tcp-mini-alert-switched-off').current_tcp, false);
-  assert.ok(texts(after).includes('无当前 TCP 检测'));
-  assert.equal(after.svg().filter(n => n.dataset.alert === 'true').length, 0);
-  assert.ok(!texts(after).includes('告警') && !texts(after).includes('告警覆盖不足'));
-  assert.equal(after.plot.dataset.warning, 'false');
-  assert.doesNotMatch(after.plot.title, /告警来源日|峰值/);
-  // The long explanation is a tooltip of the words in the chart, never a paragraph in the card.
-  assert.equal(after.note.textContent, '', 'no paragraph under the chart');
-  assert.equal(after.note.hidden, true);
-  const words = after.svg().find(n => n.tagName === 'text' && n.ownText === '无当前 TCP 检测');
-  assert.match(words.children.find(n => n.tagName === 'title').textContent, /没有正在检测的 IPv4 TCP 线路（总开关关闭、没有勾选 IPv4 TCP，或只剩 ICMP \/ IPv6）；不显示旧告警/);
-  assert.doesNotMatch(after.node.textContent, /不显示旧告警.*不显示旧告警/s);
-  assert.doesNotMatch(after.note.textContent, /4700|2026-10/, 'no peak and no source day of the old alert');
-  const none = await chart(C.adapt(load('v4-saved-off')), load('tcp-mini-none'));
-  assert.ok(texts(none).includes('无当前 TCP 检测'));
-});
-
-test('N6: a running IPv4 TCP lane shows the alert with its source day and the persistence rule', async () => {
-  const status = load('tcp-mini-alert-running'), running = await chart(C.adapt(load('v4-running')), status);
-  assert.equal(status.state, 'alert'); assert.equal(status.current_tcp, true);
-  const mark = running.svg().filter(n => n.dataset.alert === 'true');
-  assert.equal(mark.length, 1); assert.equal(mark[0].ownText, '告警');
-  assert.match(mark[0].textContent, new RegExp(`告警来源日 ${status.source_day}`));
-  assert.match(mark[0].textContent, /告警持续到之后某一天出现正常 TCP 分钟为止，可能来自已更换的目标/);
-  assert.equal(running.plot.dataset.warning, 'true');
-  assert.equal(running.note.textContent, '', 'the card carries only the word 告警; the explanation is its tooltip (above)');
-  assert.equal(running.note.hidden, true);
-  assert.ok(!texts(running).includes('无当前 TCP 检测'));
-});
-
-test('N6: unknown evidence and a failed read keep the coverage warning only while a TCP lane is running', async () => {
-  const unknown = await chart(C.adapt(load('v4-running')), {...load('tcp-mini-none'), current_tcp: true});
-  assert.ok(texts(unknown).includes('告警覆盖不足'));
-  const failed = await chart(C.adapt(load('v4-running')), new Error('boom'));
-  assert.ok(texts(failed).includes('告警覆盖不足'));
-  const bad = await chart(C.adapt(load('v4-running')), {...load('tcp-mini-alert-running'), current_tcp: 'yes'});
-  assert.ok(texts(bad).includes('告警覆盖不足'), 'a response without a boolean current_tcp is not trusted');
-});
-
 // A one-day minute history for a target of the given configuration, in the shape the chart accepts.
 const minuteHistory = (config, now = NOW) => url => {
   const id = new URL(url, 'http://local').searchParams.get('target_id'), t = config.targets.find(x => x.id === id);
@@ -528,48 +490,11 @@ const minuteHistory = (config, now = NOW) => url => {
     algorithm: 'weighted-grid-rtt-adjacent-v3', histogram_version: 1, grid_ms: .25, percentile_max_error_ms: .125, groups: [{semantics: 'staged_probe_v2', metric: t.protocol === 'tcp' ? 'pure_connect' : 'echo_rtt', points}]});
 };
 
-test('the latency chart relabels on a label-only change and keeps its curves and cached history; a new address clears them', async () => {
-  const running = C.adapt(load('v4-running'));
-  const c = await chart(running, load('tcp-mini-none'), {history: minuteHistory(running)});
-  assert.deepEqual(c.legend.map(b => b.attributes['aria-label']), ['电信 · 广东 RTT 曲线', 'NTT · Tokyo RTT 曲线', '移动 RTT 曲线']);
-  const cached = c.api.snapshot().views[0].cachedTargets;
-  assert.ok(cached >= 2, 'history of the running lanes is cached: ' + cached);
-  const relabelled = clone(load('v4-running')); relabelled.slots[0].region = '浙江'; relabelled.slots[0].isp = 'mobile';
-  const snapshotBefore = JSON.stringify(c.api.snapshot().views[0]);
-  c.api.bindConfig(AGENT, C.adapt(relabelled));
-  assert.equal(c.legend[0].attributes['aria-label'], '移动 · 浙江 RTT 曲线');
-  assert.equal(JSON.stringify(c.api.snapshot().views[0]), snapshotBefore, 'view, cache and follow state are untouched');
-  assert.equal(c.api.snapshot().views[0].cachedTargets, cached);
-  assert.ok(c.svg().some(n => n.tagName === 'path' && n.attributes.d?.includes('L')), 'the curve is still drawn');
-  // A new address is a new series: the old curve is gone at once.
-  const moved = clone(load('v4-running')); moved.config_revision = String(BigInt(moved.config_revision) + 1n);
-  for (const l of moved.lanes) if (l.slot === 'telecom' && l.target_id) { l.target_id = 'a'.repeat(32); l.slot_revision = moved.config_revision; }
-  moved.slots[0].host = 'new.example.org';
-  c.api.bindConfig(AGENT, C.adapt(moved));
-  assert.ok(c.api.snapshot().views[0].cachedTargets < cached, 'the replaced target\'s history is dropped');
-});
-
-test('XSS in the latency chart: legend, tooltip text and SVG titles are text', async () => {
-  const evil = hostile[1], raw = clone(load('v4-running'));
-  raw.slots[0] = {...raw.slots[0], kind: 'custom', region: evil, isp: '<script>1</script>'};
-  const c = await chart(C.adapt(raw), load('tcp-mini-alert-running'));
-  assert.ok(c.legend[0].attributes['aria-label'].startsWith('<script>1</script> · ' + evil));
-  for (const n of [c.node, ...c.node.all()]) assert.ok(['section', 'div', 'button', 'span', 'input', 'output', 'small', 'svg', 'path', 'text', 'title', 'circle'].includes(n.tagName), n.tagName);
-  assert.ok(!c.node.all().some(n => n.tagName === 'script' || n.tagName === 'img'));
-});
-
-test('the page uses a recorded history shape for the cards (cardHistory helper) and the contract helper agrees with it', () => {
-  const t = C.adapt(load('v4-running')).targets.find(x => x.protocol === 'tcp' && x.family === 'ipv4');
-  const h = cardHistory(t);
-  assert.equal(C.cardCurrent(h, t, {revision: '2'}).text, '21.0ms');
-  assert.equal(C.cardPoints(h, t).length, 12);
-});
-
 test('the card header: 设置 replaces the region button, the IPv4/IPv6 switch stays, there is no V6 detection switch', async () => {
   const f = setup({raw: load('v4-running')});
   f.ui.setVisible(AGENT, true); await flush();
-  const labels = f.node.querySelectorAll('button').filter(b => b.className.split(' ').includes('nq-link') || b.parent?.className === 'nq-tabs').map(b => b.textContent);
-  assert.deepEqual(labels, ['设置', 'IPv4', 'IPv6']);
+  const labels = f.node.querySelectorAll('button').filter(b => b.className.split(' ').includes('nq-link') || b.parent?.className.includes('nq-tabs')).map(b => b.textContent);
+  assert.deepEqual(labels.sort(), ['IPv4', 'IPv6', '设置']);
   assert.doesNotMatch(f.node.all().map(n => n.ownText).join('|'), /地区选择|V6 检测/);
 });
 
@@ -601,15 +526,6 @@ test('a save in flight survives the card leaving the viewport and is not cancell
   release(); await flush();
   assert.equal(f.ui.snapshot().panel.dirty, false);
   assert.equal(f.writes.length, 1);
-});
-
-test('a history answer for another protocol or slot never fills a card lane', async () => {
-  for (const field of ['protocol', 'slot']) {
-    const f = setup({raw: load('v4-running'), history: h => ({...h, target: {...h.target, [field]: field === 'protocol' ? (h.target.protocol === 'tcp' ? 'icmp' : 'tcp') : 'wrong-slot'}})});
-    f.ui.setVisible(AGENT, true); await flush();
-    assert.equal(f.node.querySelectorAll('.nq-low').length, 0, field);
-    assert.ok(f.node.querySelectorAll('.nq-metric').filter(m => m.dataset.laneState === 'measuring').every(m => !/[0-9]/.test(m.textContent)), field);
-  }
 });
 
 // ---- review fixes (R07-D-review M1-M7) ----
@@ -753,40 +669,6 @@ test('M4: a changed configuration found by a later read asks the same question; 
   assert.deepEqual(guards(g), []); assert.equal(g.field('telecom-host').value, 'new.example.net');
 });
 
-test('M6: switching detection off removes the old alert at once and the new answer decides', async () => {
-  const status = {...load('tcp-mini-alert-running')};
-  const c = await chart(C.adapt(load('v4-running')), status, {history: async () => { throw new Error('no history here'); }});
-  assert.equal(c.plot.dataset.warning, 'true');
-  Object.assign(status, load('tcp-mini-alert-switched-off'));
-  c.api.bindConfig(AGENT, C.adapt(load('v4-saved-off')));
-  assert.equal(c.plot.dataset.warning, 'false', 'no old alert while the new answer is awaited');
-  assert.equal(c.svg().filter(n => n.dataset.alert === 'true').length, 0);
-  assert.ok(!texts(c).includes('告警') && !c.svg().some(n => /告警来源日/.test(n.textContent)));
-  for (let i = 0; i < 30; i++) { await new Promise(r => setImmediate(r)); c.api.tick(); }
-  assert.ok(texts(c).includes('无当前 TCP 检测'));
-  assert.equal(c.plot.dataset.warning, 'false');
-  // Back on: the alert is read again, not remembered.
-  Object.assign(status, load('tcp-mini-alert-running'));
-  c.api.bindConfig(AGENT, C.adapt(load('v4-running')));
-  assert.equal(c.plot.dataset.warning, 'false', 'nothing is shown until the Server has answered');
-  for (let i = 0; i < 30; i++) { await new Promise(r => setImmediate(r)); c.api.tick(); }
-  assert.equal(c.plot.dataset.warning, 'true');
-});
-
-test('M6: the last IPv4 TCP lane turning into something else drops the old alert too', async () => {
-  const status = {...load('tcp-mini-alert-running')};
-  const c = await chart(C.adapt(load('v4-running')), status, {history: async () => { throw new Error('no history here'); }});
-  const icmpOnly = clone(load('v4-running'));
-  for (const l of icmpOnly.lanes) if (l.family === 'ipv4' && l.protocol === 'tcp') l.status = 'inactive';
-  for (const s of icmpOnly.slots) s.ipv4_tcp = false;
-  icmpOnly.config_revision = String(BigInt(icmpOnly.config_revision) + 1n);
-  Object.assign(status, load('tcp-mini-none'));
-  c.api.bindConfig(AGENT, C.adapt(icmpOnly));
-  assert.equal(c.plot.dataset.warning, 'false');
-  for (let i = 0; i < 30; i++) { await new Promise(r => setImmediate(r)); c.api.tick(); }
-  assert.ok(texts(c).includes('无当前 TCP 检测'));
-});
-
 const configReads = f => f.requests.filter(r => r.method === 'GET' && r.url.endsWith('/v4/config')).length;
 
 test('M7: a visible card reads the v4 state again every 30 seconds, so negotiation finishing shows up without reopening anything', async () => {
@@ -795,14 +677,14 @@ test('M7: a visible card reads the v4 state again every 30 seconds, so negotiati
   const f = setup({raw: load('v4-empty-unreported'), clock: () => offset});
   f.ui.setVisible(AGENT, true); await flush();
   assert.equal(configReads(f), 1);
-  assert.match(f.node.querySelector('.nq-status').textContent, /Agent 尚未支持网络质量/);
+  assert.match(f.node.querySelector('.nq7-row').querySelector('.nq7-text').title + f.node.querySelector('.nq7-note').textContent, /Agent/);
   f.setRaw(load('v4-running'));
   offset += 10000; f.ui.tick(); await flush();
   assert.equal(configReads(f), 1, 'not before the period is over');
   offset += 21000; f.ui.tick(); await flush();
   assert.equal(configReads(f), 2);
-  assert.doesNotMatch(f.node.querySelector('.nq-status').textContent, /尚未支持/);
-  assert.ok(f.requests.some(r => r.url.includes('card-history')), 'the lanes that now run read their buckets');
+  assert.doesNotMatch(f.node.querySelector('.nq7-note').textContent, /尚未支持/);
+  assert.ok(f.requests.some(r => r.url.includes('/v5/card')), 'the lanes that now run read their judgement');
 });
 
 test('M7: a target that turns abnormal and recovers is followed', async () => {
@@ -813,9 +695,9 @@ test('M7: a target that turns abnormal and recovers is followed', async () => {
   const lanesWith = c => c.lanes.map(l => l.status);
   assert.ok(!lanesWith(f.raw()).includes('target_abnormal'));
   f.setRaw(load('v4-target-abnormal')); offset += 31000; f.ui.tick(); await flush();
-  assert.ok(f.node.all().some(n => n.dataset.laneState === 'abnormal'));
+  assert.ok(f.node.all().some(n => n.dataset.lane === 'abnormal'));
   f.setRaw(load('v4-running')); offset += 31000; f.ui.tick(); await flush();
-  assert.ok(!f.node.all().some(n => n.dataset.laneState === 'abnormal'));
+  assert.ok(!f.node.all().some(n => n.dataset.lane === 'abnormal'));
 });
 
 test('M7: no reads while hidden or off screen, one catch-up read when back', async () => {
@@ -843,11 +725,11 @@ test('M7: a failing read backs off 30 s, 60 s, 120 s and a good one resets it; t
     offset += step; f.ui.tick(); await flush();
     assert.equal(configReads(f) - reads, expected, 'after +' + step); reads = configReads(f);
   }
-  assert.match(f.node.querySelector('.nq-status').textContent, /配置读取失败，保留上次可信状态/);
-  assert.ok(f.node.all().some(n => n.dataset.laneState === 'measuring'), 'the last good lanes are still shown');
+  assert.match(f.node.querySelector('.nq7-note').textContent, /配置读取失败，保留上次可信状态/);
+  assert.ok(f.node.all().some(n => n.dataset.lane === 'blocks'), 'the last good lanes are still shown');
   failing = false; offset += 241000; f.ui.tick(); await flush();
   assert.equal(configReads(f) - reads, 1); reads = configReads(f);
-  assert.equal(f.node.querySelector('.nq-status').hidden, true);
+  assert.equal(f.node.querySelector('.nq7-note').textContent, '每格 3 分钟');
   offset += 31000; f.ui.tick(); await flush();
   assert.equal(configReads(f) - reads, 1, 'back to the 30 s pace');
 });
@@ -871,11 +753,11 @@ test('M7: a refresh while the dialog is saving does not start, and writes are ne
 test('S2: a restarted Agent that was authorized shows "正在连接…"; a first upgrade whose first step has arrived still reads as not supported (the Server decides, the page maps)', async () => {
   const negotiating = setup({raw: load('v4-negotiating')}); negotiating.ui.setVisible(AGENT, true); await flush();
   assert.equal(load('v4-negotiating').agent_support, 'negotiating');
-  assert.equal(negotiating.node.querySelector('.nq-status').textContent, '正在连接…');
-  assert.ok(negotiating.node.all().some(n => n.dataset.laneState === 'negotiating'));
+  assert.equal(negotiating.node.querySelector('.nq7-note').textContent, '正在连接…');
+  assert.ok(negotiating.node.all().some(n => n.dataset.lane === 'negotiating'));
   const first = setup({raw: load('v4-first-upgrade')}); first.ui.setVisible(AGENT, true); await flush();
   assert.equal(load('v4-first-upgrade').agent_support, 'unsupported');
-  assert.equal(first.node.querySelector('.nq-status').textContent, 'Agent 尚未支持网络质量');
+  assert.equal(first.node.querySelector('.nq7-note').textContent, 'Agent 尚未支持网络质量');
 });
 
 test('R1: ICMP unsupported + a literal address of the other family: ticked boxes can always be unticked, the save succeeds, nothing wrong can be ticked again', async () => {
@@ -985,25 +867,6 @@ test('D1: the history answers of the real Server name the lane\'s target by its 
   const raw = load('v4-running'), id = laneTarget(raw, 'telecom', 'ipv4', 'tcp'), h = serverHistory();
   assert.equal(h.card.target.id, id); assert.equal(h.day.target.id, id);
   assert.equal(h.card.target.slot_revision, raw.lanes.find(l => l.target_id === id).slot_revision);
-});
-
-test('D1: a card fed only by the Server\'s real history shows the current value and the five-minute cells', async () => {
-  screen(1000, 1000);
-  const f = setup({raw: load('v4-running'), serverHistory: serverHistory()});
-  f.ui.setVisible(AGENT, true); await flush();
-  const row = f.node.querySelectorAll('.nq-row')[0], tcp = row.querySelector('.nq-tcp-value');
-  assert.equal(tcp.dataset.laneState, 'measuring');
-  assert.match(tcp.textContent, /^[0-9.]+ms$/, 'the lane shows its latest connect time, not "未知": ' + tcp.textContent);
-  const cells = row.querySelector('.nq-tcp-blocks').querySelectorAll('.nq-block');
-  assert.equal(cells.length, 12);
-  assert.ok(cells.some(c => /nq-low/.test(c.className)), 'at least one cell carries the data of the four samples');
-});
-
-test('D1: the mini chart draws the real one-day answer instead of "历史读取失败"', async () => {
-  const raw = load('v4-running'), id = laneTarget(raw, 'telecom', 'ipv4', 'tcp'), day = load('history-1day-tcp');
-  const c = await chart(C.adapt(raw), load('tcp-mini-none'), {history: url => new URL(url, 'http://local').searchParams.get('target_id') === id ? Promise.resolve(JSON.parse(JSON.stringify(day))) : new Promise(() => {})});
-  assert.ok(!texts(c).includes('历史读取失败'), texts(c).join('|'));
-  assert.equal(Number(c.plot.dataset.pointCount) > 0, true, 'points drawn: ' + c.plot.dataset.pointCount);
 });
 
 test('D1: the history dialog opens on the Server\'s real answer and shows its statistics', async () => {
