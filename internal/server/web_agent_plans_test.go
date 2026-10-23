@@ -38,6 +38,29 @@ func TestWebAgentPlanRequiresMutationProofAndPersistsExactUnits(t *testing.T) {
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"renewal_price":"49"`) {
 		t.Fatalf("detail status=%d body=%s", detail.Code, detail.Body.String())
 	}
+	// R30: the per-direction counters of the cycle are part of the plan on the wire. A calibrated plan counts
+	// them again from the calibration ("since") and no direction is on record yet.
+	for _, want := range []string{`"cycle_rx_bytes":0`, `"cycle_tx_bytes":0`, `"cycle_dir_basis":"since"`, `"cycle_dir_since":`} {
+		if !strings.Contains(response.Body.String(), want) || !strings.Contains(detail.Body.String(), want) {
+			t.Fatalf("plan lacks %s: save=%s detail=%s", want, response.Body.String(), detail.Body.String())
+		}
+	}
+}
+
+func TestWebAgentPlanWithoutCalibrationStartsExactAndDoesNotAcceptDirectionInput(t *testing.T) {
+	app, store, agentID := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	response := webPlanPut(t, app, agentID, `{"traffic_mode":"sum","cycle_kind":"monthly","cycle_count":1,"cycle_anchor":"2026-01-01","timezone":"UTC"}`, true)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"cycle_dir_basis":"exact"`) || strings.Contains(response.Body.String(), `"cycle_dir_since"`) {
+		t.Fatalf("save status=%d body=%s", response.Code, response.Body.String())
+	}
+	// The counters belong to the Server: a request that tries to set them is refused as an unknown field.
+	for _, field := range []string{`"cycle_rx_bytes":5`, `"cycle_tx_bytes":5`, `"cycle_dir_basis":"since"`, `"cycle_dir_since":1`} {
+		body := `{"traffic_mode":"sum","cycle_kind":"monthly","cycle_count":1,"cycle_anchor":"2026-01-01","timezone":"UTC",` + field + `}`
+		if r := webPlanPut(t, app, agentID, body, true); r.Code != http.StatusBadRequest {
+			t.Fatalf("%s accepted: %d %s", field, r.Code, r.Body.String())
+		}
+	}
 }
 
 func TestWebAgentPlanRejectsAmbiguousQuantitiesAndSupportsClear(t *testing.T) {

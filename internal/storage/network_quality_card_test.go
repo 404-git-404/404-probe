@@ -653,3 +653,47 @@ func TestBlockUsesTheLargestIntervalOfItsMinutes(t *testing.T) {
 		t.Fatalf("3 samples: %+v", b)
 	}
 }
+
+// Lanes the device is not measuring answer with their status only, and nothing of the judgement: not a block,
+// not a red state, not an alert (design 1.9, N6).
+func TestCardLanesThatAreNotMeasuringShowNoJudgement(t *testing.T) {
+	t.Run("storage pressure", func(t *testing.T) {
+		c := newCardKit(t)
+		c.fillTCP("ipv4", c.minute(0), c.minute(5), 0, 0, 2, 0)
+		now := time.UnixMilli(c.minute(5)*qualityMinuteMS + qualityEvalLagMS)
+		c.s.qualityDiskObserve = func() (qualityDisk, error) { return qualityDisk{}, errors.New("disk unreadable") }
+		c.s.qualityBudgetMu.Lock()
+		c.s.qualityBudgetAt = time.Time{}
+		c.s.qualityBudgetMu.Unlock()
+		s := c.summary(now, "ipv4")
+		if tcp := c.telecom(s).TCP; tcp.Status != protocol.QualityLaneStoragePressure || tcp.Blocks != nil || tcp.Red != nil || s.AlertActive {
+			t.Fatalf("storage pressure: %+v alert=%v", tcp, s.AlertActive)
+		}
+	})
+	t.Run("no IPv6 address on the device", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.negotiate(v4Caps(protocol.QualityIPv6None))
+		k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp", "v6tcp"))
+		k.enable(true)
+		s, err := k.s.QualityCardSummary(k.ctx, k.id, "ipv6", k.now.Add(10*time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tcp := s.Lanes[0].TCP
+		if tcp.Status != protocol.QualityLaneNoIPv6 || tcp.Blocks != nil || tcp.Red != nil {
+			t.Fatalf("no IPv6: %+v", tcp)
+		}
+	})
+	t.Run("agent without negotiated targets", func(t *testing.T) {
+		k := newV4Kit(t)
+		k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp"))
+		s, err := k.s.QualityCardSummary(k.ctx, k.id, "ipv4", k.now.Add(10*time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tcp := s.Lanes[0].TCP
+		if tcp.Status == protocol.QualityLaneActive || tcp.Blocks != nil || tcp.Red != nil || s.AlertActive {
+			t.Fatalf("not negotiated: %+v", tcp)
+		}
+	})
+}
