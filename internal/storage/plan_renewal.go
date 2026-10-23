@@ -217,8 +217,8 @@ func renewalPreview(p *AgentPlan, c planRenewalConfig, field string, now time.Ti
 func readRenewalPlanTx(ctx context.Context, tx *sql.Tx, id string) (*AgentPlan, planRenewalConfig, error) {
 	var p AgentPlan
 	var c planRenewalConfig
-	var quota, bandwidth, start, end sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(quota_value,''),COALESCE(quota_unit,''),quota_bytes,COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,COALESCE(bandwidth_value,''),COALESCE(bandwidth_unit,''),bandwidth_bps,COALESCE(currency,''),COALESCE(purchase_price,''),COALESCE(purchase_price_period,''),COALESCE(renewal_price,''),COALESCE(renewal_price_period,''),COALESCE(purchase_date,''),COALESCE(renewal_date,''),COALESCE(expiry_date,''),COALESCE(country_code_override,''),updated_at,observe_after FROM agent_plans WHERE agent_id=?`, id).Scan(&p.AgentID, &p.TrafficMode, &p.QuotaValue, &p.QuotaUnit, &quota, &p.CycleKind, &p.CycleCount, &p.CycleAnchor, &p.Timezone, &p.UsageBytes, &p.UsageStatus, &start, &end, &p.BandwidthValue, &p.BandwidthUnit, &bandwidth, &p.Currency, &p.PurchasePrice, &p.PurchasePricePeriod, &p.RenewalPrice, &p.RenewalPricePeriod, &p.PurchaseDate, &p.RenewalDate, &p.ExpiryDate, &p.CountryCodeOverride, &p.UpdatedAt, &p.ObserveAfter)
+	var quota, bandwidth, start, end, dirSince sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(quota_value,''),COALESCE(quota_unit,''),quota_bytes,COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,COALESCE(bandwidth_value,''),COALESCE(bandwidth_unit,''),bandwidth_bps,COALESCE(currency,''),COALESCE(purchase_price,''),COALESCE(purchase_price_period,''),COALESCE(renewal_price,''),COALESCE(renewal_price_period,''),COALESCE(purchase_date,''),COALESCE(renewal_date,''),COALESCE(expiry_date,''),COALESCE(country_code_override,''),updated_at,observe_after,cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since FROM agent_plans WHERE agent_id=?`, id).Scan(&p.AgentID, &p.TrafficMode, &p.QuotaValue, &p.QuotaUnit, &quota, &p.CycleKind, &p.CycleCount, &p.CycleAnchor, &p.Timezone, &p.UsageBytes, &p.UsageStatus, &start, &end, &p.BandwidthValue, &p.BandwidthUnit, &bandwidth, &p.Currency, &p.PurchasePrice, &p.PurchasePricePeriod, &p.RenewalPrice, &p.RenewalPricePeriod, &p.PurchaseDate, &p.RenewalDate, &p.ExpiryDate, &p.CountryCodeOverride, &p.UpdatedAt, &p.ObserveAfter, &p.CycleRXBytes, &p.CycleTXBytes, &p.CycleDirBasis, &dirSince)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, c, err
 	}
@@ -234,6 +234,7 @@ func readRenewalPlanTx(ctx context.Context, tx *sql.Tx, id string) (*AgentPlan, 
 		return nil, c, nil
 	}
 	assignNullablePlanValues(&p, quota, bandwidth, start, end)
+	assignDirectionSince(&p, dirSince)
 	return &p, c, nil
 }
 func requireRenewalAgentTx(ctx context.Context, tx *sql.Tx, id string) error {

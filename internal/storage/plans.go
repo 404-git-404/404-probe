@@ -13,17 +13,25 @@ import (
 )
 
 type AgentPlan struct {
-	AgentID             string  `json:"agent_id"`
-	TrafficMode         string  `json:"traffic_mode,omitempty"`
-	QuotaValue          string  `json:"quota_value,omitempty"`
-	QuotaUnit           string  `json:"quota_unit,omitempty"`
-	QuotaBytes          *uint64 `json:"quota_bytes,omitempty"`
-	CycleKind           string  `json:"cycle_kind,omitempty"`
-	CycleCount          int     `json:"cycle_count,omitempty"`
-	CycleAnchor         string  `json:"cycle_anchor,omitempty"`
-	Timezone            string  `json:"timezone,omitempty"`
-	UsageBytes          uint64  `json:"usage_bytes"`
-	UsageStatus         string  `json:"usage_status,omitempty"`
+	AgentID     string  `json:"agent_id"`
+	TrafficMode string  `json:"traffic_mode,omitempty"`
+	QuotaValue  string  `json:"quota_value,omitempty"`
+	QuotaUnit   string  `json:"quota_unit,omitempty"`
+	QuotaBytes  *uint64 `json:"quota_bytes,omitempty"`
+	CycleKind   string  `json:"cycle_kind,omitempty"`
+	CycleCount  int     `json:"cycle_count,omitempty"`
+	CycleAnchor string  `json:"cycle_anchor,omitempty"`
+	Timezone    string  `json:"timezone,omitempty"`
+	UsageBytes  uint64  `json:"usage_bytes"`
+	UsageStatus string  `json:"usage_status,omitempty"`
+	// CycleRXBytes and CycleTXBytes count the cycle's traffic per direction. They are accumulated by the very
+	// UPDATE that accumulates UsageBytes and reset where it is reset. CycleDirBasis says how far they cover
+	// the billed usage: "exact" (all of it), "backfill" (rebuilt from minute data at the upgrade, aligned to the
+	// usage) or "since" (only what happened after CycleDirSince; the rest has no direction on record).
+	CycleRXBytes        uint64  `json:"cycle_rx_bytes"`
+	CycleTXBytes        uint64  `json:"cycle_tx_bytes"`
+	CycleDirBasis       string  `json:"cycle_dir_basis"`
+	CycleDirSince       *int64  `json:"cycle_dir_since,omitempty"`
 	CycleStart          *int64  `json:"cycle_start,omitempty"`
 	CycleEnd            *int64  `json:"cycle_end,omitempty"`
 	BandwidthValue      string  `json:"bandwidth_value,omitempty"`
@@ -44,16 +52,18 @@ type AgentPlan struct {
 
 func (s *Store) GetAgentPlan(ctx context.Context, agentID string) (AgentPlan, bool, error) {
 	var plan AgentPlan
-	var quotaBytes, bandwidthBPS, cycleStart, cycleEnd sql.NullInt64
+	var quotaBytes, bandwidthBPS, cycleStart, cycleEnd, dirSince sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(quota_value,''),COALESCE(quota_unit,''),quota_bytes,
 		COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,
 		COALESCE(bandwidth_value,''),COALESCE(bandwidth_unit,''),bandwidth_bps,COALESCE(currency,''),COALESCE(purchase_price,''),COALESCE(purchase_price_period,''),
-		COALESCE(renewal_price,''),COALESCE(renewal_price_period,''),COALESCE(purchase_date,''),COALESCE(renewal_date,''),COALESCE(expiry_date,''),COALESCE(country_code_override,''),updated_at,observe_after
+		COALESCE(renewal_price,''),COALESCE(renewal_price_period,''),COALESCE(purchase_date,''),COALESCE(renewal_date,''),COALESCE(expiry_date,''),COALESCE(country_code_override,''),updated_at,observe_after,
+		cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since
 		FROM agent_plans WHERE agent_id=?`, agentID).Scan(
 		&plan.AgentID, &plan.TrafficMode, &plan.QuotaValue, &plan.QuotaUnit, &quotaBytes,
 		&plan.CycleKind, &plan.CycleCount, &plan.CycleAnchor, &plan.Timezone, &plan.UsageBytes, &plan.UsageStatus, &cycleStart, &cycleEnd,
 		&plan.BandwidthValue, &plan.BandwidthUnit, &bandwidthBPS, &plan.Currency, &plan.PurchasePrice, &plan.PurchasePricePeriod,
-		&plan.RenewalPrice, &plan.RenewalPricePeriod, &plan.PurchaseDate, &plan.RenewalDate, &plan.ExpiryDate, &plan.CountryCodeOverride, &plan.UpdatedAt, &plan.ObserveAfter)
+		&plan.RenewalPrice, &plan.RenewalPricePeriod, &plan.PurchaseDate, &plan.RenewalDate, &plan.ExpiryDate, &plan.CountryCodeOverride, &plan.UpdatedAt, &plan.ObserveAfter,
+		&plan.CycleRXBytes, &plan.CycleTXBytes, &plan.CycleDirBasis, &dirSince)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentPlan{}, false, nil
 	}
@@ -61,6 +71,7 @@ func (s *Store) GetAgentPlan(ctx context.Context, agentID string) (AgentPlan, bo
 		return AgentPlan{}, false, err
 	}
 	assignNullablePlanValues(&plan, quotaBytes, bandwidthBPS, cycleStart, cycleEnd)
+	assignDirectionSince(&plan, dirSince)
 	return plan, true, nil
 }
 
@@ -104,6 +115,14 @@ func assignNullablePlanValues(plan *AgentPlan, quotaBytes, bandwidthBPS, cycleSt
 	}
 }
 
+func assignDirectionSince(plan *AgentPlan, since sql.NullInt64) {
+	plan.CycleDirSince = nil
+	if since.Valid {
+		value := since.Int64
+		plan.CycleDirSince = &value
+	}
+}
+
 func (s *Store) PutAgentPlan(ctx context.Context, plan AgentPlan, calibration *uint64, now time.Time) (AgentPlan, error) {
 	if plan.AgentID == "" {
 		return AgentPlan{}, errors.New("agent ID is required")
@@ -132,12 +151,18 @@ func (s *Store) PutAgentPlan(ctx context.Context, plan AgentPlan, calibration *u
 		return AgentPlan{}, err
 	}
 	usage, status, observeAfter := uint64(0), "partial", int64(0)
+	dirRX, dirTX, dirBasis, dirSince := uint64(0), uint64(0), planDirExact, (*int64)(nil)
 	policyUnchanged := previousExists && previous.TrafficMode == plan.TrafficMode && previous.CycleKind == plan.CycleKind && previous.CycleCount == plan.CycleCount && previous.CycleAnchor == plan.CycleAnchor && previous.Timezone == plan.Timezone && sameInt64(previous.CycleStart, start)
 	if policyUnchanged {
 		usage, status, observeAfter = previous.UsageBytes, previous.UsageStatus, previous.ObserveAfter
+		// The direction counters travel with the usage they explain.
+		dirRX, dirTX, dirBasis, dirSince = previous.CycleRXBytes, previous.CycleTXBytes, previous.CycleDirBasis, previous.CycleDirSince
 	}
 	if calibration != nil {
 		usage, status = *calibration, "calibrated"
+		// The calibrated value carries history without a direction: count again from here.
+		calibratedAt := now.UnixMilli()
+		dirRX, dirTX, dirBasis, dirSince = 0, 0, planDirSince, &calibratedAt
 	}
 	if plan.TrafficMode != "" && (!policyUnchanged || calibration != nil) {
 		// A report delta spanning this edit cannot be split honestly between
@@ -155,9 +180,11 @@ func (s *Store) PutAgentPlan(ctx context.Context, plan AgentPlan, calibration *u
 		updatedAt = now.UnixMilli()
 	}
 	plan.UsageBytes, plan.UsageStatus, plan.CycleStart, plan.CycleEnd, plan.UpdatedAt, plan.ObserveAfter = usage, status, start, end, updatedAt, observeAfter
-	_, err = tx.ExecContext(ctx, `INSERT INTO agent_plans(agent_id,traffic_mode,quota_value,quota_unit,quota_bytes,cycle_kind,cycle_count,cycle_anchor,timezone,usage_bytes,usage_status,cycle_start,cycle_end,bandwidth_value,bandwidth_unit,bandwidth_bps,currency,purchase_price,purchase_price_period,renewal_price,renewal_price_period,purchase_date,renewal_date,expiry_date,country_code_override,updated_at,observe_after)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET traffic_mode=excluded.traffic_mode,quota_value=excluded.quota_value,quota_unit=excluded.quota_unit,quota_bytes=excluded.quota_bytes,cycle_kind=excluded.cycle_kind,cycle_count=excluded.cycle_count,cycle_anchor=excluded.cycle_anchor,timezone=excluded.timezone,usage_bytes=excluded.usage_bytes,usage_status=excluded.usage_status,cycle_start=excluded.cycle_start,cycle_end=excluded.cycle_end,bandwidth_value=excluded.bandwidth_value,bandwidth_unit=excluded.bandwidth_unit,bandwidth_bps=excluded.bandwidth_bps,currency=excluded.currency,purchase_price=excluded.purchase_price,purchase_price_period=excluded.purchase_price_period,renewal_price=excluded.renewal_price,renewal_price_period=excluded.renewal_price_period,purchase_date=excluded.purchase_date,renewal_date=excluded.renewal_date,expiry_date=excluded.expiry_date,country_code_override=excluded.country_code_override,updated_at=excluded.updated_at,observe_after=excluded.observe_after`,
-		plan.AgentID, nullable(plan.TrafficMode), nullable(plan.QuotaValue), nullable(plan.QuotaUnit), nullableUint(plan.QuotaBytes), nullable(plan.CycleKind), nullableInt(plan.CycleCount), nullable(plan.CycleAnchor), nullable(plan.Timezone), int64(plan.UsageBytes), plan.UsageStatus, nullableInt64(plan.CycleStart), nullableInt64(plan.CycleEnd), nullable(plan.BandwidthValue), nullable(plan.BandwidthUnit), nullableUint(plan.BandwidthBPS), nullable(plan.Currency), nullable(plan.PurchasePrice), nullable(plan.PurchasePricePeriod), nullable(plan.RenewalPrice), nullable(plan.RenewalPricePeriod), nullable(plan.PurchaseDate), nullable(plan.RenewalDate), nullable(plan.ExpiryDate), nullable(plan.CountryCodeOverride), plan.UpdatedAt, plan.ObserveAfter)
+	plan.CycleRXBytes, plan.CycleTXBytes, plan.CycleDirBasis, plan.CycleDirSince = dirRX, dirTX, dirBasis, dirSince
+	_, err = tx.ExecContext(ctx, `INSERT INTO agent_plans(agent_id,traffic_mode,quota_value,quota_unit,quota_bytes,cycle_kind,cycle_count,cycle_anchor,timezone,usage_bytes,usage_status,cycle_start,cycle_end,bandwidth_value,bandwidth_unit,bandwidth_bps,currency,purchase_price,purchase_price_period,renewal_price,renewal_price_period,purchase_date,renewal_date,expiry_date,country_code_override,updated_at,observe_after,cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET traffic_mode=excluded.traffic_mode,quota_value=excluded.quota_value,quota_unit=excluded.quota_unit,quota_bytes=excluded.quota_bytes,cycle_kind=excluded.cycle_kind,cycle_count=excluded.cycle_count,cycle_anchor=excluded.cycle_anchor,timezone=excluded.timezone,usage_bytes=excluded.usage_bytes,usage_status=excluded.usage_status,cycle_start=excluded.cycle_start,cycle_end=excluded.cycle_end,bandwidth_value=excluded.bandwidth_value,bandwidth_unit=excluded.bandwidth_unit,bandwidth_bps=excluded.bandwidth_bps,currency=excluded.currency,purchase_price=excluded.purchase_price,purchase_price_period=excluded.purchase_price_period,renewal_price=excluded.renewal_price,renewal_price_period=excluded.renewal_price_period,purchase_date=excluded.purchase_date,renewal_date=excluded.renewal_date,expiry_date=excluded.expiry_date,country_code_override=excluded.country_code_override,updated_at=excluded.updated_at,observe_after=excluded.observe_after,cycle_rx_bytes=excluded.cycle_rx_bytes,cycle_tx_bytes=excluded.cycle_tx_bytes,cycle_dir_basis=excluded.cycle_dir_basis,cycle_dir_since=excluded.cycle_dir_since`,
+		plan.AgentID, nullable(plan.TrafficMode), nullable(plan.QuotaValue), nullable(plan.QuotaUnit), nullableUint(plan.QuotaBytes), nullable(plan.CycleKind), nullableInt(plan.CycleCount), nullable(plan.CycleAnchor), nullable(plan.Timezone), int64(plan.UsageBytes), plan.UsageStatus, nullableInt64(plan.CycleStart), nullableInt64(plan.CycleEnd), nullable(plan.BandwidthValue), nullable(plan.BandwidthUnit), nullableUint(plan.BandwidthBPS), nullable(plan.Currency), nullable(plan.PurchasePrice), nullable(plan.PurchasePricePeriod), nullable(plan.RenewalPrice), nullable(plan.RenewalPricePeriod), nullable(plan.PurchaseDate), nullable(plan.RenewalDate), nullable(plan.ExpiryDate), nullable(plan.CountryCodeOverride), plan.UpdatedAt, plan.ObserveAfter,
+		int64(plan.CycleRXBytes), int64(plan.CycleTXBytes), plan.CycleDirBasis, nullableInt64(plan.CycleDirSince))
 	if err != nil {
 		return AgentPlan{}, err
 	}
@@ -181,6 +208,7 @@ func accountPlanTrafficTx(ctx context.Context, tx *sql.Tx, old, current State, e
 	}
 	plan = resolved
 	usage, status := plan.UsageBytes, plan.UsageStatus
+	dirRX, dirTX := plan.CycleRXBytes, plan.CycleTXBytes
 	if continuityPartial {
 		status = "partial"
 	}
@@ -204,6 +232,13 @@ func accountPlanTrafficTx(ctx context.Context, tx *sql.Tx, old, current State, e
 			return errors.New("billing traffic counter exceeds storage range")
 		}
 		usage += increment
+		// The directions ride on the same delta, in the same condition and the same UPDATE, whatever the
+		// billing mode: that is what keeps them equal to the billed usage (design 2.3).
+		if rxDelta > math.MaxInt64 || dirRX > math.MaxInt64-rxDelta || txDelta > math.MaxInt64 || dirTX > math.MaxInt64-txDelta {
+			return errors.New("billing traffic counter exceeds storage range")
+		}
+		dirRX += rxDelta
+		dirTX += txDelta
 	}
 	if spansAccountingBoundary {
 		status = "partial"
@@ -213,7 +248,8 @@ func accountPlanTrafficTx(ctx context.Context, tx *sql.Tx, old, current State, e
 		observeAfter = 0
 	}
 	updatedAt := maxPlanUpdatedAt(plan.UpdatedAt, now.UnixMilli())
-	_, err = tx.ExecContext(ctx, `UPDATE agent_plans SET usage_bytes=?,usage_status=?,cycle_start=?,cycle_end=?,updated_at=?,observe_after=? WHERE agent_id=?`, int64(usage), status, nullableInt64(plan.CycleStart), nullableInt64(plan.CycleEnd), updatedAt, observeAfter, current.AgentID)
+	_, err = tx.ExecContext(ctx, `UPDATE agent_plans SET usage_bytes=?,usage_status=?,cycle_start=?,cycle_end=?,updated_at=?,observe_after=?,cycle_rx_bytes=?,cycle_tx_bytes=?,cycle_dir_basis=?,cycle_dir_since=? WHERE agent_id=?`,
+		int64(usage), status, nullableInt64(plan.CycleStart), nullableInt64(plan.CycleEnd), updatedAt, observeAfter, int64(dirRX), int64(dirTX), plan.CycleDirBasis, nullableInt64(plan.CycleDirSince), current.AgentID)
 	return err
 }
 
@@ -305,6 +341,7 @@ func resolvePlanCycle(plan AgentPlan, now time.Time) (AgentPlan, planCyclePhase,
 		plan.CycleStart, plan.CycleEnd = start, end
 		plan.UsageBytes = 0
 		plan.UsageStatus = "partial"
+		resetPlanDirections(&plan)
 		return plan, planCycleInitialized, nil
 	}
 	switch {
@@ -312,6 +349,7 @@ func resolvePlanCycle(plan AgentPlan, now time.Time) (AgentPlan, planCyclePhase,
 		plan.CycleStart, plan.CycleEnd = start, end
 		plan.UsageBytes = 0
 		plan.UsageStatus = "partial"
+		resetPlanDirections(&plan)
 		return plan, planCycleAdvanced, nil
 	case *start == *plan.CycleStart:
 		plan.CycleStart, plan.CycleEnd = start, end
@@ -320,6 +358,11 @@ func resolvePlanCycle(plan AgentPlan, now time.Time) (AgentPlan, planCyclePhase,
 		plan.UsageStatus = "partial"
 		return plan, planCycleRollback, nil
 	}
+}
+
+// resetPlanDirections starts the direction counters of a new cycle: nothing counted yet, so they are exact.
+func resetPlanDirections(plan *AgentPlan) {
+	plan.CycleRXBytes, plan.CycleTXBytes, plan.CycleDirBasis, plan.CycleDirSince = 0, 0, planDirExact, nil
 }
 
 func AgentPlanAt(plan AgentPlan, now time.Time) (AgentPlan, error) {
@@ -346,8 +389,8 @@ func anchoredMonth(anchor time.Time, offset int) time.Time {
 
 func getAgentPlanTx(ctx context.Context, tx *sql.Tx, agentID string) (AgentPlan, bool, error) {
 	var plan AgentPlan
-	var start, end sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,updated_at,observe_after FROM agent_plans WHERE agent_id=?`, agentID).Scan(&plan.AgentID, &plan.TrafficMode, &plan.CycleKind, &plan.CycleCount, &plan.CycleAnchor, &plan.Timezone, &plan.UsageBytes, &plan.UsageStatus, &start, &end, &plan.UpdatedAt, &plan.ObserveAfter)
+	var start, end, dirSince sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,updated_at,observe_after,cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since FROM agent_plans WHERE agent_id=?`, agentID).Scan(&plan.AgentID, &plan.TrafficMode, &plan.CycleKind, &plan.CycleCount, &plan.CycleAnchor, &plan.Timezone, &plan.UsageBytes, &plan.UsageStatus, &start, &end, &plan.UpdatedAt, &plan.ObserveAfter, &plan.CycleRXBytes, &plan.CycleTXBytes, &plan.CycleDirBasis, &dirSince)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentPlan{}, false, nil
 	}
@@ -355,6 +398,7 @@ func getAgentPlanTx(ctx context.Context, tx *sql.Tx, agentID string) (AgentPlan,
 		return AgentPlan{}, false, err
 	}
 	assignNullablePlanValues(&plan, sql.NullInt64{}, sql.NullInt64{}, start, end)
+	assignDirectionSince(&plan, dirSince)
 	return plan, true, nil
 }
 

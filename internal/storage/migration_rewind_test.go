@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 )
@@ -30,11 +31,36 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 // are dropped and the TCP Mini tables of schema 29 are back, one state row per agent as migration 29 made them.
 func rewindV107Fixture(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=35`); err != nil {
-		t.Fatal(err)
-	}
 	for _, column := range [][2]string{{"agent_plans", "cycle_rx_bytes"}, {"agent_plans", "cycle_tx_bytes"}, {"agent_plans", "cycle_dir_basis"}, {"agent_plans", "cycle_dir_since"}, {"quality_config", "slow_threshold_ms"}} {
 		dropColumnIfPresent(t, db, column[0], column[1])
+	}
+	rewindV107Version(t, db)
+}
+
+// migrateV107Forward runs migration 35 once more on a fixture a test rewound (its version row goes first).
+func migrateV107Forward(t *testing.T, db *sql.DB) {
+	t.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM schema_migrations WHERE version=35`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateV107Tx(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rewindV107Version lets migration 35 run again: its version row goes and the TCP Mini tables return.
+func rewindV107Version(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=35`); err != nil {
+		t.Fatal(err)
 	}
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS tcp_mini_state(agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,evidence_start INTEGER NOT NULL,scanned_at INTEGER NOT NULL DEFAULT 0,initialized INTEGER NOT NULL DEFAULT 0,last_high INTEGER NOT NULL DEFAULT 0,last_low INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,backfill_minute INTEGER NOT NULL DEFAULT 0,backfill_series INTEGER NOT NULL DEFAULT 0)`,

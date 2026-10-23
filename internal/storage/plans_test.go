@@ -125,9 +125,11 @@ func TestAgentPlanAtMarksUnobservedNewCyclePartial(t *testing.T) {
 func TestAgentPlanAtClockRollbackPreservesCalibratedCycle(t *testing.T) {
 	februaryStart := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
 	marchStart := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	calibratedAt := februaryStart + 5000
 	plan := AgentPlan{
 		TrafficMode: "rx", CycleKind: "monthly", CycleCount: 1, CycleAnchor: "2024-01-01", Timezone: "UTC",
 		UsageBytes: 1000, UsageStatus: "calibrated", CycleStart: &februaryStart, CycleEnd: &marchStart,
+		CycleRXBytes: 40, CycleTXBytes: 7, CycleDirBasis: "since", CycleDirSince: &calibratedAt,
 	}
 	got, err := AgentPlanAt(plan, time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -135,6 +137,9 @@ func TestAgentPlanAtClockRollbackPreservesCalibratedCycle(t *testing.T) {
 	}
 	if got.UsageBytes != 1000 || got.UsageStatus != "partial" || got.CycleStart == nil || *got.CycleStart != februaryStart || got.CycleEnd == nil || *got.CycleEnd != marchStart {
 		t.Fatalf("clock rollback changed calibrated cycle: %+v", got)
+	}
+	if got.CycleRXBytes != 40 || got.CycleTXBytes != 7 || got.CycleDirBasis != "since" || got.CycleDirSince == nil || *got.CycleDirSince != calibratedAt {
+		t.Fatalf("the read projection of a clock rollback lost the direction counters: %+v", got)
 	}
 }
 
@@ -218,14 +223,18 @@ func TestPlanUsageAndCycleCursorSurviveClockRollbackAndAdvance(t *testing.T) {
 		status     string
 		cycleStart int64
 		cycleEnd   int64
+		// The direction counters follow the usage: rx only here (the reports carry no tx), counted
+		// from the calibration ("since"), and exact again once March starts.
+		rx, tx uint64
+		basis  string
 	}{
-		{"first sample", 1, 1000, feb10.Add(time.Second), 1000, "calibrated", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
-		{"normal February growth", 2, 1100, feb10.Add(2 * time.Second), 1100, "calibrated", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
-		{"first January rollback report", 3, 1200, time.Date(2024, 1, 20, 12, 0, 0, 0, time.UTC), 1200, "partial", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
-		{"second January rollback report", 4, 1300, time.Date(2024, 1, 21, 12, 0, 0, 0, time.UTC), 1300, "partial", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
-		{"February clock recovery", 5, 1400, time.Date(2024, 2, 11, 12, 0, 0, 0, time.UTC), 1400, "partial", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
-		{"March rollover baseline", 6, 1500, time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC), 0, "partial", time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
-		{"March growth resumes", 7, 1525, time.Date(2024, 3, 2, 0, 0, 0, 0, time.UTC), 25, "partial", time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli()},
+		{"first sample", 1, 1000, feb10.Add(time.Second), 1000, "calibrated", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 0, 0, "since"},
+		{"normal February growth", 2, 1100, feb10.Add(2 * time.Second), 1100, "calibrated", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 100, 0, "since"},
+		{"first January rollback report", 3, 1200, time.Date(2024, 1, 20, 12, 0, 0, 0, time.UTC), 1200, "partial", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 200, 0, "since"},
+		{"second January rollback report", 4, 1300, time.Date(2024, 1, 21, 12, 0, 0, 0, time.UTC), 1300, "partial", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 300, 0, "since"},
+		{"February clock recovery", 5, 1400, time.Date(2024, 2, 11, 12, 0, 0, 0, time.UTC), 1400, "partial", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 400, 0, "since"},
+		{"March rollover baseline", 6, 1500, time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC), 0, "partial", time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 0, 0, "exact"},
+		{"March growth resumes", 7, 1525, time.Date(2024, 3, 2, 0, 0, 0, 0, time.UTC), 25, "partial", time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 25, 0, "exact"},
 	}
 	var previousUpdatedAt int64
 	for _, step := range steps {
@@ -240,6 +249,12 @@ func TestPlanUsageAndCycleCursorSurviveClockRollbackAndAdvance(t *testing.T) {
 			}
 			if got.UsageBytes != step.usage || got.UsageStatus != step.status || got.CycleStart == nil || *got.CycleStart != step.cycleStart || got.CycleEnd == nil || *got.CycleEnd != step.cycleEnd {
 				t.Fatalf("plan=%+v want usage=%d status=%s cycle=%d..%d", got, step.usage, step.status, step.cycleStart, step.cycleEnd)
+			}
+			if got.CycleRXBytes != step.rx || got.CycleTXBytes != step.tx || got.CycleDirBasis != step.basis {
+				t.Fatalf("directions rx=%d tx=%d basis=%s, want rx=%d tx=%d basis=%s", got.CycleRXBytes, got.CycleTXBytes, got.CycleDirBasis, step.rx, step.tx, step.basis)
+			}
+			if (got.CycleDirBasis == "exact") != (got.CycleDirSince == nil) {
+				t.Fatalf("since mark %v does not fit basis %s", got.CycleDirSince, got.CycleDirBasis)
 			}
 			if got.UpdatedAt < previousUpdatedAt {
 				t.Fatalf("updated_at regressed from %d to %d", previousUpdatedAt, got.UpdatedAt)
@@ -271,6 +286,10 @@ func TestPlanClockRollbackBeforeAnchorStillAccumulatesCurrentProof(t *testing.T)
 	if err != nil || !exists || got.UsageBytes != 110 || got.UsageStatus != "partial" || got.CycleStart == nil || *got.CycleStart != time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).UnixMilli() {
 		t.Fatalf("pre-anchor rollback plan=%+v exists=%t err=%v", got, exists, err)
 	}
+	// The rolled-back delta (rx 10) is counted in the direction as well, counted from the calibration.
+	if got.CycleRXBytes != 10 || got.CycleTXBytes != 0 || got.CycleDirBasis != "since" {
+		t.Fatalf("pre-anchor rollback directions rx=%d tx=%d basis=%s", got.CycleRXBytes, got.CycleTXBytes, got.CycleDirBasis)
+	}
 }
 
 func TestObserveAfterStillBlocksRollbackSpanningDeltaAndClearsOnRecovery(t *testing.T) {
@@ -294,11 +313,12 @@ func TestObserveAfterStillBlocksRollbackSpanningDeltaAndClearsOnRecovery(t *test
 		at       time.Time
 		usage    uint64
 		observe  bool
+		rx       uint64 // the direction counter moves exactly when the usage does
 	}{
-		{2, 1010, time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC), 1000, true},
-		{3, 1020, time.Date(2024, 1, 21, 0, 0, 0, 0, time.UTC), 1000, true},
-		{4, 1030, time.Date(2024, 2, 11, 0, 0, 0, 0, time.UTC), 1000, false},
-		{5, 1040, time.Date(2024, 2, 11, 0, 0, 1, 0, time.UTC), 1010, false},
+		{2, 1010, time.Date(2024, 1, 20, 0, 0, 0, 0, time.UTC), 1000, true, 0},
+		{3, 1020, time.Date(2024, 1, 21, 0, 0, 0, 0, time.UTC), 1000, true, 0},
+		{4, 1030, time.Date(2024, 2, 11, 0, 0, 0, 0, time.UTC), 1000, false, 0},
+		{5, 1040, time.Date(2024, 2, 11, 0, 0, 1, 0, time.UTC), 1010, false, 10},
 	} {
 		report := validReport(agentID, 1, "session", "boot", step.sequence, step.rawRX, 0)
 		if _, accepted, _, err := store.ProcessReport(ctx, agentID, report, step.at); err != nil || !accepted {
@@ -307,6 +327,9 @@ func TestObserveAfterStillBlocksRollbackSpanningDeltaAndClearsOnRecovery(t *test
 		got, _, err := store.GetAgentPlan(ctx, agentID)
 		if err != nil || got.UsageBytes != step.usage || (got.ObserveAfter != 0) != step.observe {
 			t.Fatalf("sequence %d plan=%+v err=%v", step.sequence, got, err)
+		}
+		if got.CycleRXBytes != step.rx || got.CycleTXBytes != 0 || got.CycleDirBasis != "since" {
+			t.Fatalf("sequence %d directions rx=%d tx=%d basis=%s, want rx=%d", step.sequence, got.CycleRXBytes, got.CycleTXBytes, got.CycleDirBasis, step.rx)
 		}
 	}
 }
@@ -365,5 +388,8 @@ func TestPlanCalibrationDoesNotCountDeltaSpanningCalibrationBoundary(t *testing.
 	got, _, err = store.GetAgentPlan(ctx, agentID)
 	if err != nil || got.UsageBytes != calibration+25 || got.UsageStatus != "partial" {
 		t.Fatalf("after next report=%+v err=%v", got, err)
+	}
+	if got.CycleRXBytes != 25 || got.CycleTXBytes != 0 || got.CycleDirBasis != "since" || got.CycleDirSince == nil {
+		t.Fatalf("directions after the calibration boundary: rx=%d tx=%d basis=%s since=%v", got.CycleRXBytes, got.CycleTXBytes, got.CycleDirBasis, got.CycleDirSince)
 	}
 }

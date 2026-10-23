@@ -542,6 +542,7 @@ func TestPlanRenewalMigration24BackfillAndAtomicFailure(t *testing.T) {
 		}
 	}
 	t.Logf("v23->24 retains %d objects / %d old data tables; only 2 tables, 2 indexes, 2 automatic PK indexes added: %v", len(objects), len(data), newObjects)
+	migrateV107Forward(t, s.db) // the code under test reads the schema 35 columns again
 	q := renewalRequest(t, s, id, "11111111111111111111111111111111", renewalNow())
 	renewalApply(t, s, id, q, renewalNow())
 }
