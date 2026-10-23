@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -118,5 +119,52 @@ func TestV107CardHistoryAnswersGoneAndOneHourViewReplacesIt(t *testing.T) {
 	w = qualityWebRequest(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/history?target_id="+target+"&view=1hour", "")
 	if w.Code == http.StatusGone || w.Code == http.StatusBadRequest {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+// The device details page reads its hour as v3/history?view=1hour: a configured target answers 200 and the answer is exactly QualityCardHistory.
+func TestV107OneHourViewOfAConfiguredTargetEqualsCardHistory(t *testing.T) {
+	a, s, id, token := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	cfg := qualityServerConfig(t, a, s, id, token)
+	target := ""
+	for _, l := range cfg.Lanes {
+		if l.TargetID != nil && l.Family == "ipv4" && l.Protocol == "tcp" {
+			target = *l.TargetID
+			break
+		}
+	}
+	if target == "" {
+		t.Fatal("the configured agent has no ipv4 tcp target")
+	}
+	w := qualityWebRequest(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/history?target_id="+target+"&view=1hour", "")
+	if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal(w.Code, w.Header(), w.Body.String())
+	}
+	want, err := s.QualityCardHistory(context.Background(), id, target, a.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, _ := json.Marshal(want)
+	var got, expected any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || json.Unmarshal(wantJSON, &expected) != nil {
+		t.Fatal(err)
+	}
+	g, _ := json.Marshal(got)
+	e, _ := json.Marshal(expected)
+	if string(g) != string(e) {
+		t.Fatalf("the one-hour view differs from QualityCardHistory:\n%s\n%s", g, e)
+	}
+	var shape struct {
+		View         string `json:"view"`
+		ResolutionMS int64  `json:"resolution_ms"`
+		Target       struct {
+			ID string `json:"id"`
+		} `json:"target"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &shape)
+	if shape.View != "1hour-card" || shape.ResolutionMS != 300000 || shape.Target.ID != target {
+		t.Fatalf("%+v", shape)
 	}
 }

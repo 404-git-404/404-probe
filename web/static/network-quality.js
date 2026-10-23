@@ -27,7 +27,7 @@
       else if(value&&changed)refreshCard(card);
     }
     const observer=Observer?new Observer(entries=>{for(const e of entries){const c=cards.get(e.target.dataset.qualityAgent);if(c)setVisible(c,e.isIntersecting);}},{rootMargin:'0px'}):null;
-    function effective(card) {return card.visible&&!doc.hidden&&!card.agent.revoked;}
+    function effective(card) {return card.visible&&!doc.hidden&&!card.agent.revoked&&!card.agent.removal;}
     // What decides whether a measurement still belongs to the same series: the measurement revision and the
     // targets with their state. Labels, kind, interval text and the settings revision are not part of it.
     const measurement=config=>JSON.stringify([config.revision,config.targets.map(t=>[t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status,t.lane_status,t.condition])]);
@@ -151,13 +151,13 @@
     }
     // Before the first answer, or when the device is gone: a lane described by the configuration alone.
     function configLane(card,key) {
-      const device=card.agent.revoked||card.agent.disabled_at;
+      const device=card.agent.revoked||card.agent.disabled_at||card.agent.removal;
       const notice=protocol=>device?{status:'device_inactive',condition:''}:(l=>l?{status:l.status,condition:l.condition||''}:{status:'unset',condition:''})(card.config?.lanes?.get(`${key}/${card.family}/${protocol}`));
       return {slot:key,tcp:{...notice('tcp'),blocks:null,red:false,dns_failing:false},icmp:notice('icmp'),right:{kind:'none',percent:null,numerator:0,denominator:0,samples:'none'}};
     }
     function renderCard(card) {
       if(!card.head)buildFaceA(card);
-      const device=!!(card.agent.revoked||card.agent.disabled_at),summary=device?null:card.summary;
+      const device=!!(card.agent.revoked||card.agent.disabled_at||card.agent.removal),summary=device?null:card.summary;
       for(const b of card.tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
       const threshold=summary?.threshold_ms??card.config?.slow_threshold_ms??C.THRESHOLD_DEFAULT,interval=summary?.interval_ms??card.config?.effective_interval_ms??30000;
       const subText=`TCP · 1h · 门槛 ${threshold} ms`;
@@ -199,7 +199,7 @@
       for(const [key,view]of card.rows)if(!live.has(key)){view.node.remove();card.rows.delete(key);}
       // One line for the whole card: a failed read says so (the old blocks stay, marked as not current).
       let reason=card.summaryError||card.error||C.cardNotice(card.config);
-      if(device)reason='设备已撤销/暂停，当前数据不可用';
+      if(device)reason=card.agent.removal?'设备正在移除，当前数据不可用':'设备已撤销/暂停，当前数据不可用';
       const note=reason||'每格 3 分钟';
       if(card.note.textContent!==note)card.note.textContent=note;
       card.note.title=reason||`每格 3 分钟 · 检测间隔 ${interval/1000} 秒`;card.note.dataset.alert=String(!!reason);
@@ -217,7 +217,8 @@
         cards.set(card.id,card);renderCard(card);observer?.observe(node);
       }
       card.agent=agent;
-      if(agent.revoked){queue.release(card.historyOwner);card.generation++;card.summaryLoading=false;}
+      // A device that is gone or going: what was read before no longer describes it, and an answer still on its way is not adopted.
+      if(agent.revoked||agent.removal){queue.release(card.historyOwner);card.generation++;card.summaryLoading=false;card.summary=null;}
       // Metadata/resource refresh never starts a quality config read or resets a draft.
       if(history?.card===card){const machine=historyContainer()?.querySelector('.nq-machine');if(machine)machine.textContent=agent.name||agent.state?.hostname||'未命名设备';}
       renderCard(card);

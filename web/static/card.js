@@ -94,7 +94,9 @@
   }
 
   // ---- traffic ---------------------------------------------------------------------------------
-  const hasCycle=plan=>Boolean(plan&&plan.traffic_mode&&plan.cycle_kind&&plan.cycle_kind!=='none');
+  // A cycle is in force when the plan names one and the Server has bounds for it. An anchor in the future leaves the bounds empty:
+  // until it arrives the card shows the device total, like a device without a plan (design 2.4).
+  const hasCycle=plan=>Boolean(plan&&plan.traffic_mode&&plan.cycle_kind&&plan.cycle_kind!=='none'&&finite(plan.cycle_start)&&finite(plan.cycle_end));
   function cycleDays(plan,now) {
     if(!finite(plan.cycle_start)||!finite(plan.cycle_end)||plan.cycle_end<=plan.cycle_start)return null;
     const total=Math.max(1,Math.round((plan.cycle_end-plan.cycle_start)/DAY)),day=Math.min(total,Math.max(1,Math.floor((now-plan.cycle_start)/DAY)+1));

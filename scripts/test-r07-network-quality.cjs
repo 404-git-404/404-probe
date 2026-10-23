@@ -881,3 +881,16 @@ test('D1: the history dialog opens on the Server\'s real answer and shows its st
   assert.match(text, /样本 4/);
   assert.doesNotMatch(text, /读取失败/);
 });
+
+test('B2: a pending removal takes the cached current judgement and the numbers off face A at once',async()=>{
+ screen(1000,1000);
+ const f=setup({raw:load('v4-running'),card:base=>{base.lanes[0].tcp.red={active:true};base.lanes[0].right={kind:'icmp_loss',percent:12,numerator:43,denominator:360,samples:'ok'};return base;}});
+ f.ui.setVisible(AGENT,true);await flush();
+ const row=()=>f.node.querySelectorAll('.nq7-row')[0];
+ assert.equal(row().dataset.lane,'red');assert.match(row().querySelector('.nq7-right').textContent,/12\.0%/);
+ f.ui.mount({...f.agent,removal:{status:'requested'}});
+ assert.equal(row().dataset.lane,'device');assert.equal(row().querySelector('.nq7-blocks').hidden,true);
+ assert.equal(row().querySelector('.nq7-right').textContent,'—');assert.equal(row().querySelector('.nq7-text').textContent,'设备已撤销/暂停');
+ const reads=f.requests.filter(r=>r.url.includes('/v5/card')).length;
+ f.ui.tick();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/v5/card')).length,reads,'nothing is read for a device that is being removed');
+});

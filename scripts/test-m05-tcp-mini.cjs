@@ -65,7 +65,7 @@ async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  for(const proto of ['tcp','icmp'])for(const slot of Object.keys(IDS)){const f=fixture(proto,slot);for(const p of f.points)Object.assign(p,{count:0,valid_rtts:0,p50_ms:null,p95_ms:null,completeness:'no_data'});if(proto===protocol)series[slot]?.(f.points);histories[f.target.id]=f.h;}
  const targets=['tcp','icmp'].flatMap(proto=>Object.keys(IDS).map(slot=>fixture(proto,slot).target));
  const lanes=new Map(targets.map(t=>[`${t.slot}/ipv4/${t.protocol}`,{slot:t.slot,family:'ipv4',protocol:t.protocol,status:'active',condition:''}]));
- const config={revision:'1',supported:true,enabled:true,targets,lanes,slots:Object.keys(IDS).map(slot=>({slot,kind:'builtin',region:'',isp:slot,host:'example.com',port:443}))};
+ const config={revision:'1',settings_revision:'1',supported:true,enabled:true,targets,lanes,slots:Object.keys(IDS).map(slot=>({slot,kind:'builtin',region:'',isp:slot,host:'example.com',port:443}))};
  const requests=[],state={};
  state.fetchJSON=async url=>{
   requests.push(url);
@@ -81,7 +81,7 @@ async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  const nums=()=>Object.fromEntries(node.all().filter(n=>n.className.startsWith('lm-num')).map((n,i)=>[Object.keys(IDS)[i],n]));
  const strip=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.tagName==='rect'&&n.attributes['data-mark'])||[];
  const tags=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.attributes['data-tag'])||[];
- return {api,node,plot,svg,nums,strip,tags,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
+ return {api,node,plot,svg,nums,strip,tags,config,marks,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
 }
 const solid=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.3');
 const dashed=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-dasharray']);
@@ -184,4 +184,19 @@ test('the range slider drives the plotted window; the end handle at "now" means 
  assert.match(caption(c),/历史位置/);
  end.dispatch('keydown',{key:'End'});
  assert.match(caption(c),/跟随现在/);
+});
+
+test('B1: a save that only changes the slow threshold invalidates the marks at once; an answer under the old threshold is not adopted',async()=>{
+ const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'}];
+ const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},marks});
+ const reads=()=>c.requests.filter(u=>u.includes('/v5/marks')).length;
+ assert.equal(c.strip().length,1);const before=reads();
+ // the Server now answers with no mark (threshold 3000 ms): same targets, same measurement revision, new settings revision
+ marks.length=0;
+ c.api.bindConfig('a',{...c.config,settings_revision:'2'});
+ assert.equal(c.strip().length,0,'the old mark is gone at once');
+ await c.flush();
+ assert.ok(reads()>before,'the marks were read again');assert.equal(c.strip().length,0);
+ // the same settings revision again changes nothing and reads nothing
+ const again=reads();c.api.bindConfig('a',{...c.config,settings_revision:'2'});await c.flush();assert.equal(reads(),again);
 });

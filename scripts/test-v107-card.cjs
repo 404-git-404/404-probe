@@ -127,6 +127,16 @@ test('traffic face A: rates, the cycle amounts, and the quota bar in each plan s
  const old=Card.trafficView(a,{old:true,now:NOW});assert.deepEqual([old.rx,old.tx],['↓ —','↑ —']);
 });
 
+test('B3: a plan whose cycle has not started yet shows the device total, like a device without a plan',()=>{
+ const future=plan({cycle_start:undefined,cycle_end:undefined,cycle_rx_bytes:0,cycle_tx_bytes:0,cycle_anchor:'2999-01-01'});
+ const a=agent({plan:future,traffic:{rx_total:123456,tx_total:654321}});
+ const v=Card.trafficView(a,{now:NOW});
+ assert.deepEqual([v.label,v.down,v.up],['累计','123 KB','654 KB']);
+ assert.equal(v.bar.kind,'none');assert.equal(v.bar.text,'未设置流量配额 · 点此编辑套餐');
+ assert.equal(Card.hasCycle(future),false);
+ assert.equal(Card.hasCycle(plan()),true);
+});
+
 test('the first cycle after the upgrade says where its direction split starts',()=>{
  const since=Card.trafficView(agent({plan:plan({cycle_dir_basis:'since',cycle_dir_since:Date.UTC(2026,9,5,12)})}),{now:NOW});
  assert.equal(since.mark,'*');assert.match(since.markTitle,/自 10-0\d 起统计；此前的用量没有分方向记录/);

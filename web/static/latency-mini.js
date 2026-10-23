@@ -179,12 +179,12 @@
       if(c.protocol!=='tcp'||c.marksLoading||!c.config?.supported)return;
       const f=family(c.id);
       if(c.marks&&c.marks.family===f&&now()-c.marksUpdated<MARKS_TTL)return;
-      const to=Math.max(c.latestServer||0,now()),from=to-DAY,serial=c.serial;c.marksLoading=true;
+      const to=Math.max(c.latestServer||0,now()),from=to-DAY,serial=c.serial,epoch=c.marksEpoch||0;c.marksLoading=true;
       queue.request(marksKey(c),c.owner,signal=>C.transportLease(tracked=>state.fetchJSON(`/api/v1/web/agents/${encodeURIComponent(c.id)}/network-quality/v5/marks?family=${f}&from=${from}&to=${to}`,{signal,fetcher:tracked,unauthorized,timeoutMs:10000}),fetcher)).then(raw=>{
-        if(serial!==c.serial||!effective(c)||family(c.id)!==f)return;
+        if(serial!==c.serial||epoch!==(c.marksEpoch||0)||!effective(c)||family(c.id)!==f)return;
         c.marks=normalizeMarks(raw,f);c.marksUpdated=now();c.slider.setMarks(mergeRuns(c.marks.runs));render(c);
-      }).catch(error=>{if(serial===c.serial&&effective(c)&&error.name!=='AbortError'){c.marksUpdated=now();c.marks=c.marks?.family===f?c.marks:null;render(c);}})
-        .finally(()=>{if(serial===c.serial)c.marksLoading=false;});
+      }).catch(error=>{if(serial===c.serial&&epoch===(c.marksEpoch||0)&&effective(c)&&error.name!=='AbortError'){c.marksUpdated=now();c.marks=c.marks?.family===f?c.marks:null;render(c);}})
+        .finally(()=>{if(serial===c.serial&&epoch===(c.marksEpoch||0))c.marksLoading=false;});
     }
     function request(c){
       if(!effective(c))return;
@@ -248,7 +248,11 @@
       }
       const was=inactive(c);c.agent=agent;if(!was&&inactive(c))invalidate(c,true);render(c);return c.node;
     }
-    function bindConfig(id,config){const c=cards.get(id);if(!c)return;const signature=JSON.stringify([config.revision,config.supported,config.enabled,config.targets.map(t=>[t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status,t.lane_status,t.condition])]);if(signature===c.signature){c.config=config;render(c);return;}invalidate(c,true);
+    // The marks are judged against the slow threshold, which is a setting, not part of the measurement: a new settings revision
+    // throws the marks away and fences an answer that is still on its way.
+    function dropMarks(c){c.marksEpoch=(c.marksEpoch||0)+1;c.marks=null;c.marksUpdated=0;c.marksLoading=false;c.slider.setMarks([]);}
+    function bindConfig(id,config){const c=cards.get(id);if(!c)return;
+      if(c.config&&c.config.settings_revision!==config.settings_revision){c.config=config;dropMarks(c);render(c);request(c);}const signature=JSON.stringify([config.revision,config.supported,config.enabled,config.targets.map(t=>[t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status,t.lane_status,t.condition])]);if(signature===c.signature){c.config=config;render(c);return;}invalidate(c,true);
       c.signature=signature;c.config=config;c.latestServer=null;render(c);request(c);}
     // The page's address family changed (the same choice drives face A): the old marks and curves belong to the other family.
     function familyChanged(id){const c=cards.get(id);if(!c)return;invalidate(c,true);render(c);request(c);}
