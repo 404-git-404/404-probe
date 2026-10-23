@@ -57,7 +57,7 @@ func TestQualityCardPerformanceReport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, c := range all {
+		for ci, c := range all {
 			cfgRev, _ := parseRevision(c.cfg.ConfigRevision)
 			for _, lane := range c.cfg.Lanes {
 				target := *lane.TargetID
@@ -78,6 +78,12 @@ func TestQualityCardPerformanceReport(t *testing.T) {
 						b.Stats.ConnectAttempts, b.Stats.ConnectSuccesses, b.Stats.ValidRTTs = per, per, per
 						b.Histogram[uint16(40+int(m)%20)] = uint32(per)
 						b.RTTSum = float64(per) * 12
+						if ci%3 == 0 && m >= 1000 && m < 1008 { // an outage: nothing connects
+							b.Stats.ConnectSuccesses, b.Stats.ValidRTTs, b.Histogram, b.RTTSum = 0, 0, map[uint16]uint32{}, 0
+						}
+						if ci%3 == 0 && m >= 1200 && m < 1215 { // 15 slow minutes
+							b.Histogram, b.RTTSum = map[uint16]uint32{3200: uint32(per)}, float64(per)*800
+						}
 					} else {
 						b.Stats.Sent, b.Stats.Received = 3*per, 3*per
 					}
@@ -113,28 +119,26 @@ func TestQualityCardPerformanceReport(t *testing.T) {
 		for _, c := range all {
 			begin := time.Now()
 			sum, err := s.QualityCardSummary(ctx, c.k.id, "ipv4", now)
-			one = append(one, time.Since(begin))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if bytes == 0 {
-				wire, _ := json.Marshal(sum)
-				bytes = len(wire)
-			}
+			wire, _ := json.Marshal(sum) // the encoding is part of the answer
+			one = append(one, time.Since(begin))
+			bytes = max(bytes, len(wire))
 		}
 		stats(fmt.Sprintf("card summary, %d s interval, sequential", intervalMS/1000), one)
 		t.Logf("  response size %d bytes", bytes)
 		var marks []time.Duration
 		var marksBytes int
-		for _, c := range all[:10] {
+		for _, c := range all[:12] {
 			begin := time.Now()
 			m, err := s.QualityMarks(ctx, c.k.id, "ipv4", now.Add(-24*time.Hour).UnixMilli(), now.UnixMilli(), now)
-			marks = append(marks, time.Since(begin))
 			if err != nil {
 				t.Fatal(err)
 			}
 			wire, _ := json.Marshal(m)
-			marksBytes = len(wire)
+			marks = append(marks, time.Since(begin))
+			marksBytes = max(marksBytes, len(wire))
 		}
 		stats(fmt.Sprintf("marks 24 h, %d s interval, sequential", intervalMS/1000), marks)
 		t.Logf("  marks response size %d bytes", marksBytes)
@@ -143,14 +147,16 @@ func TestQualityCardPerformanceReport(t *testing.T) {
 	// 20 browsers, each asks for all 31 cards (the worst case is that they all look at the full grid), with
 	// and without a writer that keeps reporting for all devices.
 	concurrent := func(label string, withWriter bool) {
-		var wg sync.WaitGroup
+		var wg, background sync.WaitGroup
 		var mu sync.Mutex
 		var durations []time.Duration
 		stop := make(chan struct{})
-		var writes int
+		var writes, accepted, rejected, cleanups int
 		var writeWait time.Duration
 		if withWriter {
+			background.Add(2)
 			go func() {
+				defer background.Done()
 				seq := uint64(100)
 				for {
 					select {
@@ -162,12 +168,35 @@ func TestQualityCardPerformanceReport(t *testing.T) {
 						seq++
 						r := validReport(c.k.id, 1, "perf-session", "boot", seq, seq*10, seq*20)
 						begin := time.Now()
-						_, _, _, _ = s.ProcessReport(ctx, c.k.id, r, now.Add(time.Duration(seq)*time.Millisecond))
+						_, ok, _, err := s.ProcessReport(ctx, c.k.id, r, now.Add(time.Duration(seq)*time.Millisecond))
 						mu.Lock()
 						writes++
 						writeWait += time.Since(begin)
+						if err == nil && ok {
+							accepted++
+						} else {
+							rejected++
+						}
 						mu.Unlock()
 					}
+				}
+			}()
+			go func() { // the periodic cleanup of the quality tables runs against the same connection
+				defer background.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					if _, _, err := s.CleanupQualityBatch(ctx, now); err != nil {
+						t.Error(err)
+						return
+					}
+					mu.Lock()
+					cleanups++
+					mu.Unlock()
+					time.Sleep(20 * time.Millisecond)
 				}
 			}()
 		}
@@ -178,10 +207,12 @@ func TestQualityCardPerformanceReport(t *testing.T) {
 				defer wg.Done()
 				for _, c := range all {
 					started := time.Now()
-					if _, err := s.QualityCardSummary(ctx, c.k.id, "ipv4", now); err != nil {
+					sum, err := s.QualityCardSummary(ctx, c.k.id, "ipv4", now)
+					if err != nil {
 						t.Error(err)
 						return
 					}
+					_, _ = json.Marshal(sum)
 					mu.Lock()
 					durations = append(durations, time.Since(started))
 					mu.Unlock()
@@ -189,14 +220,15 @@ func TestQualityCardPerformanceReport(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		close(stop)
 		elapsed := time.Since(begin)
+		close(stop)
+		background.Wait() // the counters below are final
 		stats(label, durations)
-		t.Logf("  wall %s for %d requests (%.0f requests/s, one connection)", elapsed.Round(time.Millisecond), len(durations), float64(len(durations))/elapsed.Seconds())
-		if withWriter && writes > 0 {
-			t.Logf("  writer: %d reports, mean %s each", writes, (writeWait / time.Duration(writes)).Round(time.Microsecond))
+		t.Logf("  wall %s for %d requests (%.0f requests/s, one connection, 20 goroutines that start together)", elapsed.Round(time.Millisecond), len(durations), float64(len(durations))/elapsed.Seconds())
+		if withWriter {
+			t.Logf("  writer: %d reports, %d accepted, %d rejected, mean %s each; %d cleanup passes", writes, accepted, rejected, (writeWait / time.Duration(max(writes, 1))).Round(time.Microsecond), cleanups)
 		}
 	}
 	concurrent("20 browsers x 31 cards", false)
-	concurrent("20 browsers x 31 cards, with a writer", true)
+	concurrent("20 browsers x 31 cards, with a writer and cleanup", true)
 }

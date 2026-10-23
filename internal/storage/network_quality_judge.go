@@ -314,12 +314,17 @@ func (tl *qualityTimeline) redAt(t int64, fallbackIntervalMS int) bool {
 	}
 
 	// 2. Mostly bad: the bad samples are the strict majority of a dense look-back window and span at least 5 minutes.
+	// The window is the look-back minutes after the most recent unusable minute: like a run of failures, it
+	// does not reach across a break (a gap, a mixed bucket, an older slot version, the interval start).
 	lo := t - int64(p.lookN) + 1
 	n, bad := 0, 0
 	firstBad, lastBad := int64(0), int64(0)
 	haveBad := false
-	for m := lo; m <= t; m++ {
+	for m := t; m >= lo; m-- {
 		x := tl.at(m)
+		if x.Kind == minuteUnusable {
+			break
+		}
 		if x.Kind != minuteData {
 			continue
 		}
@@ -327,9 +332,9 @@ func (tl *qualityTimeline) redAt(t int64, fallbackIntervalMS int) bool {
 		bad += x.B
 		if x.B > 0 {
 			if !haveBad {
-				firstBad, haveBad = m, true
+				lastBad, haveBad = m, true
 			}
-			lastBad = m
+			firstBad = m
 		}
 	}
 	if n >= p.minJudged && bad >= judgeSlowMinBad && 2*bad > n && haveBad {

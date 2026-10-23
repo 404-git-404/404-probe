@@ -14,6 +14,13 @@ import (
 // so nothing here may touch s.db while the transaction is open), builds the minute states of the lanes it
 // needs and answers from them. Nothing is cached or persisted.
 
+// qualityTimelineMaxMinutes bounds the minute states one lane may be given: 24 hours of marks, the read-ahead for
+// the look-back of the red rule and the alignment to blocks. No request may ask for more.
+const qualityTimelineMaxMinutes = 1440 + qualityJudgePrefetchMinutes + 6
+
+// qualityTimelineHook lets tests observe how many minute states a request builds; nil in production.
+var qualityTimelineHook func(minutes int)
+
 const qualityMarksMaxSpanMS = int64(24 * 60 * 60 * 1000)
 
 type QualityLaneRed struct {
@@ -88,6 +95,8 @@ type qualityJudgeReader struct {
 	cfg      protocol.QualityV4Config
 	evalEnd  int64
 	first    int64 // first minute index read
+	last     int64 // minute index after the last one read (exclusive): never beyond what the request needs
+	removing bool  // a removal of the device is pending: nothing is judged
 	opens    map[string]qualityOpenStart
 	gaps     []protocol.QualityGap
 	timeline map[string]qualityTimeline
@@ -101,6 +110,10 @@ type qualityOpenStart struct {
 func (r *qualityJudgeReader) lane(slot, family, proto string) (protocol.QualityV4Lane, bool) {
 	for _, l := range r.cfg.Lanes {
 		if l.Slot == slot && l.Family == family && l.Protocol == proto {
+			if r.removing {
+				// The device is being removed: its lanes are not measuring, whatever the configuration says.
+				l.Status, l.Condition = protocol.QualityLaneDeviceInactive, ""
+			}
 			return l, true
 		}
 	}
@@ -109,7 +122,10 @@ func (r *qualityJudgeReader) lane(slot, family, proto string) (protocol.QualityV
 
 // newQualityJudgeReader loads the configuration, the open intervals and the gaps of the minutes from
 // firstMinute to the evaluation cut-off.
-func (s *Store) newQualityJudgeReader(ctx context.Context, tx *sql.Tx, budget qualityBudget, id string, now time.Time, firstMinute int64) (*qualityJudgeReader, error) {
+func (s *Store) newQualityJudgeReader(ctx context.Context, tx *sql.Tx, budget qualityBudget, id string, now time.Time, firstMinute, lastMinute int64) (*qualityJudgeReader, error) {
+	if lastMinute-firstMinute > qualityTimelineMaxMinutes {
+		return nil, ErrQualityInvalid
+	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id=?)`, id).Scan(&exists); err != nil {
 		return nil, err
@@ -121,8 +137,11 @@ func (s *Store) newQualityJudgeReader(ctx context.Context, tx *sql.Tx, budget qu
 	if err != nil {
 		return nil, err
 	}
-	r := &qualityJudgeReader{tx: tx, id: id, cfg: cfg, evalEnd: QualityEvalEnd(now.UnixMilli()), first: firstMinute,
+	r := &qualityJudgeReader{tx: tx, id: id, cfg: cfg, evalEnd: QualityEvalEnd(now.UnixMilli()), first: firstMinute, last: lastMinute,
 		opens: map[string]qualityOpenStart{}, timeline: map[string]qualityTimeline{}}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_removal_operations WHERE agent_id=?)`, id).Scan(&r.removing); err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT slot,family,protocol,target_id,start_at FROM quality_intervals WHERE agent_id=? AND end_at IS NULL`, id)
 	if err != nil {
 		return nil, err
@@ -141,7 +160,7 @@ func (s *Store) newQualityJudgeReader(ctx context.Context, tx *sql.Tx, budget qu
 	if err != nil {
 		return nil, err
 	}
-	gapRows, err := tx.QueryContext(ctx, `SELECT start_at,end_at,reason FROM quality_gaps WHERE agent_id=? AND start_at<=? AND end_at>=? AND reason NOT LIKE 'storage_pruned:%' ORDER BY start_at LIMIT 4096`, id, r.evalEnd, firstMinute*qualityMinuteMS)
+	gapRows, err := tx.QueryContext(ctx, `SELECT start_at,end_at,reason FROM quality_gaps WHERE agent_id=? AND start_at<=? AND end_at>=? AND reason NOT LIKE 'storage_pruned:%' ORDER BY start_at LIMIT 4096`, id, lastMinute*qualityMinuteMS, firstMinute*qualityMinuteMS)
 	if err != nil {
 		return nil, err
 	}
@@ -171,10 +190,10 @@ func (r *qualityJudgeReader) timelineOf(ctx context.Context, slot, family, proto
 	if o, ok := r.opens[key]; ok && o.target == *lane.TargetID {
 		frame.IntervalStart, frame.HasInterval = o.start, true
 	}
-	last := r.evalEnd / qualityMinuteMS
+	last := r.last
 	buckets := map[int64]qualityBucketData{}
 	rows, err := r.tx.QueryContext(ctx, `SELECT b.bucket_start,b.data FROM quality_series s CROSS JOIN quality_buckets b ON b.series_id=s.id WHERE s.agent_id=? AND s.target_id=? AND s.semantics=? AND b.resolution=60000 AND b.bucket_start>=? AND b.bucket_start<?`,
-		r.id, *lane.TargetID, protocol.QualityStagedSemantics, r.first*qualityMinuteMS, r.evalEnd)
+		r.id, *lane.TargetID, protocol.QualityStagedSemantics, r.first*qualityMinuteMS, last*qualityMinuteMS)
 	if err != nil {
 		return qualityTimeline{}, false, err
 	}
@@ -198,6 +217,9 @@ func (r *qualityJudgeReader) timelineOf(ctx context.Context, slot, family, proto
 		return qualityTimeline{}, false, err
 	}
 	tl := qualityBuildTimeline(frame, r.first, last, buckets, r.gaps)
+	if qualityTimelineHook != nil {
+		qualityTimelineHook(len(tl.Mins))
+	}
 	r.timeline[key] = tl
 	return tl, true, nil
 }
@@ -247,7 +269,7 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 	evalEnd := QualityEvalEnd(now.UnixMilli())
 	lastBlock := floorDiv64(evalEnd-1, QualityBlockMS) * QualityBlockMS
 	windowStart := lastBlock - int64(QualityCardBlocks-1)*QualityBlockMS
-	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, windowStart/qualityMinuteMS-qualityJudgePrefetchMinutes)
+	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, windowStart/qualityMinuteMS-qualityJudgePrefetchMinutes, evalEnd/qualityMinuteMS)
 	if err != nil {
 		return QualityCardSummary{}, err
 	}
@@ -303,14 +325,30 @@ func (s *Store) QualityAlertActive(ctx context.Context, agentID string, now time
 	}
 	defer tx.Rollback()
 	evalEnd := QualityEvalEnd(now.UnixMilli())
-	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, evalEnd/qualityMinuteMS-qualityJudgePrefetchMinutes-3)
+	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, evalEnd/qualityMinuteMS-qualityJudgePrefetchMinutes-3, evalEnd/qualityMinuteMS)
 	if err != nil {
 		return false, err
 	}
 	return r.alert(ctx)
 }
 
-// QualityMarks is the face B marks: yellow and red runs of the TCP lanes of one family in [from, to].
+// qualityMarksPlan decides what a marks request reads (design 1.10): the blocks from alignedFrom to end, the
+// minutes needed to judge them (firstMinute .. lastMinute, exclusive) and nothing else. The range is clamped to the
+// 24 hours of 1-minute buckets that exist and to the evaluation cut-off, so a request can never make the Server
+// build a timeline longer than that, whatever from and to say. ok is false when nothing of the range is left.
+func qualityMarksPlan(evalEnd, from, to int64) (alignedFrom, end, firstMinute, lastMinute int64, ok bool) {
+	oldest := floorDiv64(evalEnd-qualityMarksMaxSpanMS, QualityBlockMS) * QualityBlockMS
+	alignedFrom = max(floorDiv64(from, QualityBlockMS)*QualityBlockMS, oldest)
+	end = min(to, evalEnd)
+	if end <= alignedFrom {
+		return alignedFrom, end, 0, 0, false
+	}
+	lastMinute = min(evalEnd/qualityMinuteMS, ceilDiv64(end, QualityBlockMS)*QualityBlockMS/qualityMinuteMS)
+	return alignedFrom, end, alignedFrom/qualityMinuteMS - qualityJudgePrefetchMinutes, lastMinute, true
+}
+
+// QualityMarks is the face B marks: yellow and red runs of the TCP lanes of one family in [from, to]. The range
+// is clamped to the retained history and the cut-off (qualityMarksPlan); the answer says what it covers.
 func (s *Store) QualityMarks(ctx context.Context, agentID, family string, from, to int64, now time.Time) (QualityMarks, error) {
 	if !qualityValidFamily(family) || from < 0 || to <= from || to-from > qualityMarksMaxSpanMS {
 		return QualityMarks{}, ErrQualityInvalid
@@ -323,19 +361,26 @@ func (s *Store) QualityMarks(ctx context.Context, agentID, family string, from, 
 		return QualityMarks{}, err
 	}
 	defer tx.Rollback()
-	alignedFrom := floorDiv64(from, QualityBlockMS) * QualityBlockMS
-	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, alignedFrom/qualityMinuteMS-qualityJudgePrefetchMinutes)
+	evalEnd := QualityEvalEnd(now.UnixMilli())
+	alignedFrom, end, firstMinute, lastMinute, ok := qualityMarksPlan(evalEnd, from, to)
+	if !ok {
+		// Nothing of the range is retained or judged yet: read no minutes, but still answer for a real agent.
+		firstMinute, lastMinute = evalEnd/qualityMinuteMS, evalEnd/qualityMinuteMS
+	}
+	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, firstMinute, lastMinute)
 	if err != nil {
 		return QualityMarks{}, err
 	}
-	end := min(to, r.evalEnd)
-	out := QualityMarks{EvalEnd: r.evalEnd, Family: family, From: alignedFrom, To: end, Lanes: []QualityMarksLane{}}
+	out := QualityMarks{EvalEnd: r.evalEnd, Family: family, From: alignedFrom, To: max(end, alignedFrom), Lanes: []QualityMarksLane{}}
+	if !ok {
+		return out, nil
+	}
 	for _, slot := range protocol.QualitySlotOrder() {
-		tl, ok, err := r.timelineOf(ctx, slot, family, "tcp")
+		tl, active, err := r.timelineOf(ctx, slot, family, "tcp")
 		if err != nil {
 			return out, err
 		}
-		if !ok {
+		if !active {
 			continue
 		}
 		blocks := []QualityCardBlock{}

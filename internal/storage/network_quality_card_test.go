@@ -391,9 +391,7 @@ func TestAlertGateClosesForEveryReason(t *testing.T) {
 		if _, err := c.s.db.Exec(`INSERT INTO agent_removal_operations(operation_id,agent_id,status,requested_epoch,requested_session_id,active_epoch,active_session_id,created_at,updated_at) VALUES('0123456789abcdef0123456789abcdef',?,'requested',1,'s',1,'s',1,1)`, c.id); err != nil {
 			t.Fatal(err)
 		}
-		if alert, err := c.s.QualityAlertActive(c.ctx, c.id, now); err != nil || alert {
-			t.Fatalf("alert while the device is being removed: %v %v", alert, err)
-		}
+		assertNoJudgement(t, c, now, "removal in progress (a row in the table)")
 	})
 }
 
