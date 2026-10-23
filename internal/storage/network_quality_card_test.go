@@ -579,3 +579,77 @@ func TestCardAnswersOnAFileDatabaseWithoutWaitingForItsOwnConnection(t *testing.
 		cancel()
 	}
 }
+
+// Review (design 1.8): the right-hand ICMP number counts complete echo windows only. The buckets come out of the
+// ingestion's own contribution function, so what the aggregator keeps is what the card reads.
+func TestCardRightNumberCountsOnlyCompleteICMPWindows(t *testing.T) {
+	c := newCardKit(t)
+	target := protocol.QualityTarget{Protocol: "icmp", Host: "example.com"}
+	at := time.UnixMilli(c.minute(10) * qualityMinuteMS)
+	complete := a2Echo(target, "1", 1, at, []float64{10, 20, -1}) // three echoes sent, two received
+	incomplete := a2Echo(target, "1", 2, at.Add(time.Minute), []float64{10, -1, -1})
+	d, err := protocol.DecodeQualityDetails(incomplete.Details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.WindowComplete, d.ProbeComplete = false, false
+	incomplete.Details, incomplete.Sent, incomplete.Received = d.Encode(), 2, 1
+	for i, sample := range []protocol.QualitySample{complete, incomplete} {
+		b, err := qualityContribution(sample, "icmp")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.versions(&b, "ipv4", "icmp")
+		c.put("telecom", "ipv4", "icmp", c.minute(10)+int64(i), b)
+	}
+	c.fillTCP("ipv4", c.minute(0), c.minute(20), 2, 0, 0, 0)
+	lane := c.telecom(c.summary(c.at(21), "ipv4"))
+	if lane.Right.Kind != "icmp_loss" || lane.Right.Denominator != 3 || lane.Right.Numerator != 1 {
+		t.Fatalf("an incomplete window was counted: %+v", lane.Right)
+	}
+}
+
+// The next-minute twin of the future-sample case (B2-b): a sample 40 s ahead that lands in the following
+// minute is held back by the same cut-off.
+func TestCardIgnoresAFutureSampleInTheNextMinuteToo(t *testing.T) {
+	c := newCardKit(t)
+	c.fillTCP("ipv4", c.minute(0), c.minute(20), 2, 0, 0, 0)
+	now := time.UnixMilli(c.minute(20)*qualityMinuteMS + 40000)       // 40 s into minute 20
+	future := c.userTCPSample(c.cfg, 1, now.Add(40*time.Second), 800) // 20:80 s: inside minute 21
+	if future.StartedAt/qualityMinuteMS != c.minute(21) {
+		t.Fatalf("fixture: the sample is in minute %d", future.StartedAt/qualityMinuteMS-c.minute(0))
+	}
+	if acks := c.upload(now, future); acks[0] != "committed" {
+		t.Fatalf("upload: %v", acks)
+	}
+	slow := func(at time.Time) int {
+		n := 0
+		for _, b := range c.telecom(c.summary(at, "ipv4")).TCP.Blocks {
+			n += b.Slow
+		}
+		return n
+	}
+	if slow(now) != 0 || slow(now.Add(time.Minute)) != 0 {
+		t.Fatal("the minute of a future sample was judged before its cut-off")
+	}
+	if slow(time.UnixMilli(c.minute(22)*qualityMinuteMS+qualityEvalLagMS)) != 1 {
+		t.Fatal("the sample never appeared")
+	}
+}
+
+// A block takes the largest check interval of its minutes: a card whose interval changed inside a block needs
+// the samples of the slower interval (design 1.4).
+func TestBlockUsesTheLargestIntervalOfItsMinutes(t *testing.T) {
+	tl := tlOf(6).data(0, 3, 0, 0, i30).data(1, 0, 0, 0, i60).data(2, 0, 0, 0, i60)
+	tl.Mins[1].Kind, tl.Mins[2].Kind = minuteEmpty, minuteEmpty
+	// 3 judged samples: enough at 30 s (m=3); at 60 s (m=2) too. A single sample is enough at neither/either:
+	// with minutes of 60 s the block needs 2.
+	one := tlOf(6).data(0, 1, 0, 0, i30).data(1, 0, 0, 0, i60)
+	one.Mins[1].Kind = minuteEmpty
+	if b := one.classifyBlock(0, 6*qualityMinuteMS, i30); b.State != QualityCardGray {
+		t.Fatalf("1 sample with a mixed 30/60 s interval: %+v", b)
+	}
+	if b := tl.classifyBlock(0, 6*qualityMinuteMS, i30); b.State != QualityCardGreen {
+		t.Fatalf("3 samples: %+v", b)
+	}
+}

@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -585,6 +587,60 @@ func TestReconcilePlanDirectionsSmallValuesExhaustive(t *testing.T) {
 					t.Fatalf("(%d,%d,%d): rx %d, want floor %d", usage, rxB, txB, rx, want)
 				}
 			}
+		}
+	}
+}
+
+// Schema 35 retires the TCP Mini tables: after it, no runtime code may name them. Only the historical schema 29
+// step (kept so that older databases still walk the whole chain) and migration 35 itself mention them.
+func TestRetiredTCPMiniIsNotReferencedByRuntimeCode(t *testing.T) {
+	roots := []string{".", filepath.Join("..", "server"), filepath.Join("..", "..", "cmd")}
+	allowed := map[string]bool{"migrations_legacy.go": true, "migration35.go": true}
+	var offenders []string
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || allowed[filepath.Base(path)] {
+				return nil
+			}
+			text, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			// The chain still calls the historical step (and logs its number); that is the one allowed name.
+			lower := strings.ToLower(strings.ReplaceAll(string(text), "migrateTCPMiniTx", ""))
+			for _, word := range []string{"tcp_mini", "tcpmini", "tcp-mini"} {
+				if strings.Contains(lower, word) {
+					offenders = append(offenders, path+": "+word)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The only live mention allowed is the route that answers 410 for pages of v1.0.6.
+	var unexpected []string
+	for _, o := range offenders {
+		if !strings.HasPrefix(o, filepath.Join("..", "server", "web_network_quality.go")) {
+			unexpected = append(unexpected, o)
+		}
+	}
+	if len(unexpected) != 0 {
+		t.Fatalf("runtime code still names the retired TCP Mini: %v", unexpected)
+	}
+}
+
+// A new database starts without the tables and the quality ingest and cleanup run without them (design 1.9 d).
+func TestQualityCleanupRunsWithoutTCPMiniTables(t *testing.T) {
+	s, _, _ := testStore(t, ":memory:")
+	defer s.Close()
+	for round := 0; round < 3; round++ {
+		if _, _, err := s.CleanupQualityBatch(context.Background(), time.Now()); err != nil {
+			t.Fatalf("cleanup round %d: %v", round, err)
 		}
 	}
 }
