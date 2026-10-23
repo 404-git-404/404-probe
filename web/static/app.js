@@ -1135,6 +1135,14 @@ function cardRuntimeText(agent, oldMetrics) {
   return `${label} ${duration(agent.state.uptime)}${oldMetrics?` · 旧数据 · 最后上报 ${seen(agent.last_seen)}`:''}`;
 }
 
+// The card shows the number of days (or hours) only; the full text, with the old-data note, is the tooltip.
+function cardRuntimeShort(agent, oldMetrics) {
+  if (!agent.state) return '等待首次上报';
+  const seconds = Number(agent.state.uptime || 0), days = Math.floor(seconds / 86400), hours = Math.floor(seconds % 86400 / 3600);
+  const label = cardLifecycle(agent) === 'offline' ? '上次运行' : '运行';
+  return `${label} ${days ? days + ' 天' : hours + ' 小时'}${oldMetrics ? ' · 旧' : ''}`;
+}
+
 function resourceFactsFor(agent) {
   const s=agent?.state||{},old=!agent?.online||agent?.disabled_at||s.stale,prefix=old?'旧数据 · ':'';
   const observed=agent?cardObservations.observe(agent):{cpu:'unknown',io:'unknown',stale:true},stale=old||observed.stale;
@@ -1228,7 +1236,7 @@ function createAgentCard(initialAgent) {
     updateEgress(agent);
     const runtime = document.createElement('small');
     runtime.className = 'card-runtime c7-runtime';
-    setReadableText(runtime, cardRuntimeText(agent, oldMetrics));
+    setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
     sub.append(status, logo, systemText, egress, runtime);
     let nameControl = agentNameControl(agent, state);
     const mark = countryMark(agent.country_code, agent.country_source);
@@ -1461,7 +1469,7 @@ function createAgentCard(initialAgent) {
         setCardText(nameControl.querySelector('.name-tooltip'), agent.name || state.hostname || '未命名 VPS');
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }
-      setReadableText(runtime, cardRuntimeText(agent, oldMetrics));
+      setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
       machine.update(Card.machineView(agent, observed, oldMetrics));
       updateTraffic();
       trafficCharts.mount(agent); latencyCharts.mount(agent); networkQuality.mount(agent);

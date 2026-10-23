@@ -130,8 +130,9 @@
       head.append(title,sub,tabs,settings);
       const content=el('div','nq7-rows');card.rows=new Map();
       const legend=el('div','nq7-legend');
-      for(const [state,text] of [['green','正常'],['yellow','偶发慢 / 失败'],['red','持续（告警）'],['gray','无数据']]){const key=el('span','nq7-key');key.append(el('span',`nq7-b nq7-b-${state}`),el('span','',text));legend.append(key);}
+      for(const [state,text] of [['green','正常'],['yellow','偶发'],['red','持续'],['gray','无数据']]){const key=el('span','nq7-key');key.append(el('span',`nq7-b nq7-b-${state}`),el('span','',text));legend.append(key);}
       const note=el('span','nq7-note','每格 3 分钟');legend.append(note);
+      legend.title='正常 · 偶发慢或失败（黄）· 持续慢或失败 = 告警（红）· 无数据或样本不足（灰）';
       const tip=el('div','nq7-tip');tip.hidden=true;tip.setAttribute('role','tooltip');
       content.addEventListener('pointerover',event=>{const cell=event.target?.closest?.('.nq7-b[data-i]');if(cell)showTip(card,cell);});
       content.addEventListener('pointerleave',()=>{tip.hidden=true;});
@@ -159,7 +160,7 @@
       const device=!!(card.agent.revoked||card.agent.disabled_at),summary=device?null:card.summary;
       for(const b of card.tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
       const threshold=summary?.threshold_ms??card.config?.slow_threshold_ms??C.THRESHOLD_DEFAULT,interval=summary?.interval_ms??card.config?.effective_interval_ms??30000;
-      const subText=`TCP · 近 1h · 门槛 ${threshold} ms`;
+      const subText=`TCP · 1h · 门槛 ${threshold} ms`;
       if(card.sub.textContent!==subText)card.sub.textContent=subText;
       card.sub.title=`只看 TCP 线路（当前所选地址族）· 最近 1 小时，每格 3 分钟 · 慢 = 连接时间超过 ${threshold} ms · 检测间隔 ${interval/1000} 秒${interval>=240000?'；检测间隔较长，部分方块没有样本':''}`;
       const live=new Set();let position=card.content.firstElementChild;

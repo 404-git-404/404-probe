@@ -79,8 +79,9 @@ async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  if(protocol==='icmp'){node.all().find(n=>n.tagName==='button'&&n.textContent==='ICMP').dispatch('click');await flush();}
  const svg=()=>plot.children[0].all();
  const nums=()=>Object.fromEntries(node.all().filter(n=>n.className.startsWith('lm-num')).map((n,i)=>[Object.keys(IDS)[i],n]));
- const strip=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.tagName==='rect')||[];
- return {api,node,plot,svg,nums,strip,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
+ const strip=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.tagName==='rect'&&n.attributes['data-mark'])||[];
+ const tags=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.attributes['data-tag'])||[];
+ return {api,node,plot,svg,nums,strip,tags,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
 }
 const solid=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.3');
 const dashed=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-dasharray']);
@@ -159,7 +160,7 @@ test('ICMP uses the same fixed scale, ruler and top numbers, and draws no slow /
  assert.equal(t.strip().length>0,true);assert.equal(i.strip().length,0,'the ICMP view draws curves only');
 });
 
-test('each lane has its own thin mark strip, in the lane colour: red solid, yellow lighter',async()=>{
+test('each lane has its own thin mark strip in the state colours of face A, with a tag in the lane curve colour',async()=>{
  const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'},{slot:'mobile',start:NOW-1800000,end:NOW-1200000,state:'yellow'},{slot:'mobile',start:NOW-900000,end:NOW-720000,state:'red'}];
  const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},marks});
  const rects=c.strip();
@@ -167,8 +168,9 @@ test('each lane has its own thin mark strip, in the lane colour: red solid, yell
  const by=slot=>rects.filter(r=>r.attributes['data-slot']===slot);
  assert.equal(by('telecom').length,1);assert.equal(by('unicom').length,0);assert.equal(by('mobile').length,2);
  assert.deepEqual([by('telecom')[0].attributes.y,by('mobile')[0].attributes.y],['0','6'],'one row per lane, always the same row');
- assert.equal(by('telecom')[0].attributes.fill,'#3D6FA8');assert.equal(by('mobile')[0].attributes.fill,'#4F5B62');
- assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='yellow').attributes.opacity,'0.45');assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='red').attributes.opacity,'1');
+ assert.equal(by('telecom')[0].attributes.fill,'#B8433D','red is the red of the blocks');
+ assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='yellow').attributes.fill,'#E3B54F');assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='red').attributes.fill,'#B8433D');
+ assert.deepEqual(c.tags().map(t=>[t.attributes['data-tag'],t.attributes.fill,t.attributes.y]),[['telecom','#3D6FA8','0'],['unicom','#8A5BB0','3'],['mobile','#4F5B62','6']],'one tag per running lane, in its curve colour');
  assert.ok(rects.every(r=>r.attributes.height==='2'));
  assert.ok(c.requests.some(u=>/v5\/marks\?family=ipv4&from=\d+&to=\d+/.test(u)));
 });

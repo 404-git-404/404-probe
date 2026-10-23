@@ -6,6 +6,7 @@
   const RS=root.RangeSlider||(typeof require==='function'?require('./range-slider.js'):null);
   const MINUTE=60000,HOUR=3600000,DAY=24*HOUR,TTL=120000,MARKS_TTL=60000,MIN_SPAN=10*MINUTE;
   const colors={telecom:'#3D6FA8',unicom:'#8A5BB0',mobile:'#4F5B62'};
+  // The strips use the colours of the blocks of face A; the lane is told by a short tag in its own curve colour.
   const markColors={yellow:'#E3B54F',red:'#B8433D'};
   const finite=C.finite,integer=v=>Number.isSafeInteger(v)&&v>=0;
   const identity=t=>JSON.stringify([t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status]);
@@ -44,7 +45,7 @@
       if(!lane||!C.slots.includes(lane.slot)||!Array.isArray(lane.runs))fail();
       for(const r of lane.runs){if(!r||!finite(r.start)||!finite(r.end)||r.end<=r.start||!['yellow','red'].includes(r.state))fail();runs.push({slot:lane.slot,start:r.start,end:r.end,state:r.state});}
     }
-    return {family,from:v.from,to:v.to,evalEnd:v.eval_end,runs};
+    return {family,from:v.from,to:v.to,evalEnd:v.eval_end,runs,slots:v.lanes.map(l=>l.slot)};
   }
   // Fixed ruler: sqrt(v/1000) over 0-1000ms, identical on every card. Above 1000ms is off the ruler and is drawn as a dashed run on the top edge.
   const CEIL=1000,DASH='3,2',GRID=[100,300,1000];
@@ -101,15 +102,17 @@
       const box=c.node.getBoundingClientRect(),plot=c.plot.getBoundingClientRect(),width=Math.min(250,Math.max(140,box.width-8));
       c.tip.style.width=width+'px';c.tip.style.left=Math.max(0,Math.min(box.width-width,x-box.left-width/2))+'px';c.tip.style.top=(plot.bottom-box.top+4)+'px';
     }
-    // One thin strip per lane, in the lane's colour: red solid, yellow lighter. Lane order is the order of the curves.
+    // One thin strip per running lane, in the state colours of face A (yellow: now and then, red: lasting); at its left end a tag in the lane's curve colour.
     function drawMarks(c,start,end,left,w){
       const ns='http://www.w3.org/2000/svg',svg=doc.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${w} 8`);svg.setAttribute('aria-hidden','true');
       if(c.protocol==='tcp'&&c.marks){
         const x=v=>left+(v-start)/(end-start)*(w-left);
         C.slots.forEach((slot,row)=>{
+          if(!c.marks.slots.includes(slot))return;
+          const tag=doc.createElementNS(ns,'rect');for(const [k,v]of Object.entries({x:Math.max(0,left-9),y:row*3,width:7,height:2,fill:colors[slot],'data-tag':slot}))tag.setAttribute(k,String(v));svg.append(tag);
           for(const run of c.marks.runs.filter(r=>r.slot===slot&&r.end>start&&r.start<end)){
             const from=Math.max(x(Math.max(run.start,start)),left),to=Math.min(x(Math.min(run.end,end)),w),rect=doc.createElementNS(ns,'rect');
-            for(const [k,v]of Object.entries({x:from.toFixed(2),y:row*3,width:Math.max(2,to-from).toFixed(2),height:2,fill:colors[slot],opacity:run.state==='red'?1:.45,'data-mark':run.state,'data-slot':slot}))rect.setAttribute(k,String(v));
+            for(const [k,v]of Object.entries({x:from.toFixed(2),y:row*3,width:Math.max(2,to-from).toFixed(2),height:2,fill:markColors[run.state],'data-mark':run.state,'data-slot':slot}))rect.setAttribute(k,String(v));
             svg.append(rect);
           }
         });
