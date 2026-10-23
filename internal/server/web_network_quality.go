@@ -17,6 +17,8 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 	mux.Handle("GET "+path+"v3/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryRollup), true)))
 	mux.Handle("GET "+path+"v3/card-history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardHistory), true)))
 	a.qualityV4Routes(mux, path)
+	mux.Handle("GET "+path+"v5/card", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardV5), true)))
+	mux.Handle("GET "+path+"v5/marks", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityMarksV5), true)))
 	// Routes of the catalog era. The static files are embedded in the binary, but a page that was open
 	// during a Server upgrade still calls them, so they answer 410 instead of vanishing (R07 4.1).
 	outdated := http.HandlerFunc(a.handleQualityClientOutdated)
