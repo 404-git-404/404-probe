@@ -718,3 +718,16 @@ func TestCardAndAlertForADeviceThatNeverConfiguredQuality(t *testing.T) {
 		t.Fatalf("marks %+v %v", marks, err)
 	}
 }
+
+// A range wholly after the evaluation cut-off is answered empty, and the answer does not claim to reach past the cut-off.
+func TestMarksFutureRangeStopsAtTheCutoff(t *testing.T) {
+	k := newV4Kit(t)
+	evalEnd := QualityEvalEnd(k.now.UnixMilli())
+	m, err := k.s.QualityMarks(k.ctx, k.id, "ipv4", evalEnd+3600000, evalEnd+7200000, k.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.To > m.EvalEnd || m.From > m.To || len(m.Lanes) != 0 {
+		t.Fatalf("%+v", m)
+	}
+}

@@ -371,7 +371,9 @@ func (s *Store) QualityMarks(ctx context.Context, agentID, family string, from, 
 	if err != nil {
 		return QualityMarks{}, err
 	}
-	out := QualityMarks{EvalEnd: r.evalEnd, Family: family, From: alignedFrom, To: max(end, alignedFrom), Lanes: []QualityMarksLane{}}
+	// The answer never reaches past the evaluation cut-off, also for a range that lies wholly in the future.
+	clampedTo := min(max(end, alignedFrom), r.evalEnd)
+	out := QualityMarks{EvalEnd: r.evalEnd, Family: family, From: min(alignedFrom, clampedTo), To: clampedTo, Lanes: []QualityMarksLane{}}
 	if !ok {
 		return out, nil
 	}

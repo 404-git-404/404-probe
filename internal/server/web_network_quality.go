@@ -15,7 +15,6 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 	mux.Handle("GET "+path+"history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistory), true)))
 	mux.Handle("GET "+path+"v2/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryV2), true)))
 	mux.Handle("GET "+path+"v3/history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityHistoryRollup), true)))
-	mux.Handle("GET "+path+"v3/card-history", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardHistory), true)))
 	a.qualityV4Routes(mux, path)
 	mux.Handle("GET "+path+"v5/card", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardV5), true)))
 	mux.Handle("GET "+path+"v5/marks", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityMarksV5), true)))
@@ -27,6 +26,8 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 		mux.Handle("GET "+path+suffix, qualityBudgetHandler(a.requireWebSession(outdated, true)))
 		mux.Handle("PUT "+path+suffix, qualityBudgetHandler(a.requireWebMutation(outdated)))
 	}
+	// v1.0.7 moved the card to v5/card; the old card read answers 410 so an open page asks to be refreshed.
+	mux.Handle("GET "+path+"v3/card-history", qualityBudgetHandler(a.requireWebSession(outdated, true)))
 	mux.Handle("GET "+path+"v3/card-config", qualityBudgetHandler(a.requireWebSession(outdated, true)))
 	// Schema 35 retires the TCP Mini evidence tables; R25 judges the stored minute buckets instead.
 	mux.Handle("GET "+path+"v3/tcp-mini", qualityBudgetHandler(a.requireWebSession(outdated, true)))
@@ -53,20 +54,6 @@ func (a *App) handleQualityHistoryRollup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	history, err := a.store.QualityHistoryRollup(r.Context(), r.PathValue("agent_id"), q.Get("target_id"), q.Get("view"), a.now())
-	if err != nil {
-		qualityHTTPError(w, err)
-		return
-	}
-	writeJSON(w, 200, history)
-}
-func (a *App) handleQualityCardHistory(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	q, err := url.ParseQuery(r.URL.RawQuery)
-	if !qualityWebPath(r, "v3/card-history") || err != nil || len(q) != 1 || len(q["target_id"]) != 1 || !validLowerHexID(q.Get("target_id"), 32) {
-		writeJobError(w, 400, "invalid_query", "target_id required")
-		return
-	}
-	history, err := a.store.QualityCardHistory(r.Context(), r.PathValue("agent_id"), q.Get("target_id"), a.now())
 	if err != nil {
 		qualityHTTPError(w, err)
 		return

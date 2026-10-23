@@ -102,3 +102,21 @@ func TestV107V5EndpointsRefuseBadRequests(t *testing.T) {
 		}
 	}
 }
+
+// The card moved to v5/card: the old per-target card read answers 410 so that a page of v1.0.6 asks to be refreshed.
+func TestV107CardHistoryAnswersGoneAndOneHourViewReplacesIt(t *testing.T) {
+	a, s, id, token := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	qualityServerConfig(t, a, s, id, token)
+	target := strings.Repeat("a", 32)
+	w := qualityWebRequest(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/card-history?target_id="+target, "")
+	if w.Code != http.StatusGone || !strings.Contains(w.Body.String(), "client_outdated") || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal(w.Code, w.Header(), w.Body.String())
+	}
+	// The device details page reads its one-hour view as v3/history?view=1hour: not 410, and not the one-day view.
+	w = qualityWebRequest(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/history?target_id="+target+"&view=1hour", "")
+	if w.Code == http.StatusGone || w.Code == http.StatusBadRequest {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

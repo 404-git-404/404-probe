@@ -48,6 +48,9 @@ func (s *Store) QualityHistoryRollup(ctx context.Context, id, targetID, view str
 	var res int64
 	var n int
 	switch view {
+	case "1hour":
+		// The device details page's one-hour view: twelve five-minute buckets (it used v3/card-history before v1.0.7).
+		return s.QualityCardHistory(ctx, id, targetID, now)
 	case "1day":
 		res, n = 60000, 1440
 	case "1week":
