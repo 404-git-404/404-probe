@@ -3,6 +3,7 @@ package protocol
 import (
 	"errors"
 	"net/netip"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -43,14 +44,20 @@ const (
 	QualityErrInvalidInterval = "invalid_interval"
 	QualityErrInvalidEncoding = "invalid_encoding"
 	QualityErrInvalidRequest  = "invalid_request"
+	// QualityErrInvalidThreshold: the slow threshold is not a whole number of milliseconds in range.
+	QualityErrInvalidThreshold = "invalid_threshold"
 )
 
 const (
 	QualityMinIntervalMS  = 30000
 	QualityMaxIntervalMS  = 300000
 	QualityStepIntervalMS = 30000
-	qualityLabelBytes     = 96
-	qualityLabelRunes     = 32
+	// The slow threshold of a card (design 1.7): whole milliseconds, one value for its three slots.
+	QualitySlowThresholdMinMS     = 50
+	QualitySlowThresholdMaxMS     = 3000
+	QualitySlowThresholdDefaultMS = 500
+	qualityLabelBytes             = 96
+	qualityLabelRunes             = 32
 )
 
 // QualityProvinces are the 31 provincial-level regions a built-in slot may name.
@@ -112,6 +119,47 @@ type QualityV4SaveRequest struct {
 	ExpectedRevision string          `json:"expected_revision"`
 	IntervalMS       int             `json:"interval_ms"`
 	Slots            []QualityV4Slot `json:"slots"`
+	// SlowThresholdMS is absent for a page that does not know the field (v1.0.6): the stored value is kept.
+	SlowThresholdMS *QualityThreshold `json:"slow_threshold_ms,omitempty"`
+}
+
+// QualityThreshold carries a slow threshold as the client sent it. A JSON number that is not a whole
+// number (500.5, 5e2), a string or anything else decodes without an error and reports Valid=false, so the
+// handler can answer with the field error invalid_threshold instead of a generic decode failure.
+type QualityThreshold struct {
+	Value int
+	Valid bool
+}
+
+func (t QualityThreshold) MarshalJSON() ([]byte, error) { return []byte(strconv.Itoa(t.Value)), nil }
+
+func (t *QualityThreshold) UnmarshalJSON(raw []byte) error {
+	*t = QualityThreshold{}
+	text := strings.TrimSpace(string(raw))
+	if text == "" || len(text) > 9 {
+		return nil
+	}
+	for i, r := range text {
+		if r < '0' || r > '9' {
+			if !(i == 0 && r == '-' && len(text) > 1) {
+				return nil
+			}
+		}
+	}
+	if len(text) > 1 && (text[0] == '0' || strings.HasPrefix(text, "-0")) {
+		return nil // JSON has no leading zeros; they never reach here, kept as a guard
+	}
+	value, err := strconv.Atoi(text)
+	if err != nil {
+		return nil
+	}
+	t.Value, t.Valid = value, true
+	return nil
+}
+
+// QualitySlowThresholdValid reports whether v is a usable slow threshold.
+func QualitySlowThresholdValid(v int) bool {
+	return v >= QualitySlowThresholdMinMS && v <= QualitySlowThresholdMaxMS
 }
 
 // QualityV4EnabledRequest changes only the master switch.
@@ -150,6 +198,7 @@ type QualityV4Config struct {
 	ConfigRevision      string          `json:"config_revision"`
 	Enabled             bool            `json:"enabled"`
 	IntervalMS          int             `json:"interval_ms"`
+	SlowThresholdMS     int             `json:"slow_threshold_ms"`
 	EffectiveIntervalMS int             `json:"effective_interval_ms"`
 	State               string          `json:"state"`
 	AgentSupport        string          `json:"agent_support"`

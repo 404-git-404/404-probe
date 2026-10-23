@@ -378,3 +378,66 @@ func TestR07V4RealHTTPFiveSecondBodyBudget(t *testing.T) {
 		t.Fatal("handler remained blocked beyond budget")
 	}
 }
+
+// The slow threshold of a card (v1.0.7): validated field by field, optional for an old page, never reset.
+func TestV107SlowThresholdSaveOverHTTP(t *testing.T) {
+	a, id, resolver, done := v4App(t)
+	defer done()
+	resolver.answers["ip4/example.com"] = addr("93.184.216.34")
+	resolver.answers["ip6/example.com"] = addr("2606:2800:220:1:248:1893:25c8:1946")
+	path := v4Path(id, "config")
+	withThreshold := func(expected string, raw string) string {
+		body := v4Body(expected, 30000, "example.com")
+		if raw == "" {
+			return body
+		}
+		return strings.Replace(body, `"interval_ms":30000`, `"interval_ms":30000,"slow_threshold_ms":`+raw, 1)
+	}
+	read := func() protocol.QualityV4Config {
+		t.Helper()
+		var cfg protocol.QualityV4Config
+		w := qualityWebRequest(t, a, http.MethodGet, path, "")
+		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || w.Code != 200 {
+			t.Fatal(err, w.Code, w.Body.String())
+		}
+		return cfg
+	}
+	if cfg := read(); cfg.SlowThresholdMS != 500 {
+		t.Fatalf("a new card starts at %d", cfg.SlowThresholdMS)
+	}
+	for _, raw := range []string{"49", "3001", "0", "-1", "500.5", "500.0", "5e2", `"500"`, "true", "[500]", "99999999999999999999"} {
+		w := qualityWebRequest(t, a, http.MethodPut, path, withThreshold(read().SettingsRevision, raw))
+		details := v4Decode(t, w).Error.Details
+		if w.Code != 400 || len(details) != 1 || details[0].Field != "slow_threshold_ms" || details[0].Code != "invalid_threshold" {
+			t.Fatalf("threshold %s: %d %s", raw, w.Code, w.Body.String())
+		}
+	}
+	if cfg := read(); cfg.SlowThresholdMS != 500 || cfg.SettingsRevision != "0" {
+		t.Fatalf("a refused threshold changed the card: %+v", cfg)
+	}
+	for _, raw := range []string{"50", "3000", "600"} {
+		w := qualityWebRequest(t, a, http.MethodPut, path, withThreshold(read().SettingsRevision, raw))
+		var cfg protocol.QualityV4Config
+		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || w.Code != 200 || fmt.Sprint(cfg.SlowThresholdMS) != raw {
+			t.Fatalf("threshold %s: %d %s", raw, w.Code, w.Body.String())
+		}
+	}
+	// A page of v1.0.6 does not send the field: the stored 600 stays.
+	w := qualityWebRequest(t, a, http.MethodPut, path, withThreshold(read().SettingsRevision, ""))
+	var cfg protocol.QualityV4Config
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || w.Code != 200 || cfg.SlowThresholdMS != 600 {
+		t.Fatalf("an absent threshold reset the card: %d %s", w.Code, w.Body.String())
+	}
+	// The same page with a stale revision conflicts; after it read the revision again it still keeps 600.
+	if w := qualityWebRequest(t, a, http.MethodPut, path, withThreshold("0", "")); w.Code != 409 {
+		t.Fatalf("stale: %d %s", w.Code, w.Body.String())
+	}
+	// The master switch does not reset it either.
+	revision := read().SettingsRevision
+	if w := qualityWebRequest(t, a, http.MethodPut, v4Path(id, "enabled"), `{"expected_revision":"`+revision+`","enabled":true}`); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if cfg := read(); cfg.SlowThresholdMS != 600 || !cfg.Enabled {
+		t.Fatalf("after the switch: %+v", cfg)
+	}
+}

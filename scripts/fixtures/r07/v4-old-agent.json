@@ -3,6 +3,7 @@
   "config_revision": "2",
   "enabled": true,
   "interval_ms": 60000,
+  "slow_threshold_ms": 500,
   "effective_interval_ms": 60000,
   "state": "agent_upgrade_required",
   "agent_support": "upgrade_required",

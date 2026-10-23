@@ -44,6 +44,12 @@ func (s *Store) SaveQualityConfigV4(ctx context.Context, id string, request prot
 		return protocol.QualityV4Config{}, ErrQualityInvalid
 	}
 	proposal := qualityProposal{IntervalMS: request.IntervalMS}
+	if request.SlowThresholdMS != nil {
+		if !request.SlowThresholdMS.Valid || !protocol.QualitySlowThresholdValid(request.SlowThresholdMS.Value) {
+			return protocol.QualityV4Config{}, ErrQualityInvalid
+		}
+		proposal.SlowThresholdMS = request.SlowThresholdMS.Value
+	}
 	seen := map[string]bool{}
 	for _, slot := range request.Slots {
 		normalized, errs := protocol.NormalizeQualitySlot(slot)
@@ -138,7 +144,7 @@ func (s *Store) SetQualityEnabledV4(ctx context.Context, id string, request prot
 		if err != nil {
 			return protocol.QualityV4Config{}, err
 		}
-		proposal := qualityProposal{Enabled: want, IntervalMS: cfg.IntervalMS}
+		proposal := qualityProposal{Enabled: want, IntervalMS: cfg.IntervalMS, SlowThresholdMS: cfg.SlowThresholdMS}
 		for i := range rows {
 			proposal.Slots[i] = rows[i].QualityV4Slot
 		}
@@ -262,6 +268,7 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 	out.ConfigRevision = strconv.FormatInt(cfg.Revision, 10)
 	out.Enabled = cfg.Enabled
 	out.IntervalMS = cfg.IntervalMS
+	out.SlowThresholdMS = cfg.SlowThresholdMS
 	out.EffectiveIntervalMS = qualityEffectiveInterval(cfg.IntervalMS, budget.Scale)
 	out.AgentSupport = support.state
 	out.ICMPSupport = qualityICMPSupport(deviceInactive, support, in)

@@ -3,6 +3,7 @@
   "config_revision": "1",
   "enabled": false,
   "interval_ms": 60000,
+  "slow_threshold_ms": 500,
   "effective_interval_ms": 60000,
   "state": "unsupported",
   "agent_support": "unsupported",

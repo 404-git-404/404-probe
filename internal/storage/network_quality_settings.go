@@ -45,6 +45,7 @@ type qualityConfigRow struct {
 	SettingsRevision int64
 	Enabled          bool
 	IntervalMS       int
+	SlowThresholdMS  int
 	Granted          bool
 	Snapshot         *protocol.QualityCapabilities
 }
@@ -60,10 +61,10 @@ func qualityDefaultSlot(slot string) protocol.QualityV4Slot {
 }
 
 func qualityLoadConfigTx(ctx context.Context, tx *sql.Tx, id string) (qualityConfigRow, error) {
-	cfg := qualityConfigRow{IntervalMS: protocol.QualityMinIntervalMS}
+	cfg := qualityConfigRow{IntervalMS: protocol.QualityMinIntervalMS, SlowThresholdMS: protocol.QualitySlowThresholdDefaultMS}
 	var snapshot sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT revision,settings_revision,enabled,interval_ms,targets_granted,capability_snapshot FROM quality_config WHERE agent_id=?`, id).
-		Scan(&cfg.Revision, &cfg.SettingsRevision, &cfg.Enabled, &cfg.IntervalMS, &cfg.Granted, &snapshot)
+	err := tx.QueryRowContext(ctx, `SELECT revision,settings_revision,enabled,interval_ms,slow_threshold_ms,targets_granted,capability_snapshot FROM quality_config WHERE agent_id=?`, id).
+		Scan(&cfg.Revision, &cfg.SettingsRevision, &cfg.Enabled, &cfg.IntervalMS, &cfg.SlowThresholdMS, &cfg.Granted, &snapshot)
 	if errors.Is(err, sql.ErrNoRows) {
 		return cfg, nil
 	}
@@ -187,7 +188,10 @@ func qualityLaneActive(s protocol.QualityV4Slot, l qualityLane, enabled bool, in
 type qualityProposal struct {
 	Enabled    bool
 	IntervalMS int
-	Slots      [3]protocol.QualityV4Slot
+	// SlowThresholdMS is a setting, not a measurement: it changes the settings revision only. Zero means
+	// "keep the stored value", so a proposal built without it can never reset the threshold.
+	SlowThresholdMS int
+	Slots           [3]protocol.QualityV4Slot
 }
 
 func qualityMeasurementSame(a, b protocol.QualityV4Slot) bool {
@@ -224,7 +228,7 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 	if err != nil {
 		return result, err
 	}
-	next := qualityProposal{Enabled: cfg.Enabled, IntervalMS: cfg.IntervalMS}
+	next := qualityProposal{Enabled: cfg.Enabled, IntervalMS: cfg.IntervalMS, SlowThresholdMS: cfg.SlowThresholdMS}
 	for i := range rows {
 		next.Slots[i] = rows[i].QualityV4Slot
 	}
@@ -235,8 +239,17 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 			return result, ErrQualityInvalid
 		}
 		next = *proposal
+		if next.SlowThresholdMS == 0 {
+			next.SlowThresholdMS = cfg.SlowThresholdMS
+		}
+		if !protocol.QualitySlowThresholdValid(next.SlowThresholdMS) {
+			return result, ErrQualityInvalid
+		}
 		if next.Enabled != cfg.Enabled || next.IntervalMS != cfg.IntervalMS {
 			settingsChanged, measurementChanged = true, true
+		}
+		if next.SlowThresholdMS != cfg.SlowThresholdMS {
+			settingsChanged = true // the threshold only changes how stored samples are classified
 		}
 		for i := range rows {
 			if next.Slots[i].Slot != rows[i].Slot {
@@ -426,9 +439,9 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 		}
 	}
 	defaultChoices, _ := json.Marshal(qualityDefaultChoices())
-	if _, err := tx.ExecContext(ctx, `INSERT INTO quality_config(agent_id,revision,enabled,ipv6,choices,updated_at,settings_revision,interval_ms) VALUES(?,?,?,0,?,?,?,?)
-		ON CONFLICT(agent_id) DO UPDATE SET revision=excluded.revision,settings_revision=excluded.settings_revision,enabled=excluded.enabled,interval_ms=excluded.interval_ms,updated_at=excluded.updated_at`,
-		id, newRevision, next.Enabled, string(defaultChoices), now.UnixMilli(), newSettings, next.IntervalMS); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO quality_config(agent_id,revision,enabled,ipv6,choices,updated_at,settings_revision,interval_ms,slow_threshold_ms) VALUES(?,?,?,0,?,?,?,?,?)
+		ON CONFLICT(agent_id) DO UPDATE SET revision=excluded.revision,settings_revision=excluded.settings_revision,enabled=excluded.enabled,interval_ms=excluded.interval_ms,slow_threshold_ms=excluded.slow_threshold_ms,updated_at=excluded.updated_at`,
+		id, newRevision, next.Enabled, string(defaultChoices), now.UnixMilli(), newSettings, next.IntervalMS, next.SlowThresholdMS); err != nil {
 		return result, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE quality_targets SET retired_at=CASE WHEN EXISTS(SELECT 1 FROM quality_slots s WHERE s.target_id=quality_targets.id) THEN NULL ELSE COALESCE(retired_at,?) END WHERE agent_id=?`, now.UnixMilli(), id); err != nil {

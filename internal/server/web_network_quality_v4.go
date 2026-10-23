@@ -91,6 +91,9 @@ func (a *App) handleQualityV4Config(w http.ResponseWriter, r *http.Request) {
 	if !protocol.QualityIntervalValid(request.IntervalMS) {
 		errs = append(errs, protocol.QualityFieldError{Field: "interval_ms", Code: protocol.QualityErrInvalidInterval})
 	}
+	if t := request.SlowThresholdMS; t != nil && (!t.Valid || !protocol.QualitySlowThresholdValid(t.Value)) {
+		errs = append(errs, protocol.QualityFieldError{Field: "slow_threshold_ms", Code: protocol.QualityErrInvalidThreshold})
+	}
 	if len(request.Slots) != 3 {
 		errs = append(errs, protocol.QualityFieldError{Field: "slots", Code: protocol.QualityErrInvalidRequest})
 	}
