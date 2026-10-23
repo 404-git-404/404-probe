@@ -7,6 +7,7 @@ this adapter and the old release binary; add a separately tested adapter for the
 new previous-release schema, never copy handwritten DDL into this tool.
 """
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import random
@@ -139,11 +140,6 @@ def generate(server, output, scale, seed=31, anchor_ms=NOW):
                    collected_at=NOW, last_seen=NOW, ram_total=1073741824, disk_total=21474836480)
         states.append(row)
     insert('agent_state', states)
-    insert('agent_plans', (dict(agent_id=a,traffic_mode=['rx','tx','sum'][i%3],quota_value='1',
-        quota_unit='TiB',quota_bytes=1099511627776,cycle_kind='days',cycle_count=30,
-        cycle_anchor='2026-09-23',timezone='UTC',cycle_start=NOW-30*DAY,cycle_end=NOW,
-        usage_bytes=123456789,updated_at=NOW) for i,a in enumerate(agents[:31])))
-    insert('agent_plan_config', (dict(agent_id=a,revision=uid()) for a in agents[:31]))
     insert('agent_upgrade_operations', (dict(operation_id=uid(),agent_id=agents[i%71],from_version='v1.0.5',
         target_version='v1.0.6',status='succeeded',created_at=NOW-i*60000,updated_at=NOW,
         finished_at=NOW) for i in range(113)))
@@ -159,7 +155,7 @@ def generate(server, output, scale, seed=31, anchor_ms=NOW):
         return agents[i%23]
     insert('quality_targets', (dict(id=t,agent_id=owner(i),fingerprint=uid(),payload=json.dumps(dict(
         slot=slots[i%3],family='ipv4',slot_revision='1',source='user',protocol='tcp',host=f'192.0.2.{i%250+1}',
-        port=443,status='ready')),created_at=NOW-30*DAY,retired_at=NOW if i>=108 else None)
+        port=443,status='ready')),created_at=NOW-30*DAY,retired_at=NOW)
         for i,t in enumerate(targets)))
     insert('quality_series', (dict(id=i+1,agent_id=owner(i),target_id=targets[i],semantics='staged_probe_v2') for i in range(128)))
     insert('quality_sessions', (dict(id=i+1,agent_id=agents[i],epoch=1,session_id=f'example-quality-{i}') for i in range(23)))
@@ -168,15 +164,37 @@ def generate(server, output, scale, seed=31, anchor_ms=NOW):
         v1_authorized=0) for i in range(111)))
     insert('quality_gaps', (dict(agent_id=agents[i%23],epoch=1,session_id=f'example-quality-{i%23}',
         start_at=NOW-i*60000-30000,end_at=NOW-i*60000,reason='example',dropped=1) for i in range(95)))
-    metric_count = size(31*43200 if scale=='full' else 1252235)
+    metric_count = 1280 if tiny else (31*43200 if scale=='full' else 1252235)
     def metrics(count, offset=0, owners=40):
         for i in range(count):
             minute = (i//owners)*43200//max(1, (count+owners-1)//owners) + offset if offset == 0 else i//owners+offset
             yield dict(agent_id=agents[i%owners],bucket=NOW-(minute+1)*60000,samples=2,
                 cpu_sum=35.125+i%80,ram_sum=94.125,swap_sum=0.0,disk_sum=66.25,
                 load1_sum=0.125,load5_sum=0.25,load15_sum=0.375,rx_rate_sum=12345.125,
-                tx_rate_sum=5432.125,rx_total=123456789012+i*12345,tx_total=98765432101+i*5432)
+                tx_rate_sum=5432.125,rx_total=123456789012+max(0,43200-minute-1)*12000,tx_total=98765432101+max(0,43200-minute-1)*6000)
     insert('minute_metrics',metrics(metric_count,owners=31 if scale=='full' else 40))
+    # Cycle starts lie inside the retained window, with an actual preceding row.
+    # Match usage exactly to the mode's accumulated delta (including calibrated plans).
+    plans=[]
+    for i,a in enumerate(agents[:43]):
+        cycle_start=NOW-(7+i%19)*DAY
+        first=c.execute('SELECT rx_total,tx_total FROM minute_metrics WHERE agent_id=? AND bucket<=? ORDER BY bucket DESC LIMIT 1',(a,cycle_start)).fetchone()
+        last=c.execute('SELECT rx_total,tx_total FROM minute_metrics WHERE agent_id=? AND bucket<=? ORDER BY bucket DESC LIMIT 1',(a,NOW)).fetchone()
+        mode=['rx','tx','sum'][i%3]
+        rx,tx=(last[0]-first[0],last[1]-first[1]) if first and last else (0,0)
+        plans.append(dict(agent_id=a,traffic_mode=mode,quota_value='1',quota_unit='TiB',quota_bytes=1099511627776,
+            cycle_kind='days',cycle_count=30,cycle_anchor=datetime.fromtimestamp(cycle_start/1000,timezone.utc).strftime('%Y-%m-%d'),
+            timezone='UTC',cycle_start=cycle_start,cycle_end=cycle_start+30*DAY,
+            usage_bytes={'rx':rx,'tx':tx,'sum':rx+tx}[mode],usage_status='calibrated' if first and i%4==0 else 'partial',updated_at=NOW))
+        if last:
+            c.execute('UPDATE agent_state SET rx_total=?,tx_total=? WHERE agent_id=?',(*last,a))
+    insert('agent_plans',plans)
+    insert('agent_plan_config',(dict(agent_id=a,revision=uid()) for a in agents[:43]))
+    insert('quality_retired',(dict(session_key=i+1,seq=0,sample_time=NOW-2*DAY-30000) for i in range(23)))
+    insert('tcp_mini_state',(dict(agent_id=a,evidence_start=NOW-3*DAY,scanned_at=NOW,initialized=1,revision=1) for a in agents))
+    insert('agent_google_status',(dict(agent_id=a,youtube_status='unknown',search_status='unknown',signin_status='unknown',
+        gemini_status='unknown',checked_at=NOW,unknown_streak=0,next_due_at=NOW+DAY) for a in agents[:48]))
+    insert('agent_google_status_capabilities',(dict(agent_id=a,supported=1,updated_at=NOW) for a in agents[:48]))
     receipts = size(108*5760 if scale=='full' else 433443)
     insert('quality_receipts', (dict(session_key=i%23+1,seq=i+1,series_id=i%108+1,
         sample_time=NOW-(i//108*5760//max(1,(receipts+107)//108)+1)*30000,config_revision=1,slot_revision=1,
