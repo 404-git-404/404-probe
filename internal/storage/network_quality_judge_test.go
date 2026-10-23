@@ -730,3 +730,70 @@ func TestBlockEnoughSamplesPerInterval(t *testing.T) {
 		}
 	}
 }
+
+// ---------- every outcome through the ingest's own aggregation (design 1.2) ----------
+
+func outcomeSample(outcome string, probeComplete, connectComplete bool, ms float64, extra func(*protocol.QualityDetails)) protocol.QualitySample {
+	d := protocol.QualityDetails{Semantics: protocol.QualityStagedSemantics, DNSOutcome: "success", ProbeComplete: probeComplete, ConnectAttempted: connectComplete, ConnectComplete: connectComplete, IntervalMS: 30000}
+	s := protocol.QualitySample{Sequence: "1", StartedAt: 1000, FinishedAt: 1020, DurationMS: 20, Outcome: outcome, ResolvedIP: "93.184.216.34"}
+	if outcome == "success" {
+		d.ConnectMS = &ms
+		s.LatencyMS = &ms
+	}
+	if extra != nil {
+		extra(&d)
+	}
+	s.Details = d.Encode()
+	return s
+}
+
+func TestEveryOutcomeIsClassifiedAsJudgedOrNot(t *testing.T) {
+	frame := qualityLaneFrame{SlotRevision: 2, HasInterval: true, ThresholdMS: 500, TCP: true}
+	dnsFailure := func(d *protocol.QualityDetails) {
+		d.DNSOutcome, d.ErrorStage, d.ErrorCode = "not_found", "dns", "not_found"
+	}
+	for _, c := range []struct {
+		name     string
+		sample   protocol.QualitySample
+		j, s, f  int
+		unjudged int
+	}{
+		{"fast success", outcomeSample("success", true, true, 100, nil), 1, 0, 0, 0},
+		{"success exactly at the threshold", outcomeSample("success", true, true, 500, nil), 1, 0, 0, 0},
+		{"success one grid step over the threshold", outcomeSample("success", true, true, 500.25, nil), 1, 1, 0, 0},
+		{"slow success", outcomeSample("success", true, true, 900, nil), 1, 1, 0, 0},
+		{"timeout after the connect stage", outcomeSample("timeout", true, true, 0, nil), 1, 0, 1, 0},
+		{"refused", outcomeSample("refused", true, true, 0, nil), 1, 0, 1, 0},
+		{"network error", outcomeSample("network_error", true, true, 0, nil), 1, 0, 1, 0},
+		{"resolver failure", outcomeSample("dns_error", true, false, 0, dnsFailure), 0, 0, 0, 1},
+		{"canceled", outcomeSample("canceled", false, false, 0, nil), 0, 0, 0, 1},
+		{"not run", outcomeSample("not_run", false, false, 0, nil), 0, 0, 0, 1},
+		{"unsafe address", outcomeSample("unsafe_address", false, false, 0, nil), 0, 0, 0, 1},
+		{"permission denied", outcomeSample("permission_denied", false, false, 0, nil), 0, 0, 0, 1},
+		{"unsupported", outcomeSample("unsupported", false, false, 0, nil), 0, 0, 0, 1},
+		{"invalid configuration", outcomeSample("invalid_config", false, false, 0, nil), 0, 0, 0, 1},
+		{"connected but the probe is incomplete", outcomeSample("success", false, true, 80, nil), 0, 0, 0, 1},
+	} {
+		b, err := qualityContribution(c.sample, "tcp")
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		b.ConfigMin, b.ConfigMax, b.SlotMin, b.SlotMax = 1, 1, 2, 2
+		m := qualityJudgeMinute(frame, 5*qualityMinuteMS, &b, false)
+		if m.J != c.j || m.S != c.s || m.F != c.f || m.Unjudged != c.unjudged {
+			t.Errorf("%s: J=%d S=%d F=%d unjudged=%d, want J=%d S=%d F=%d unjudged=%d", c.name, m.J, m.S, m.F, m.Unjudged, c.j, c.s, c.f, c.unjudged)
+		}
+		if (m.Kind == minuteData) != (c.j > 0) {
+			t.Errorf("%s: minute kind %v", c.name, m.Kind)
+		}
+	}
+	// The same stored RTT is classified by the threshold of the moment: 600 ms is slow at 500 and 599, not at 600.
+	b, _ := qualityContribution(outcomeSample("success", true, true, 600, nil), "tcp")
+	b.ConfigMin, b.ConfigMax, b.SlotMin, b.SlotMax = 1, 1, 2, 2
+	for _, threshold := range []int{50, 500, 599, 600, 3000} {
+		frame.ThresholdMS = threshold
+		if m := qualityJudgeMinute(frame, 5*qualityMinuteMS, &b, false); (m.S == 1) != (600 > threshold) {
+			t.Errorf("threshold %d: slow=%d", threshold, m.S)
+		}
+	}
+}

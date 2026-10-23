@@ -697,3 +697,26 @@ func TestCardLanesThatAreNotMeasuringShowNoJudgement(t *testing.T) {
 		}
 	})
 }
+
+// A device that never configured network quality still gets a well-formed answer: three lanes with their status,
+// the default threshold, no judgement and no alert.
+func TestCardAndAlertForADeviceThatNeverConfiguredQuality(t *testing.T) {
+	s, id, _ := testStore(t, ":memory:")
+	defer s.Close()
+	now := time.Unix(1800000000, 0)
+	got, err := s.QualityCardSummary(context.Background(), id, "ipv4", now)
+	if err != nil || len(got.Lanes) != 3 || got.ThresholdMS != 500 || got.AlertActive {
+		t.Fatalf("%+v %v", got, err)
+	}
+	for _, lane := range got.Lanes {
+		if lane.TCP.Status == "" || lane.TCP.Blocks != nil || lane.TCP.Red != nil || lane.Right.Kind != "none" {
+			t.Fatalf("lane %+v", lane)
+		}
+	}
+	if alert, err := s.QualityAlertActive(context.Background(), id, now); err != nil || alert {
+		t.Fatalf("alert %v %v", alert, err)
+	}
+	if marks, err := s.QualityMarks(context.Background(), id, "ipv6", now.UnixMilli()-3600000, now.UnixMilli(), now); err != nil || len(marks.Lanes) != 0 {
+		t.Fatalf("marks %+v %v", marks, err)
+	}
+}
