@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -538,5 +540,42 @@ func TestCardTargetAbnormalLaneHasNoBlocks(t *testing.T) {
 	}
 	if s.AlertActive {
 		t.Fatal("alert from a lane with an abnormal target")
+	}
+}
+
+// The disk budget reads the database itself. On a file database (the one connection) a read that asked for it
+// while its own transaction was open would wait for itself until the deadline; memory databases hide that.
+func TestCardAnswersOnAFileDatabaseWithoutWaitingForItsOwnConnection(t *testing.T) {
+	s, id, _ := testStore(t, filepath.Join(t.TempDir(), "card.db"))
+	t.Cleanup(func() { s.Close() })
+	k := &v4Kit{t: t, s: s, id: id, now: time.Unix(1800000000, 0), epoch: 1, session: "v4-session", ctx: context.Background()}
+	k.negotiate(v4Caps(protocol.QualityIPv6Present))
+	k.save(30000, v4Slot("telecom", "example.com", 443, "v4tcp", "v4icmp"))
+	k.enable(true)
+	for round := 0; round < 3; round++ {
+		s.qualityBudgetMu.Lock()
+		s.qualityBudgetAt = time.Time{} // an expired budget: the next request has to measure again
+		s.qualityBudgetMu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		begin := time.Now()
+		if _, err := s.QualityCardSummary(ctx, id, "ipv4", k.now.Add(time.Hour)); err != nil {
+			cancel()
+			t.Fatalf("card summary on a file database: %v after %s", err, time.Since(begin))
+		}
+		s.qualityBudgetMu.Lock()
+		s.qualityBudgetAt = time.Time{}
+		s.qualityBudgetMu.Unlock()
+		if _, err := s.QualityMarks(ctx, id, "ipv4", k.now.UnixMilli(), k.now.Add(time.Hour).UnixMilli(), k.now.Add(2*time.Hour)); err != nil {
+			cancel()
+			t.Fatalf("marks on a file database: %v", err)
+		}
+		s.qualityBudgetMu.Lock()
+		s.qualityBudgetAt = time.Time{}
+		s.qualityBudgetMu.Unlock()
+		if _, err := s.QualityAlertActive(ctx, id, k.now.Add(time.Hour)); err != nil {
+			cancel()
+			t.Fatalf("alert on a file database: %v", err)
+		}
+		cancel()
 	}
 }

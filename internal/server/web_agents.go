@@ -40,6 +40,7 @@ type webAgentDetailView struct {
 	Removal           *webAgentRemovalOperationView  `json:"removal,omitempty"`
 	State             *webAgentStateView             `json:"state"`
 	Traffic           *storage.TrafficTotals         `json:"traffic,omitempty"`
+	Usage24h          *storage.Usage24h              `json:"usage_24h,omitempty"`
 	Outbounds         webOutboundsView               `json:"outbounds"`
 	GoogleStatus      webGoogleStatusView            `json:"google_status"`
 	PublicEgressCheck webPublicEgressCheckView       `json:"public_egress_check"`
@@ -268,6 +269,13 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 			return webAgentDetailView{}, err
 		}
 		view.Traffic = &traffic
+		usage, ok, err := a.store.GetUsage24h(ctx, agentID, a.now())
+		if err != nil {
+			return webAgentDetailView{}, err
+		}
+		if ok {
+			view.Usage24h = &usage
+		}
 	}
 	plan, planExists, err := a.store.GetAgentPlan(ctx, agentID)
 	if err != nil {

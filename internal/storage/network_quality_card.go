@@ -109,7 +109,7 @@ func (r *qualityJudgeReader) lane(slot, family, proto string) (protocol.QualityV
 
 // newQualityJudgeReader loads the configuration, the open intervals and the gaps of the minutes from
 // firstMinute to the evaluation cut-off.
-func (s *Store) newQualityJudgeReader(ctx context.Context, tx *sql.Tx, id string, now time.Time, firstMinute int64) (*qualityJudgeReader, error) {
+func (s *Store) newQualityJudgeReader(ctx context.Context, tx *sql.Tx, budget qualityBudget, id string, now time.Time, firstMinute int64) (*qualityJudgeReader, error) {
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id=?)`, id).Scan(&exists); err != nil {
 		return nil, err
@@ -117,7 +117,7 @@ func (s *Store) newQualityJudgeReader(ctx context.Context, tx *sql.Tx, id string
 	if !exists {
 		return nil, ErrAgentNotFound
 	}
-	cfg, err := qualityV4ConfigTx(ctx, tx, id, now, s.qualityBudget(ctx))
+	cfg, err := qualityV4ConfigTx(ctx, tx, id, now, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +238,7 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	budget := s.qualityBudget(ctx) // it reads the database itself: never while the read transaction holds the one connection
 	tx, err := s.qualityReadTx(ctx)
 	if err != nil {
 		return QualityCardSummary{}, err
@@ -246,7 +247,7 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 	evalEnd := QualityEvalEnd(now.UnixMilli())
 	lastBlock := floorDiv64(evalEnd-1, QualityBlockMS) * QualityBlockMS
 	windowStart := lastBlock - int64(QualityCardBlocks-1)*QualityBlockMS
-	r, err := s.newQualityJudgeReader(ctx, tx, agentID, now, windowStart/qualityMinuteMS-qualityJudgePrefetchMinutes)
+	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, windowStart/qualityMinuteMS-qualityJudgePrefetchMinutes)
 	if err != nil {
 		return QualityCardSummary{}, err
 	}
@@ -295,13 +296,14 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 func (s *Store) QualityAlertActive(ctx context.Context, agentID string, now time.Time) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	budget := s.qualityBudget(ctx)
 	tx, err := s.qualityReadTx(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
 	evalEnd := QualityEvalEnd(now.UnixMilli())
-	r, err := s.newQualityJudgeReader(ctx, tx, agentID, now, evalEnd/qualityMinuteMS-qualityJudgePrefetchMinutes-3)
+	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, evalEnd/qualityMinuteMS-qualityJudgePrefetchMinutes-3)
 	if err != nil {
 		return false, err
 	}
@@ -315,13 +317,14 @@ func (s *Store) QualityMarks(ctx context.Context, agentID, family string, from, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	budget := s.qualityBudget(ctx)
 	tx, err := s.qualityReadTx(ctx)
 	if err != nil {
 		return QualityMarks{}, err
 	}
 	defer tx.Rollback()
 	alignedFrom := floorDiv64(from, QualityBlockMS) * QualityBlockMS
-	r, err := s.newQualityJudgeReader(ctx, tx, agentID, now, alignedFrom/qualityMinuteMS-qualityJudgePrefetchMinutes)
+	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, alignedFrom/qualityMinuteMS-qualityJudgePrefetchMinutes)
 	if err != nil {
 		return QualityMarks{}, err
 	}

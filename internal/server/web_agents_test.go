@@ -258,3 +258,45 @@ func assertNoWebAgentSecrets(t *testing.T, body string) {
 		}
 	}
 }
+
+func TestWebAgentDetailCarriesTheLastDayUsage(t *testing.T) {
+	app, store, now := newWebAgentTestApp(t)
+	defer store.Close()
+	read := func() webAgentDetailView {
+		t.Helper()
+		w := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/agents/"+controlAgentA)
+		if w.Code != http.StatusOK {
+			t.Fatalf("detail status=%d body=%s", w.Code, w.Body.String())
+		}
+		var detail webAgentDetailView
+		if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
+		}
+		return detail
+	}
+	send := func(sequence uint64, at time.Time, rx, tx uint64) {
+		t.Helper()
+		report := protocol.Report{
+			AgentID: controlAgentA, Epoch: 1, SessionID: "session", Sequence: sequence, CollectedAt: at.UnixMilli(),
+			Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot", Uptime: 11,
+			CPUPercent: 5, Load1: 1, Load5: 2, Load15: 3, RAMUsed: 10, RAMTotal: 20, RAMPercent: 50,
+			SwapUsed: 1, SwapTotal: 2, SwapPercent: 50, DiskUsed: 30, DiskTotal: 60, DiskPercent: 50, RXBytes: rx, TXBytes: tx,
+		}
+		if _, accepted, reason, err := store.ProcessReport(context.Background(), controlAgentA, report, at); err != nil || !accepted {
+			t.Fatalf("report %d accepted=%t reason=%q err=%v", sequence, accepted, reason, err)
+		}
+	}
+	send(1, now, 1000, 2000)
+	if detail := read(); detail.State == nil || detail.Usage24h != nil {
+		t.Fatalf("one minute is no usage: %+v", detail.Usage24h)
+	}
+	send(2, now.Add(2*time.Minute), 1600, 2300)
+	detail := read()
+	if detail.Usage24h == nil || detail.Usage24h.RX != 600 || detail.Usage24h.TX != 300 || detail.Usage24h.CoverageMS <= 0 || detail.Usage24h.CoverageMS > 24*3600*1000 {
+		t.Fatalf("usage_24h %+v", detail.Usage24h)
+	}
+	// The field is additive: the rest of the view is what it was.
+	if detail.Traffic == nil || detail.Traffic.RXTotal != 600 {
+		t.Fatalf("traffic %+v", detail.Traffic)
+	}
+}
