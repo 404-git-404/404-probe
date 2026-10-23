@@ -59,7 +59,9 @@ class El{
 }
 const fakeDoc={hidden:false,createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
 const IDS={telecom:1,unicom:2,mobile:3};
+const gate={marks:null},clock={ms:0};
 async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
+ gate.marks=null;clock.ms=0;
  // series: {slot: points => void}; slots absent from `series` get empty history.
  const histories={};
  for(const proto of ['tcp','icmp'])for(const slot of Object.keys(IDS)){const f=fixture(proto,slot);for(const p of f.points)Object.assign(p,{count:0,valid_rtts:0,p50_ms:null,p95_ms:null,completeness:'no_data'});if(proto===protocol)series[slot]?.(f.points);histories[f.target.id]=f.h;}
@@ -69,9 +71,11 @@ async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  const requests=[],state={};
  state.fetchJSON=async url=>{
   requests.push(url);
-  if(url.includes('/v5/marks'))return {family:'ipv4',eval_end:NOW-30000,from:NOW-86400000,to:NOW-30000,lanes:Object.keys(IDS).map(slot=>({slot,runs:marks.filter(m=>m.slot===slot).map(({start,end,state})=>({start,end,state}))}))};
+  if(url.includes('/v5/marks')){const answer={family:'ipv4',eval_end:NOW-30000,from:NOW-86400000,to:NOW-30000,lanes:Object.keys(IDS).map(slot=>({slot,runs:marks.filter(m=>m.slot===slot).map(({start,end,state})=>({start,end,state}))}))};
+   if(gate.marks)await gate.marks; // the answer is made when the request is made, and arrives later
+   return answer;}
   const tid=decodeURIComponent(/target_id=([^&]+)/.exec(url)[1]);return histories[tid];};
- const api=L.create({document:fakeDoc,state,interval:()=>0,clear(){},now:()=>NOW,monotonicNow:()=>0,unauthorized(){}});
+ const api=L.create({document:fakeDoc,state,interval:()=>0,clear(){},now:()=>NOW+clock.ms,monotonicNow:()=>0,unauthorized(){}});
  const node=api.mount({agent_id:id,online:true});
  const plot=node.all().find(n=>n.className==='lm-plot');plot.rect={width:300,height,left:0,top:0,right:300,bottom:80};node.rect={width:300,height:200,left:0,top:0,right:300,bottom:200};globalThis.innerHeight=1000;globalThis.innerWidth=1000;
  const flush=async()=>{for(let i=0;i<30;i++){await new Promise(r=>setImmediate(r));api.tick();}};
@@ -81,7 +85,7 @@ async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  const nums=()=>Object.fromEntries(node.all().filter(n=>n.className.startsWith('lm-num')).map((n,i)=>[Object.keys(IDS)[i],n]));
  const strip=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.tagName==='rect'&&n.attributes['data-mark'])||[];
  const tags=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.attributes['data-tag'])||[];
- return {api,node,plot,svg,nums,strip,tags,config,marks,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
+ return {api,node,plot,svg,nums,strip,tags,config,marks,gate,clock,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
 }
 const solid=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.3');
 const dashed=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-dasharray']);
@@ -199,4 +203,26 @@ test('B1: a save that only changes the slow threshold invalidates the marks at o
  assert.ok(reads()>before,'the marks were read again');assert.equal(c.strip().length,0);
  // the same settings revision again changes nothing and reads nothing
  const again=reads();c.api.bindConfig('a',{...c.config,settings_revision:'2'});await c.flush();assert.equal(reads(),again);
+});
+
+test('R1: an old marks answer that is still on its way when the threshold changes is not adopted, and the new threshold is really read',async()=>{
+ const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'}];
+ const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},marks});
+ const reads=()=>c.requests.filter(u=>u.includes('/v5/marks')).length;
+ assert.equal(c.strip().length,1);
+ // a periodic refresh starts; its answer (the old red mark, made now) is held back
+ let release;gate.marks=new Promise(r=>{release=r;});clock.ms+=61000;c.api.tick();await new Promise(r=>setImmediate(r));
+ const held=reads();assert.equal(held,2,'the periodic read is in flight');
+ // the threshold is raised and saved: the Server now answers without the mark
+ marks.length=0;gate.marks=null;
+ c.api.bindConfig('a',{...c.config,settings_revision:'2'});
+ assert.equal(c.strip().length,0);
+ await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+ assert.equal(reads(),held+1,'a new read for the new threshold was really made');
+ // now the old answer arrives
+ release();for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
+ assert.equal(c.strip().length,0,'the old red mark does not come back');
+ // and it did not refresh the cache stamp: the next refresh is due 60 s after the NEW read, not after the old one
+ const before=reads();clock.ms+=30000;c.api.tick();await new Promise(r=>setImmediate(r));assert.equal(reads(),before,'not due yet');
+ clock.ms+=31000;c.api.tick();await new Promise(r=>setImmediate(r));assert.equal(reads(),before+1);
 });

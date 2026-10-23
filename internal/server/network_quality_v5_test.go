@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"404-probe/internal/storage"
 )
@@ -128,6 +129,9 @@ func TestV107OneHourViewOfAConfiguredTargetEqualsCardHistory(t *testing.T) {
 	defer s.Close()
 	defer a.Shutdown()
 	cfg := qualityServerConfig(t, a, s, id, token)
+	// One clock for the request and for the expectation.
+	fixed := a.now()
+	a.now = func() time.Time { return fixed }
 	target := ""
 	for _, l := range cfg.Lanes {
 		if l.TargetID != nil && l.Family == "ipv4" && l.Protocol == "tcp" {

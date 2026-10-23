@@ -80,7 +80,8 @@
     const effective=c=>!closed&&!c.dead&&c.active&&c.visible&&!doc.hidden&&c.node.isConnected&&!inactive(c);
     const targets=c=>C.slots.map(slot=>(c.config?.targets||[]).find(t=>t.slot===slot&&t.family===family(c.id)&&t.protocol===c.protocol)||{slot,status:'unavailable'});
     const key=(c,t)=>JSON.stringify(['latency-mini',c.id,c.config.revision,identity(t)]);
-    const marksKey=c=>JSON.stringify(['marks-v5',c.id,family(c.id)]);
+    // The settings revision is part of the key: after a change of the threshold a read in flight is a different job, never shared with the new one.
+    const marksKey=c=>JSON.stringify(['marks-v5',c.id,family(c.id),c.config?.settings_revision||'']);
     const selected=c=>targets(c).filter(t=>c.isps.has(t.slot));
     const view=c=>({start:c.range.start,end:c.range.end});
     const label=(c,slot)=>C.cardLabel(c.config,slot);
