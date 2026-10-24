@@ -64,3 +64,14 @@ R31_PYTHON=python3 R31_PREVIOUS_SERVER=/local/v1.0.6/404-probe-server-linux-amd6
 ```
 
 `R31_BASH` 可指定 bash 路径；`R31_PYTHON` 可指定 Python 路径。未提供 `R31_PREVIOUS_SERVER` 时跳过 tiny 集成；没有 Python 时 Go 包明确 skip。常规 `go build ./...` 不新增工具产品二进制。测试覆盖跨秒 tiny 字节一致性、流量单调/锚点/用量及目标状态、计数器故障、编码、四个锚点/语法、schema 结果与退出码、回滚健康耗时拆分，以及临时根目录和假 systemctl 下的缺失单元 stop=5、部分移动/恢复/清理失败、reload/enable 失败、活跃库拒绝替换、哈希不一致、第二次 Ctrl-C 等恢复场景；真实安装/迁移/回滚/原环境恢复必须在安排好的 Linux 测试机上验证。
+
+
+## 可选冻结哈希证据入口
+
+`scripts/r31-run-with-evidence.py` 是 Linux 实跑时实际使用的 `run-with-evidence.py` 外壳的原样副本，现纳入版本管理。它未经过前一轮轻量档交叉评审；此次增加了隔离测试，不能将自测写成独立评审。
+
+把此入口（可保留文件名）、r31-upgrade.py、r31-generate.py 一起复制到仓库外同一准备目录，提前创建该目录下 root 私有的 `evidence/`（0700），再由维护者在交互 root SSH 终端运行该入口并传入与 r31-upgrade.py 相同的参数。不要直接在仓库目录下生成证据或实跑产物；实际使用目录仍可为 `/var/lib/404-probe-r31-run`。
+
+外壳加载原升级工具，仅给两个状态采集点增加 JSON 保存：停服后、移动原安装前的 `before-frozen.json`；恢复文件后、原服务重启前的 `after-restored-frozen.json`。同时输出 `frozen-compare.json`，比较文件 SHA256、模式和 uid/gid，记录差异路径；文件0600。它不读取并保存凭据原文，不改变资产/数据库、安装器和原恢复逻辑的判断；原工具退出码原样传出。证据目录缺失或已存在 before-frozen.json 时拒绝重复运行。
+
+这层额外 I/O 也会引入失败点：写证据异常可能触发原工具的异常/恢复路径，不能声称它没有行为影响。Linux 实跑的 before/after/compare、result.json 与当前服务状态必须一起核验。服务恢复启动后 Agent 会继续写库，应比较重启前的冻结哈希，而不是要求运行中的 DB 哈希永久不变。

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import sqlite3
+import shutil
 import subprocess
 import tempfile
 import time
@@ -282,5 +283,73 @@ p.write_text(json.dumps(state)); sys.exit(rc)
         source=mock.Mock(); source.exists.return_value=True; source.stat.return_value.st_dev=2
         backup=mock.Mock(); backup.stat.return_value.st_dev=1
         with self.assertRaises(ValueError): upgrade.preflight_filesystems([source],backup,Path('/runtime'))
+
+class EvidenceWrapperTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.wrapper=self.root/'run-with-evidence.py'
+        shutil.copyfile(ROOT/'r31-run-with-evidence.py',self.wrapper)
+        self.fake='''from pathlib import Path
+root=Path(__file__).resolve().parent
+PATHS=[Path('/example-data'),Path('/example-config')]
+ORIGINAL={'/example-data':[33152,0,0,'example-original-sha'],'/example-config':[33152,0,0,'example-config-sha']}
+_after=False
+CHANGE=False
+
+def tree_state(paths):
+    state={p.as_posix():list(ORIGINAL.get(p.as_posix(),[33152,0,0,'example-runtime'])) for p in paths}
+    if _after and CHANGE: state['/example-data'][-1]='example-changed-sha'
+    return state
+
+def restore_installation(*args,state=tree_state,**kwargs):
+    return 0 if state(PATHS)==ORIGINAL else 9
+
+def main():
+    global _after
+    (root/'main-called').write_text('example')
+    tree_state([Path('/runtime-example')])
+    assert not (root/'evidence/before-frozen.json').exists(), 'captured unrelated preflight state'
+    tree_state(PATHS)
+    _after=True
+    return restore_installation()
+'''
+
+    def run_wrapper(self,changed=False):
+        (self.root/'r31-upgrade.py').write_text(self.fake.replace('CHANGE=False','CHANGE='+str(changed)),encoding='utf-8')
+        return subprocess.run([sys.executable,'-B',str(self.wrapper)],capture_output=True,text=True)
+
+    def test_records_exact_before_and_after_only_at_intended_callbacks(self):
+        evidence=self.root/'evidence'; evidence.mkdir()
+        result=self.run_wrapper()
+        self.assertEqual(result.returncode,0,result.stderr)
+        before=json.loads((evidence/'before-frozen.json').read_text())
+        after=json.loads((evidence/'after-restored-frozen.json').read_text())
+        self.assertEqual(before,after)
+        comparison=json.loads((evidence/'frozen-compare.json').read_text())
+        self.assertTrue(comparison['equal']); self.assertEqual(comparison['changed_paths'],[])
+        self.assertEqual(comparison['before_entries'],2)
+        if os.name=='posix':
+            for p in evidence.iterdir(): self.assertEqual(p.stat().st_mode&0o777,0o600)
+
+    def test_records_hash_difference_and_forwards_original_exit_code(self):
+        evidence=self.root/'evidence'; evidence.mkdir()
+        result=self.run_wrapper(changed=True)
+        self.assertEqual(result.returncode,9,result.stderr)
+        comparison=json.loads((evidence/'frozen-compare.json').read_text())
+        self.assertFalse(comparison['equal']); self.assertEqual(comparison['changed_paths'],['/example-data'])
+
+    def test_missing_private_evidence_directory_refuses_before_main(self):
+        result=self.run_wrapper()
+        self.assertNotEqual(result.returncode,0)
+        self.assertFalse((self.root/'main-called').exists())
+
+    def test_existing_run_evidence_is_not_overwritten(self):
+        evidence=self.root/'evidence'; evidence.mkdir()
+        before=evidence/'before-frozen.json'; before.write_text('example previous evidence')
+        result=self.run_wrapper()
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(before.read_text(),'example previous evidence')
+        self.assertFalse((self.root/'main-called').exists())
 
 if __name__=='__main__': unittest.main()
