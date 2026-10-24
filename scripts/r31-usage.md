@@ -1,0 +1,77 @@
+# R31 大数据库升级测试工具
+
+仅在维护者安排的测试机独占时段运行。Python 3 标准库，无新 Go 依赖。
+
+## 本机文件位置
+
+工作目录为 `D:\Claude-Github\404-probe-codex`。所有生成的数据库、JSON、日志和本机 v1.0.6 校验程序统一放在仓库外 `D:\Claude-Github\r31-fixtures\`；保留的三份数据库为 `r31-reviewed-v2-{snapshot,full,compact}.db`，校验程序为 `r31-server-v1.0.6.exe`。输出目录不得位于任何 Git 仓库内，以免未跟踪文件使发布构建目录变脏。
+
+不要在主仓库 `D:\Claude-Github\404-probe` 下创建缓存、fixture、日志或临时工作目录；实现文件只写入自己的 worktree，生成物和临时文件放在仓库外。
+
+## 生成数据库
+
+```bash
+python3 scripts/r31-generate.py --server /local/v1.0.6/404-probe-server-linux-amd64 \
+  --scale snapshot --out /local/fixtures/snapshot.db
+```
+
+`--scale` 支持 `tiny`、`snapshot`、`full`、`compact`。输出路径及同名 WAL/SHM 必须不存在。输出数据库和 `<数据库>.json`；JSON 记录版本身份、schema 指纹、行数、页数、校验结果和包含校验在内的总耗时。大小口径为字节；换算 MiB 除以 1048576，与 R29 报告一致。
+
+- 固定种子 31、固定 UTC 窗口末端（2026-10-23），同一 SQLite/Server 版本下字节可复现；可用 `--seed`、`--anchor-ms` 明确改变输入。
+- 通过所给 **v1.0.6 正式 Server 的 `agent list --db`** 调用该发布版本的 `storage.Open` 创建空库；没有手写 DDL。要求版本为 v1.0.6、dirty=false、schema=34。用其 `agent list` 再打开成品，并运行 `database verify`。
+- 从官方 schema 填充合成数据；不关外键，不删/关触发器。核对 `integrity_check`、`foreign_key_check`、全部 `quality_totals` 和各 Agent 的 `quality_usage`。填充前后比较所有表、索引、触发器的 schema 指纹。
+- minute_metrics、receipts、minute、三档 buckets、security、jobs 遵循 R29 的时间窗口；full 为 31 Agent × 30 天分钟指标、108 序列 × 30 秒完整质量窗口。二进制 buckets 使用 v1.0.6 的 v1 直方图编码。原始质量样本为 0，与快照一致；小表保留外键遍历量，并包含 43 份套餐/配置（含已校准套餐）供 R30 回填使用。累计流量按时间递增，周期起点位于窗口内，usage_bytes 与起点锚点至最新行的对应方向差值一致；无历史的套餐保留为 partial。131 个目标全部停用，并补齐 quality_retired、tcp_mini_state 和 Google 状态等小表。
+- snapshot 在同一正式表中插入/删除合成分钟行，形成页内碎片和空闲页；无额外填充表。compact 保留同样最终逻辑行数并 VACUUM；full 填满保留窗口并 VACUUM。它们近似 R29 的形状，不能复制真实库每页的布局。
+- 所有内容均为 example 合成值，地址仅用文档保留地址。token_hash 为合成摘要，没有可使用的真实凭据。工具不会启动网络探测。
+- 后续 schema 变化：**保留本适配器和 v1.0.6 产物**，仍可生成该版数据库。为下一次“上一个正式版本”增加独立适配器，调用该版本正式 Server 创建空库，更新填充字段/编码及测试；不要把当前分支迁移代码冒充旧版 schema。此适配器拒绝其他版本/schema。
+
+## Linux 测试机实跑
+
+需要 root、systemd、既有 Server（404-probe 用户/组已存在）、Python 3，以及安装器依赖（bash、curl、sha256sum、runuser 等）；不安装系统软件。只支持 Linux amd64/arm64。两个本地产物目录各包含正式构建的七个文件，运行前核对其 SHA256、LF、Server 版本和 dirty=false。只接受规范 `vX.Y.Z`，目标必须更高。不能有 Agent 混装、未完成升级、候选文件或服务 drop-in。
+
+```bash
+sudo python3 scripts/r31-upgrade.py v1.0.5 v1.0.6 \
+  /local/assets-v1.0.5 /local/assets-v1.0.6 snapshot \
+  --out /local/r31-results --confirm-test-host 'TEST_HOSTNAME'
+```
+
+必须显式传入 `--confirm-test-host`，值要与运行机 hostname 完全相同；此参数不能替代维护者的测试机时段安排，不要在仓库保存真实主机名。
+
+发布时使用 `v1.0.6 <目标正式版>`。`--expected-schema` 默认 v1.0.6=34、v1.0.7=35；其他目标版本必须显式指定。成功升级后的正式 postcheck JSON 记录在 `post_upgrade_verification` 并断言 schema 和 integrity。当前生成适配器只接受以 v1.0.6 为起始版，或 v1.0.5 → v1.0.6 的流程验证组合。两个 schema 都是 34 的实跑只验证流程和计时，不证明未来新增迁移正确。
+
+流程：
+
+1. 确认测试机 hostname 和独占时段、至少 8 GiB 空闲空间；提前探测新 `--out` 可写且结果文件不存在，四个 CLI 计时锚点必须各命中一次，其他计时函数/备份边界也须匹配。安装路径必须与备份同一文件系统；仅 root 属主的 `/run/404-probe-upgrade` 可跨 tmpfs，用 cp -a 并比较内容/属主/权限后删除源。停现有 Server；原数据库目录（含 WAL/SHM）、配置、二进制、helper、unit、升级目录和运行锁目录移动到 `/var/lib/404-probe-r31-<编号>/original/`（0700）。保留原启用/活动状态及文件 SHA256、属主、权限快照。
+2. 用本地正式起始产物和未改动的 `install.sh` 安装起始版，参数为 `PROBE_404_LOCAL_ASSET_DIRECTORY`、`PROBE_404_VERSION`。安装交互仍在终端：维护者选择 **Server**，选择回环监听，输入管理员密码；不得输入任何真实服务凭据。工具不代填密码，也不保存终端安装录屏。生成的 Control token 仅由安装器写入私有配置文件，结束时删除。
+3. 停服换入本工具生成的库，重新启动。实跑生成时采用当前 UTC 分钟作为窗口末端，避免未来执行时历史数据已经过期；JSON 会记录 anchor，重现时传同一个 `--anchor-ms`。用服务用户运行 agent list，启动后立即检查服务活动及 HTTP 401 健康，再进入升级。
+4. 从目标本地产物的 installer 创建一次性计时副本：包装真实 `database verify`、`migrate-copy`、`migrate-protected` 命令，分别记退出码和单调时钟耗时。正式产物不改，依然由安装器校验正式资产；包装保留原命令退出码、参数及重定向。布局锚点变化时拒绝运行。
+5. 先在迁移完成及二进制替换后 `exit 87`，调用安装器自身 EXIT trap 自动回滚，单独计时 `restore_server_upgrade`。检查旧二进制哈希、服务活动、pending 已清除。数据库/WAL/SHM 的恢复哈希由安装器自身的备份清单验证，记入结果。然后在恢复的起始版上执行一次成功升级，检查目标二进制哈希及服务活动。两次升级确认由维护者在终端输入 `y`。
+6. 无论成功失败，恢复及写结果期间忽略 INT/TERM/HUP；逐步捕获错误，继续其他独立恢复步骤。stop 返回 5 时仍查询非活动状态，确认没有运行进程才删除生成安装、移回各原文件；reload、enable/disable 和文件核对各自运行并记错。只有原文件核对通过且 reload 成功才尝试启动原服务，避免用不完整数据或未加载的单元启动。输出 `result.json` 和 `summary.md`（不含配置内容/凭据），成功恢复才删除私有备份及全部生成库/临时脚本。资产和结果目录必须在安装路径外，资产不会删除。
+
+结果中的每个 event 都有 `run`（failure/success）、`phase`、`seconds`、`exit_code`。四个 CLI 阶段为 `precheck-verify`、`migrate-copy`、`migrate-protected`、`postcheck-verify`；后者还保存正式 JSON。`protected-backup` 单独记录 cp、清单和备份验证阶段。回滚拆成 `rollback-total`、`rollback-restore-files`、`rollback-verify-files` 和 `health-observation`；最后一项记录固定最少 5 秒观察及实际函数总时长。rollback-total 同时给出 `health_observation_seconds` 和 `seconds_excluding_health`，Markdown 也列出扣除健康观察的耗时。
+
+缓存不主动清空：生成/校验本身会暖缓存，失败运行先做，成功运行的缓存通常更热。JSON/Markdown 明示该顺序；不要把两次时间视为冷缓存对照。工具不执行 drop_caches，若需要冷缓存实验必须另由维护者批准。
+
+恢复异常时 `restored=false`，保留 0700 备份，退出非零，并给出目录；此时不要开始其他任务。SIGKILL、断电、Python 进程自身崩溃不能执行 finally，需要人工恢复：停止 Server，按 `PATHS` 中的零基序号，将 `original/<序号>` 移回对应路径（先保留失败现场，不覆盖唯一备份），daemon-reload，按运行前状态恢复 enable/disable 和 start/stop。先核对原数据/配置/二进制，再删除失败现场。**私有备份含运行前数据和凭据，不上传或打印。**
+
+## 自测
+
+```bash
+R31_PREVIOUS_SERVER=/local/v1.0.6/404-probe-server-linux-amd64 \
+  python3 scripts/test-r31.py -v
+R31_PYTHON=python3 R31_PREVIOUS_SERVER=/local/v1.0.6/404-probe-server-linux-amd64 \
+  go test ./scripts/r31-tooltest -count=1 -v
+```
+
+`R31_BASH` 可指定 bash 路径；`R31_PYTHON` 可指定 Python 路径。未提供 `R31_PREVIOUS_SERVER` 时跳过 tiny 集成；没有 Python 时 Go 包明确 skip。常规 `go build ./...` 不新增工具产品二进制。测试覆盖跨秒 tiny 字节一致性、流量单调/锚点/用量及目标状态、计数器故障、编码、四个锚点/语法、schema 结果与退出码、回滚健康耗时拆分，以及临时根目录和假 systemctl 下的缺失单元 stop=5、部分移动/恢复/清理失败、reload/enable 失败、活跃库拒绝替换、哈希不一致、第二次 Ctrl-C 等恢复场景；真实安装/迁移/回滚/原环境恢复必须在安排好的 Linux 测试机上验证。
+
+
+## 可选冻结哈希证据入口
+
+`scripts/r31-run-with-evidence.py` 是 Linux 实跑时实际使用的 `run-with-evidence.py` 外壳的原样副本，现纳入版本管理。它未经过前一轮轻量档交叉评审；此次增加了隔离测试，不能将自测写成独立评审。
+
+把此入口（可保留文件名）、r31-upgrade.py、r31-generate.py 一起复制到仓库外同一准备目录，提前创建该目录下 root 私有的 `evidence/`（0700），再由维护者在交互 root SSH 终端运行该入口并传入与 r31-upgrade.py 相同的参数。不要直接在仓库目录下生成证据或实跑产物；实际使用目录仍可为 `/var/lib/404-probe-r31-run`。
+
+外壳加载原升级工具，仅给两个状态采集点增加 JSON 保存：停服后、移动原安装前的 `before-frozen.json`；恢复文件后、原服务重启前的 `after-restored-frozen.json`。同时输出 `frozen-compare.json`，比较文件 SHA256、模式和 uid/gid，记录差异路径；文件0600。它不读取并保存凭据原文，不改变资产/数据库、安装器和原恢复逻辑的判断；原工具退出码原样传出。证据目录缺失或已存在 before-frozen.json 时拒绝重复运行。
+
+这层额外 I/O 也会引入失败点：写证据异常可能触发原工具的异常/恢复路径，不能声称它没有行为影响。Linux 实跑的 before/after/compare、result.json 与当前服务状态必须一起核验。服务恢复启动后 Agent 会继续写库，应比较重启前的冻结哈希，而不是要求运行中的 DB 哈希永久不变。
