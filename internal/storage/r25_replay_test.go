@@ -153,10 +153,10 @@ type replayResult struct {
 	tl      qualityTimeline
 }
 
-func replayLaneRun(l replayLane, samples []replaySample, gaps []protocol.QualityGap, thresholdMS, stride int) replayResult {
+func replayLaneRun(l replayLane, samples []replaySample, gaps []protocol.QualityGap, thresholdMS, stride, offset int) replayResult {
 	picked := make([]replaySample, 0, len(samples)/stride+1)
 	for i, s := range samples {
-		if i%stride == 0 {
+		if i%stride == offset {
 			picked = append(picked, s)
 		}
 	}
@@ -245,7 +245,7 @@ func r25Replay(dir string, thresholdMS int, strides []int) (string, error) {
 			l := lanes[target]
 			samples := by[target]
 			sort.Slice(samples, func(i, j int) bool { return samples[i].at < samples[j].at })
-			res := replayLaneRun(l, samples, gapsByAgent[l.agent], thresholdMS, stride)
+			res := replayLaneRun(l, samples, gapsByAgent[l.agent], thresholdMS, stride, 0)
 			if len(res.minutes) == 0 {
 				continue
 			}
@@ -384,5 +384,162 @@ func TestR25ReplayHarnessOnSyntheticFiles(t *testing.T) {
 	}
 	if strings.Contains(report, "red outside every event") {
 		t.Fatalf("a red minute outside the events:\n%s", report)
+	}
+}
+
+// r25PhaseSweep repeats the replay for every phase of the sub-sampling (60 s: 2 phases, 300 s: 10 phases), because
+// which samples a longer interval happens to keep decides a lot. For the lane the events were injected into it
+// counts, per event, in how many phases the lane turned red; for every other lane that is not permanently dead
+// (95 % of its samples failing) it counts the red episodes (runs of red minutes) in all phases.
+func r25PhaseSweep(dir string, thresholdMS int, strides []int) (string, error) {
+	laneRows, err := readCSVRows(filepath.Join(dir, "lanes.csv"))
+	if err != nil {
+		return "", err
+	}
+	lanes := map[string]replayLane{}
+	for _, r := range laneRows {
+		lanes[r["target_id"]] = replayLane{target: r["target_id"], slot: r["slot"], family: r["family"], proto: r["protocol"], agent: int(atoi64(r["agent_no"]))}
+	}
+	rawRows, err := readCSVRows(filepath.Join(dir, "raw.csv"))
+	if err != nil {
+		return "", err
+	}
+	by := map[string][]replaySample{}
+	for _, r := range rawRows {
+		l, ok := lanes[r["target_id"]]
+		if !ok || l.proto != "tcp" {
+			continue
+		}
+		s := replaySample{at: atoi64(r["sample_time"]), success: r["outcome"] == "success", probeComplete: r["probe_complete"] == "1", connectComplete: r["connect_complete"] == "1",
+			dns: r["outcome"] == "dns_error", config: atoi64(r["config_revision"]), slot: atoi64(r["slot_revision"])}
+		if v := strings.TrimSpace(r["latency"]); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				s.latency, s.hasLatency = f, true
+			}
+		}
+		by[r["target_id"]] = append(by[r["target_id"]], s)
+	}
+	events, err := readReplayEvents(filepath.Join(dir, "events.log"))
+	if err != nil {
+		return "", err
+	}
+	var gaps = map[int][]protocol.QualityGap{}
+	if raw, err := os.ReadFile(filepath.Join(dir, "gaps.csv")); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			f := strings.Split(strings.TrimSpace(line), ",")
+			if len(f) >= 4 && !strings.HasPrefix(f[3], "storage_pruned:") {
+				gaps[int(atoi64(f[0]))] = append(gaps[int(atoi64(f[0]))], protocol.QualityGap{Start: atoi64(f[1]), End: atoi64(f[2]), Reason: f[3]})
+			}
+		}
+	}
+	var targets []string
+	for id := range by {
+		targets = append(targets, id)
+	}
+	sort.Strings(targets)
+	var sb strings.Builder
+	for _, stride := range strides {
+		fmt.Fprintf(&sb, "\n=== sweep, check interval %d s: %d phases ===\n", 30*stride, stride)
+		for _, target := range targets {
+			l := lanes[target]
+			samples := by[target]
+			sort.Slice(samples, func(i, j int) bool { return samples[i].at < samples[j].at })
+			failed := 0
+			for _, s := range samples {
+				if !s.success {
+					failed++
+				}
+			}
+			if len(samples) == 0 {
+				continue
+			}
+			dead := float64(failed)/float64(len(samples)) >= 0.95
+			injected := false
+			for _, e := range events {
+				bad, total := 0, 0
+				for _, s := range samples {
+					if s.at >= e.begin && s.at <= e.end {
+						total++
+						if !s.success || (s.hasLatency && s.latency > float64(thresholdMS)) {
+							bad++
+						}
+					}
+				}
+				if total > 0 && bad*2 > total && !dead && e.name == "E3" {
+					injected = true
+				}
+			}
+			label := fmt.Sprintf("agent#%d %s/%s", l.agent, l.slot, l.family)
+			if dead {
+				fmt.Fprintf(&sb, "%s: permanently dead lane (%d of %d samples failed)\n", label, failed, len(samples))
+				continue
+			}
+			hits := map[string]int{}
+			episodes, redMinutes := 0, 0
+			outside := 0
+			for offset := 0; offset < stride; offset++ {
+				res := replayLaneRun(l, samples, gaps[l.agent], thresholdMS, stride, offset)
+				after := int64(qualityJudgeParamsFor(float64(stride)/2).lookN + 5)
+				covered := map[int64]bool{}
+				for _, e := range events {
+					begin, end := floorDiv64(e.begin, qualityMinuteMS), ceilDiv64(e.end, qualityMinuteMS)
+					for m := begin - 2; m <= end+after; m++ {
+						covered[m] = true
+					}
+					if injected {
+						for m := begin; m <= end+after; m++ {
+							if res.red[m] {
+								hits[e.name]++
+								break
+							}
+						}
+					}
+				}
+				prev := int64(-10)
+				for _, m := range res.minutes {
+					if !res.red[m] {
+						continue
+					}
+					redMinutes++
+					if m != prev+1 {
+						episodes++
+					}
+					prev = m
+					if injected && !covered[m] {
+						outside++
+					}
+				}
+			}
+			if injected {
+				fmt.Fprintf(&sb, "%s (the injected lane): red outside every event window: %d minutes over %d phases\n", label, outside, stride)
+				for _, name := range []string{"E1", "E2a", "E2b", "E3", "E4", "E5", "E6", "E7"} {
+					fmt.Fprintf(&sb, "  %-4s red in %d of %d phases\n", name, hits[name], stride)
+				}
+			} else {
+				fmt.Fprintf(&sb, "%s (natural): %d red episodes, %d red minutes over %d phases (%d samples)\n", label, episodes, redMinutes, stride, len(samples))
+			}
+		}
+	}
+	return sb.String(), nil
+}
+
+func TestR25PhaseSweepOfTheTestBedData(t *testing.T) {
+	dir := os.Getenv("R25_REPLAY_DIR")
+	if dir == "" {
+		t.Skip("set R25_REPLAY_DIR")
+	}
+	threshold := 500
+	if v := os.Getenv("R25_THRESHOLD_MS"); v != "" {
+		threshold = int(atoi64(v))
+	}
+	report, err := r25PhaseSweep(dir, threshold, []int{1, 2, 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("\n" + report)
+	if out := os.Getenv("R25_REPLAY_OUT"); out != "" {
+		if err := os.WriteFile(out, []byte(report), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
