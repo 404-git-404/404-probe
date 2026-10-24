@@ -11,6 +11,7 @@ go test ./... -count=1
 ```
 
 - 发布前的测试结果以 Linux 为准。下面两个用例在 Windows 上会偶发失败，不是回归：`internal/agent` 的 `TestRCHelperNegotiationDoesNotTrustOldV2`（Windows 实测失败率约 25%，负载下超时，v1.0.2 上同样如此）和 `internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（Windows 约 5%）。遇到时单独重跑该用例，不要把重跑通过写成“首次全量通过”，要如实记下首次的失败。
+- Linux 上的既有偶发失败：`internal/egress` 的 `TestM10HTTPSFailureClassification/body_timeout_after_headers` 可能把预期的 `timeout` 判为 `invalid_response`。v1.0.7 发布前首次全量曾失败；同机定向 50 轮对照中 v1.0.6 失败 1 次、v1.0.7 为 0 次，随后 v1.0.7 包级和全量复测通过。维护者据此按既有偶发处理，不视为本次回归；50 轮不能证明两版失败率完全相同。遇到时如实保留首次失败及复测结果，不把复测通过写成首次通过。
 - `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-m02-real-chain.cjs`、`scripts/test-n3-network-quality.cjs`（19 过 4 败，v1.0.3 上相同）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。`scripts/test-p4b2-traffic-chart.cjs`（8 过 7 败）和 `scripts/test-p5a2-device-details.cjs`（3 败）同样是基线失败，v1.0.3 上相同。
 - `scripts/test-agent-upgrade-systemd.sh` 可以使用（R04 已参数化）：`sudo bash scripts/test-agent-upgrade-systemd.sh <起始版本> <目标版本> <起始资产目录> <目标资产目录> <源码 git 目录> <go 路径>`，在隔离的 systemd 环境里演练一次 Agent 升级（官方起始 Agent → 目标 Server → 受控 updater → 官方目标 Agent）。**只接受正式版本号**（`vX.Y.Z`），不支持 beta/rc、同版本覆盖和降级；两个资产目录各需 `build-release-assets.sh` 输出的 7 个文件；只在 Linux amd64/arm64 且有 root 的机器上运行。它不覆盖官方 updater 本身、Web 操作入口和 GitHub release 的可用性发现，这些由 Web 升级真机验证补上。
 - 文档、说明和提交信息用中文或英文均可，提交信息采用 `type(scope): subject`，作者邮箱用 `305518817+404-git-404@users.noreply.github.com`。
