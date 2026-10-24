@@ -41,7 +41,7 @@ go test ./... -count=1
 
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
-   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。工具见 R31（工具完成前无法执行）。
+   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 工具已完成，用法入口为 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器为 scripts/r31-generate.py，Linux 升级演练入口为 scripts/r31-upgrade.py，冻结状态证据入口为 scripts/r31-run-with-evidence.py。
 5. **推送顺序（每一步推送都先让维护者确认）：**
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
    2. 对发布提交打**带注释**的 tag `vX.Y.Z`，只推这个 tag。

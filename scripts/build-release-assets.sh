@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 ROOT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT_DIRECTORY
-readonly VERSION="${1:-v1.0.6}"
+readonly VERSION="${1:-v1.0.7}"
 readonly RELEASE_COMMIT="${PROBE_404_RELEASE_COMMIT:-}"
 readonly OUTPUT_DIRECTORY="${PROBE_404_RELEASE_OUTPUT:-${ROOT_DIRECTORY}/build/release-${VERSION}}"
 

@@ -16,7 +16,7 @@ check_banner() {
   }
 }
 unset PROBE_404_VERSION
-check_banner $'Install 404-probe v1.0.6\n\n  1) Server\n  2) Agent'
+check_banner $'Install 404-probe v1.0.7\n\n  1) Server\n  2) Agent'
 printf 'PASS default stable banner\n'
 PROBE_404_VERSION=v1.2.3 check_banner $'Install 404-probe v1.2.3\n\n  1) Server\n  2) Agent'
 printf 'PASS explicit stable banner\n'
