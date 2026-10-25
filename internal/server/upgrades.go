@@ -119,25 +119,14 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusConflict, "bootstrap_required", "Updater missing: supported v0.9.3/v1.0.0 installations can use version-pinned v1.0.1 install.sh upgrade-agent to preserve identity and configuration")
 		return
 	}
-	if !a.buildInfo.UpgradeEligible() && !(buildinfo.IsRCVersion(a.buildInfo.Version) && a.buildInfo.ExplicitUpgradeEligible() && input.Channel != "") {
+	if !a.buildInfo.UpgradeEligible() && !(a.buildInfo.ExplicitUpgradeEligible() && input.Channel == "beta" && input.ConfirmBeta) {
 		writeJobError(w, http.StatusConflict, "server_build_ineligible", "remote upgrade is unavailable on this Server build")
 		return
 	}
-	target := upgradeTarget{Version: a.buildInfo.Version, Channel: "stable", RequiredProtocol: 1, Supported: true, Commit: a.buildInfo.Commit}
-	if input.Channel != "" || requiresNewUpgradeContract(target.Version) || requiresLegacyStaticProof(target.Version, record.State.AgentUpgradeV2) {
-		version := target.Version
-		if input.Channel != "" {
-			version = input.TargetVersion
-		}
-		target, err = a.releaseTarget(r.Context(), version)
-		if err != nil {
-			writeJobError(w, 409, "release_unavailable", err.Error())
-			return
-		}
-		if input.Channel != "" && input.Channel != target.Channel {
-			writeJobError(w, 400, "invalid_request", "release channel mismatch")
-			return
-		}
+	target := a.serverUpgradeTarget()
+	if input.Channel != "" && (input.TargetVersion != target.Version || input.Channel != target.Channel) {
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "升级目标必须与 Server 的版本和提交相同")
+		return
 	}
 	if comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version); !ok || comparison >= 0 {
 		writeJobError(w, http.StatusConflict, "upgrade_not_available", "a newer eligible Agent version is not available")
@@ -149,14 +138,16 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if requiresLegacyStaticProof(target.Version, record.State.AgentUpgradeV2) {
-		if err := a.verifyLegacyRelease(r.Context(), target, record.State.Arch); err != nil {
+		// Preserve the legacy Updater's Server-side static proof. Only this
+		// old-protocol path needs GitHub; modern tasks use buildInfo directly.
+		legacy, err := a.releaseTarget(r.Context(), target.Version)
+		if err == nil {
+			err = a.verifyLegacyRelease(r.Context(), legacy, record.State.Arch)
+		}
+		if err != nil {
 			writeJobError(w, 409, "release_unavailable", err.Error())
 			return
 		}
-	}
-	if comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version); !ok || comparison >= 0 {
-		writeJobError(w, http.StatusConflict, "upgrade_not_available", "a newer eligible Agent version is not available")
-		return
 	}
 	operationID, err := auth.NewID()
 	if err != nil {

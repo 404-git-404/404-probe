@@ -6,7 +6,6 @@ import (
 	"404-probe/internal/storage"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -87,49 +86,18 @@ func TestUpgradeExplicitInputFailsClosed(t *testing.T) {
 }
 
 func TestWebExplicitBetaAuthorizationAndLegacyClaimIsolation(t *testing.T) {
+	rejectUpgradeHTTP(t)
 	app, store, id := newWebAuthenticationTestApp(t)
 	defer store.Close()
-	app.buildInfo = buildinfo.Info{Version: "v1.0.1", Commit: strings.Repeat("a", 40)}
-	version := "v1.0.2-beta.1"
-	document := releasemetadata.Document{SchemaVersion: 2, Version: version, Commit: strings.Repeat("b", 40), Compatibility: &releasemetadata.Compatibility{MinServerVersion: "v1.0.1", UpgradeProtocol: 2}}
-	for _, arch := range []string{"amd64", "arm64"} {
-		for _, role := range []string{"agent", "server"} {
-			document.Assets = append(document.Assets, releasemetadata.Asset{Name: "404-probe-" + role + "-linux-" + arch, GOOS: "linux", GOARCH: arch, SHA256: strings.Repeat("c", 64)})
-		}
-	}
-	metadata, err := releasemetadata.Encode(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(metadata)
-	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/tags/" + version:
-			fmt.Fprintf(w, `{"tag_name":%q,"prerelease":true,"assets":[{"name":"RELEASE-METADATA.json"},{"name":"SHA256SUMS"},{"name":"install.sh"},{"name":"404-probe-agent-linux-amd64"},{"name":"404-probe-agent-linux-arm64"},{"name":"404-probe-server-linux-amd64"},{"name":"404-probe-server-linux-arm64"}]}`, version)
-		case "/downloads/" + version + "/RELEASE-METADATA.json":
-			w.Write(metadata)
-		case "/downloads/" + version + "/SHA256SUMS":
-			fmt.Fprintf(w, "%s  RELEASE-METADATA.json\n", hex.EncodeToString(digest[:]))
-			fmt.Fprintf(w, "%s  install.sh\n", strings.Repeat("c", 64))
-			for _, asset := range document.Assets {
-				fmt.Fprintf(w, "%s  %s\n", asset.SHA256, asset.Name)
-			}
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer fixture.Close()
-	oldAPI, oldDownload := upgradeReleaseAPI, upgradeReleaseDownloads
-	defer func() { upgradeReleaseAPI, upgradeReleaseDownloads = oldAPI, oldDownload }()
-	upgradeReleaseAPI = fixture.URL + "/api"
-	upgradeReleaseDownloads = fixture.URL + "/downloads"
+	defer app.Shutdown()
+	app.buildInfo = buildinfo.Info{Version: "v1.0.8-beta.2", Commit: strings.Repeat("a", 40)}
 	report := reportFor(id, 1)
-	report.AgentVersion = "v1.0.1"
+	report.AgentVersion = "v1.0.8-beta.1"
 	report.AgentUpgradeCapable = true
 	if _, _, _, err := store.ProcessReport(context.Background(), id, report, app.now()); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"channel":"beta","target_version":"v1.0.2-beta.1","confirm_beta":true}`
+	body := `{"channel":"beta","target_version":"v1.0.8-beta.2","confirm_beta":true}`
 	if w := webUpgradeResponse(t, app, id, body); w.Code != 409 {
 		t.Fatalf("legacy accepted: %d %s", w.Code, w.Body.String())
 	}
@@ -141,6 +109,19 @@ func TestWebExplicitBetaAuthorizationAndLegacyClaimIsolation(t *testing.T) {
 	if _, _, _, err := store.ProcessReport(context.Background(), id, report, app.now()); err != nil {
 		t.Fatal(err)
 	}
+	for _, invalid := range []string{
+		`{}`,
+		`{"channel":"beta","target_version":"v1.0.8-beta.2"}`,
+		`{"channel":"beta","target_version":"v1.0.8-beta.3","confirm_beta":true}`,
+		`{"channel":"beta","target_version":"v1.0.8-beta.2","target_commit":"` + strings.Repeat("b", 40) + `","confirm_beta":true}`,
+	} {
+		if w := webUpgradeResponse(t, app, id, invalid); w.Code != 400 && w.Code != 409 {
+			t.Fatalf("different/unconfirmed Beta build accepted: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if operation, err := store.GetLatestUpgrade(context.Background(), id); err != nil || operation != nil {
+		t.Fatal(operation, err)
+	}
 	if w := webUpgradeResponse(t, app, id, body); w.Code != 201 {
 		t.Fatalf("V2 rejected: %d %s", w.Code, w.Body.String())
 	}
@@ -148,7 +129,7 @@ func TestWebExplicitBetaAuthorizationAndLegacyClaimIsolation(t *testing.T) {
 		t.Fatalf("legacy claimed V2 %+v %v", operation, err)
 	}
 	operation, err := store.ClaimUpgrade(context.Background(), id, app.now(), 2)
-	if err != nil || operation == nil || operation.Status != storage.UpgradeClaimed || !operation.BetaConfirmed || operation.TargetCommit != document.Commit || operation.ServerVersion != "v1.0.1" {
+	if err != nil || operation == nil || operation.Status != storage.UpgradeClaimed || !operation.BetaConfirmed || operation.TargetVersion != app.buildInfo.Version || operation.TargetCommit != app.buildInfo.Commit || operation.ServerVersion != app.buildInfo.Version {
 		t.Fatalf("authorization %+v %v", operation, err)
 	}
 }

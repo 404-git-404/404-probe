@@ -66,7 +66,7 @@ class Element {
   showModal() {this.open=true;} close() {this.open=false; for(const f of this.listeners.get('close')||[]) f();}
   setAttribute(k,v){this.attrs ||= {};this.attrs[k]=String(v);}getAttribute(k){return this.attrs?.[k]??null;}hasAttribute(k){return Object.hasOwn(this.attrs||{},k);}removeAttribute(k){if(this.attrs)delete this.attrs[k];} querySelector(){return new Element();} querySelectorAll(){return [];} replaceChildren(...children){this.children=children;} append(...children){this.children ||= [];this.children.push(...children);}
 }
-function dashboard(file = 'app.js', readTimeout = 1000) {
+function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) {
   const nodes=new Map(), requests=[], sources=[], redirects=[], windowListeners=new Map();
   let route=null;
   const getNode = selector => {if(!nodes.has(selector)) nodes.set(selector,new Element()); return nodes.get(selector);};
@@ -97,6 +97,9 @@ function dashboard(file = 'app.js', readTimeout = 1000) {
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/plan-units.js'),'utf8'),sandbox,{filename:'plan-units.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/public-egress-check.js'),'utf8'),sandbox,{filename:'public-egress-check.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/agent-enrollment.js'),'utf8'),sandbox,{filename:'agent-enrollment.js'});
+  // Upgrade tests load the current page dependencies; retain the old suite's baseline sandbox.
+  if(upgradeModules) for(const module of ['range-slider.js','latency-mini.js','card.js','youtube-status.js'])
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',module),'utf8'),sandbox,{filename:module});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',file),'utf8'),sandbox,{filename:file});
   if(file === 'app.js') vm.runInContext("agentState.endRefresh(agentState.beginRefresh()); var actualDashboardRender=render; render = () => {}; mutationCSRFToken = 'test-token';",sandbox);
   else vm.runInContext("loadController.abort(); renderCurrentAgent = () => {currentAgent=agentState.agents.get(id);}; renderOutbounds=()=>{};renderAgentRuntime=()=>{};renderGoogleStatus=()=>{}; mutationCSRFToken='test-token';",sandbox);
@@ -106,22 +109,54 @@ function dashboard(file = 'app.js', readTimeout = 1000) {
     request:fragment=>requests.findLast(r=> /^\/[a-z]{32}$/.test(fragment) ? r.url.endsWith(fragment) : r.url.includes(fragment))};
 }
 
-test('Stable preparation: Beta never selected by default; explicit confirmation targets one Agent',async()=>{
-  const app=dashboard();seed(app.state);app.eval("serverBuild={version:'v1.0.1',upgrade_eligible:true}");
-  app.setRoute((url,options)=>url.endsWith('/upgrade-targets')?response({targets:[
-    {version:'v1.0.2-beta.1',channel:'beta',supported:true},
-    {version:'v1.0.1',channel:'stable',supported:false,reason:'equal version'}]}):options.method==='POST'?response({status:'requested',target_version:'v1.0.2-beta.1'},201):undefined);
+test('R34 same Server RC/Beta target requires explicit confirmation for one Agent',async()=>{
+  for (const version of ['v1.0.8-beta.2','v1.0.8-rc.2']) {
+    const app=dashboard('app.js',1000,true);seed(app.state);app.eval(`serverBuild={version:'${version}',upgrade_eligible:false}`);
+    app.setRoute((url,options)=>url.endsWith('/upgrade-targets')?response({targets:[
+      {version,channel:'beta',supported:true}]}):options.method==='POST'?response({status:'requested',target_version:version},201):undefined);
+    await app.eval(`openUpgradeAgentDialog(agents.get('${A}'))`);
+    assert.equal(app.nodes.get('#upgrade-release').value,'0');
+    assert.equal(app.nodes.get('#upgrade-release').disabled,true);
+    assert.equal(app.nodes.get('#upgrade-release').children[0].textContent,`升级到 ${version}（与 Server 相同）`);
+    assert.equal(app.nodes.get('#upgrade-beta-label').hidden,false);
+    assert.equal(app.nodes.get('#upgrade-agent-confirm').disabled,true);
+    await app.nodes.get('#upgrade-agent-form').emit('submit');assert.equal(app.requests.filter(r=>r.options.method==='POST').length,0);
+    app.nodes.get('#upgrade-beta-confirm').checked=true;await app.nodes.get('#upgrade-beta-confirm').emit('change');
+    assert.equal(app.nodes.get('#upgrade-agent-confirm').disabled,false);
+    await app.nodes.get('#upgrade-agent-form').emit('submit');
+    const mutation=app.requests.find(r=>r.options.method==='POST');assert.equal(mutation.url,`/api/v1/web/agents/${A}/upgrade`);
+    assert.deepEqual(JSON.parse(mutation.options.body),{channel:'beta',target_version:version,confirm_beta:true});
+  }
+});
+test('R34 lower/equal/higher Agent displays sole Server target and blocks unavailable submission',async()=>{
+  for(const [version,supported,reason] of [
+    ['v1.0.7',true,''],['v1.0.8',false,'已是最新版本'],
+    ['v1.0.9',false,'Agent 版本高于 Server，不能回退；如需回退请重新安装']]) {
+    const app=dashboard('app.js',1000,true);seed(app.state,{...dto(),version});app.eval("serverBuild={version:'v1.0.8',upgrade_eligible:true}");
+    app.setRoute((url,options)=>url.endsWith('/upgrade-targets')?response({targets:[{version:'v1.0.8',channel:'stable',supported,reason}]}):options.method==='POST'?response({status:'requested',target_version:'v1.0.8'},201):undefined);
+    await app.eval(`openUpgradeAgentDialog(agents.get('${A}'))`);
+    assert.equal(app.nodes.get('#upgrade-current-version').textContent,version);
+    assert.equal(app.nodes.get('#upgrade-release').children.length,1);
+    assert.equal(app.nodes.get('#upgrade-release').children[0].textContent,'升级到 v1.0.8（与 Server 相同）');
+    assert.equal(app.nodes.get('#upgrade-release-reason').textContent,reason);
+    assert.equal(app.nodes.get('#upgrade-agent-confirm').disabled,!supported);
+    await app.nodes.get('#upgrade-agent-form').emit('submit');
+    const mutations=app.requests.filter(r=>r.options.method==='POST');assert.equal(mutations.length,supported?1:0);
+    if(supported)assert.deepEqual(JSON.parse(mutations[0].options.body),{});
+  }
+});
+test('R34 ineligible Server displays explanation instead of an empty target',async()=>{
+  const app=dashboard('app.js',1000,true);seed(app.state);
+  app.setRoute(url=>url.endsWith('/upgrade-targets')?response({targets:[],message:'当前 Server 构建不支持远程升级'}):undefined);
   await app.eval(`openUpgradeAgentDialog(agents.get('${A}'))`);
-  assert.equal(app.nodes.get('#upgrade-release').value,'1');assert.equal(app.nodes.get('#upgrade-agent-confirm').disabled,true);
-  app.nodes.get('#upgrade-release').value='0';await app.nodes.get('#upgrade-release').emit('change');
+  assert.equal(app.nodes.get('#upgrade-release').children.length,1);
+  assert.equal(app.nodes.get('#upgrade-release').children[0].textContent,'当前 Server 构建不支持远程升级');
+  assert.equal(app.nodes.get('#upgrade-release-reason').textContent,'当前 Server 构建不支持远程升级');
+  assert.equal(app.nodes.get('#upgrade-agent-confirm').disabled,true);
   await app.nodes.get('#upgrade-agent-form').emit('submit');assert.equal(app.requests.filter(r=>r.options.method==='POST').length,0);
-  app.nodes.get('#upgrade-beta-confirm').checked=true;await app.nodes.get('#upgrade-beta-confirm').emit('change');
-  await app.nodes.get('#upgrade-agent-form').emit('submit');
-  const mutation=app.requests.find(r=>r.options.method==='POST');assert.equal(mutation.url,`/api/v1/web/agents/${A}/upgrade`);
-  assert.deepEqual(JSON.parse(mutation.options.body),{channel:'beta',target_version:'v1.0.2-beta.1',confirm_beta:true});
 });
 test('Stable preparation: late catalog cannot overwrite another Agent or a closed dialog',async()=>{
-  const app=dashboard();seed(app.state);seed(app.state,dto(B));
+  const app=dashboard('app.js',1000,true);seed(app.state);seed(app.state,dto(B));
   const first=app.eval(`openUpgradeAgentDialog(agents.get('${A}'))`);const old=app.request(A+'/upgrade-targets');
   const second=app.eval(`openUpgradeAgentDialog(agents.get('${B}'))`);const current=app.request(B+'/upgrade-targets');
   assert.equal(old.options.signal.aborted,true);

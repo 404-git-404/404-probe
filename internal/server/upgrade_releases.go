@@ -40,13 +40,6 @@ type githubUpgradeRelease struct {
 	} `json:"assets"`
 }
 
-func snapshotVersion(record storage.AgentSnapshot) string {
-	if record.State == nil {
-		return "unknown"
-	}
-	return record.State.AgentVersion
-}
-
 func upgradeFetch(ctx context.Context, address string, limit int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
@@ -256,7 +249,14 @@ func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeT
 	comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version)
 	if !ok || comparison >= 0 {
 		target.Supported = false
-		target.Reason = "目标不是严格更新版本；重复升级与降级不可用"
+		switch {
+		case !ok:
+			target.Reason = "目标不是严格更新版本；重复升级与降级不可用"
+		case comparison == 0:
+			target.Reason = "已是最新版本"
+		default:
+			target.Reason = "Agent 版本高于 Server，不能回退；如需回退请重新安装"
+		}
 	}
 	if !buildinfo.IsCanonicalVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2 {
 		target.Supported = false
@@ -293,52 +293,27 @@ func (a *App) handleWebUpgradeTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targets := []upgradeTarget{}
-	if a.buildInfo.UpgradeEligible() {
-		base := upgradeTarget{Version: a.buildInfo.Version, Channel: "stable", RequiredProtocol: 1, Commit: a.buildInfo.Commit, Supported: true}
-		if c, ok := buildinfo.CompareReleaseVersions(base.Version, "v1.0.2"); ok && c >= 0 {
-			base, err = a.releaseTarget(r.Context(), base.Version)
-			if err != nil {
-				base.Supported = false
-				base.Reason = "版本兼容信息读取失败"
-			}
-		}
-		targets = append(targets, a.compatibleAgentTarget(base, record))
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-	defer cancel()
-	body, err := upgradeFetch(ctx, strings.TrimRight(upgradeReleaseAPI, "/")+"?per_page=20", 1<<20)
 	message := ""
-	if err != nil {
-		message = "官方版本目录读取失败；默认 Stable 入口仍按原规则处理"
+	if a.buildInfo.UpgradeEligible() || a.buildInfo.ExplicitUpgradeEligible() {
+		targets = append(targets, a.compatibleAgentTarget(a.serverUpgradeTarget(), record))
 	} else {
-		var releases []githubUpgradeRelease
-		if json.Unmarshal(body, &releases) != nil {
-			message = "官方版本目录无效"
-		} else {
-			seen := map[string]bool{a.buildInfo.Version: true}
-			for _, release := range releases {
-				if len(targets) >= 8 {
-					break
-				}
-				if release.Draft || seen[release.TagName] || !buildinfo.IsReleaseVersion(release.TagName) {
-					continue
-				}
-				seen[release.TagName] = true
-				comparison, ok := buildinfo.CompareReleaseVersions(snapshotVersion(record), release.TagName)
-				if !ok || comparison >= 0 {
-					continue
-				}
-				target, err := a.releaseTarget(ctx, release.TagName)
-				if err != nil {
-					target.Supported = false
-					target.Reason = err.Error()
-				}
-				targets = append(targets, a.compatibleAgentTarget(target, record))
-			}
-		}
+		message = "当前 Server 构建不支持远程升级"
 	}
 	writeJSON(w, 200, struct {
 		Targets []upgradeTarget `json:"targets"`
 		Message string          `json:"message,omitempty"`
 	}{targets, message})
+}
+
+// New-protocol upgrades are authorized by this Server's own build identity.
+// Release metadata and payload validation remain the Agent Updater's responsibility.
+func (a *App) serverUpgradeTarget() upgradeTarget {
+	target := upgradeTarget{Version: a.buildInfo.Version, Commit: a.buildInfo.Commit, Channel: "stable", RequiredProtocol: 1, Supported: true}
+	if !buildinfo.IsCanonicalVersion(target.Version) {
+		target.Channel = "beta"
+		target.RequiredProtocol = 2
+	} else if requiresNewUpgradeContract(target.Version) {
+		target.RequiredProtocol = 2
+	}
+	return target
 }

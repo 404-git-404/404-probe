@@ -166,7 +166,8 @@ async function openUpgradeAgentDialog(agent) {
   upgradeTargetVersion.textContent = '—';
   upgradeReleaseSelect.replaceChildren();
   upgradeReleaseTargets = [];
-  upgradeReleaseReason.textContent = '正在读取兼容版本…';
+  upgradeReleaseReason.textContent = '正在读取升级状态…';
+  upgradeReleaseSelect.disabled = true;
   upgradeBetaConfirm.checked = false;
   upgradeBetaLabel.hidden = true;
   upgradeAgentError.classList.add('hidden');
@@ -179,17 +180,19 @@ async function openUpgradeAgentDialog(agent) {
     for (const [index, target] of upgradeReleaseTargets.entries()) {
       const option = document.createElement('option');
       option.value = String(index);
-      option.textContent = `${target.version} · ${target.channel === 'beta' ? (target.version.includes('-rc.')?'RC 预发布':'Beta 预发布') : 'Stable'}${target.supported ? '' : ' · 不可用'}`;
+      option.textContent = `升级到 ${target.version}（与 Server 相同）`;
       upgradeReleaseSelect.append(option);
     }
-    // Never select Beta by default, including when the current Stable is equal.
-    const stable = upgradeReleaseTargets.findIndex(target => target.channel === 'stable' && target.supported);
-    const fallback = upgradeReleaseTargets.findIndex(target => target.channel === 'stable');
-    upgradeReleaseSelect.value = String(stable >= 0 ? stable : fallback);
+    upgradeReleaseSelect.value = upgradeReleaseTargets.length ? '0' : '';
     refreshUpgradeSelection();
-    if (!upgradeReleaseTargets.length) upgradeReleaseReason.textContent = catalog.message || '没有可用的兼容版本';
+    if (!upgradeReleaseTargets.length) {
+      const option = document.createElement('option');
+      option.textContent = catalog.message || '当前 Server 构建不支持远程升级';
+      upgradeReleaseSelect.append(option);
+      upgradeReleaseReason.textContent = option.textContent;
+    }
   } catch (error) {
-    if (generation === upgradeCatalogGeneration && !controller.signal.aborted) upgradeReleaseReason.textContent = '版本目录读取失败，请重新打开重试';
+    if (generation === upgradeCatalogGeneration && !controller.signal.aborted) upgradeReleaseReason.textContent = '升级状态读取失败，请重新打开重试';
   }
 }
 
