@@ -13,7 +13,9 @@ function agent(){const n=now();const a={agent_id:ID,name:'DediRock-LAX-1',create
  state:{collected_at:n,uptime:52*86400,os:'linux',platform:'debian',platform_version:'13.6',hostname:'DediRock-LAX-1',cpu_percent:scenario==='special'?12.4:1.3,ram_percent:scenario==='special'?83.2:15.9,disk_percent:scenario==='special'?92.1:19.3,cpu_cores:1,load1:.09,load5:.06,load15:.01,cpu_steal_percent:0,ram_used:234*2**20,ram_total:1.44*2**30,swap_used:0,swap_total:512*2**20,disk_used:4.49*2**30,disk_total:24.5*2**30,disk_read_rate:12*1024,disk_write_rate:48*1024,disk_busy_percent:1,rx_rate:369,tx_rate:265},
  traffic:{rx_total:79.3e9,tx_total:79.1e9,started_at:new Date(2026,8,30).getTime()},usage_24h:{rx:1.3e9,tx:.9e9,coverage_ms:DAY},
  plan:scenario==='special'?{renewal_date:'2026-10-30'}:{currency:'USD',renewal_price:'6.85',renewal_price_period:'yearly',renewal_date:'2026-12-01',traffic_mode:'sum',cycle_kind:'monthly',cycle_count:1,cycle_anchor:'2026-10-01',cycle_start:n-9*DAY,cycle_end:n+21*DAY,cycle_rx_bytes:20.1e9,cycle_tx_bytes:16.5e9,usage_bytes:36.6e9,quota_bytes:5e12,quota_value:'5',quota_unit:'TB',bandwidth_value:'1',bandwidth_unit:'Gbps'},
- outbounds:{configured:true,available:true,status:'connected',order_source:'config',selectors:[{name:'出口',current:'直连',choices:['直连','WARP','自定义']}]}};
+ outbounds:{configured:true,available:true,status:'connected',order_source:'config',selectors:[{name:'出站主组',current:'直连',choices:['直连','WARP','自定义']},{name:'出站备用组',current:'备用',choices:['备用','备用二']}]}};
+ if(scenario==='single-outbound')a.outbounds.selectors.splice(1);
+ if(scenario==='long-outbound')for(const s of a.outbounds.selectors){s.current='lax-cn-hy2-'+ 'very-long-outbound-tag-'.repeat(12);s.choices=[s.current,...Array.from({length:100},(_,i)=>'出站-'+i)];}
  a.state.os='Debian 13.6';a.public_egress_check={enabled:true};a.state.public_egress={ipv4:{status:'available',checked_at:n,valid_until:n+DAY,ip:'203.0.113.9'},ipv6:{status:'unavailable',checked_at:n}};a.google_status={supported:true,checked_at:n,next_due_at:n+DAY,result:{youtube:{status:'not_cn',region:'US'}}};
  if(scenario==='real'){const sample=JSON.parse(fs.readFileSync(process.env.R33_REAL_SAMPLE,'utf8'));a.name='本机实测（Windows）';a.state=sample;a.last_seen=sample.collected_at;a.country_code='';a.country_source='';a.plan={};a.traffic={};a.usage_24h=null;a.outbounds={configured:false};a.public_egress_check={enabled:false};a.google_status={supported:false};}
  return a;}
@@ -73,7 +75,7 @@ test('R33 actual dashboard: A/B heights, filled day plot and exact network align
   assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });
-test('R33 special states, hover/title and native exit dialog: draft, submit, focus, backdrop, scroll',browserOptions,async()=>{
+test('R33 special states, hover/title and native outbound dialog: draft, per-group submit, focus, backdrop, scroll',browserOptions,async()=>{
  const {page,errors}=await open('special');try{
   await page.waitForFunction(()=>document.querySelectorAll('.nq7-b-red').length>20);
   assert.equal(await page.locator('.nq7-row').nth(1).locator('.nq7-right').textContent(),'—');
@@ -88,17 +90,48 @@ test('R33 special states, hover/title and native exit dialog: draft, submit, foc
   await shot(page,'A-special-tooltip');await page.mouse.move(0,0);
   await page.click('.selector-trigger');await page.waitForSelector('dialog.selector-dialog[open]');
   assert.equal(await page.locator('.selector-device').textContent(),'DediRock-LAX-1');
-  assert.equal(await page.locator('.selector-option input:checked').inputValue(),'直连');
-  await shot(page,'exit-dialog','body');
-  const before=posts.length;await page.locator('.selector-option').filter({hasText:'WARP'}).click();assert.equal(posts.length,before);
-  await shot(page,'exit-dialog-draft','body');
+  assert.equal(await page.locator('#selector-dialog-title').textContent(),'出站选择');
+  assert.equal(await page.locator('.selector-options select').first().inputValue(),'直连');
+  assert.equal(await page.locator('.selector-options select').nth(1).inputValue(),'备用');
+  assert.equal(await page.locator('.selector-actions').textContent(),'关闭');
+  const switches=page.locator('[data-selector-kind=submit]');assert.equal(await switches.count(),2);
+  assert.equal(await switches.first().isDisabled(),true);assert.equal(await switches.nth(1).isDisabled(),true);
+  await shot(page,'outbound-dialog','body');
+  const before=posts.length;await page.locator('.selector-options select').first().selectOption('WARP');assert.equal(posts.length,before);
+  assert.equal(await switches.first().isDisabled(),false);assert.equal(await switches.nth(1).isDisabled(),true);
+  await shot(page,'outbound-dialog-draft','body');
   const p1=await page.locator('.selector-dialog').boundingBox();await page.evaluate(()=>{document.body.style.minHeight='2000px';window.scrollTo(0,500);});const p2=await page.locator('.selector-dialog').boundingBox();assert.equal(p1.y,p2.y);
   await page.keyboard.press('Escape');assert.equal(await page.locator('.selector-trigger').evaluate(e=>e===document.activeElement),true);
   await page.click('.selector-trigger');await page.mouse.click(2,2);assert.equal(await page.locator('.selector-dialog').evaluate(e=>e.open),false);
-  await page.click('.selector-trigger');await page.locator('.selector-option').filter({hasText:'WARP'}).click();await page.click('[data-selector-kind=submit]');
+  await page.click('.selector-trigger');await page.locator('.selector-options select').first().selectOption('WARP');await switches.first().click();
   await page.waitForFunction(()=>document.querySelector('.selector-error'));
-  assert.equal(posts.length,before+1);assert.equal(posts.at(-1).body.selector,'出口');assert.equal(posts.at(-1).body.choice,'WARP');
+  assert.equal(posts.length,before+1);assert.equal(posts.at(-1).body.selector,'出站主组');assert.equal(posts.at(-1).body.choice,'WARP');
   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+test('400px card: long outbound names never truncate YouTube region; many choices keep two compact rows',browserOptions,async()=>{
+ const {page,errors}=await open('long-outbound');try{
+  assert.equal(await page.locator('.selector-trigger').textContent(),'出站选择 ⌄');
+  assert.match(await page.locator('.selector-trigger').getAttribute('title'),/very-long-outbound-tag/);
+  assert.equal(await page.locator('.selector-trigger svg').getAttribute('stroke'),'currentColor');
+  const layout=await page.evaluate(()=>{const card=document.querySelector('.agent-card').getBoundingClientRect(),label=document.querySelector('.c7-foot1 .check-result'),r=label.getBoundingClientRect(),b=document.querySelector('.selector-trigger').getBoundingClientRect();return {cardWidth:card.width,text:label.textContent,fits:label.scrollWidth<=label.clientWidth,labelRight:r.right,buttonLeft:b.left,buttonRight:b.right,cardRight:card.right};});
+  assert.equal(layout.cardWidth,400);assert.match(layout.text,/地区 US/);assert.equal(layout.fits,true);assert.ok(layout.labelRight<=layout.buttonLeft);assert.ok(layout.buttonRight<=layout.cardRight);
+  await shot(page,'400-long-outbound');await page.click('.selector-trigger');
+  assert.equal(await page.locator('.selector-row').count(),2);assert.equal(await page.locator('.selector-row select option').count(),202);assert.equal(await page.locator('input[type=radio]').count(),0);
+  assert.ok((await page.locator('.selector-dialog').boundingBox()).height<350);
+  for(let i=0;i<2;i++)await page.locator('.selector-row select').nth(i).selectOption('出站-3');
+  const before=posts.length;await page.locator('[data-selector-kind=submit]').nth(1).click();await page.waitForSelector('.selector-error');
+  assert.equal(posts.length,before+1);assert.equal(posts.at(-1).body.selector,'出站备用组');assert.equal(posts.at(-1).body.choice,'出站-3');
+  assert.equal(await page.locator('.selector-row select').first().inputValue(),'出站-3');assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+test('one outbound group uses the same labelled select row and disabled initial switch',browserOptions,async()=>{
+ const {page,errors}=await open('single-outbound');try{
+  await page.click('.selector-trigger');assert.equal(await page.locator('.selector-row').count(),1);
+  assert.equal(await page.getByLabel('出站主组',{exact:true}).inputValue(),'直连');assert.equal(await page.locator('[data-selector-kind=submit]').isDisabled(),true);
+  assert.equal(await page.locator('.selector-actions').textContent(),'关闭');assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });
 test('R33 real local measurements screenshot (optional sample path)',{skip:!available||!process.env.R33_REAL_SAMPLE},async()=>{

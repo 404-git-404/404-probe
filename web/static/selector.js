@@ -227,7 +227,6 @@
     const el = (tag, text, className = '') => {
       const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
     };
-    let chosenName = '';
     function hide() {
       if (!panel || !activeID) return;
       const id = activeID;
@@ -254,16 +253,15 @@
         const node=event.target.closest('[data-selector-kind]');if(!node||!panel.contains(node))return;
         const kind=node.dataset.selectorKind;
         if(kind==='close')hide();
-        else if(kind==='submit'){const g=controller.group(activeID,chosenName);controller.submit(activeID,chosenName,g.draft);}
+        else if(kind==='submit'){const name=node.dataset.selectorName,g=controller.group(activeID,name);controller.submit(activeID,name,g.draft);}
       });
       panel.addEventListener('change', event => {
         if(event.target.dataset.selectorKind==='choice'){
-          chosenName=event.target.dataset.selectorName;
-          controller.draft(activeID,chosenName,event.target.value);
+          controller.draft(activeID,event.target.dataset.selectorName,event.target.value);
         }
       });
     }
-    // Delegated events read the live controls. Keyed patching retains the radios,
+    // Delegated events read the live controls. Keyed patching retains the selects,
     // buttons and scroll state even when a new outbound snapshot arrives mid-gesture.
     const nodeKey = node => node.nodeType===1 ? node.dataset.selectorGroup!=null ? `group/${node.dataset.selectorGroup}`
       : node.dataset.selectorKind ? `${node.dataset.selectorKind}/${node.dataset.selectorName||''}/${node.dataset.selectorChoice||''}` : null : null;
@@ -295,41 +293,44 @@
       if (!panel || activeID !== id) return;
       const m = controller.model(id), agent = state.agents.get(id);
       if (!m.open || !agent || state.blocked(id)) { hide(); return; }
-      const signature = JSON.stringify([id, chosenName, agent.name, m.open, m.expanded, [...m.groups], Boolean(m.active), Boolean(m.inspection), m.recoveryIncomplete, m.recoveryMessage, agent.outbounds, reason(agent, csrf())]);
+      const signature = JSON.stringify([id, agent.name, m.open, m.expanded, [...m.groups], Boolean(m.active), Boolean(m.inspection), m.recoveryIncomplete, m.recoveryMessage, agent.outbounds, reason(agent, csrf())]);
       if (signature === renderedPanel) return;
       renderedPanel = signature;
       const focus = document.activeElement;
       const focusedName = focus?.dataset?.selectorName, focusedKind = focus?.dataset?.selectorKind;
       const content=el('div','');
-      const heading=el('h2','出口选择');heading.id='selector-dialog-title';
+      const heading=el('h2','出站选择');heading.id='selector-dialog-title';
       const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device');device.id='selector-dialog-device';
       content.append(heading,device);
       const out=agent.outbounds||{},blocked=reason(agent,csrf());
+      let index=0;
       for(const selector of out.selectors||[]){
         const g=controller.group(id,selector.name),section=el('div','','selector-options');section.dataset.selectorGroup=selector.name;
-        if(out.selectors.length>1)section.append(el('strong',selector.name));
-        for(const choice of selector.choices||[]){
-          const row=el('label','','selector-option'),radio=el('input',''),words=el('span','');
-          row.dataset.selectorKind='option';row.dataset.selectorName=selector.name;row.dataset.selectorChoice=choice;
-          radio.type='radio';radio.name='selector-choice';radio.value=choice;
-          radio.dataset.selectorKind='choice';radio.dataset.selectorName=selector.name;radio.dataset.selectorChoice=choice;
-          radio.checked=chosenName===selector.name&&(g.draft??selector.current)===choice;
-          radio.disabled=Boolean(blocked||m.active);row.dataset.selected=String(radio.checked);
-          words.append(el('strong',choice));
-          if(choice===selector.current)words.append(el('small','当前'));
-          row.append(radio,words);section.append(row);
+        const row=el('div','','selector-row'),label=el('label',selector.name,'selector-label'),select=el('select','');
+        select.id=`selector-choice-${index++}`;label.setAttribute('for',select.id);
+        select.dataset.selectorKind='choice';select.dataset.selectorName=selector.name;
+        select.title=`当前：${selector.current||'—'}`;
+        const value=g.draft??selector.current;
+        if(value!=null&&!selector.choices?.includes(value)){
+          const missing=el('option',`${value}（已失效）`);missing.value=value;missing.disabled=true;select.append(missing);
         }
+        for(const choice of selector.choices||[]){
+          const option=el('option',choice===selector.current?`${choice}（当前）`:choice);option.value=choice;select.append(option);
+        }
+        select.value=value??'';select.disabled=Boolean(blocked||m.active);
+        const submit=el('button',m.active&&g.feedback?.pending?'切换中…':'切换');submit.type='button';
+        submit.dataset.selectorKind='submit';submit.dataset.selectorName=selector.name;
+        submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selector.choices?.includes(value)||value===selector.current);
+        row.append(label,select,submit);section.append(row);
         const status=g.feedback||g.recovered;
         if(status){const feedback=el('p',status.message,status.error?'selector-error':'selector-feedback');feedback.setAttribute('aria-live','polite');section.append(feedback);}
         content.append(section);
       }
       const message=blocked||(m.inspection?'正在核对待执行切换…':m.recoveryMessage)||(!out.selectors?.length?'未发现 Selector':'');
       if(message)content.append(el('p',message,'selector-status'));
-      const selected=out.selectors?.find(s=>s.name===chosenName),g=controller.group(id,chosenName),value=g.draft??selected?.current;
-      const actions=el('div','','selector-actions'),cancel=el('button','取消'),submit=el('button',m.active?'切换中…':'切换');
-      cancel.type=submit.type='button';cancel.dataset.selectorKind='close';submit.dataset.selectorKind='submit';
-      submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selected?.choices?.includes(value)||value===selected?.current);
-      actions.append(cancel,submit);content.append(actions);
+      const actions=el('div','','selector-actions'),cancel=el('button','关闭');
+      cancel.type='button';cancel.dataset.selectorKind='close';
+      actions.append(cancel);content.append(actions);
       patchChildren(panel,content);
       if (focus?.isConnected && panel.contains(focus)) return;
       const liveClose = panel.querySelector('[data-selector-kind="close"]');
@@ -347,11 +348,16 @@
     }
     function trigger(agent) {
       if (!agent.outbounds?.configured) { triggers.delete(agent.agent_id); return null; }
-      const choices=agent.outbounds.selectors||[],current=choices.length===1?choices[0].current:'';
-      const label=`出口：${current||choices.map(s=>s.current).filter(Boolean).join(' / ')||'—'} ▸`,hint=`出站选择${current?'：'+current:''}`;
+      const hint=(agent.outbounds.selectors||[]).map(s=>`${s.name}：${s.current||'—'}`).join('\n')||'出站选择';
       const existing = triggers.get(agent.agent_id);
-      if (existing) { if(existing.textContent!==label)existing.textContent=label;existing.title=hint;existing.setAttribute('aria-label',hint);existing.setAttribute('aria-expanded', String(controller.model(agent.agent_id).open)); return existing; }
-      const id = agent.agent_id, button = el('button', label, 'selector-trigger'); button.type = 'button';button.title=hint;button.setAttribute('aria-label',hint);
+      if (existing) { existing.title=hint;existing.setAttribute('aria-expanded', String(controller.model(agent.agent_id).open)); return existing; }
+      const id = agent.agent_id, button = el('button', '', 'selector-trigger'); button.type = 'button';button.title=hint;button.setAttribute('aria-label','出站选择');
+      const svgNS='http://www.w3.org/2000/svg',icon=document.createElementNS(svgNS,'svg');
+      icon.setAttribute('class','selector-icon');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('fill','none');icon.setAttribute('stroke','currentColor');icon.setAttribute('stroke-width','1.75');icon.setAttribute('aria-hidden','true');
+      for(const [tag,attrs] of [['path',{d:'M6 7v10M18 8a8 8 0 0 1-8 8H6'}],['circle',{cx:'6',cy:'5',r:'2'}],['circle',{cx:'18',cy:'6',r:'2'}],['circle',{cx:'6',cy:'19',r:'2'}]]){
+        const shape=document.createElementNS(svgNS,tag);for(const [key,value] of Object.entries(attrs))shape.setAttribute(key,value);icon.append(shape);
+      }
+      const arrow=el('span',' ⌄');arrow.setAttribute('aria-hidden','true');button.append(icon,el('span','出站选择'),arrow);
       button.dataset.focusKey = 'selector'; button.dataset.agentId = id;
       button.setAttribute('aria-controls', 'selector-popover'); button.setAttribute('aria-expanded', String(controller.model(id).open));
       triggers.set(id, button);
@@ -359,11 +365,11 @@
         ensure();
         if (activeID === id) { hide(); return; }
         if (activeID) hide();
-        activeID = id; chosenName=state.agents.get(id)?.outbounds?.selectors?.[0]?.name||'';
+        activeID = id;
         for(const selector of state.agents.get(id)?.outbounds?.selectors||[])controller.group(id,selector.name).draft=null;
         renderedPanel=null;controller.open(id); refresh(id);
         panel.showModal();
-        (panel.querySelector('input:checked')||panel.querySelector('button'))?.focus({preventScroll: true}); onopen(id);
+        (panel.querySelector('select:not(:disabled)')||panel.querySelector('[data-selector-kind="close"]'))?.focus({preventScroll: true}); onopen(id);
       });
       return button;
     }

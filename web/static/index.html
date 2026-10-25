@@ -109,10 +109,10 @@
           <div class="form-grid three"><label>周期<select id="plan-cycle-kind"><option value="monthly">月</option><option value="yearly">年</option><option value="days">天</option></select></label><label>每<input id="plan-cycle-count" type="number" min="1" max="120" value="1"></label><label>周期起点<input id="plan-cycle-anchor" type="date"></label></div>
         </div>
       </details>
-      <details class="plan-section"><summary>高级 · 购买记录、用量校准与出口国家/地区</summary>
+      <details class="plan-section"><summary>高级 · 购买记录、用量校准与出站国家/地区</summary>
       <div class="form-grid two"><label>购买价格<input id="plan-purchase-price" inputmode="decimal" placeholder="可选"></label><label>原始价格周期<select id="plan-purchase-period"><option value="">—</option><option value="once">一次性</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label><label>购买日期<input id="plan-purchase-date" type="date"></label></div>
       <div class="calibration-row"><label>当前周期已用量校准<input id="plan-calibration-value" inputmode="decimal" placeholder="可选，仅在对账时填写"></label><label>单位<select id="plan-calibration-unit"><option>GB</option><option>TB</option></select></label><small>校准不会声称补齐过去的采样，只从此值继续累计；只有启用流量统计且明确填写时才提交。</small></div>
-      <div class="plan-section"><h3>出口国家/地区</h3><div class="form-grid two"><div><label>搜索国家/地区<input id="plan-country-search" type="search" placeholder="中文、英文或两字母代码"></label><label>手动覆盖<select id="plan-country-code"></select></label><span id="plan-country-preview"></span><button id="plan-country-auto" type="button">使用 Agent 识别值</button><p id="plan-country-status" class="field-note" role="status"></p></div><p class="field-note">使用 Agent 识别值时，采用安装时缓存或最近一次成功的主动重取。失败保留原值；手动覆盖优先。选择或清空只改变草稿，保存套餐后才生效。</p></div></div>
+      <div class="plan-section"><h3>出站国家/地区</h3><div class="form-grid two"><div><label>搜索国家/地区<input id="plan-country-search" type="search" placeholder="中文、英文或两字母代码"></label><label>手动覆盖<select id="plan-country-code"></select></label><span id="plan-country-preview"></span><button id="plan-country-auto" type="button">使用 Agent 识别值</button><p id="plan-country-status" class="field-note" role="status"></p></div><p class="field-note">使用 Agent 识别值时，采用安装时缓存或最近一次成功的主动重取。失败保留原值；手动覆盖优先。选择或清空只改变草稿，保存套餐后才生效。</p></div></div>
       <button id="plan-clear" class="text-danger" type="button">清除套餐资料</button>
       </details>
       </div>

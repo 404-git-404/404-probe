@@ -48,7 +48,7 @@
     const premium=tone==='observed'?(consent?'available':china?'unavailable':premiumRegions.has(y.region)?'available':'unavailable'):null;
     const premiumNote=consent?'':china?(premium?(notice?'页面提示 Premium 不可用':'Premium 不可用地区（CN 不在 YouTube 官方名单内）'):''):premium==='available'?'Premium 可用地区':premium==='unavailable'?`Premium 不可用地区（依据 YouTube 官方名单，核对日期 ${premiumCheckedAt}）`:'';
     const prior=g?.result?`；${g.pending||old||expired?'上次记录':'结果记录'}：${china?'地区 CN（送中）':known?'页面地区 '+y.region:'未知'}，${y?.error?.category==='job_expired'?'作业到期时间':'结果记录时间'} ${time}`:'';
-    const description=`YouTube：${state}${prior}；${reason}。${premiumNote?premiumNote+'。':''}通过 IPv4 HTTPS 读取 Premium 页面；页面地区可能来自默认值、偏好或启发式判断，不代表出口 IP 归属，未验证视频播放或 Premium 解锁。`;
+    const description=`YouTube：${state}${prior}；${reason}。${premiumNote?premiumNote+'。':''}通过 IPv4 HTTPS 读取 Premium 页面；页面地区可能来自默认值、偏好或启发式判断，不代表出站 IP 归属，未验证视频播放或 Premium 解锁。`;
     return {label,tone,premium,state,description,reason,known,expired:expired||old};
   }
   const api={view};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.YouTubeStatus=api;

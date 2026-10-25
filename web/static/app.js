@@ -848,7 +848,7 @@ function countryMark(code, source) {
     mark.dataset.countryCode = normalized;
     const sourceLabel = source === 'manual' ? '手动覆盖' : source === 'lookup' ? 'Agent 主动重取' : 'Agent 自动识别';
     mark.title = `${normalized} · ${sourceLabel}`;
-    mark.setAttribute('aria-label', `出口国家或地区 ${normalized}，${sourceLabel}`);
+    mark.setAttribute('aria-label', `出站国家或地区 ${normalized}，${sourceLabel}`);
     const flag = document.createElement('img');
     flag.className = 'country-flag';
     flag.src = `/vendor/flag-icons/4x3/${normalized.toLowerCase()}.svg`;
@@ -857,14 +857,14 @@ function countryMark(code, source) {
     flag.addEventListener('error', () => {
       mark.replaceChildren('🌐');
       mark.removeAttribute('data-country-code');
-      mark.title = '出口国家/地区未知';
-      mark.setAttribute('aria-label', '出口国家或地区未知');
+      mark.title = '出站国家/地区未知';
+      mark.setAttribute('aria-label', '出站国家或地区未知');
     }, {once: true});
     mark.append(flag);
   } else {
     mark.textContent = '🌐';
-    mark.title = '出口国家/地区未知';
-    mark.setAttribute('aria-label', '出口国家或地区未知');
+    mark.title = '出站国家/地区未知';
+    mark.setAttribute('aria-label', '出站国家或地区未知');
   }
   return mark;
 }
@@ -1160,7 +1160,7 @@ function resourceFactsFor(agent) {
 function createPublicEgress(agentID) {
   const egress=document.createElement('div');
   egress.className='public-egress';
-  egress.setAttribute('aria-label','Agent 公网出口');
+  egress.setAttribute('aria-label','Agent 公网出站');
   const items=['ipv4','ipv6'].map((family,index)=>{
     const item=document.createElement('button');item.type='button';item.className='public-egress-item';item.dataset.family=family;
     item.textContent=index?'V6':'V4';
@@ -1186,7 +1186,7 @@ function createPublicEgress(agentID) {
       if(!available||stale)continue;
       const at=new Date(observation.checked_at).toLocaleString();
       const history=observation.last_success;
-      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${PublicEgressCheck.maskIP(observation.ip)} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+PublicEgressCheck.maskIP(history.ip)+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出口观测`;
+      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${PublicEgressCheck.maskIP(observation.ip)} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+PublicEgressCheck.maskIP(history.ip)+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出站观测`;
       setCardText(tip,full);item.setAttribute('aria-label',full);
       item.dataset.status=status;item.dataset.stale='false';
       shown.push(item,tip);families.push(family);

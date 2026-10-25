@@ -7,7 +7,7 @@ test('M11: a page region makes no playback, entitlement or IP geolocation claim'
  for(const region of ['US','JP','HK','DE','CW']){
   const view=YouTube.view(agent({status:'not_cn',region}),now);
   assert.equal(view.label,'地区 '+region);assert.equal(view.tone,'observed');
-  assert.doesNotMatch(view.label,/正常|解锁|送中/);assert.match(view.description,/未验证视频播放或 Premium 解锁/);assert.match(view.description,/不代表出口 IP 归属/);
+  assert.doesNotMatch(view.label,/正常|解锁|送中/);assert.match(view.description,/未验证视频播放或 Premium 解锁/);assert.match(view.description,/不代表出站 IP 归属/);
  }
 });
 test('M11: latest unknown cannot expose a current region or green normal tone',()=>{
@@ -36,7 +36,7 @@ test('M11: Premium availability colours only valid results, by the official list
  assert.equal(premium('US').premium,'available');assert.equal(premium('US').tone,'observed');
  assert.equal(premium('PR').premium,'available');
  for(const region of ['MO','RU']){const v=premium(region);assert.equal(v.premium,'unavailable');assert.match(v.description,/Premium 不可用地区（依据 YouTube 官方名单，核对日期 \d{4}-\d{2}-\d{2}）/);}
- assert.match(premium('US').description,/Premium 可用地区/);assert.match(premium('US').description,/未验证视频播放或 Premium 解锁/);assert.match(premium('CN').description,/不代表出口 IP 归属/);
+ assert.match(premium('US').description,/Premium 可用地区/);assert.match(premium('US').description,/未验证视频播放或 Premium 解锁/);assert.match(premium('CN').description,/不代表出站 IP 归属/);
 });
 test('M11: stale, offline, pending, unknown and unsupported stay neutral',()=>{
  const stale=YouTube.view(agent({status:'cn',region:'CN'},{stale:true}),now);
@@ -61,7 +61,7 @@ test('L2: an EU consent page shows a green 地区 EU with Premium available and 
  assert.equal(view.known,false,'no country is claimed');
  assert.ok(view.description.includes('遇到欧盟隐私同意页，具体国家未知；欧盟/欧洲经济区、英国、瑞士均在 Premium 可用名单内'));
  assert.doesNotMatch(view.description,/Premium 不可用地区/);
- assert.match(view.description,/不代表出口 IP 归属/);
+ assert.match(view.description,/不代表出站 IP 归属/);
 });
 test('L2: a consent page that is stale, offline, pending, unsupported or not yet checked stays neutral',()=>{
  const consent={status:'unknown',error:{category:'consent_page'}};

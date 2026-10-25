@@ -372,11 +372,12 @@ func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T)
 	for _, required := range []string{
 		`id="outbounds-status"`, `id="outbounds-list"`, `未配置出站发现`, `当前不可用`, `未发现 Selector`,
 		`panel = el('dialog', '', 'selector-dialog')`, `panel.showModal()`,
-		`radio.type='radio'`, `radio.disabled=Boolean(blocked||m.active)`,
-		`panel.addEventListener('change'`, `controller.draft(activeID,chosenName,event.target.value)`,
-		`kind==='submit'`, `controller.submit(activeID,chosenName,g.draft)`,
-		`el('button',m.active?'切换中…':'切换')`,
-		`submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selected?.choices?.includes(value)||value===selected?.current)`,
+		`select.dataset.selectorKind='choice'`, `select.disabled=Boolean(blocked||m.active)`,
+		`panel.addEventListener('change'`, `controller.draft(activeID,event.target.dataset.selectorName,event.target.value)`,
+		`kind==='submit'`, `controller.submit(activeID,name,g.draft)`,
+		`submit.dataset.selectorName=selector.name`, `el('button',m.active&&g.feedback?.pending?'切换中…':'切换')`,
+		`submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selector.choices?.includes(value)||value===selector.current)`,
+		`el('h2','出站选择')`, `el('button','关闭')`, `document.createElementNS(svgNS,'svg')`, `icon.setAttribute('stroke','currentColor')`,
 		`/outbounds/switch`, `method: 'POST'`, `'X-CSRF-Token': csrf()`,
 		`body: JSON.stringify({request_id: operation.requestID, selector: name, choice})`,
 		`choice === selector.current`, `agent.disabled_at`, `agent.revoked`, `m.active`,
@@ -424,7 +425,7 @@ func TestSharedSelectorLoadsBeforeBothPagesWithLocalTheme(t *testing.T) {
 		}
 	}
 	css, _ := fs.ReadFile(static, "card-v7.css")
-	for _, marker := range []string{"dialog.selector-dialog{position:fixed;inset:0;margin:auto", "color-scheme:light", ".selector-dialog .selector-option input", ".selector-dialog button:disabled"} {
+	for _, marker := range []string{"dialog.selector-dialog{position:fixed;inset:0;margin:auto", "color-scheme:light", ".selector-dialog select", ".selector-dialog .selector-row{display:grid", ".selector-dialog button:disabled"} {
 		if !strings.Contains(string(css), marker) {
 			t.Fatalf("missing local Selector style %q", marker)
 		}
