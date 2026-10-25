@@ -219,66 +219,54 @@
     }
     return {model, group, open, close, expand, draft, sync, cancel, closeAll, submit, recover};
   }
-  // The floating surface lives outside card re-renders. Native auto popover
-  // supplies top-layer/light dismissal; fixed fallback keeps the same intent.
+  // The modal lives outside card re-renders. Native dialog supplies top-layer
+  // focus trapping; dismissal hands focus back to the opening button.
   function view({controller, state, csrf, onopen = () => {}}) {
     const triggers = new Map();
-    let panel = null, activeID = '', native = false;
+    let panel = null, activeID = '';
     const el = (tag, text, className = '') => {
       const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
     };
-    function position() {
-      const trigger = triggers.get(activeID);
-      if (!panel || !trigger?.isConnected) return;
-      const rect = trigger.getBoundingClientRect(), width = Math.min(400, innerWidth - 24);
-      panel.style.width = `${width}px`;
-      panel.style.left = `${Math.max(12, Math.min(rect.left, innerWidth - width - 12))}px`;
-      const below = innerHeight - rect.bottom - 20, above = rect.top - 20;
-      const useBelow = below >= Math.min(280, above);
-      panel.style.maxHeight = `${Math.max(80, useBelow ? below : above)}px`;
-      panel.style.top = useBelow ? `${rect.bottom + 8}px` : 'auto';
-      panel.style.bottom = useBelow ? 'auto' : `${innerHeight - rect.top + 8}px`;
-    }
+    let chosenName = '';
     function hide() {
       if (!panel || !activeID) return;
       const id = activeID;
       activeID = '';
-      if (native) { if (panel.matches(':popover-open')) panel.hidePopover(); }
-      else panel.hidden = true;
+      if (panel.open) panel.close();
       controller.close(id);
       triggers.get(id)?.setAttribute('aria-expanded', 'false');
       triggers.get(id)?.focus({preventScroll: true});
     }
     function ensure() {
       if (panel) return;
-      panel = el('section', '', 'selector-popover'); panel.id = 'selector-popover';
-      panel.setAttribute('aria-label', '出站选择');
-      native = typeof panel.showPopover === 'function';
-      if (native) {
-        panel.setAttribute('popover', 'auto');
-        panel.addEventListener('toggle', event => { if (event.newState === 'closed' && activeID && !panel.matches(':popover-open')) hide(); });
-      } else panel.hidden = true;
+      panel = el('dialog', '', 'selector-dialog'); panel.id = 'selector-popover';
+      panel.setAttribute('aria-labelledby', 'selector-dialog-title');
+      panel.setAttribute('aria-describedby', 'selector-dialog-device');
+      panel.addEventListener('cancel', event => { event.preventDefault(); hide(); });
+      panel.addEventListener('close', hide);
+      panel.addEventListener('click', event => {
+        if(event.target!==panel)return;
+        const r=panel.getBoundingClientRect();
+        if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)hide();
+      });
       document.body.append(panel);
       panel.addEventListener('click', event => {
         const node=event.target.closest('[data-selector-kind]');if(!node||!panel.contains(node))return;
-        const kind=node.dataset.selectorKind,name=node.dataset.selectorName;
+        const kind=node.dataset.selectorKind;
         if(kind==='close')hide();
-        else if(kind==='summary')controller.expand(activeID,name);
-        else if(kind==='submit')controller.submit(activeID,name,node.closest('[data-selector-group]').querySelector('select').value);
+        else if(kind==='submit'){const g=controller.group(activeID,chosenName);controller.submit(activeID,chosenName,g.draft);}
       });
       panel.addEventListener('change', event => {
-        if(event.target.dataset.selectorKind==='select')controller.draft(activeID,event.target.dataset.selectorName,event.target.value);
+        if(event.target.dataset.selectorKind==='choice'){
+          chosenName=event.target.dataset.selectorName;
+          controller.draft(activeID,chosenName,event.target.value);
+        }
       });
-      addEventListener('keydown', event => { if (activeID && event.key === 'Escape') { event.preventDefault(); hide(); } });
-      addEventListener('pointerdown', event => {
-        if (!native && activeID && !panel.contains(event.target) && !triggers.get(activeID)?.contains(event.target)) hide();
-      });
-      addEventListener('resize', position); addEventListener('scroll', position, true);
     }
-    // Delegated events read the live controls. Keyed patching retains the native select,
+    // Delegated events read the live controls. Keyed patching retains the radios,
     // buttons and scroll state even when a new outbound snapshot arrives mid-gesture.
     const nodeKey = node => node.nodeType===1 ? node.dataset.selectorGroup!=null ? `group/${node.dataset.selectorGroup}`
-      : node.dataset.selectorKind ? `${node.dataset.selectorKind}/${node.dataset.selectorName||''}` : null : null;
+      : node.dataset.selectorKind ? `${node.dataset.selectorKind}/${node.dataset.selectorName||''}/${node.dataset.selectorChoice||''}` : null : null;
     function patchChildren(current,next) {
       const old=[...current.childNodes],used=new Set();let cursor=current.firstChild;
       for(const desired of [...next.childNodes]) {
@@ -294,6 +282,7 @@
             const selected=desired.value;
             patchChildren(node,desired);
             if(node.tagName==='SELECT'&&node.value!==selected)node.value=selected;
+            if(node.tagName==='INPUT')node.checked=desired.checked;
           }
         }
         used.add(node);cursor=node.nextSibling;
@@ -306,56 +295,42 @@
       if (!panel || activeID !== id) return;
       const m = controller.model(id), agent = state.agents.get(id);
       if (!m.open || !agent || state.blocked(id)) { hide(); return; }
-      const signature = JSON.stringify([id, m.open, m.expanded, [...m.groups], Boolean(m.active), Boolean(m.inspection), m.recoveryIncomplete, m.recoveryMessage, agent.outbounds, reason(agent, csrf())]);
-      if (signature === renderedPanel) { position(); return; }
+      const signature = JSON.stringify([id, chosenName, agent.name, m.open, m.expanded, [...m.groups], Boolean(m.active), Boolean(m.inspection), m.recoveryIncomplete, m.recoveryMessage, agent.outbounds, reason(agent, csrf())]);
+      if (signature === renderedPanel) return;
       renderedPanel = signature;
       const focus = document.activeElement;
       const focusedName = focus?.dataset?.selectorName, focusedKind = focus?.dataset?.selectorKind;
       const content=el('div','');
-      const heading = el('div', '', 'selector-popover-heading');
-      const closeButton = el('button', '关闭'); closeButton.type = 'button';
-      closeButton.dataset.selectorKind = 'close';
-      heading.append(el('strong', '出站选择'), closeButton); content.append(heading);
-      const out = agent.outbounds || {}, blocked = reason(agent, csrf());
-      content.append(el('p', `${blocked || '已连接'} · ${out.order_source === 'config' ? '按配置顺序' : '名称回退顺序'}`, 'selector-popover-status'));
-      if (m.inspection || m.recoveryMessage) content.append(el('p', m.inspection ? '正在核对待执行切换…' : m.recoveryMessage, 'selector-popover-status'));
-      const jobsLink = el('a', '完整操作记录见 Probe Jobs'); jobsLink.href = '/jobs.html'; jobsLink.dataset.selectorKind = 'jobs'; content.append(jobsLink);
-      if (out.updated_at) content.append(el('small', `最后快照 ${new Date(out.updated_at).toLocaleString()}`));
-      for (const selector of out.selectors || []) {
-        const g = controller.group(id, selector.name), expanded = m.expanded === selector.name;
-        const section = el('div', '', 'selector-popover-group'); section.dataset.selectorGroup=selector.name;
-        const summary = el('button', '', 'selector-popover-summary'); summary.type = 'button';
-        summary.dataset.selectorName = selector.name; summary.dataset.selectorKind = 'summary';
-        summary.setAttribute('aria-expanded', String(expanded));
-        summary.append(el('strong', selector.name), el('span', `${selector.current || '—'} ${expanded ? '▴' : '▾'}`));
-        section.append(summary);
-        if (expanded) {
-          const controls = el('div', '', 'selector-popover-controls'), select = el('select', '');
-          select.dataset.selectorName = selector.name; select.dataset.selectorKind = 'select';
-          select.setAttribute('aria-label', `${selector.name} 目标出站`);
-          const selected = g.draft ?? selector.current;
-          if (g.draft !== null && !selector.choices?.includes(g.draft)) {
-            const invalid = el('option', `${g.draft}（已移除）`); invalid.value = g.draft; invalid.disabled = true; select.append(invalid);
-          }
-          for (const choice of selector.choices || []) {
-            const option = el('option', choice === selector.current ? `${choice}（当前）` : choice); option.value = choice; select.append(option);
-          }
-          select.value = selected; select.disabled = Boolean(blocked || m.active);
-          const button = el('button', m.active ? '处理中…' : '切换'); button.type = 'button';
-          button.dataset.selectorName = selector.name; button.dataset.selectorKind = 'submit';
-          button.disabled = Boolean(blocked || m.active || m.inspection || m.recoveryIncomplete || g.remotePending || selected === selector.current || !selector.choices?.includes(selected));
-          controls.append(select, button); section.append(controls);
+      const heading=el('h2','出口选择');heading.id='selector-dialog-title';
+      const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device');device.id='selector-dialog-device';
+      content.append(heading,device);
+      const out=agent.outbounds||{},blocked=reason(agent,csrf());
+      for(const selector of out.selectors||[]){
+        const g=controller.group(id,selector.name),section=el('div','','selector-options');section.dataset.selectorGroup=selector.name;
+        if(out.selectors.length>1)section.append(el('strong',selector.name));
+        for(const choice of selector.choices||[]){
+          const row=el('label','','selector-option'),radio=el('input',''),words=el('span','');
+          row.dataset.selectorKind='option';row.dataset.selectorName=selector.name;row.dataset.selectorChoice=choice;
+          radio.type='radio';radio.name='selector-choice';radio.value=choice;
+          radio.dataset.selectorKind='choice';radio.dataset.selectorName=selector.name;radio.dataset.selectorChoice=choice;
+          radio.checked=chosenName===selector.name&&(g.draft??selector.current)===choice;
+          radio.disabled=Boolean(blocked||m.active);row.dataset.selected=String(radio.checked);
+          words.append(el('strong',choice));
+          if(choice===selector.current)words.append(el('small','当前'));
+          row.append(radio,words);section.append(row);
         }
-        const status = g.recovered || g.feedback;
-        if (status) {
-          const feedback = el('p', status.message, status.error ? 'selector-popover-error' : 'selector-popover-feedback');
-          feedback.setAttribute('aria-live', 'polite'); section.append(feedback);
-        }
+        const status=g.feedback||g.recovered;
+        if(status){const feedback=el('p',status.message,status.error?'selector-error':'selector-feedback');feedback.setAttribute('aria-live','polite');section.append(feedback);}
         content.append(section);
       }
-      if (!out.selectors?.length) content.append(el('p', '未发现 Selector'));
+      const message=blocked||(m.inspection?'正在核对待执行切换…':m.recoveryMessage)||(!out.selectors?.length?'未发现 Selector':'');
+      if(message)content.append(el('p',message,'selector-status'));
+      const selected=out.selectors?.find(s=>s.name===chosenName),g=controller.group(id,chosenName),value=g.draft??selected?.current;
+      const actions=el('div','','selector-actions'),cancel=el('button','取消'),submit=el('button',m.active?'切换中…':'切换');
+      cancel.type=submit.type='button';cancel.dataset.selectorKind='close';submit.dataset.selectorKind='submit';
+      submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selected?.choices?.includes(value)||value===selected?.current);
+      actions.append(cancel,submit);content.append(actions);
       patchChildren(panel,content);
-      position();
       if (focus?.isConnected && panel.contains(focus)) return;
       const liveClose = panel.querySelector('[data-selector-kind="close"]');
       const liveJobs = panel.querySelector('[data-selector-kind="jobs"]');
@@ -373,7 +348,7 @@
     function trigger(agent) {
       if (!agent.outbounds?.configured) { triggers.delete(agent.agent_id); return null; }
       const choices=agent.outbounds.selectors||[],current=choices.length===1?choices[0].current:'';
-      const label='出口 ▾',hint=`出站选择${current?'：'+current:''}`;
+      const label=`出口：${current||choices.map(s=>s.current).filter(Boolean).join(' / ')||'—'} ▸`,hint=`出站选择${current?'：'+current:''}`;
       const existing = triggers.get(agent.agent_id);
       if (existing) { if(existing.textContent!==label)existing.textContent=label;existing.title=hint;existing.setAttribute('aria-label',hint);existing.setAttribute('aria-expanded', String(controller.model(agent.agent_id).open)); return existing; }
       const id = agent.agent_id, button = el('button', label, 'selector-trigger'); button.type = 'button';button.title=hint;button.setAttribute('aria-label',hint);
@@ -384,9 +359,11 @@
         ensure();
         if (activeID === id) { hide(); return; }
         if (activeID) hide();
-        activeID = id; controller.open(id); refresh(id);
-        if (native) panel.showPopover(); else panel.hidden = false;
-        position(); panel.querySelector('button')?.focus({preventScroll: true}); onopen(id);
+        activeID = id; chosenName=state.agents.get(id)?.outbounds?.selectors?.[0]?.name||'';
+        for(const selector of state.agents.get(id)?.outbounds?.selectors||[])controller.group(id,selector.name).draft=null;
+        renderedPanel=null;controller.open(id); refresh(id);
+        panel.showModal();
+        (panel.querySelector('input:checked')||panel.querySelector('button'))?.focus({preventScroll: true}); onopen(id);
       });
       return button;
     }

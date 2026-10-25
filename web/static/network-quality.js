@@ -129,15 +129,11 @@
       const settings=button('设置',event=>openPanel(card,event.currentTarget),'nq7-btn nq-link');settings.dataset.focusKey='nq-settings';
       head.append(title,sub,tabs,settings);
       const content=el('div','nq7-rows');card.rows=new Map();
-      const legend=el('div','nq7-legend');
-      for(const [state,text] of [['green','正常'],['yellow','偶发'],['red','持续'],['gray','无数据']]){const key=el('span','nq7-key');key.append(el('span',`nq7-b nq7-b-${state}`),el('span','',text));legend.append(key);}
-      const note=el('span','nq7-note','每格 3 分钟');legend.append(note);
-      legend.title='正常 · 偶发慢或失败（黄）· 持续慢或失败 = 告警（红）· 无数据或样本不足（灰）';
       const tip=el('div','nq7-tip');tip.hidden=true;tip.setAttribute('role','tooltip');
       content.addEventListener('pointerover',event=>{const cell=event.target?.closest?.('.nq7-b[data-i]');if(cell)showTip(card,cell);});
       content.addEventListener('pointerleave',()=>{tip.hidden=true;});
-      faceA.append(head,content,legend,tip);
-      Object.assign(card,{faceA,head,sub,tabs,content,legend,note,tip});
+      faceA.append(head,content,tip);
+      Object.assign(card,{faceA,head,sub,tabs,content,tip});
       card.node.append(faceA);
     }
     function buildRow(card,key) {
@@ -174,7 +170,7 @@
         let shown=C.laneView(lane);
         if(shown.kind==='blocks'&&!lane.tcp.blocks)shown={kind:'text',key:'loading',text:'读取中…',title:'正在读取最近 1 小时的判断'};
         if(lane.tcp.status==='active'&&!summary&&!device)shown={kind:'text',key:'loading',text:card.summaryError||'读取中…',title:card.summaryError||'正在读取最近 1 小时的判断'};
-        const right=C.rightView(lane.right);
+        const right=C.tcpRightView(lane);
         const set=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
         set(view.label,label);view.label.title=label;
         view.blocks.hidden=shown.kind!=='blocks';view.text.hidden=shown.kind==='blocks';
@@ -184,7 +180,7 @@
           shown.blocks.forEach((block,i)=>{
             const cell=view.cells[i],cls=`nq7-b nq7-b-${block.state}${block.in_progress?' is-live':''}`;
             if(cell.className!==cls)cell.className=cls;
-            cell.tipText=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms}).text;counts[block.state]++;
+            cell.tipText=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms}).text;cell.title=cell.tipText;counts[block.state]++;
           });
           view.text.title='';
           view.node.setAttribute('aria-label',`${label}，TCP 最近 1 小时：正常 ${counts.green} 格，偶发慢或失败 ${counts.yellow} 格，持续告警 ${counts.red} 格，无数据 ${counts.gray} 格；${right.text}`);
@@ -200,9 +196,7 @@
       // One line for the whole card: a failed read says so (the old blocks stay, marked as not current).
       let reason=card.summaryError||card.error||C.cardNotice(card.config);
       if(device)reason=card.agent.removal?'设备正在移除，当前数据不可用':'设备已撤销/暂停，当前数据不可用';
-      const note=reason||'每格 3 分钟';
-      if(card.note.textContent!==note)card.note.textContent=note;
-      card.note.title=reason||`每格 3 分钟 · 检测间隔 ${interval/1000} 秒`;card.note.dataset.alert=String(!!reason);
+      card.head.title=card.sub.title+' · 正常 / 偶发慢或失败 / 持续告警 / 无数据或样本不足'+(reason?' · '+reason:'');
       card.node.dataset.alertActive=String(!!summary?.alert_active);
       const settings=card.head.querySelector('.nq-link');settings.title='网络质量设置：目标地址、检测频率、慢连接门槛、总开关';
     }

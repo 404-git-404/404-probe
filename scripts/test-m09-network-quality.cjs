@@ -23,7 +23,7 @@ test('block text restates the Server numbers and nothing else',()=>{
  const red=C.blockView(block(2,'red',{judged:6,slow:3,failed:2,max_ms:1840,in_progress:true,partial:true}),{label:'上海电信',threshold:500});
  assert.equal(red.state,'red');
  assert.match(red.text,/上海电信 · .*持续（告警）/);assert.match(red.text,/慢 3 · 失败 2 · 最高约 1840 ms/);assert.match(red.text,/门槛|超过 500 ms/);
- assert.match(red.text,/数据仍在到达/);assert.match(red.text,/配置变更或缺测/);assert.match(red.text,/B 面曲线同一时间有对应标记/);
+ assert.match(red.text,/数据仍在到达/);assert.match(red.text,/配置变更或缺测/);assert.doesNotMatch(red.text,/B 面曲线同一时间有对应标记|已持续/);
  assert.doesNotMatch(C.blockView(block(0)).text,/B 面|慢 =/);
  const gray=C.blockView(block(0,'gray',{judged:0}),{intervalMS:300000});
  assert.match(gray.text,/没有可用样本/);assert.match(gray.text,/检测间隔较长，部分方块没有样本/);

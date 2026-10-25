@@ -135,6 +135,9 @@ func TestSameBuildIneligibleServerWithoutHTTP(t *testing.T) {
 		{Version: "dev", Commit: strings.Repeat("a", 40)},
 		{Version: "v1.0.8", Commit: strings.Repeat("a", 40), Dirty: true},
 		{Version: "v1.0.8"},
+		{Version: "v1.0.8", Commit: "abc"},
+		{Version: "v1.0.8", Commit: strings.Repeat("A", 40)},
+		{Version: "v1.0.8-beta.2", Commit: "invalid"},
 	} {
 		app, store, id := newWebAuthenticationTestApp(t)
 		app.buildInfo = info
@@ -144,11 +147,19 @@ func TestSameBuildIneligibleServerWithoutHTTP(t *testing.T) {
 			Targets []upgradeTarget `json:"targets"`
 			Message string          `json:"message"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil || w.Code != 200 || len(catalog.Targets) != 0 || catalog.Message == "" {
+		if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil || w.Code != 200 || len(catalog.Targets) != 0 || catalog.Message != "当前 Server 构建不支持远程升级" {
 			t.Fatal(w.Code, w.Body.String(), err)
 		}
 		if w := webUpgradeResponse(t, app, id, `{}`); w.Code != 409 || jobErrorCode(t, w) != "server_build_ineligible" {
 			t.Fatal(w.Code, w.Body.String())
+		}
+		if info.Version == "v1.0.8-beta.2" {
+			if w := webUpgradeResponse(t, app, id, `{"channel":"beta","target_version":"v1.0.8-beta.2","confirm_beta":true}`); w.Code != 409 || jobErrorCode(t, w) != "server_build_ineligible" {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		}
+		if op, err := store.GetLatestUpgrade(context.Background(), id); err != nil || op != nil {
+			t.Fatal(op, err)
 		}
 		app.Shutdown()
 		store.Close()

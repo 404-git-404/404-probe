@@ -208,8 +208,8 @@
     text.append(left,pctNode,right);bar.append(fill,tick,text);
     const empty=el('button','c7-quota-empty');empty.type='button';empty.dataset.focusKey='traffic-plan';empty.addEventListener('click',()=>onEditPlan(empty));
     a.append(line,bar,empty);
-    const spark=chart,d24=el('div','c7-row'),d24l=el('span'),d24r=el('span','c7-muted'),tot=el('div','c7-row'),totl=el('span'),totr=el('span','c7-muted');
-    d24.append(d24l,d24r);tot.append(totl,totr);b.append(spark,d24,tot);
+    const spark=chart,tot=el('div','c7-row'),totl=el('span'),totr=el('span','c7-muted');
+    tot.append(totl,totr);b.append(spark,tot);
     return {a,b,emptyButton:empty,update(view,detail){
       sides.forEach((s,i)=>{const rate=i?view.tx:view.rx;if(s.rate.textContent!==rate)s.rate.textContent=rate;s.label.textContent=view.label+' ';s.amount.textContent=i?view.up:view.down;s.mark.textContent=view.mark;s.mark.hidden=!view.mark;
         s.side.title=view.mark?view.markTitle:(view.oldMetrics?'旧数据，速率不是当前值':'');s.side.dataset.old=String(view.oldMetrics);});
@@ -221,7 +221,10 @@
         tick.hidden=view.bar.time==null;if(view.bar.time!=null)tick.style.left=(view.bar.time*100).toFixed(1)+'%';
         left.textContent=kind==='bar'?view.bar.left:view.bar.left;pctNode.textContent=kind==='bar'?view.bar.percent:'';right.textContent=view.bar.right;bar.title=view.bar.title||'';
       }
-      d24l.textContent=detail.day24;d24r.textContent=detail.reset;totl.textContent=detail.total;totr.textContent=detail.since;
+      const label=spark.querySelector('.tc7-label'),parts=detail.day24.split(/(?=↓|↑)/);
+      label.replaceChildren(...parts.map((text,i)=>el('span',i===1?'c7-rx':i===2?'c7-tx':'',text)));
+      totl.textContent=detail.total+' · '+detail.since.replace(/ 起$/,'');totr.textContent=detail.reset;
+      totl.title=totl.textContent;totr.title=detail.reset;
     }};
   }
 

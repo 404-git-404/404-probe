@@ -1,11 +1,11 @@
-/* Face B of the traffic module: the last hour of the per-minute mean rates (resources/history?hours=1) as two thin lines and
+/* Face B of the traffic module: the last day of the per-minute mean rates (resources/history?hours=24) as two thin lines and
    the peak. Nothing is invented: a missing minute breaks the line, and no data says so. */
 (function(root) {
   'use strict';
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   // resource-history.js is loaded after this file on the page, so it is looked up when it is first needed.
   const history=()=>root.ResourceHistory||(typeof require==='function'?require('./resource-history.js'):null);
-  const HOUR=3600000,MINUTE=60000,REFRESH_MS=55000,W=200,HEIGHT=24;
+  const HOUR=86400000,MINUTE=60000,REFRESH_MS=55000,W=340,HEIGHT=80;
   const NS='http:'+'//www.w3.org/2000/svg'; // an XML namespace name, not a request
   function bytes(value) {
     if(value===null||value===undefined||!Number.isFinite(value))return '—';
@@ -17,8 +17,11 @@
   function paths(points,from,to) {
     const peak=points.reduce((m,p)=>Math.max(m,p.rx_rate,p.tx_rate),0),top=Math.max(peak,1);
     const x=t=>((t-from)/(to-from))*W,y=v=>HEIGHT-1-(v/top)*(HEIGHT-4);
-    const build=key=>{let d='',prev=null;for(const p of points){d+=`${prev!==null&&p.timestamp-prev===MINUTE?'L':'M'}${x(p.timestamp).toFixed(1)},${y(p[key]).toFixed(1)}`;prev=p.timestamp;}return d;};
-    return {peak,rx:build('rx_rate'),tx:build('tx_rate')};
+    const build=key=>{let d='',fill='',run='',prev=null,first=0,last=0;
+      const flush=()=>{if(run)fill+=run+`L${last.toFixed(1)},${HEIGHT-1}L${first.toFixed(1)},${HEIGHT-1}Z`;run='';};
+      for(const p of points){const px=x(p.timestamp),consecutive=prev!==null&&p.timestamp-prev===MINUTE;if(!consecutive){flush();first=px;}const part=`${consecutive?'L':'M'}${px.toFixed(1)},${y(p[key]).toFixed(1)}`;d+=part;run+=part;last=px;prev=p.timestamp;}flush();return {line:d,fill};};
+    const rx=build('rx_rate'),tx=build('tx_rate');
+    return {peak,rx:rx.line,tx:tx.line,rxFill:rx.fill,txFill:tx.fill};
   }
   function create({document:doc=root.document,coordinator=null,state=root.AgentState,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Observer=root.IntersectionObserver,
@@ -31,13 +34,14 @@
     function draw(c) {
       const lifecycle=inactive(c.agent),v=c.data;
       c.svg.replaceChildren();
-      const text=lifecycle?'设备暂停/撤销':!v?c.error||(c.loading?'正在读取…':'等待数据'):!v.points.length?'近 1 小时没有分钟数据':'';
+      const text=lifecycle?'设备暂停/撤销':!v?c.error||(c.loading?'正在读取…':'等待数据'):!v.points.length?'近 24 小时没有分钟数据':'';
       c.status.textContent=text;c.status.hidden=!text;c.svg.parentNode.hidden=!!text;
-      if(!v||lifecycle||!v.points.length){c.peak.textContent='峰值 —';c.peak.title='峰值（分钟均值）';return;}
-      const {peak,rx,tx}=paths(v.points,v.to-HOUR,v.to);
-      for(const [d,cls] of [[tx,'tc7-tx'],[rx,'tc7-rx']]){const p=doc.createElementNS(NS,'path');p.setAttribute('d',d);p.setAttribute('class',cls);p.setAttribute('fill','none');p.setAttribute('vector-effect','non-scaling-stroke');c.svg.append(p);}
-      c.peak.textContent=`峰值 ${bytes(peak)}`;c.peak.title=`近 1 小时分钟均值的峰值 ${bytes(peak)}（不是瞬时峰值）${c.error?'；读取失败，显示上次结果':''}`;
-      c.svg.parentNode.title=`近 1 小时 ↓ ${bytes(v.points.at(-1).rx_rate)} ↑ ${bytes(v.points.at(-1).tx_rate)}（最近一分钟均值） · 每点为一分钟算术均值`;
+      if(!v||lifecycle||!v.points.length){c.axis.textContent='—';c.peak.textContent='峰值 —';c.peak.title='峰值（分钟均值）';return;}
+      const {peak,rx,tx,rxFill,txFill}=paths(v.points,v.to-HOUR,v.to);
+      for(const [d,cls] of [[rxFill,'tc7-rx-fill'],[txFill,'tc7-tx-fill'],[rx,'tc7-rx'],[tx,'tc7-tx']]){const p=doc.createElementNS(NS,'path');p.setAttribute('d',d);p.setAttribute('class',cls);p.setAttribute('vector-effect','non-scaling-stroke');c.svg.append(p);}
+      c.axis.textContent=bytes(peak).replace('/s','');
+      c.peak.textContent=`峰值 ${bytes(peak)}`;c.peak.title=`近 24 小时分钟均值的峰值 ${bytes(peak)}（不是瞬时峰值）${c.error?'；读取失败，显示上次结果':''}`;
+      c.svg.parentNode.title='近 24 小时 · 每点为一分钟算术均值；缺测断线，不补零';
     }
     function release(c,keep=false) {c.serial++;c.loading=false;queue.release(c.owner);if(!keep){c.data=null;c.updated=0;c.error='';}}
     async function refresh(c) {
@@ -46,9 +50,9 @@
       c.loading=true;const serial=c.serial,id=c.id;
       try{
         const value=await queue.request(JSON.stringify(['traffic-hour',id]),c.owner,signal=>C.transportLease(tracked=>state.fetchJSON(
-          `/api/v1/web/agents/${encodeURIComponent(id)}/resources/history?hours=1`,{signal,fetcher:tracked,unauthorized,timeoutMs:10000}),history().boundedFetcher(fetcher)));
+          `/api/v1/web/agents/${encodeURIComponent(id)}/resources/history?hours=24`,{signal,fetcher:tracked,unauthorized,timeoutMs:10000}),history().boundedFetcher(fetcher)));
         if(serial!==c.serial||!effective(c))return;
-        c.data=history().validate(value,id,{hours:1});c.updated=now();c.error='';draw(c);
+        c.data=history().validate(value,id,{hours:24});c.updated=now();c.error='';draw(c);
       }catch(error){if(serial===c.serial&&effective(c)&&error.name!=='AbortError'){c.updated=now();c.error='流量读取失败';draw(c);}}
       finally{if(serial===c.serial){c.loading=false;draw(c);}}
     }
@@ -62,10 +66,10 @@
     function mount(agent) {
       let c=cards.get(agent.agent_id);
       if(!c) {
-        const node=el('div','tc7'),label=el('span','tc7-label','近 1h'),box=el('span','tc7-spark'),svg=doc.createElementNS(NS,'svg'),status=el('small','tc7-status'),peak=el('span','tc7-peak','峰值 —');
+        const node=el('div','tc7'),label=el('span','tc7-label','近 24h —'),box=el('span','tc7-spark'),svg=doc.createElementNS(NS,'svg'),status=el('small','tc7-status'),peak=el('span','tc7-peak','峰值 —'),ruler=el('span','tc7-axis'),axis=el('span','tc7-axis-peak','—'),zero=el('span','tc7-axis-zero','0'),plot=el('div','tc7-plot'),overlay=el('div','tc7-overlay');
         svg.setAttribute('viewBox',`0 0 ${W} ${HEIGHT}`);svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');box.append(svg);
-        status.setAttribute('role','status');node.dataset.trafficAgent=agent.agent_id;node.append(label,box,status,peak);
-        c={id:agent.agent_id,agent,node,svg,status,peak,owner:{},active:false,visible:false,serial:0,loading:false,dead:false,data:null,updated:0,error:''};
+        status.setAttribute('role','status');node.dataset.trafficAgent=agent.agent_id;ruler.append(axis,zero);overlay.append(label,peak);plot.append(box,status,overlay);node.append(ruler,plot);
+        c={id:agent.agent_id,agent,node,svg,status,peak,axis,owner:{},active:false,visible:false,serial:0,loading:false,dead:false,data:null,updated:0,error:''};
         cards.set(c.id,c);observer?.observe(node);
       }
       c.agent=agent;

@@ -10,6 +10,7 @@ import (
 	"404-probe/internal/auth"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
+	"404-probe/internal/releasemetadata"
 	"404-probe/internal/storage"
 )
 
@@ -119,7 +120,7 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusConflict, "bootstrap_required", "Updater missing: supported v0.9.3/v1.0.0 installations can use version-pinned v1.0.1 install.sh upgrade-agent to preserve identity and configuration")
 		return
 	}
-	if !a.buildInfo.UpgradeEligible() && !(a.buildInfo.ExplicitUpgradeEligible() && input.Channel == "beta" && input.ConfirmBeta) {
+	if !releasemetadata.IsCommit(a.buildInfo.Commit) || (!a.buildInfo.UpgradeEligible() && !(a.buildInfo.ExplicitUpgradeEligible() && input.Channel == "beta" && input.ConfirmBeta)) {
 		writeJobError(w, http.StatusConflict, "server_build_ineligible", "remote upgrade is unavailable on this Server build")
 		return
 	}

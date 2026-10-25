@@ -294,7 +294,7 @@ func (a *App) handleWebUpgradeTargets(w http.ResponseWriter, r *http.Request) {
 	}
 	targets := []upgradeTarget{}
 	message := ""
-	if a.buildInfo.UpgradeEligible() || a.buildInfo.ExplicitUpgradeEligible() {
+	if releasemetadata.IsCommit(a.buildInfo.Commit) && (a.buildInfo.UpgradeEligible() || a.buildInfo.ExplicitUpgradeEligible()) {
 		targets = append(targets, a.compatibleAgentTarget(a.serverUpgradeTarget(), record))
 	} else {
 		message = "当前 Server 构建不支持远程升级"

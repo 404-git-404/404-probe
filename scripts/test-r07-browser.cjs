@@ -193,10 +193,10 @@ test('D1 (Chromium): the card draws the v5/card answer of the Server: twenty blo
       return {n: cells.length, green: getComputedStyle(cells[0]).backgroundColor, greenEdge: getComputedStyle(cells[0]).borderTopColor, h: cells[0].getBoundingClientRect().height,
         yellowBar: [px(cells[3], 'width'), px(cells[3], 'height')], redDot: [px(cells[4], 'width'), px(cells[4], 'height'), px(cells[4], 'backgroundColor')], grayAfter: px(cells[5], 'content'), greenAfter: px(cells[0], 'content'),
         right: document.querySelector('.nq7-right').textContent}; });
-    assert.equal(facts.n, 20); assert.equal(facts.green, 'rgb(140, 197, 181)'); assert.equal(facts.greenEdge, 'rgb(62, 156, 134)'); assert.equal(facts.h, 16);
+    assert.equal(facts.n, 20); assert.equal(facts.green, 'rgb(140, 197, 181)'); assert.equal(facts.greenEdge, 'rgb(62, 156, 134)'); assert.equal(facts.h, 18);
     assert.deepEqual(facts.yellowBar, ['8px', '2px']); assert.deepEqual(facts.redDot, ['3px', '3px', 'rgb(255, 255, 255)']);
     assert.ok(facts.grayAfter === 'none' && facts.greenAfter === 'none', 'green and gray carry no mark');
-    assert.equal(facts.right, '丢包 0%');
+    assert.equal(facts.right, '失败 0%');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });

@@ -109,13 +109,17 @@ func TestWebExplicitBetaAuthorizationAndLegacyClaimIsolation(t *testing.T) {
 	if _, _, _, err := store.ProcessReport(context.Background(), id, report, app.now()); err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range []string{
-		`{}`,
-		`{"channel":"beta","target_version":"v1.0.8-beta.2"}`,
-		`{"channel":"beta","target_version":"v1.0.8-beta.3","confirm_beta":true}`,
-		`{"channel":"beta","target_version":"v1.0.8-beta.2","target_commit":"` + strings.Repeat("b", 40) + `","confirm_beta":true}`,
+	for _, invalid := range []struct {
+		body   string
+		status int
+		code   string
+	}{
+		{`{}`, 409, "server_build_ineligible"},
+		{`{"channel":"beta","target_version":"v1.0.8-beta.2"}`, 400, "invalid_request"},
+		{`{"channel":"beta","target_version":"v1.0.8-beta.3","confirm_beta":true}`, 400, "invalid_request"},
+		{`{"channel":"beta","target_version":"v1.0.8-beta.2","target_commit":"` + strings.Repeat("b", 40) + `","confirm_beta":true}`, 400, "invalid_request"},
 	} {
-		if w := webUpgradeResponse(t, app, id, invalid); w.Code != 400 && w.Code != 409 {
+		if w := webUpgradeResponse(t, app, id, invalid.body); w.Code != invalid.status || jobErrorCode(t, w) != invalid.code {
 			t.Fatalf("different/unconfirmed Beta build accepted: %d %s", w.Code, w.Body.String())
 		}
 	}

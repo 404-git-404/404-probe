@@ -1,4 +1,4 @@
-// Face B of the traffic module (v1.0.7): the last hour of per-minute mean rates, from resources/history?hours=1.
+// Face B of the traffic module (R33): 24 hours, with separate filled runs across gaps.
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const T=require('../web/static/traffic-chart.js');
 const NOW=1792080030000,M=60000;
@@ -11,7 +11,7 @@ class El{
 }
 const doc={hidden:false,createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
 const ID='a'.repeat(32);
-const history=(points,over={})=>({agent_id:ID,server_now:NOW,from:NOW-3600000,to:NOW,bucket_from:Math.floor((NOW-3600000)/M)*M,bucket_to:Math.floor(NOW/M)*M,interval_ms:M,source:'minute_metrics',aggregation:'arithmetic_mean',retention_days:30,coverage:'partial',point_limit:1441,
+const history=(points,over={})=>({agent_id:ID,server_now:NOW,from:NOW-86400000,to:NOW,bucket_from:Math.floor((NOW-86400000)/M)*M,bucket_to:Math.floor(NOW/M)*M,interval_ms:M,source:'minute_metrics',aggregation:'arithmetic_mean',retention_days:30,coverage:'partial',point_limit:1441,
  oldest_timestamp:points[0]?.timestamp??null,last_timestamp:points.at(-1)?.timestamp??null,points:points.map(p=>({cpu:1,ram_percent:1,swap_percent:0,disk_percent:1,load1:0,load5:0,load15:0,rx_rate:0,tx_rate:0,...p})),...over});
 async function mount(answer,agent={agent_id:ID,online:true}){
  const requests=[];
@@ -32,13 +32,15 @@ test('one scale for both lines; a gap of more than a minute breaks the line; the
  const r=T.paths(pts,NOW-3600000,NOW);
  assert.equal(r.peak,400);
  assert.equal((r.rx.match(/M/g)||[]).length,2,'the ten minute gap starts a new segment');assert.equal((r.rx.match(/L/g)||[]).length,1);
+ assert.equal((r.rxFill.match(/Z/g)||[]).length,2,'each fill closes to baseline before the gap');
+ assert.equal((r.txFill.match(/M/g)||[]).length,2);
 });
 
-test('the card reads the last hour once, draws the lines and the peak "(minute mean)"',async()=>{
+test('the card reads 24 hours once, draws both fills and lines and the minute-mean peak',async()=>{
  const pts=Array.from({length:60},(_,i)=>({timestamp:Math.floor(NOW/M)*M-(59-i)*M,rx_rate:i===30?5800:100,tx_rate:50}));
  const c=await mount(history(pts));
- assert.equal(c.requests.length,1);assert.match(c.requests[0],/\/resources\/history\?hours=1$/);
- assert.equal(c.paths().length,2);
+ assert.equal(c.requests.length,1);assert.match(c.requests[0],/\/resources\/history\?hours=24$/);
+ assert.equal(c.paths().length,4);
  assert.equal(c.peak().textContent,'峰值 5.80 KB/s');assert.match(c.peak().title,/分钟均值/);
  assert.equal(c.status().hidden,true);
 });

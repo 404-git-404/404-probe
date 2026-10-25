@@ -321,7 +321,7 @@ test('an answer to the master switch that carries other content replaces the bas
 test('an old page gets 410: the card and the dialog say the page is out of date and nothing can be saved', async () => {
   const f = setup({readStatus: 410});
   f.ui.setVisible(AGENT, true); await flush();
-  assert.equal(f.node.querySelector('.nq7-note').textContent, '页面已过期，请刷新');
+  assert.match(f.node.querySelector('.nq7-head').title, /页面已过期，请刷新/);
   const g = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(410, {error: {code: 'client_outdated', message: '页面版本已过期，请刷新页面后重试'}})});
   const panel = await g.open();
   g.type('telecom-port', '444'); g.field('save-top').click(); await flush();
@@ -334,11 +334,11 @@ test('cards: every state the Server can report is shown as text, never inferred'
     const f = setup({raw: load(name)}); f.ui.setVisible(AGENT, true); await flush();
     if (family === 'ipv6') { f.node.querySelectorAll('button').find(b => b.textContent === 'IPv6').click(); await flush(); }
     const rows = f.node.querySelectorAll('.nq7-row');
-    return {f, rows, text: rows.map(r => [r.querySelector('.nq7-label').textContent, r.dataset.lane, r.querySelector('.nq7-text').textContent, r.querySelector('.nq7-right').textContent]), status: f.node.querySelector('.nq7-note').textContent};
+    return {f, rows, text: rows.map(r => [r.querySelector('.nq7-label').textContent, r.dataset.lane, r.querySelector('.nq7-text').textContent, r.querySelector('.nq7-right').textContent]), status: f.node.querySelector('.nq7-head').title};
   };
   const running = await lanes('v4-running');
   assert.equal(running.text[0][0], '广东电信'); assert.equal(running.text[1][0], 'Tokyo NTT'); assert.equal(running.text[2][0], '移动');
-  assert.equal(running.text[0][1], 'blocks'); assert.match(running.text[0][3], /^丢包 0%$/);
+  assert.equal(running.text[0][1], 'blocks'); assert.match(running.text[0][3], /^失败 0%$/);
   assert.deepEqual(running.text[2].slice(1, 3), ['unset', '未配置目标'], 'a slot without an address');
   const v6 = await lanes('v4-running', 'ipv6');
   assert.deepEqual(v6.text[1].slice(1, 3), ['inactive', '未启用'], 'ticked for IPv4 only');
@@ -385,7 +385,7 @@ test('cards: a failed v5 read keeps the last answer and says it is not current; 
   f.ui.setVisible(AGENT, true); await flush();
   assert.equal(f.node.querySelector('.nq7-row').dataset.lane, 'blocks');
   failing = 503; offset += 31000; f.ui.tick(); await flush();
-  assert.match(f.node.querySelector('.nq7-note').textContent, /读取失败，显示上次结果（非当前）/);
+  assert.match(f.node.querySelector('.nq7-head').title, /读取失败，显示上次结果（非当前）/);
   assert.equal(f.node.querySelector('.nq7-row').dataset.lane, 'blocks', 'the last answer stays');
   assert.equal(f.node.querySelector('.nq7-row').dataset.stale, 'true');
 });
@@ -677,13 +677,13 @@ test('M7: a visible card reads the v4 state again every 30 seconds, so negotiati
   const f = setup({raw: load('v4-empty-unreported'), clock: () => offset});
   f.ui.setVisible(AGENT, true); await flush();
   assert.equal(configReads(f), 1);
-  assert.match(f.node.querySelector('.nq7-row').querySelector('.nq7-text').title + f.node.querySelector('.nq7-note').textContent, /Agent/);
+  assert.match(f.node.querySelector('.nq7-row').querySelector('.nq7-text').title + f.node.querySelector('.nq7-head').title, /Agent/);
   f.setRaw(load('v4-running'));
   offset += 10000; f.ui.tick(); await flush();
   assert.equal(configReads(f), 1, 'not before the period is over');
   offset += 21000; f.ui.tick(); await flush();
   assert.equal(configReads(f), 2);
-  assert.doesNotMatch(f.node.querySelector('.nq7-note').textContent, /尚未支持/);
+  assert.doesNotMatch(f.node.querySelector('.nq7-head').title, /尚未支持/);
   assert.ok(f.requests.some(r => r.url.includes('/v5/card')), 'the lanes that now run read their judgement');
 });
 
@@ -725,11 +725,11 @@ test('M7: a failing read backs off 30 s, 60 s, 120 s and a good one resets it; t
     offset += step; f.ui.tick(); await flush();
     assert.equal(configReads(f) - reads, expected, 'after +' + step); reads = configReads(f);
   }
-  assert.match(f.node.querySelector('.nq7-note').textContent, /配置读取失败，保留上次可信状态/);
+  assert.match(f.node.querySelector('.nq7-head').title, /配置读取失败，保留上次可信状态/);
   assert.ok(f.node.all().some(n => n.dataset.lane === 'blocks'), 'the last good lanes are still shown');
   failing = false; offset += 241000; f.ui.tick(); await flush();
   assert.equal(configReads(f) - reads, 1); reads = configReads(f);
-  assert.equal(f.node.querySelector('.nq7-note').textContent, '每格 3 分钟');
+  assert.doesNotMatch(f.node.querySelector('.nq7-head').title, /配置读取失败/);
   offset += 31000; f.ui.tick(); await flush();
   assert.equal(configReads(f) - reads, 1, 'back to the 30 s pace');
 });
@@ -753,11 +753,11 @@ test('M7: a refresh while the dialog is saving does not start, and writes are ne
 test('S2: a restarted Agent that was authorized shows "正在连接…"; a first upgrade whose first step has arrived still reads as not supported (the Server decides, the page maps)', async () => {
   const negotiating = setup({raw: load('v4-negotiating')}); negotiating.ui.setVisible(AGENT, true); await flush();
   assert.equal(load('v4-negotiating').agent_support, 'negotiating');
-  assert.equal(negotiating.node.querySelector('.nq7-note').textContent, '正在连接…');
+  assert.match(negotiating.node.querySelector('.nq7-head').title, /正在连接…/);
   assert.ok(negotiating.node.all().some(n => n.dataset.lane === 'negotiating'));
   const first = setup({raw: load('v4-first-upgrade')}); first.ui.setVisible(AGENT, true); await flush();
   assert.equal(load('v4-first-upgrade').agent_support, 'unsupported');
-  assert.equal(first.node.querySelector('.nq7-note').textContent, 'Agent 尚未支持网络质量');
+  assert.match(first.node.querySelector('.nq7-head').title, /Agent 尚未支持网络质量/);
 });
 
 test('R1: ICMP unsupported + a literal address of the other family: ticked boxes can always be unticked, the save succeeds, nothing wrong can be ticked again', async () => {
@@ -884,10 +884,10 @@ test('D1: the history dialog opens on the Server\'s real answer and shows its st
 
 test('B2: a pending removal takes the cached current judgement and the numbers off face A at once',async()=>{
  screen(1000,1000);
- const f=setup({raw:load('v4-running'),card:base=>{base.lanes[0].tcp.red={active:true};base.lanes[0].right={kind:'icmp_loss',percent:12,numerator:43,denominator:360,samples:'ok'};return base;}});
+ const f=setup({raw:load('v4-running'),card:base=>{base.lanes[0].tcp.red={active:true};base.lanes[0].tcp.blocks.forEach(b=>{b.state='red';b.failed=3;});base.lanes[0].right={kind:'icmp_loss',percent:12,numerator:43,denominator:360,samples:'ok'};return base;}});
  f.ui.setVisible(AGENT,true);await flush();
  const row=()=>f.node.querySelectorAll('.nq7-row')[0];
- assert.equal(row().dataset.lane,'red');assert.match(row().querySelector('.nq7-right').textContent,/12\.0%/);
+ assert.equal(row().dataset.lane,'red');assert.match(row().querySelector('.nq7-right').textContent,/失败 50%/);
  f.ui.mount({...f.agent,removal:{status:'requested'}});
  assert.equal(row().dataset.lane,'device');assert.equal(row().querySelector('.nq7-blocks').hidden,true);
  assert.equal(row().querySelector('.nq7-right').textContent,'—');assert.equal(row().querySelector('.nq7-text').textContent,'设备已撤销/暂停');

@@ -321,7 +321,7 @@
     else if(b.state==='gray')lines.push(b.unjudged?`本格没有可判断的样本（${b.unjudged} 个未判断）`:'本格没有可用样本');
     if(b.state==='gray'&&b.judged>0)lines.push('样本不足，不判断');
     if(b.state==='gray'&&intervalMS>=240000)lines.push('检测间隔较长，部分方块没有样本');
-    if(b.state==='yellow'||b.state==='red')lines.push(`慢 = 连接时间超过 ${threshold} ms`,'B 面曲线同一时间有对应标记');
+    lines.push(`门槛 ${threshold} ms`);
     if(b.partial)lines.push('含配置变更或缺测，部分分钟未计入');
     if(b.in_progress)lines.push('数据仍在到达');
     return {state:b.state,text:lines.join('\n')};
@@ -335,6 +335,15 @@
     const title=icmp?`近 1 小时 ${right.denominator} 个 Echo，丢 ${right.numerator} 个`:`近 1 小时 ${right.numerator} / ${right.denominator} 次连接失败`;
     return {text:`${icmp?'丢包':'失败'} ${value}${few?' ·少':''}`,tone:right.percent>=10?'crit':right.percent>=1?'warn':'muted',title:title+(few?'；样本较少，仅供参考':'')};
   }
+  // Sum the Server's disjoint judged blocks. This is the same window and cutoff as
+  // qualityTCPRight, even when the legacy right field contains ICMP loss instead.
+  function tcpRightView(lane) {
+    const blocks=lane.tcp.blocks||[],judged=blocks.reduce((n,b)=>n+b.judged,0),failed=blocks.reduce((n,b)=>n+b.failed,0);
+    const latest=blocks.at(-1)?.state,tone=latest==='red'?'crit':latest==='yellow'?'warn':'muted';
+    if(lane.tcp.status!=='active'||judged<3)return {text:'—',tone,title:'近 1 小时 TCP 样本太少或未测 TCP'};
+    const percent=failed/judged*100,value=Number.isInteger(percent)?String(percent):percent.toFixed(1);
+    return {text:`失败 ${value}%`,tone,title:`近 1 小时 ${failed} / ${judged} 次 TCP 连接失败${judged<10?'；样本较少，仅供参考':''}`};
+  }
   // What a lane shows in place of the 20 blocks, or its blocks.
   function laneView(lane) {
     const tcp=lane.tcp,icmp=lane.icmp;
@@ -342,10 +351,10 @@
       if(tcp.dns_failing)return {kind:'text',key:'dns',text:'解析失败',title:'最近的检测都在解析目标域名时失败；这些样本不计入慢 / 失败的判断'};
       return {kind:'blocks',blocks:tcp.blocks,red:tcp.red};
     }
-    if(tcp.status==='inactive'&&icmp.status==='active')return {kind:'text',key:'icmp-only',text:'未测 TCP（只开了 ICMP）',title:'这个卡槽只开了 ICMP，没有测 TCP；右侧是 ICMP 丢包率'};
+    if(tcp.status==='inactive'&&icmp.status==='active')return {kind:'text',key:'icmp-only',text:'未测 TCP（只开了 ICMP）',title:'这个卡槽只开了 ICMP，没有测 TCP；ICMP 丢包率见 B 面'};
     const n=statusNotice(tcp.status,tcp.condition);
     return {kind:'text',key:n.key,text:n.text,title:n.detail};
   }
-  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,rightView,laneView,STATE_TEXT};
+  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,rightView,tcpRightView,laneView,STATE_TEXT};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);
