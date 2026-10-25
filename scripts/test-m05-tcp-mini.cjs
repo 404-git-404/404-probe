@@ -59,9 +59,9 @@ class El{
 }
 const fakeDoc={hidden:false,createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
 const IDS={telecom:1,unicom:2,mobile:3};
-const gate={marks:null},clock={ms:0};
-async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
- gate.marks=null;clock.ms=0;
+const gate={history:null},clock={ms:0};
+async function card({height=80,protocol='tcp',series,id='a'}){
+ gate.history=null;clock.ms=0;
  // series: {slot: points => void}; slots absent from `series` get empty history.
  const histories={};
  for(const proto of ['tcp','icmp'])for(const slot of Object.keys(IDS)){const f=fixture(proto,slot);for(const p of f.points)Object.assign(p,{count:0,valid_rtts:0,p50_ms:null,p95_ms:null,completeness:'no_data'});if(proto===protocol)series[slot]?.(f.points);histories[f.target.id]=f.h;}
@@ -71,10 +71,11 @@ async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  const requests=[],state={};
  state.fetchJSON=async url=>{
   requests.push(url);
-  if(url.includes('/v5/marks')){const answer={family:'ipv4',eval_end:NOW-30000,from:NOW-86400000,to:NOW-30000,lanes:Object.keys(IDS).map(slot=>({slot,runs:marks.filter(m=>m.slot===slot).map(({start,end,state})=>({start,end,state}))}))};
-   if(gate.marks)await gate.marks; // the answer is made when the request is made, and arrives later
-   return answer;}
-  const tid=decodeURIComponent(/target_id=([^&]+)/.exec(url)[1]);return histories[tid];};
+  assert.ok(!url.includes('/v5/marks'),'R33 must never request the retired card mark strip');
+  const tid=decodeURIComponent(/target_id=([^&]+)/.exec(url)[1]);
+  const answer=JSON.parse(JSON.stringify(histories[tid]));
+  if(gate.history)await gate.history; // preserve the answer from request time for stale-response tests
+  return answer;};
  const api=L.create({document:fakeDoc,state,interval:()=>0,clear(){},now:()=>NOW+clock.ms,monotonicNow:()=>0,unauthorized(){}});
  const node=api.mount({agent_id:id,online:true});
  const plot=node.all().find(n=>n.className==='lm-plot');plot.rect={width:300,height,left:0,top:0,right:300,bottom:80};node.rect={width:300,height:200,left:0,top:0,right:300,bottom:200};globalThis.innerHeight=1000;globalThis.innerWidth=1000;
@@ -83,16 +84,16 @@ async function card({height=80,protocol='tcp',series,marks=[],id='a'}){
  if(protocol==='icmp'){node.all().find(n=>n.tagName==='button'&&n.textContent==='ICMP').dispatch('click');await flush();}
  const svg=()=>plot.children[0].all();
  const nums=()=>Object.fromEntries(node.all().filter(n=>n.className.startsWith('lm-num')).map((n,i)=>[Object.keys(IDS)[i],n]));
- const strip=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.tagName==='rect'&&n.attributes['data-mark'])||[];
- const tags=()=>node.all().find(n=>n.className==='lm7-marks').children[0]?.all().filter(n=>n.attributes['data-tag'])||[];
- return {api,node,plot,svg,nums,strip,tags,config,marks,gate,clock,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
+ const strip=()=>node.all().filter(n=>n.className==='lm7-marks'||n.attributes['data-mark']);
+ const tags=()=>node.all().filter(n=>n.attributes['data-tag']);
+ return {api,node,plot,svg,nums,strip,tags,config,histories,gate,clock,requests,flush,legend:node.all().filter(n=>n.tagName==='button'&&/^(电信|联通|移动)/.test(n.textContent))};
 }
 const solid=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-width']==='1.3');
 const dashed=c=>c.svg().filter(n=>n.tagName==='path'&&n.attributes['stroke-dasharray']);
 const firstY=d=>Number(/^M[\d.]+,([\d.]+)/.exec(d)[1]);
 const yOf=(v,ph=78)=>ph-Math.min(1,L.ratio(v))*(ph-4)-1; // plot height 80 => drawing height 78
 const line=(points,from,to,fn)=>{for(let i=from;i<=to;i++)set(points,i,fn(i-from));};
-const caption=c=>c.node.all().find(n=>n.className==='lm7-caption').textContent;
+const caption=c=>c.node.all().find(n=>n.className==='rs').title;
 
 test('curve is drawn from the 5-minute P50, not the minute P50 or P95',async()=>{
  const c2=await card({series:{telecom:p=>{line(p,1420,1428,()=>100);for(let i=1420;i<=1428;i++){p[i].p95_ms=3000;p[i].p50_ms=2500;}}}});
@@ -140,7 +141,7 @@ test('top numbers: latest completed minute 5-minute P50, lowest bold, >1000 red,
  assert.equal(n.telecom.dataset.state,'lowest');assert.match(n.telecom.className,/lm-lowest/);
  assert.equal(n.mobile.dataset.state,'over');assert.match(n.mobile.className,/lm-over/);assert.doesNotMatch(n.mobile.className,/lm-lowest/);
  assert.equal(n.unicom.dataset.state,'none');
- for(const b of c.legend)assert.doesNotMatch(b.textContent,/—/);
+ for(const b of c.legend){assert.doesNotMatch(b.children.filter(n=>!n.hidden).map(n=>n.textContent).join(''),/—/);assert.equal(b.children.find(n=>n.className==='lm-loss').hidden,true,'TCP does not show the ICMP loss row');}
  assert.ok(!c.node.all().some(x=>x.className==='lm-unit'||x.textContent==='ms'),'no trailing unit');
  // Moving the range away from "now" does not change the headline numbers.
  const thumb=c.node.all().find(x=>x.dataset.thumb==='end');thumb.dispatch('keydown',{key:'ArrowLeft',shiftKey:true});
@@ -154,29 +155,23 @@ test('a lone value is not marked lowest; deselecting a line clears its number',a
  assert.equal(c.nums().unicom.textContent,'');
 });
 
-test('ICMP uses the same fixed scale, ruler and top numbers, and draws no slow / failed marks',async()=>{
- const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'}];
- const t=await card({series:{telecom:p=>line(p,1420,1428,()=>150)},marks});
- const i=await card({id:'i',protocol:'icmp',series:{telecom:p=>{line(p,1420,1428,()=>150);line(p,1430,1432,()=>2000);}},marks});
+test('ICMP uses the same fixed scale, ruler and top numbers; neither protocol draws the removed mark strip',async()=>{
+ const t=await card({series:{telecom:p=>line(p,1420,1428,()=>150)}});
+ const i=await card({id:'i',protocol:'icmp',series:{telecom:p=>{line(p,1420,1428,()=>150);line(p,1430,1432,()=>2000);}}});
  assert.equal(i.plot.dataset.scale,'fixed-sqrt');
  assert.ok(Math.abs(firstY(solid(i)[0].attributes.d)-firstY(solid(t)[0].attributes.d))<.01);
  assert.equal(dashed(i).length,1);
- assert.equal(t.strip().length>0,true);assert.equal(i.strip().length,0,'the ICMP view draws curves only');
+ assert.equal(t.strip().length,0);assert.equal(i.strip().length,0,'both views draw curves only');
 });
 
-test('each lane has its own thin mark strip in the state colours of face A, with a tag in the lane curve colour',async()=>{
- const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'},{slot:'mobile',start:NOW-1800000,end:NOW-1200000,state:'yellow'},{slot:'mobile',start:NOW-900000,end:NOW-720000,state:'red'}];
- const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},marks});
- const rects=c.strip();
- assert.equal(rects.length,3);
- const by=slot=>rects.filter(r=>r.attributes['data-slot']===slot);
- assert.equal(by('telecom').length,1);assert.equal(by('unicom').length,0);assert.equal(by('mobile').length,2);
- assert.deepEqual([by('telecom')[0].attributes.y,by('mobile')[0].attributes.y],['0','6'],'one row per lane, always the same row');
- assert.equal(by('telecom')[0].attributes.fill,'#B8433D','red is the red of the blocks');
- assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='yellow').attributes.fill,'#E3B54F');assert.equal(by('mobile').find(r=>r.attributes['data-mark']==='red').attributes.fill,'#B8433D');
- assert.deepEqual(c.tags().map(t=>[t.attributes['data-tag'],t.attributes.fill,t.attributes.y]),[['telecom','#3D6FA8','0'],['unicom','#8A5BB0','3'],['mobile','#4F5B62','6']],'one tag per running lane, in its curve colour');
- assert.ok(rects.every(r=>r.attributes.height==='2'));
- assert.ok(c.requests.some(u=>/v5\/marks\?family=ipv4&from=\d+&to=\d+/.test(u)));
+test('R33 retains each lane curve colour and hover explanation without mark strips, tags, bottom caption or mark requests',async()=>{
+ const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100),unicom:p=>line(p,1420,1428,()=>150),mobile:p=>line(p,1420,1428,()=>200)}});
+ assert.deepEqual(solid(c).map(n=>n.attributes.stroke),['#3D6FA8','#8A5BB0','#4F5B62']);
+ assert.equal(c.strip().length,0);assert.equal(c.tags().length,0);
+ assert.equal(c.node.all().some(n=>n.className==='lm7-caption'),false);
+ assert.ok(c.node.all().find(n=>n.className==='lm7-head').title.includes('缺测断线'));
+ assert.ok(c.node.all().find(n=>n.className==='lm7-tip').hidden);
+ assert.ok(!c.requests.some(u=>u.includes('/v5/marks')));
 });
 
 test('the range slider drives the plotted window; the end handle at "now" means following',async()=>{
@@ -190,39 +185,30 @@ test('the range slider drives the plotted window; the end handle at "now" means 
  assert.match(caption(c),/跟随现在/);
 });
 
-test('B1: a save that only changes the slow threshold invalidates the marks at once; an answer under the old threshold is not adopted',async()=>{
- const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'}];
- const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},marks});
- const reads=()=>c.requests.filter(u=>u.includes('/v5/marks')).length;
- assert.equal(c.strip().length,1);const before=reads();
- // the Server now answers with no mark (threshold 3000 ms): same targets, same measurement revision, new settings revision
- marks.length=0;
+test('B1 (R33): a slow-threshold-only save preserves raw RTT curves and never requests or recreates removed marks',async()=>{
+ const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)}});
+ const before=c.requests.length,curve=solid(c).map(n=>n.attributes.d);
  c.api.bindConfig('a',{...c.config,settings_revision:'2'});
- assert.equal(c.strip().length,0,'the old mark is gone at once');
  await c.flush();
- assert.ok(reads()>before,'the marks were read again');assert.equal(c.strip().length,0);
- // the same settings revision again changes nothing and reads nothing
- const again=reads();c.api.bindConfig('a',{...c.config,settings_revision:'2'});await c.flush();assert.equal(reads(),again);
+ assert.deepEqual(solid(c).map(n=>n.attributes.d),curve);
+ assert.equal(c.requests.length,before);assert.equal(c.strip().length,0);
+ c.api.bindConfig('a',{...c.config,settings_revision:'2'});await c.flush();
+ assert.equal(c.requests.length,before);assert.ok(!c.requests.some(u=>u.includes('/v5/marks')));
 });
 
-test('R1: an old marks answer that is still on its way when the threshold changes is not adopted, and the new threshold is really read',async()=>{
- const marks=[{slot:'telecom',start:NOW-3600000,end:NOW-3000000,state:'red'}];
- const c=await card({series:{telecom:p=>line(p,1420,1428,()=>100)},marks});
- const reads=()=>c.requests.filter(u=>u.includes('/v5/marks')).length;
- assert.equal(c.strip().length,1);
- // a periodic refresh starts; its answer (the old red mark, made now) is held back
- let release;gate.marks=new Promise(r=>{release=r;});clock.ms+=61000;c.api.tick();await new Promise(r=>setImmediate(r));
- const held=reads();assert.equal(held,2,'the periodic read is in flight');
- // the threshold is raised and saved: the Server now answers without the mark
- marks.length=0;gate.marks=null;
- c.api.bindConfig('a',{...c.config,settings_revision:'2'});
- assert.equal(c.strip().length,0);
- await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
- assert.equal(reads(),held+1,'a new read for the new threshold was really made');
- // now the old answer arrives
- release();for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
- assert.equal(c.strip().length,0,'the old red mark does not come back');
- // and it did not refresh the cache stamp: the next refresh is due 60 s after the NEW read, not after the old one
- const before=reads();clock.ms+=30000;c.api.tick();await new Promise(r=>setImmediate(r));assert.equal(reads(),before,'not due yet');
- clock.ms+=31000;c.api.tick();await new Promise(r=>setImmediate(r));assert.equal(reads(),before+1);
+test('R1 (R33): an old RTT answer cannot replace curves after measurement identity changes, or postpone their next refresh',async()=>{
+ const c=await card({series:{telecom:p=>line(p,1420,1438,()=>100)}});
+ const reads=()=>c.requests.filter(u=>u.includes('target_id=t-tcp-telecom')).length;
+ let release;c.gate.history=new Promise(r=>{release=r;});c.clock.ms+=121000;
+ c.api.tick();await new Promise(r=>setImmediate(r));assert.equal(reads(),2,'old refresh is in flight');
+ c.gate.history=null;
+ const h=c.histories['t-tcp-telecom'];h.target.slot_revision='8';
+ for(const p of h.groups[0].points){p.slot_revision_min=p.slot_revision_max='8';if(p.valid_rtts)p.p50_5m_ms=300;}
+ c.api.bindConfig('a',{...c.config,revision:'2',targets:c.config.targets.map(t=>t.id==='t-tcp-telecom'?{...t,slot_revision:'8'}:t)});
+ await c.flush();assert.equal(reads(),3);assert.equal(c.nums().telecom.textContent,'300');
+ c.clock.ms+=30000;release();await c.flush();
+ assert.equal(c.nums().telecom.textContent,'300','late old identity does not overwrite fresh data');
+ const before=reads();c.clock.ms+=89000;c.api.tick();await c.flush();assert.equal(reads(),before,'new cache not yet due');
+ c.clock.ms+=2000;c.api.tick();await c.flush();assert.equal(reads(),before+1,'old response did not postpone the 120s refresh');
+ assert.equal(c.strip().length,0);assert.ok(!c.requests.some(u=>u.includes('/v5/marks')));
 });

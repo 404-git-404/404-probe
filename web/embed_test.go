@@ -230,7 +230,7 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	if !strings.Contains(string(cardCSS), `repeat(4,minmax(0,1fr))`) {
 		t.Fatal("card grid columns missing")
 	}
-	for _, required := range []string{`.c7-ring`, `.nq7-b-red`, `--c7-ring-ok:#2A8C7C`, `.c7-offline`, `height:176px`} {
+	for _, required := range []string{`.c7-ring`, `.nq7-b-red`, `--c7-ring-ok:#2A8C7C`, `.c7-offline`, `.c7 .c7-mod[data-module=network]{height:164px}`} {
 		if !strings.Contains(string(v7CSS), required) {
 			t.Fatalf("card layout missing %q", required)
 		}
@@ -371,7 +371,12 @@ func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T)
 	combined := string(htmlBytes) + string(jsBytes) + string(jobsBytes) + string(selectorBytes)
 	for _, required := range []string{
 		`id="outbounds-status"`, `id="outbounds-list"`, `未配置出站发现`, `当前不可用`, `未发现 Selector`,
-		`el('select', '')`, `m.active ? '处理中…' : '切换'`, `panel.setAttribute('popover', 'auto')`,
+		`panel = el('dialog', '', 'selector-dialog')`, `panel.showModal()`,
+		`radio.type='radio'`, `radio.disabled=Boolean(blocked||m.active)`,
+		`panel.addEventListener('change'`, `controller.draft(activeID,chosenName,event.target.value)`,
+		`kind==='submit'`, `controller.submit(activeID,chosenName,g.draft)`,
+		`el('button',m.active?'切换中…':'切换')`,
+		`submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selected?.choices?.includes(value)||value===selected?.current)`,
 		`/outbounds/switch`, `method: 'POST'`, `'X-CSRF-Token': csrf()`,
 		`body: JSON.stringify({request_id: operation.requestID, selector: name, choice})`,
 		`choice === selector.current`, `agent.disabled_at`, `agent.revoked`, `m.active`,
@@ -418,8 +423,8 @@ func TestSharedSelectorLoadsBeforeBothPagesWithLocalTheme(t *testing.T) {
 			t.Fatalf("%s duplicates the shared mutation algorithm", page.script)
 		}
 	}
-	css, _ := fs.ReadFile(static, "style.css")
-	for _, marker := range []string{".selector-popover{", "color-scheme:light", ".selector-popover option", ".selector-popover button:disabled"} {
+	css, _ := fs.ReadFile(static, "card-v7.css")
+	for _, marker := range []string{"dialog.selector-dialog{position:fixed;inset:0;margin:auto", "color-scheme:light", ".selector-dialog .selector-option input", ".selector-dialog button:disabled"} {
 		if !strings.Contains(string(css), marker) {
 			t.Fatalf("missing local Selector style %q", marker)
 		}

@@ -110,8 +110,16 @@ func TestR07QualityPageSources(t *testing.T) {
 	if !strings.Contains(read("network-quality.css"), ".nq-overlay") || !strings.Contains(read("network-quality.css"), ".nq-dialog") {
 		t.Fatal("dialog styles missing")
 	}
-	if !strings.Contains(read("card-v7.css"), "lm7-marks") {
-		t.Fatal("mark strip style missing")
+	mini := read("latency-mini.js")
+	for _, need := range []string{"tip.setAttribute('role','tooltip')", "head.title='每分钟一个点", "node.append(head,legend,plot,rangeRow,output,tip)"} {
+		if !strings.Contains(mini, need) {
+			t.Fatalf("R33 curve/hover structure missing %q", need)
+		}
+	}
+	for _, gone := range []string{"lm7-marks", "lm7-caption", "/v5/marks"} {
+		if strings.Contains(mini, gone) {
+			t.Fatalf("R33 curve retains retired mark strip or bottom caption %q", gone)
+		}
 	}
 	for _, name := range []string{"network-quality.js", "network-quality-core.js", "latency-mini.js"} {
 		if strings.Contains(read(name), "tcp-mini") || strings.Contains(read(name), "card-history") {
