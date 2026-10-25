@@ -115,7 +115,8 @@
     function showTip(card,cell) {
       const text=cell?.tipText;
       if(!text){card.tip.hidden=true;return;}
-      card.tip.textContent=text;card.tip.hidden=false;
+      const lines=text.split('\n');
+      card.tip.replaceChildren(el('strong','',lines.shift()),el('span','',lines.length?'\n'+lines.join('\n'):''));card.tip.hidden=false;
       const box=card.faceA.getBoundingClientRect(),at=cell.getBoundingClientRect(),width=Math.min(220,Math.max(120,box.width-8));
       card.tip.style.width=width+'px';
       card.tip.style.left=Math.max(0,Math.min(box.width-width,at.left-box.left+at.width/2-width/2))+'px';

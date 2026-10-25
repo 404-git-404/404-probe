@@ -82,6 +82,9 @@ test('R33 special states, hover/title and native exit dialog: draft, submit, foc
   assert.equal(await page.locator('.nq7-right').first().evaluate(n=>{const old=n.textContent;n.textContent='失败 33.3%';const fits=n.scrollWidth<=n.clientWidth;n.textContent=old;return fits;}),true);
   await page.locator('.nq7-row').first().locator('.nq7-b-red').first().hover();
   await page.waitForSelector('.nq7-tip:not([hidden])');assert.match(await page.locator('.nq7-b-red').first().getAttribute('title'),/门槛 500 ms/);
+  assert.equal(await page.locator('.nq7-tip').textContent(),await page.locator('.nq7-row').first().locator('.nq7-b-red').first().getAttribute('title'),'hover wording is unchanged');
+  assert.equal(await page.locator('.nq7-tip strong').evaluate(n=>getComputedStyle(n).fontWeight),'700');
+  assert.equal(await page.locator('.nq7-tip span').evaluate(n=>getComputedStyle(n).fontWeight),'400');
   await shot(page,'A-special-tooltip');await page.mouse.move(0,0);
   await page.click('.selector-trigger');await page.waitForSelector('dialog.selector-dialog[open]');
   assert.equal(await page.locator('.selector-device').textContent(),'DediRock-LAX-1');
