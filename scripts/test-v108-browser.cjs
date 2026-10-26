@@ -137,3 +137,15 @@ test('one outbound group uses the same labelled select row and disabled initial 
 test('R33 real local measurements screenshot (optional sample path)',{skip:!available||!process.env.R33_REAL_SAMPLE},async()=>{
  const {page,errors}=await open('real');try{await shot(page,'real-local');assert.deepEqual(errors,[]);}finally{await page.close();}
 });
+
+// R09 persistent summary and nested lifecycle use actual production modules.
+test('R09 overview/management preserve the fixed frame and state labels',browserOptions,async()=>{
+ const {page,errors}=await open();try{
+  await page.locator('.detail-toggle').click();await page.waitForSelector('#details-pane-overview .details-metrics');
+  const before=await page.locator('#device-details').boundingBox();assert.equal(before.width,960);assert.equal(before.height,680);
+  await page.locator('#details-tab-management').click();assert.equal((await page.locator('#device-details').boundingBox()).height,680);
+  assert.match(await page.locator('#details-pane-management').innerText(),/随上报自动更新/);
+  assert.match(await page.locator('#details-pane-management').innerText(),/撤销 Agent/);
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#device-details').evaluate(n=>n.open),false);assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});

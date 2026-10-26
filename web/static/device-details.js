@@ -5,9 +5,9 @@
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   function create({document:doc=root.document,state=root.AgentState,agents,coordinator,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Plot=root.uPlot,Resize=root.ResizeObserver,
-    management=()=>null,resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},network=()=>null,conceal=()=>{}}={}) {
+    management=()=>null,overview=()=>null,upgradeTargets=()=>{},resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},network=()=>null,conceal=()=>{}}={}) {
     const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={};
-    let current=null,tab='management',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
+    let current=null,tab='overview',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
     let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,selected=0,networkIdentity=null,networkPending=false;
     const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
     const button=(text,action,cls='')=>{const n=el('button',cls,text);n.type='button';n.addEventListener('click',action);return n;};
@@ -15,10 +15,10 @@
     const heading=el('div','details-heading'),closeButton=button('关闭',()=>close(),'details-close');header.append(heading,closeButton);heading.append(title,machine);
     const tablist=el('div','details-tabs');tablist.setAttribute('role','tablist');tablist.setAttribute('aria-label','设备详情类别');
     const body=el('div','details-body');
-    for(const [key,label]of [['management','设备与管理'],['resources','资源与流量'],['network','网络质量'],['security','安全观察']]){
-      const b=button(label,()=>activate(key));b.id='details-tab-'+key;b.setAttribute('role','tab');b.setAttribute('aria-controls','details-pane-'+key);tabs[key]=b;tablist.append(b);
+    for(const [key,label]of [['overview','概览'],['resources','资源'],['security','安全'],['management','管理'],['network','网络质量']]){
+      const b=button(label,()=>activate(key));b.id='details-tab-'+key;b.setAttribute('role','tab');b.setAttribute('aria-controls','details-pane-'+key);tabs[key]=b;if(key!=='network')tablist.append(b);
       const pane=el('section','details-pane');pane.id='details-pane-'+key;pane.setAttribute('role','tabpanel');pane.setAttribute('aria-labelledby',b.id);panes[key]=pane;body.append(pane);
-      b.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const keys=Object.keys(tabs),i=keys.indexOf(key),next=e.key==='Home'?0:e.key==='End'?3:(i+(e.key==='ArrowRight'?1:3))%4;activate(keys[next]);tabs[keys[next]].focus();});
+      b.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const keys=Object.keys(tabs),i=keys.indexOf(key),next=e.key==='Home'?0:e.key==='End'?keys.length-1:(i+(e.key==='ArrowRight'?1:keys.length-1))%keys.length;activate(keys[next]);tabs[keys[next]].focus();});
     }
     dialog.replaceChildren(header,tablist,body);
     const networkControls=el('div','details-history-controls'),networkTarget=el('select'),networkChart=el('div'),networkHint=el('span','details-note');
@@ -48,8 +48,14 @@
       if(network()?.openHistoryFor(current,networkIdentity.target,networkIdentity.family,networkIdentity.kind,origin?.node)===false)
         networkChart.replaceChildren(el('p','','原指定目标已不可用；请在此选择当前有效目标，不借用其他地址族数据。'));}
     let titleIdentity = null, securityIdentity = null;
-    function updateTitle(){const agent=agents.get(current), signature=JSON.stringify([current,agent?.country_code,agent?.country_source,agent?.name,agent?.state?.hostname]);if(signature===titleIdentity)return;titleIdentity=signature;machine.replaceChildren();const mark=identity(agent);if(mark)machine.append(mark);machine.append(el('span','',agent?.name||agent?.state?.hostname||'未命名设备'));}
-    function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='management')renderManagement();if(tab==='resources')renderResourceFacts();if(tab==='security')renderSecurity();}
+    function updateTitle(){const agent=agents.get(current),s=agent?.state||{};machine.replaceChildren();const mark=identity(agent);if(mark)machine.append(mark);
+      const group=el('div','details-identity'),line=el('div','details-title-line'),name=el('strong','',agent?.name||s.hostname||'未命名设备');
+      const lifecycle=agent?.revoked?'已撤销':agent?.disabled_at?'已暂停':agent?.online?'在线':'离线';
+      line.append(name,el('span','details-status',lifecycle+(agent?.last_seen?' · '+Math.max(0,Math.floor((Date.now()-agent.last_seen)/1000))+' 秒前上报':'')));
+      group.append(line,el('span','details-note',[s.os||'系统未知',s.arch||'架构未知','Agent '+(agent?.version||'未知'),s.uptime==null?'运行时长未知':`运行 ${Math.floor(s.uptime/86400)} 天${!agent?.online?'（旧数据）':''}`].join(' · ')));machine.append(group);title.hidden=true;
+    }
+    function renderOverview(){const node=overview(agents.get(current));if(node&&node.parentNode!==panes.overview)panes.overview.replaceChildren(node);}
+    function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='overview')renderOverview();if(tab==='management')renderManagement();if(tab==='resources')renderResourceFacts();if(tab==='security')renderSecurity();}
     function renderManagement(){const pane=panes.management,focused=pane.contains(doc.activeElement)?doc.activeElement?.dataset?.focusKey:null;
       const node=management(agents.get(current));if(node){node.hidden=false;if(node.parentNode!==pane)pane.replaceChildren(node);if(focused)pane.querySelector(`[data-focus-key="${focused}"]`)?.focus({preventScroll:true});}}
     function renderSecurity(){const security=agents.get(current)?.security,pane=panes.security,signature=JSON.stringify([current,security]);if(signature===securityIdentity)return;securityIdentity=signature;pane.replaceChildren();
@@ -69,11 +75,11 @@
     function activate(key,{restoreNetwork:shouldRestoreNetwork=true}={}){if(!Object.hasOwn(panes,key))return;if(tab!==key)leave();tab=key;
       for(const [name,pane]of Object.entries(panes)){pane.hidden=name!==tab;tabs[name].setAttribute('aria-selected',String(name===tab));tabs[name].tabIndex=name===tab?0:-1;}
       if(!dialog.open)return;
-      if(tab==='management')renderManagement();else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
+      if(tab==='overview'){renderOverview();upgradeTargets(current);}else if(tab==='management'){renderManagement();upgradeTargets(current);}else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
       else if(tab==='resources'){pending=false;renderResourceFacts();renderPlot();request();}
       else {network()?.ensureHistoryTargets?.(current);populateNetworkTargets();if(shouldRestoreNetwork&&networkIdentity)restoreNetwork();else if(!networkIdentity)networkChart.replaceChildren(el('p','','暂无有效网络历史目标；请先在网络质量卡片的“设置”里填写并保存目标地址。'));}
     }
-    function open(id,key='management',trigger=null,exact=null){if(dead||!agents.has(id))return;
+    function open(id,key='overview',trigger=null,exact=null){if(dead||!agents.has(id))return;
       if(current!==id){conceal();leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';rangeError.textContent='';networkIdentity=null;current=id;}
       if(trigger||current!==origin?.id)origin={node:trigger,id,key:trigger?.dataset?.focusKey||'manage'};
       const opening=!dialog.open;if(opening){opened=true;scroll=[root.scrollX||0,root.scrollY||0];overflow=doc.body.style.overflow;doc.body.style.overflow='hidden';dialog.showModal();}

@@ -116,6 +116,8 @@
     const times=el('div','pe-times');
     const feedback=el('p','pe-feedback','');feedback.setAttribute('aria-live','polite');
     node.append(head,switchLabel,note,lines,status,times,feedback);
+    const addresses=el('div','details-addresses'),controls=el('div','details-egress-controls');
+    function split(){addresses.append(eye,lines,status,times);controls.append(switchLabel,check,note,feedback);return {addresses,controls};}
 
     let agent=null,revealed=false,busy=false,copyTimer=null,currentId=agentId||null;
     const say=text=>{if(feedback.textContent!==text)feedback.textContent=text;};
@@ -186,7 +188,7 @@
       }finally{busy=false;finish(mutation);render();}
     });
     render();
-    return {node,update,conceal,elements:{toggle,check,eye,note,feedback,rows:rowNodes,times,status},get revealed(){return revealed;}};
+    return {node,update,conceal,split,elements:{toggle,check,eye,note,feedback,rows:rowNodes,times,status},get revealed(){return revealed;}};
   }
 
   const api={view,maskIP,createPanel};

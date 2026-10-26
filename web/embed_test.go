@@ -163,7 +163,7 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 		`agent.revoked?'revoked':agent.disabled_at?'paused'`,
 		`online:'在线',offline:'离线',paused:'暂停',revoked:'已撤销',unknown:'状态未知'`,
 		`stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable'`,
-		`stateAction.textContent = agent.disabled_at ? '恢复' : '暂停'`,
+		`stateAction.textContent = agent.disabled_at ? '恢复监控' : '暂停…'`,
 		`const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale)`,
 		`Card.machineView(agent, observed, oldMetrics)`,
 		`Card.trafficView(agent, {old, quotaDisplay: quotaDisplay(agent.plan)})`,

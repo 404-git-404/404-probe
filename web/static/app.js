@@ -58,6 +58,8 @@ const overview = Overview.create({size:CardMetrics.size,deadline:planDeadline});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   network: () => networkQuality, identity: agent => countryMark(agent?.country_code,agent?.country_source),
   management: agent => agentCards.get(agent.agent_id)?.detailPanel,
+  overview: agent => agentCards.get(agent.agent_id)?.overviewPanel,
+  upgradeTargets: id => loadDetailUpgradeTargets(id),
   // Revealed IP addresses never outlive the dialog or a switch to another Agent.
   conceal: () => { for (const view of agentCards.values()) view.egressPanel?.conceal(); },
   resourceFacts: resourceFactsFor,
@@ -540,7 +542,7 @@ const planRenewal = PlanRenewal.create({agents,
   csrf: () => mutationCSRFToken, begin: id => agentState.beginMutation(id,['plan']),
   finish: (token,patch) => finishPlanResource(token,patch),
   changed: () => { if(!suspended)render(); },
-  opening: () => { deviceDetails.close({restoreFocus:false}); selectorView.hide(); },
+  opening: () => { selectorView.hide(); },
   edit: (id,trigger) => { const agent=agents.get(id);if(agent)openPlanDialog(agent,trigger); },
 });
 function openPlanRenewal(agent,trigger=null) {
@@ -1209,6 +1211,19 @@ function planActionBlocked(agent) {
   return !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'plan') || agentState.blocked(agent.agent_id) || planRenewal.unconfirmed(agent.agent_id);
 }
 
+const detailUpgradeTargets=new Map(),detailUpgradeReads=new Map();
+async function loadDetailUpgradeTargets(id){
+ if(detailUpgradeReads.has(id))return detailUpgradeReads.get(id);
+ const task=(async()=>{try{const catalog=await readJSON(`/api/v1/web/agents/${encodeURIComponent(id)}/upgrade-targets`);if(agents.has(id)){detailUpgradeTargets.set(id,catalog.targets?.find(t=>t.supported)||catalog.targets?.[0]||null);render();}}catch{detailUpgradeTargets.set(id,null);}finally{detailUpgradeReads.delete(id);}})();detailUpgradeReads.set(id,task);return task;
+}
+async function saveDetailCountry(agent,code){
+ const id=agent.agent_id;if(planActionBlocked(agent)||planDialog.open||planRenewal.unconfirmed(id))return;
+ const mutation=agentState.beginMutation(id,['plan','country']);if(!mutation)return;
+ try{const plan=await savePlanPayload(id,Management.planPayload(agents.get(id)?.plan,{country_code_override:code}));planRenewal.invalidate(id);finishPlanResource(mutation,{plan});}
+ catch(error){agentActionErrors.set(`${id}/country`,error.message||'地区保存失败');}
+ finally{finishPlanResource(mutation);reconciliation.notify(id);render();}
+}
+
 function createAgentCard(initialAgent) {
     let agent = initialAgent;
     const state = agent.state || {};
@@ -1313,7 +1328,7 @@ function createAgentCard(initialAgent) {
     remove.className = 'remove-agent';
     remove.dataset.agentId = agent.agent_id;
     remove.type = 'button';
-    remove.textContent = '永久移除';
+    remove.textContent = '撤销…';
     remove.dataset.focusKey = 'remove';
     remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
     remove.addEventListener('click', () => openRemoveAgentDialog(agent));
@@ -1322,14 +1337,14 @@ function createAgentCard(initialAgent) {
     stateAction.dataset.agentId = agent.agent_id;
     stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
     stateAction.type = 'button';
-    stateAction.textContent = agent.disabled_at ? '恢复' : '暂停';
+    stateAction.textContent = agent.disabled_at ? '恢复监控' : '暂停…';
     stateAction.dataset.focusKey = 'state';
     stateAction.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'lifecycle') || agentState.blocked(agent.agent_id);
     stateAction.addEventListener('click', () => setAgentDisabled(agent, !agent.disabled_at, stateAction));
     const upgrade = document.createElement('button');
     upgrade.className = 'upgrade-agent';
     upgrade.type = 'button';
-    upgrade.textContent = '升级';
+    upgrade.textContent = '升级…';
     upgrade.dataset.focusKey = 'upgrade';
     const versionParts = value => /^v\d+\.\d+\.\d+$/.test(value || '') ? value.slice(1).split('.').map(Number) : null;
     const currentParts = versionParts(agent.version);
@@ -1406,7 +1421,7 @@ function createAgentCard(initialAgent) {
     detailToggle.dataset.focusKey = 'manage';
     detailToggle.setAttribute('aria-haspopup', 'dialog');
     detailToggle.title = '设备详情';
-    detailToggle.addEventListener('click', () => {planRenewal.close();deviceDetails.open(agent.agent_id,'management',detailToggle);});
+    detailToggle.addEventListener('click', () => {planRenewal.close();deviceDetails.open(agent.agent_id,'overview',detailToggle);});
     head.append(detailToggle);
 
     const deadline = planDeadline(agent.plan);
@@ -1450,7 +1465,12 @@ function createAgentCard(initialAgent) {
     showOffline();
     card.append(offline);
 
-    return {card, detailPanel, egressPanel, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
+    const splitEgress=egressPanel.split();
+    const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
+      edit:(a,n)=>openPlanDialog(a,n),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a)});
+    detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id));
+    const overviewPanel=summary.overview;
+    return {card, detailPanel, egressPanel, overviewPanel, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
       egressPanel.update(agent);
       const state = agent.state || {}, hasState = Boolean(agent.state);
@@ -1497,7 +1517,7 @@ function createAgentCard(initialAgent) {
       const newer = currentParts && targetParts && targetParts.some((part, index) => part > currentParts[index] && targetParts.slice(0, index).every((value, prior) => value === currentParts[prior]));
       remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
       stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
-      setCardText(stateAction, agent.disabled_at ? '恢复' : '暂停');
+      setCardText(stateAction, agent.disabled_at ? '恢复监控' : '暂停…');
       stateAction.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'lifecycle') || agentState.blocked(agent.agent_id);
       upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
       upgrade.title = upgradeHint(agent);
@@ -1509,11 +1529,8 @@ function createAgentCard(initialAgent) {
       setCardText(resetFeedback, trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量');
       editPlan.disabled = planActionBlocked(agent);
       renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
-      for (const control of [upgrade, stateAction]) {
-        if (agent.revoked) control.remove();
-        else if (control.parentNode !== management) management.insertBefore(control, remove);
-      }
-      countryControls.update(agent);
+
+      countryControls.update(agent);summary.update(agent,detailUpgradeTargets.get(agent.agent_id));
       showOffline();
     }};
 }

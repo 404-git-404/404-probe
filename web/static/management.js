@@ -66,7 +66,11 @@
     clear.addEventListener('click', () => { selected = ''; search.value = ''; render(); onchange(); });
     return {set(code) { selected = /^[A-Z]{2}$/.test(code || '') ? code : ''; search.value = ''; render(); }};
   }
-  const api = {validName, write, countries, matches, countryPicker};
+  function planPayload(plan={},patch={}) {
+    const keys=['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','timezone','bandwidth_value','bandwidth_unit','currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','country_code_override'];
+    return {...Object.fromEntries(keys.map(k=>[k,plan[k]??(k==='cycle_count'?0:'')])),...patch};
+  }
+  const api = {validName, write, countries, matches, countryPicker, planPayload};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Management = api;
 })(globalThis);
