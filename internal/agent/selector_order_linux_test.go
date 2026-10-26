@@ -52,6 +52,10 @@ func TestSelectorOrderRootDirectoryIsReadableButNotReplaceableByAgent(t *testing
 	if err := os.Mkdir(directory, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	// Mkdir permissions are filtered by umask; make the intended fixture explicit.
+	if err := os.Chmod(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chown(directory, 0, int(gidValue)); err != nil {
 		t.Fatal(err)
 	}
