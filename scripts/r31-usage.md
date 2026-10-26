@@ -1,6 +1,6 @@
 # R31 合成大库与升级演练工具
 
-工具只用于维护者安排的独占测试机时段，不用于正式服务。数据库全部是 example 合成数据；不复制真实数据库或凭据。发布演练的安装提示、临时密码及两次升级确认仍由维护者在交互终端回答，工具不记录安装终端输出。
+scripts/r31-rehearse.sh 只能在 `CLAUDE.local.md` 登记的测试 Server 上运行，并由维护者安排独占测试机时段。数据库全部是 example 合成数据；不复制真实数据库或凭据。发布演练的安装提示、临时密码及两次升级确认仍由维护者在交互终端回答，工具不记录安装终端输出。
 
 ## 版本登记与正式产物
 
@@ -65,7 +65,7 @@ sudo bash /path/to/404-probe/scripts/r31-rehearse.sh --check /var/lib/404-probe-
 sudo bash /path/to/404-probe/scripts/r31-rehearse.sh --config /var/lib/404-probe-rehearsal/config.json
 ```
 
-入口要求 root、交互TTY和 /dev/tty；用 flock 加锁，用 noclobber 原子创建 run-started，只接受一次启动。预检检查起始版身份/哈希、数据库 schema/integrity、服务 active/enabled、没有 pending/candidate/drop-in/混装 Agent/恢复工作区，检查至少8 GiB空间及全新0700证据/结果目录。Linux验收完成记录等发布专用门禁由发布任务自行检查，不写死在工具里。
+入口要求 root、交互TTY和 /dev/tty；先用 flock 加锁再预检，用 noclobber 原子创建 run-started，只接受一次启动。普通启动预检失败时，工作目录也会留下 `rehearsal.lock`；该文件无害，不影响重跑。`--check` 仍是只读预检，不创建这个文件。预检检查起始版身份/哈希、数据库 schema/integrity、服务 active/enabled、没有 pending/candidate/drop-in/混装 Agent/恢复工作区，检查至少8 GiB空间及全新0700证据/结果目录。`--confirm-test-host` 由入口自动填本机主机名，不能防止在另一台装着同版本的正式机上误跑；防误跑由发布任务的门禁负责。Linux验收完成记录等发布专用门禁由发布任务自行检查，不写死在工具里。
 
 ### 维护者逐条回答的提示
 
@@ -95,7 +95,7 @@ r31-upgrade.py 保留原先的本地安装、计时、故意失败、自动回�
 
 ## 隔离自测（不操作运行中的服务）
 
-Windows 按 CLAUDE.md 设置 R31_PYTHON、R31_BASH，在沙箱外跑全仓；Linux 使用有 ::1 的机器，大文件及 GOCACHE/GOMODCACHE 放 /var/lib 专属目录。先只读检查 /tmp：非小型 tmpfs 且空闲至少2 GB时，Go测试不设置 TMPDIR/GOTMPDIR，使用默认短 /tmp；结束后核查和清理本轮残留。Go的 testing.TempDir 直接读取 GOTMPDIR，不能将它设成长路径，否则 Unix socket 路径超过约108字节会失败。若 /tmp 空间不足，需将编译目录与短的测试进程 fixture 路径分开，不能简单把所有临时目录设为同一个长路径。
+Windows 按 CLAUDE.md 设置 R31_PYTHON、R31_BASH，在沙箱外跑全仓；Linux 使用有 ::1 的机器，大文件及 GOCACHE/GOMODCACHE 放 /var/lib 专属目录。先只读检查 /tmp：非小型 tmpfs 且空闲至少2 GB时，Go测试不设置 TMPDIR/GOTMPDIR，使用默认短 /tmp；结束后核查和清理本轮残留。Go的 testing.TempDir 直接读取 GOTMPDIR，不能将它设成长路径，否则 Unix socket 路径超过约108字节会失败。若 /tmp 是小内存盘或空闲不足2 GB，把 TMPDIR 和 GOTMPDIR 都设成 /var/lib 专属目录下的短路径（例如 `/var/lib/<短名>/t`，总长远小于108字节，为用例追加目录名和 socket 文件名留足余量）；源码、工具链、Go 缓存及大库仍放专属目录的其他位置，将大文件与短的测试 fixture 路径分开。测试结束一并清理本轮 fixture 和专属目录。
 
 下面一行以 v1.0.8 为起始做 tiny 集成，底座始终为正式 v1.0.6；分别将 R31_START_VERSION 和 R31_PREVIOUS_SERVER 改为 v1.0.6、v1.0.7、v1.0.8 执行：
 

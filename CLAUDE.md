@@ -4,6 +4,8 @@ Go 编写的监控探针：`cmd/server`（Server）、`cmd/agent`（Agent）、`
 
 ## 日常命令
 
+施工方跑测试前、评审方评审测试前，先执行 `go version`，确认等于 `go.mod` 的 `toolchain` 版本（目前 go1.26.8）。本机装有其他 Go（例如更新的 go1.27.0）时，go 不会自动降到项目指定版本，这样的测试结果不能代表项目工具链。Windows 用仓库 `.tools/go` 引导（例如 `& ./.tools/go/bin/go.exe version`，后续命令也使用这个入口）；保持 `GOTOOLCHAIN` 默认，让它自动切到 `go.mod` 指定版本，确认版本一致后再测试。
+
 ```bash
 go vet ./...
 go build ./...
@@ -12,11 +14,11 @@ go test ./... -count=1
 
 - **施工方交付前、评审方评审时**都必须跑全仓 `go test ./... -count=1` 和相关 Node 测试，不能只跑改动的包。相关测试指加载或测试了本次改动文件的 `scripts/test-*.cjs` 和 `scripts/test-*.sh`；先用 `git diff --name-only <基准提交>` 列出改动文件，再按完整路径、文件名或模块名搜索，例如 `rg -n 'selector\.js|test-m02-real-chain' scripts -g 'test-*.cjs' -g 'test-*.sh'`，并沿公共测试 harness 的加载关系确认需要执行的脚本；改动的测试脚本本身也要执行，在报告中列出选取依据。
 - **Windows 全仓测试一律在沙箱外跑。** 沙箱内可能出现临时文件 rename/读写被拒绝、本机 HTTP fixture 不可访问等环境失败；如实保留首次结果，不把沙箱外重跑通过写成首次通过。
-- Windows 的 `TestR31Tools` 需要设置 `R31_PYTHON` 指向真正的 Python（本机 `python3` 是 Microsoft Store 假别名）；实际查找方法是 PowerShell `Get-Command python | Select-Object -ExpandProperty Source`，再执行找到的解释器 `--version` 确认。Git Bash 不在 PATH 时还要设置 `R31_BASH`：先用 `Get-Command bash -ErrorAction SilentlyContinue` 查找；找不到时用 `Get-Command git | Select-Object -ExpandProperty Source` 确认 Git 安装位置，再用 `Test-Path 'C:/Program Files/Git/bin/bash.exe'` 核实已有 Git Bash，设置 `$env:R31_BASH='C:/Program Files/Git/bin/bash.exe'`（其他安装位置用实际路径）。用 `$env:R31_PYTHON=(Get-Command python).Source` 设置真实解释器，不使用带本机用户名的固定路径；未提供 `R31_PREVIOUS_SERVER` 导致的可选集成用例跳过应照实报告。
-- **已知清单处理**：下面已列出的 Windows 偶发、Linux egress 偶发和旧 Node 套件基线失败，首次结果（包括失败）照实报告，不阻塞；复测单独记录，不能覆盖首次结果。清单以外的失败一律算问题，要么在授权范围内修复，要么停下来问，不自行归入基线。
-- Windows worktree 的构建信息已知限制：`internal/buildinfo` 的 `TestInspectLinkedLinuxReleaseNeverExecutesAndBindsVersion`（`amd64`、`arm64` 子用例）和 `internal/updater` 的 `TestInspectCandidateBuildReadsGoExecutable` 会因构建信息不全 / vcs 信息缺失而失败；这些用例必须在主仓库或干净克隆里验证，不能仅凭 worktree 结果验收。R37 已用相同干净提交对照：worktree 失败，主仓库两包通过；仍需跑全仓并报告该环境失败及独立对照结果。
-- 发布前的测试结果以 Linux 为准。下面两个用例在 Windows 上会偶发失败，不是回归：`internal/agent` 的 `TestRCHelperNegotiationDoesNotTrustOldV2`（Windows 实测失败率约 25%，负载下超时，v1.0.2 上同样如此）和 `internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（Windows 约 5%）。遇到时单独重跑该用例，不要把重跑通过写成“首次全量通过”，要如实记下首次的失败。
-- Linux 测试的大文件（源码、工具链、Go 缓存、大库）不放 `/tmp`，放 `/var/lib` 下专属目录，用完删除；有些机器的 `/tmp` 是很小的内存盘。Go 测试的临时目录（`TMPDIR` / `GOTMPDIR`）必须用短路径（例如默认 `/tmp`），因为有的用例会创建 Unix socket，路径超过约 108 字节就会失败；Go 的 `testing.TempDir` 直接读取 `GOTMPDIR`。先检查 `/tmp` 挂载和空间，非小内存盘且空闲至少 2 GB 时，不设这两个变量，直接使用默认 `/tmp`；测试结束清理本轮留下的临时 fixture。
+- Windows 的 `TestR31Tools` 需要设置 `R31_PYTHON` 指向真正的 Python（本机 `python3` 是 Microsoft Store 假别名）；实际查找方法是 PowerShell `Get-Command python | Select-Object -ExpandProperty Source`，再执行找到的解释器 `--version` 确认。Git Bash 不在 PATH 时还要设置 `R31_BASH`：先用 `Get-Command bash -ErrorAction SilentlyContinue` 查找；找不到时用 `Get-Command git | Select-Object -ExpandProperty Source` 确认 Git 安装位置，再用 `Test-Path 'C:/Program Files/Git/bin/bash.exe'` 核实已有 Git Bash，设置 `$env:R31_BASH='C:/Program Files/Git/bin/bash.exe'`（其他安装位置用实际路径）。直接运行 `python scripts/test-r31.py` 时，Git Bash 不在 PATH 里也要设置 `R31_BASH`。用 `$env:R31_PYTHON=(Get-Command python).Source` 设置真实解释器，不使用带本机用户名的固定路径；未提供 `R31_PREVIOUS_SERVER` 导致的可选集成用例跳过应照实报告。
+- **已知清单处理**：下面已列出的 Windows / Linux 偶发和旧 Node 套件基线失败，首次结果（包括失败）照实报告，不阻塞；复测单独记录，不能覆盖首次结果。清单以外的失败一律算问题，要么在授权范围内修复，要么停下来问，不自行归入基线。
+- Windows worktree 的构建信息已知限制：`internal/buildinfo` 的 `TestInspectLinkedLinuxReleaseNeverExecutesAndBindsVersion`（`amd64`、`arm64` 子用例）和 `internal/updater` 的 `TestInspectCandidateBuildReadsGoExecutable` 可能因构建信息不全 / vcs 信息缺失而失败（和 Go 版本、vcs 信息有关）；出现这类失败时，必须在主仓库或干净克隆里对照验证，不能仅凭 worktree 失败判定回归。R37 已用相同干净提交对照：worktree 失败，主仓库两包通过；仍需跑全仓并报告该环境失败及独立对照结果。
+- 发布前的测试结果以 Linux 为准。下面用例已有偶发记录，按已知清单处理：`internal/agent` 的 `TestRCHelperNegotiationDoesNotTrustOldV2`（Windows 实测失败率约 25%，负载下超时，v1.0.2 上同样如此）和 `internal/storage` 的 `TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint`（Windows、Linux 都出现过偶发；Linux 见 v1.0.9 R37 测试 Server 全仓记录，不推断 Linux 失败率）。遇到时单独重跑该用例，不要把重跑通过写成“首次全量通过”，要如实记下首次的失败。
+- Linux 测试的大文件（源码、工具链、Go 缓存、大库）不放 `/tmp`，放 `/var/lib` 下专属目录，用完删除；有些机器的 `/tmp` 是很小的内存盘。Go 测试的临时目录（`TMPDIR` / `GOTMPDIR`）必须用短路径（例如默认 `/tmp`），因为有的用例会创建 Unix socket，路径超过约 108 字节就会失败；Go 的 `testing.TempDir` 直接读取 `GOTMPDIR`。先检查 `/tmp` 挂载和空间，非小内存盘且空闲至少 2 GB 时，不设这两个变量，直接使用默认 `/tmp`；若 `/tmp` 是小内存盘或空闲不足 2 GB，则把 `TMPDIR` 和 `GOTMPDIR` 都设为 `/var/lib` 专属目录下的短路径（例如 `/var/lib/<短名>/t`，总长远小于 108 字节，为用例追加目录名和 socket 文件名留足余量），其余大文件仍放专属目录。测试结束清理本轮留下的临时 fixture 及专属目录。
 - Linux 全仓测试必须在 IPv6 回环（`::1`）可用的机器上跑；禁用了 IPv6 的机器上，`internal/agent`、`internal/egress` 的 IPv6 用例会因为绑定不上 `[::1]` 而失败，这是环境限制，不是回归，要换机验证，并如实保留原机器的首次失败。
 - Linux 上的既有偶发失败：`internal/egress` 的 `TestM10HTTPSFailureClassification/body_timeout_after_headers` 可能把预期的 `timeout` 判为 `invalid_response`。v1.0.7 发布前首次全量曾失败；同机定向 50 轮对照中 v1.0.6 失败 1 次、v1.0.7 为 0 次，随后 v1.0.7 包级和全量复测通过。维护者据此按既有偶发处理，不视为本次回归；50 轮不能证明两版失败率完全相同。遇到时如实保留首次失败及复测结果，不把复测通过写成首次通过。
 - `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-n3-network-quality.cjs`（19 过 4 败，v1.0.3 上相同）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。`scripts/test-p4b2-traffic-chart.cjs`（8 过 7 败）和 `scripts/test-p5a2-device-details.cjs`（3 败）同样是基线失败，v1.0.3 上相同。
@@ -50,7 +52,7 @@ go test ./... -count=1
 
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
-   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。
+   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。发布时对照目标版 `install.sh` 复核 r31-usage.md 里的提示清单，不一致就先更新清单。
    - 每个版本正式发布后，在下一版准备工作里把该版补入 R31 登记表：版本、正式 tag 提交、schema、相对上一版的表增删。
 5. **推送顺序：** 推送和 gh 操作需要维护者授权，可以在任务书里一次性授权。任务书必须写明哪些情况一定要停下来问，至少包括：结果与预期不符、升级失败、需要维护者操作面板或输入密码。
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
