@@ -714,7 +714,7 @@ test('P2a actual traffic uncertain retry uses original ID, duplicate disabled, m
   const first=button.emit('click');await button.emit('click');await first;
   const one=app.request('/traffic/reset');const original=JSON.parse(one.options.body).request_id;
   assert.equal(app.state.agents.get(A).traffic.rx_total,100);assert.equal(app.eval('trafficRequest'),original);
-  assert.match(app.nodes.get('#traffic-reset-feedback').textContent,/不确定/);
+  assert.match(app.nodes.get('#traffic-reset-feedback').textContent,/结果未确认/);
   button.disabled=false;const second=button.emit('click');await flush();const two=app.request('/traffic/reset');assert.equal(JSON.parse(two.options.body).request_id,original);
   two.resolve(response({rx_total:0,tx_total:0,started_at:2}));await second;
   assert.equal(app.state.agents.get(A).traffic.rx_total,100);assert.equal(app.state.agents.get(A).plan.currency,'USD');assert.equal(app.eval('trafficRequest'),null);
