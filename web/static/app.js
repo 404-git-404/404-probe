@@ -37,6 +37,9 @@ const planAgentName = document.querySelector('#plan-agent-name');
 const planTrafficEnabled = document.querySelector('#plan-traffic-enabled');
 const planTrafficFields = document.querySelector('#plan-traffic-fields');
 const planError = document.querySelector('#plan-error');
+const addShell = DialogShell.attach(addAgentDialog,{title:'添加 Agent'});
+const upgradeShell = DialogShell.attach(upgradeAgentDialog,{size:'small',title:'升级 Agent'});
+const removeShell = DialogShell.attach(removeAgentDialog,{size:'small',title:'撤销 Agent'});
 const agentState = AgentState.create();
 const monitorCoordinator = NetworkQualityCore.coordinator();
 const networkQuality = NetworkQuality.create({csrf: () => mutationCSRFToken, coordinator: monitorCoordinator,
@@ -156,7 +159,7 @@ upgradeReleaseSelect.addEventListener('change', () => { upgradeBetaConfirm.check
 upgradeBetaConfirm.addEventListener('change', refreshUpgradeSelection);
 
 async function openUpgradeAgentDialog(agent) {
-  deviceDetails.close();
+  upgradeShell.heading('升级 Agent',agent.name);
   upgradeCatalogController?.abort();
   const generation = ++upgradeCatalogGeneration;
   const controller = new AbortController();
@@ -184,6 +187,9 @@ async function openUpgradeAgentDialog(agent) {
       upgradeReleaseSelect.append(option);
     }
     upgradeReleaseSelect.value = upgradeReleaseTargets.length ? '0' : '';
+    upgradeReleaseSelect.hidden=upgradeReleaseTargets.length===1;
+    document.querySelector('#upgrade-release-label').hidden=upgradeReleaseTargets.length===1;
+    upgradeReleaseSelect.disabled=upgradeReleaseTargets.length<2;
     refreshUpgradeSelection();
     if (!upgradeReleaseTargets.length) {
       const option = document.createElement('option');
@@ -237,6 +243,7 @@ const enrollmentDialog = AgentEnrollment.createController({
   els: {
     choice: document.querySelector('#add-agent-choice'), manual: addAgentCreate, manualResult: addAgentResult,
     oneclick: document.querySelector('#oneclick-pane'), oneclickResult: document.querySelector('#oneclick-result'),
+    choiceName: document.querySelector('#add-agent-choice-name'), next: document.querySelector('#add-agent-next'),
     chooseOneClick: document.querySelector('#add-agent-choose-oneclick'), chooseManual: document.querySelector('#add-agent-choose-manual'),
     reason: document.querySelector('#add-agent-oneclick-reason'), form: document.querySelector('#oneclick-form'),
     name: document.querySelector('#oneclick-name'), error: document.querySelector('#oneclick-error'), submit: document.querySelector('#oneclick-submit'),
@@ -263,13 +270,13 @@ function clearEnrollmentDialog() {
 addAgentButton.addEventListener('click', () => {
   clearEnrollmentDialog();
   addAgentDialog.showModal();
-  document.querySelector('#add-agent-choose-oneclick').focus();
+  document.querySelector('#add-agent-choice-name').focus();
 });
 
 document.querySelector('#add-agent-choice-cancel').addEventListener('click', () => addAgentDialog.close());
 document.querySelector('#oneclick-done').addEventListener('click', () => addAgentDialog.close());
-document.querySelector('#add-agent-choose-manual').addEventListener('click', () => addAgentName.focus());
-document.querySelector('#add-agent-choose-oneclick').addEventListener('click', () => document.querySelector('#oneclick-name').focus());
+document.querySelector('#add-agent-next').addEventListener('click', () => { if(document.querySelector('#add-agent-choice').classList.contains('hidden')) { addAgentName.value=document.querySelector('#add-agent-choice-name').value; (addAgentCreate.classList.contains('hidden')?document.querySelector('#oneclick-submit'):addAgentSubmit).focus(); } });
+
 document.querySelector('#add-agent-cancel').addEventListener('click', () => addAgentDialog.close());
 document.querySelector('#add-agent-done').addEventListener('click', () => addAgentDialog.close());
 addAgentDialog.addEventListener('close', clearEnrollmentDialog);
@@ -312,7 +319,7 @@ function clearRemoveAgentDialog() {
 }
 
 function openRemoveAgentDialog(agent) {
-  deviceDetails.close();
+  removeShell.heading('撤销 Agent',agent.name);
   clearRemoveAgentDialog();
   pendingRemoveAgentID = agent.agent_id;
   removeAgentName.textContent = agent.name || '未命名 Agent';
@@ -374,6 +381,7 @@ removeAgentForm.addEventListener('submit', async event => {
 
 async function setAgentDisabled(agent, disabled, button) {
   if (!mutationCSRFToken || agent.revoked) return;
+  if(disabled && !await DialogShell.confirm({title:'暂停监控',device:agent.name,message:'暂停后不再接收数据，可以随时恢复。',confirmText:'确认暂停',danger:true,trigger:button}))return;
   const mutation = agentState.beginMutation(agent.agent_id, ['lifecycle']);
   if (!mutation) return;
   button.disabled = true;
@@ -900,9 +908,9 @@ async function refreshCountryCodeLookup(agent, button, feedback, newAfterVerific
   if (!agent || !mutationCSRFToken || !agent.management?.country_code_lookup || !agent.online
     || agent.disabled_at || agent.revoked || (uncertainCountryRequests.has(agent.agent_id) && !newAfterVerification)
     || ['requested', 'delivered'].includes(agent.country_code_lookup_operation?.status)) return;
-  if (!confirm(newAfterVerification
+  if (!await DialogShell.confirm({title:'重新识别出口地区',device:agent.name,trigger:button,message:newAfterVerification
     ? '前请求结果仍不确定，服务器未见新的操作记录；是否明确发起一个新的单次识别？这不是原请求重试，前请求可能仍执行；服务器会拒绝已有待执行操作。取消可继续核实。'
-    : '将由 Agent 向 ipwho.is 发起一次 HTTPS 国家/地区识别请求，只回传 ISO 两字母代码。失败时保留当前值。继续？')) return;
+    : '将由 Agent 向 ipwho.is 发起一次 HTTPS 国家/地区识别请求，只回传 ISO 两字母代码。失败时保留当前值。继续？',confirmText:'重新识别'})) return;
   const mutation = agentState.beginMutation(agent.agent_id, ['country']);
   if (!mutation) return;
   const controller = new AbortController(); countryWriteControllers.set(agent.agent_id, controller);
@@ -1518,7 +1526,7 @@ function canResetTraffic(agent) {
 async function resetAccumulatedTraffic(id) {
   const agent=agents.get(id);if(!canResetTraffic(agent))return;
   const oldRequest=trafficResetRequests.get(id);
-  if(!confirm(oldRequest ? `使用原请求 ${oldRequest} 核实同一次累计重新起算，不创建新重置。继续？` : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？'))return;
+  if(!await DialogShell.confirm({title:'重新开始设备累计',device:agent.name,message:oldRequest ? `使用原请求 ${oldRequest} 核实同一次累计重新起算，不创建新重置。继续？` : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？',confirmText:'确认重新开始',danger:true}))return;
   const mutation=agentState.beginMutation(id,['traffic']);if(!mutation)return;
   const verifying=Boolean(oldRequest),operationID=oldRequest||crypto.randomUUID().replaceAll('-','');trafficResetRequests.set(id,operationID);
   const controller=new AbortController();trafficResetControllers.set(id,controller);trafficResetFeedback.set(id,'正在记录新的累计起点…');render();

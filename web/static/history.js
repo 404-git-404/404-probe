@@ -104,7 +104,7 @@ function renderAgentRuntime(agent) {
 
 trafficReset.addEventListener('click', async () => {
   if (trafficReset.disabled || !currentAgent) return;
-  if (!confirm(trafficRequest ? `使用原请求 ${trafficRequest} 核实同一次累计重新起算，不创建新重置。继续？` : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？')) return;
+  if (!await DialogShell.confirm({title:'重新开始设备累计',device:currentAgent.name,message:trafficRequest ? `使用原请求 ${trafficRequest} 核实同一次累计重新起算，不创建新重置。继续？` : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？',confirmText:'确认重新开始',danger:true,trigger:trafficReset})) return;
   const mutation = agentState.beginMutation(id, ['traffic']);
   if (!mutation) return;
   const verifying = Boolean(trafficRequest);

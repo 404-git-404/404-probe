@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/plan-editor.css">
   <link rel="stylesheet" href="/plan-renewal.css">
   <link rel="stylesheet" href="/overview.css">
+  <link rel="stylesheet" href="/dialog-shell.css">
 </head>
 <body>
   <header><div><h1>404-probe</h1><p>已认证 Agent 观测 · <span id="server-version">Server unknown</span></p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
@@ -29,10 +30,11 @@
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <div id="add-agent-choice">
       <h2 id="add-agent-title">添加 Agent</h2>
-      <p>选择安装方式。一键安装生成一条一次性命令，手动安装沿用 enrollment value。</p>
-      <div class="dialog-actions enroll-choices"><button id="add-agent-choose-oneclick" class="primary-action" type="button">一键安装</button><button id="add-agent-choose-manual" type="button">手动安装</button></div>
+      <p>把一台新机器接入面板</p>
+      <label for="add-agent-choice-name">设备名称</label><input id="add-agent-choice-name" maxlength="128" required>
+      <p>安装方式</p><div class="install-choices" role="radiogroup" aria-label="安装方式"><button id="add-agent-choose-oneclick" type="button" role="radio" aria-checked="true"><strong>一键安装 · 推荐</strong><small>生成一条命令，在新机器上运行。30 分钟有效，只能使用一次。</small></button><button id="add-agent-choose-manual" type="button" role="radio" aria-checked="false"><strong>手动安装</strong><small>先运行安装器，再填写注册码。适合自己控制每一步。</small></button></div>
       <p id="add-agent-oneclick-reason" class="install-note hidden" role="status"></p>
-      <div class="dialog-actions"><button id="add-agent-choice-cancel" type="button">取消</button></div>
+      <div class="dialog-actions"><button id="add-agent-choice-cancel" type="button">取消</button><button id="add-agent-next" class="primary-action" type="button">下一步</button></div>
     </div>
     <div id="oneclick-pane" class="hidden">
       <h2>一键安装 Agent</h2>
@@ -75,25 +77,25 @@
   </dialog>
   <dialog id="upgrade-agent-dialog" class="agent-dialog" aria-labelledby="upgrade-agent-title">
     <h2 id="upgrade-agent-title">升级 Agent</h2>
-    <p>仅升级所选 Agent。程序通过校验后替换；启动或健康验证失败时恢复旧版本。</p>
+    
     <div class="upgrade-versions"><span>当前版本 <strong id="upgrade-current-version"></strong></span><span>目标版本 <strong id="upgrade-target-version"></strong></span></div>
     <form id="upgrade-agent-form">
-      <label for="upgrade-release">升级目标（与 Server 相同）</label>
+      <label id="upgrade-release-label" for="upgrade-release">升级目标（与 Server 相同）</label>
       <select id="upgrade-release" name="release"></select>
-      <p id="upgrade-release-reason" role="status"></p>
+      <p id="upgrade-release-reason" role="status"></p><ul class="upgrade-notes"><li>先下载、校验，通过后才替换</li><li>升级时设备会短暂离线</li><li>新版本启动失败会自动恢复旧版本</li></ul>
       <label id="upgrade-beta-label" hidden><input id="upgrade-beta-confirm" type="checkbox"> 我确认仅将此 Agent 升级到所选预发布版本（Beta / RC）</label>
       <div id="upgrade-agent-error" class="dialog-error hidden" role="alert">升级请求失败，请重试。</div>
       <div class="dialog-actions"><button id="upgrade-agent-cancel" type="button">取消</button><button id="upgrade-agent-confirm" class="primary-action" type="submit">开始升级</button></div>
     </form>
   </dialog>
   <dialog id="remove-agent-dialog" class="agent-dialog" aria-labelledby="remove-agent-title">
-    <h2 id="remove-agent-title">移除 Agent</h2>
-    <p>这会立即撤销 Agent credential，并将它移出默认活动视图。</p>
+    <h2 id="remove-agent-title">撤销 Agent</h2>
+    <p>停止接收数据，保留历史记录；Agent 程序不会被卸载。</p>
     <div class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
-    <p class="remove-warning">此操作会永久撤销 Agent credential，无法通过恢复操作撤销。历史 telemetry、Schedules、Probe Jobs/Results 会保留，且不会远程卸载 Agent。</p>
+    <p class="remove-warning">撤销后不能恢复原身份。历史记录、计划和任务会保留。</p>
     <form id="remove-agent-form">
       <div id="remove-agent-error" class="dialog-error hidden" role="alert">移除失败，请重试。</div>
-      <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">撤销并移除</button></div>
+      <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">确认撤销</button></div>
     </form>
   </dialog>
   <dialog id="plan-dialog" class="plan-drawer plan-editor" aria-labelledby="plan-title">
@@ -140,6 +142,7 @@
   <footer>数据通过 Server 安全汇总</footer>
   <dialog id="network-quality-history" class="nq-history" aria-labelledby="nq-history-title"></dialog>
   <dialog id="device-details" class="device-details" aria-labelledby="device-details-title"></dialog>
+  <script src="/dialog-shell.js" defer></script>
   <script src="/agent-state.js" defer></script>
   <script src="/management.js" defer></script>
   <script src="/selector.js" defer></script>

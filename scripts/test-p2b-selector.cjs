@@ -146,7 +146,7 @@ test('production recovery: delayed pending observation cannot overwrite a newer 
   await new Promise(resolve => setImmediate(resolve)); f.finish(); await operation;
   late.resolve({operation_status: 'queued', config: {selector: 'z-first', choice: 'third'}}); await recovery;
   assert.equal(c.group('a', 'z-first').remotePending, false);
-  assert.match(c.group('a', 'z-first').feedback.message, /已切换到 new/);
+  assert.match(c.group('a', 'z-first').feedback.message, /✓ 已切换/);
 });
 test('production Selector: hung poll and hung detail body consume only the single overall budget', async () => {
   for (const stage of ['poll', 'detail']) {

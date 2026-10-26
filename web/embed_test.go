@@ -86,7 +86,7 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 	javascript := string(jsBytes)
 	for _, required := range []string{
 		`id="remove-agent-dialog"`, `id="remove-agent-form"`, `id="remove-agent-name"`,
-		`永久撤销 Agent credential`, `历史 telemetry、Schedules、Probe Jobs/Results 会保留`, `不会远程卸载 Agent`,
+		`撤销后不能恢复原身份`, `历史记录、计划和任务会保留`, `Agent 程序不会被卸载`,
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("dashboard missing revoke UI %q", required)
@@ -375,7 +375,7 @@ func TestOutboundSelectorUIUsesControlledMutationAndShowsAllStates(t *testing.T)
 		`select.dataset.selectorKind='choice'`, `select.disabled=Boolean(blocked||m.active)`,
 		`panel.addEventListener('change'`, `controller.draft(activeID,event.target.dataset.selectorName,event.target.value)`,
 		`kind==='submit'`, `controller.submit(activeID,name,g.draft)`,
-		`submit.dataset.selectorName=selector.name`, `el('button',m.active&&g.feedback?.pending?'切换中…':'切换')`,
+		`submit.dataset.selectorName=selector.name`, `el('button',m.active&&g.feedback?.pending?'正在切换…':'切换')`,
 		`submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selector.choices?.includes(value)||value===selector.current)`,
 		`el('h2','出站选择')`, `el('button','关闭')`, `document.createElementNS(svgNS,'svg')`, `icon.setAttribute('stroke','currentColor')`,
 		`/outbounds/switch`, `method: 'POST'`, `'X-CSRF-Token': csrf()`,

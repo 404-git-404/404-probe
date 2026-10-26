@@ -1,0 +1,19 @@
+/* R38: bounded modal sizes, independent content scrolling, stable page geometry. */
+html{scrollbar-gutter:stable}
+dialog.dialog-shell{--shell-border:#E2D9CC;box-sizing:border-box;position:fixed;inset:0;margin:auto;width:560px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--shell-border);border-radius:16px;background:#FBF8F3;color:#2A2622;color-scheme:light;font:14px/1.5 system-ui,sans-serif;overflow:auto;overscroll-behavior:contain;box-shadow:0 24px 80px #2a262233}
+dialog.dialog-shell.dialog-small{width:420px}dialog.dialog-shell.dialog-large{width:720px}
+dialog.dialog-shell::backdrop{background:#2a262273}
+.shell-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 24px 14px;border-bottom:1px solid #E2D9CC;background:#FBF8F3}
+.shell-head h2{margin:0;font-size:18px}.shell-head p{margin:3px 0 0;color:#6E655B;overflow-wrap:anywhere;font-size:13px}.shell-head>button{flex:0 0 32px;padding:0;font-size:20px}
+.shell-content,.dialog-shell>form,.dialog-shell>div:not(.shell-head):not(.shell-actions){padding:18px 24px}
+.dialog-shell h2:not(.shell-head h2){font-size:16px}.dialog-shell p{overflow-wrap:anywhere}
+body .dialog-shell button{height:36px;box-sizing:border-box;border:1px solid #D8CEBF;border-radius:8px;background:#FBF8F3;color:#2A2622;padding:0 14px;cursor:pointer;font:inherit}
+body .dialog-shell button.primary-action{background:#2A6F63;color:#fff;border-color:#2A6F63}body .dialog-shell button.danger-action{background:#B8433D;color:#fff;border-color:#B8433D}
+body .dialog-shell button:disabled{opacity:.6;cursor:default}.dialog-shell :is(input:not([type=checkbox]),select){box-sizing:border-box;width:100%;min-width:0;height:38px;border:1px solid #D8CEBF;border-radius:8px;padding:0 10px;background:#FFFDF9;color:#2A2622;font:inherit}
+.shell-actions,.dialog-shell .dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:16px}.dialog-shell .dialog-actions button:first-child:last-child{margin-left:auto}
+.dialog-shell .selector-row{grid-template-columns:minmax(70px,120px) minmax(0,1fr) auto}.dialog-shell .selector-label{overflow-wrap:anywhere}.dialog-shell .selector-options{margin-bottom:16px}.dialog-shell .selector-error{color:#9E2F2A}
+.install-choices{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}body .dialog-shell .install-choices button{height:auto;min-height:128px;white-space:normal;text-align:left;padding:14px}.install-choices strong,.install-choices small{display:block}.install-choices small{margin-top:8px;color:#6E655B}.install-choices [aria-checked=true]{outline:2px solid #2A6F63;background:#E3F0EC}
+.dialog-shell .upgrade-versions{display:flex;gap:12px;justify-content:center;align-items:center;font-size:18px;font-weight:700}.dialog-shell>h2,.dialog-shell>p,.dialog-shell>.remove-agent-identity{margin:16px 24px}.dialog-shell>.upgrade-versions{margin:22px 24px 0}
+.dialog-shell .upgrade-notes{margin:12px 0;padding-left:22px;color:#6E655B;font-size:13px}
+.login-card{background:#FBF8F3!important;border-color:#E2D9CC!important;color:#2A2622}.login-card :is(input,button){height:38px;padding:0 12px}.login-card button{background:#2A6F63!important;color:white}.login-card form{gap:12px}
+@media(max-width:620px){dialog.dialog-shell{max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}.shell-head{padding:16px}.shell-content,.dialog-shell>form,.dialog-shell>div:not(.shell-head):not(.shell-actions){padding:16px}.install-choices{grid-template-columns:1fr}.dialog-shell .selector-row{grid-template-columns:minmax(60px,90px) minmax(0,1fr) auto}}

@@ -37,7 +37,7 @@
     setTimer=(f,ms)=>root.setInterval(f,ms),clearTimer=id=>root.clearInterval(id),
     clipboard=()=>root.navigator&&root.navigator.clipboard,available=()=>true,unavailableReason=()=>'',unauthorized=()=>{}}){
     const panes=['choice','manual','manualResult','oneclick','oneclickResult'];
-    let state=null,timer=null,submitting=false,revoking=false,copyReset=null;
+    let state=null,timer=null,submitting=false,revoking=false,copyReset=null,method='oneclick',generation=0;
 
     function show(name){
       for(const pane of panes)els[pane].classList.toggle('hidden',pane!==name);
@@ -71,7 +71,7 @@
     }
 
     function reset(){
-      stopTimer();clearSecret();
+      generation++;stopTimer();clearSecret();
       submitting=false;revoking=false;
       els.command.textContent='';
       els.countdown.textContent='';
@@ -81,6 +81,7 @@
       els.submit.disabled=false;
       els.copy.disabled=true;els.revoke.disabled=true;
       show('choice');
+      if(els.choiceName)els.choiceName.value='';
       const ok=Boolean(available());
       els.chooseOneClick.disabled=!ok;
       els.reason.textContent=ok?'':(unavailableReason()||'当前 Server 构建无法使用一键安装');
@@ -90,6 +91,7 @@
     function chooseOneClick(){
       if(els.chooseOneClick.disabled)return;
       els.name.value='';els.error.classList.add('hidden');els.submit.disabled=false;
+      if(els.choiceName)els.name.value=els.choiceName.value;
       show('oneclick');
     }
     function chooseManual(){show('manual');}
@@ -102,7 +104,7 @@
         els.error.classList.remove('hidden');
         return false;
       }
-      const name=els.name.value;
+      const name=els.name.value,serial=generation;
       submitting=true;els.submit.disabled=true;els.error.classList.add('hidden');
       try{
         const response=await fetcher('/api/v1/web/agent-enrollments',{
@@ -119,6 +121,7 @@
           return false;
         }
         const view=await response.json();
+        if(serial!==generation)return false;
         state={id:view.enrollment_id,expiresAt:view.expires_at,ended:''};
         els.command.textContent=view.command;
         status('');
@@ -175,8 +178,11 @@
 
     function close(){reset();}
 
-    els.chooseOneClick.addEventListener('click',chooseOneClick);
-    els.chooseManual.addEventListener('click',chooseManual);
+    if(els.next){
+      const select=value=>{method=value;els.chooseOneClick.setAttribute('aria-checked',String(value==='oneclick'));els.chooseManual.setAttribute('aria-checked',String(value==='manual'));};
+      els.chooseOneClick.addEventListener('click',()=>select('oneclick'));els.chooseManual.addEventListener('click',()=>select('manual'));
+      els.next.addEventListener('click',()=>{if(!els.choiceName.reportValidity())return;if(method==='oneclick'&&!els.chooseOneClick.disabled)chooseOneClick();else chooseManual();});
+    }else{els.chooseOneClick.addEventListener('click',chooseOneClick);els.chooseManual.addEventListener('click',chooseManual);}
     els.oneclickBack.addEventListener('click',back);
     els.form.addEventListener('submit',event=>{if(event&&event.preventDefault)event.preventDefault();return submit();});
     els.copy.addEventListener('click',copy);

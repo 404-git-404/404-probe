@@ -44,12 +44,12 @@
     };
     const changed = id => { if (!disposed) onchange(id); };
     function open(id) { const m = model(id); m.open = true; m.intent++; changed(id); }
-    function close(id) { const m = model(id); m.open = false; m.intent++; m.inspection?.controller.abort(); changed(id); }
+    function close(id) { const m = model(id); m.open = false; m.intent++; m.inspection?.controller.abort(); for(const g of m.groups.values()){clearTimeout(g.feedbackTimer);g.feedback=null;g.recovered=null;} changed(id); }
     function expand(id, name) {
       const m = model(id); m.expanded = m.expanded === name ? '' : name; m.intent++; changed(id);
     }
     function draft(id, name, value) {
-      const g = group(id, name); g.draft = value; g.generation++; changed(id);
+      const g = group(id, name); g.draft = value; g.generation++; clearTimeout(g.feedbackTimer);g.feedback=null; changed(id);
     }
     function sync(id) {
       const m = entities.get(id), agent = state.agents.get(id);
@@ -57,6 +57,7 @@
       if (!agent || state.blocked(id)) { cancel(id); return; }
       for (const [name, g] of m.groups) {
         const selector = agent.outbounds?.selectors?.find(item => item.name === name);
+        if(g.feedback?.completed&&selector?.current===g.feedback.target){g.feedback=null;g.draft=null;}
         if (g.draft !== null && !selector?.choices?.includes(g.draft)) {
           // Preserve the invalid draft so the user sees what disappeared. Do not
           // silently replace it with another allowed target or submit it.
@@ -67,7 +68,7 @@
     function cancel(id) {
       const m = entities.get(id);
       if (!m) return;
-      m.open = false; m.intent++; m.inspection?.controller.abort(); m.active?.controller.abort();
+      m.open = false; m.intent++; m.inspection?.controller.abort(); m.active?.controller.abort();for(const g of m.groups.values())clearTimeout(g.feedbackTimer);
     }
     function closeAll() { disposed = true; for (const id of entities.keys()) cancel(id); }
     async function recover(id, readJSON, timeoutMs = 10000) {
@@ -140,8 +141,9 @@
       g.operationVersion++;
       const controller = new AbortController(), deadline = Date.now() + budgetMs;
       const operation = {controller, requestID: crypto.randomUUID().replaceAll('-', ''), jobID: '', intent: m.intent, generation: g.generation};
+      clearTimeout(g.feedbackTimer);
       m.active = operation;
-      g.feedback = {message: `正在切换至 ${choice}`, pending: true, error: false};
+      g.feedback = {message: '正在切换…', pending: true, error: false};
       changed(id);
       let rejectAbort;
       const abortPromise = new Promise((_, reject) => { rejectAbort = reject; });
@@ -195,7 +197,8 @@
         }
         if (!state.finishMutation(mutation, {outbounds: latest.outbounds})) return false;
         if (g.generation === operation.generation) {
-          g.feedback = {message: reflected ? `已切换到 ${target}` : `任务已完成，快照尚未确认 ${target}`, error: false, uncertain: !reflected};
+          g.feedback = m.intent===operation.intent ? {message: reflected ? '✓ 已切换' : '已完成，等待快照确认', error:false,uncertain:!reflected,completed:!reflected,target} : null;
+          if(reflected&&m.open){const feedback=g.feedback;g.feedbackTimer=setTimeout(()=>{if(g.feedback===feedback){g.feedback=null;changed(id);}},3000);}
           if (reflected) {
             g.draft = null;
             if (m.intent === operation.intent && m.expanded === name) m.expanded = '';
@@ -203,7 +206,7 @@
         }
         return reflected;
       } catch (error) {
-        if (g.generation === operation.generation && !disposed && state.agents.has(id) && !state.blocked(id)) {
+        if (m.intent===operation.intent && g.generation === operation.generation && !disposed && state.agents.has(id) && !state.blocked(id)) {
           const uncertain = !error.definitive && error.name !== 'AbortError';
           g.feedback = {message: uncertain ? `${error.message}（请求 ${operation.requestID}）` : error.message,
             error: !uncertain && error.name !== 'AbortError', uncertain, requestID: operation.requestID, jobID: operation.jobID};
@@ -239,12 +242,13 @@
     function ensure() {
       if (panel) return;
       panel = el('dialog', '', 'selector-dialog'); panel.id = 'selector-popover';
+      if(root.DialogShell)root.DialogShell.attach(panel,{size:'medium'});
       panel.setAttribute('aria-labelledby', 'selector-dialog-title');
       panel.setAttribute('aria-describedby', 'selector-dialog-device');
       panel.addEventListener('cancel', event => { event.preventDefault(); hide(); });
       panel.addEventListener('close', hide);
       panel.addEventListener('click', event => {
-        if(event.target!==panel)return;
+        if(root.DialogShell||event.target!==panel)return;
         const r=panel.getBoundingClientRect();
         if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)hide();
       });
@@ -301,7 +305,7 @@
       const content=el('div','');
       const heading=el('h2','出站选择');heading.id='selector-dialog-title';
       const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device');device.id='selector-dialog-device';
-      content.append(heading,device);
+      const header=el('div','','shell-head'),group=el('div',''),x=el('button','×');x.type='button';x.dataset.selectorKind='close';x.setAttribute('aria-label','关闭');group.append(heading,device);header.append(group,x);content.append(header);
       const out=agent.outbounds||{},blocked=reason(agent,csrf());
       let index=0;
       for(const selector of out.selectors||[]){
@@ -318,7 +322,8 @@
           const option=el('option',choice===selector.current?`${choice}（当前）`:choice);option.value=choice;select.append(option);
         }
         select.value=value??'';select.disabled=Boolean(blocked||m.active);
-        const submit=el('button',m.active&&g.feedback?.pending?'切换中…':'切换');submit.type='button';
+        const submit=el('button',m.active&&g.feedback?.pending?'正在切换…':'切换');submit.type='button';
+        submit.setAttribute('aria-label',`切换 ${selector.name}`);
         submit.dataset.selectorKind='submit';submit.dataset.selectorName=selector.name;
         submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selector.choices?.includes(value)||value===selector.current);
         row.append(label,select,submit);section.append(row);

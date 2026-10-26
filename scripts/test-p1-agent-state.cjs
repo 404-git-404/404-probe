@@ -82,7 +82,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
       if(route) {const value=route(url,options); if(value !== undefined) Promise.resolve(value).then(d.resolve,d.reject);}
       return d.promise;
     },EventSource:class {constructor(){this.listeners=new Map();sources.push(this);}close(){this.closed=true;}addEventListener(type,f){this.listeners.set(type,f);}}};
-  vm.createContext(sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/management.js'),'utf8'),sandbox,{filename:'management.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/selector.js'),'utf8'),sandbox,{filename:'selector.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/network-quality-core.js'),'utf8'),sandbox,{filename:'network-quality-core.js'});

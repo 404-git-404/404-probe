@@ -59,7 +59,7 @@ test('outbound modal: one row per group, current preselection and independent dr
  assert.equal(f.get('submit','z').disabled,true);assert.equal(f.get('submit','a').disabled,true);
  choice.value='new';choice.dispatch('change');assert.equal(f.controller.group('a','z').draft,'new');assert.equal(f.get('submit','z').disabled,false);assert.equal(f.get('submit','a').disabled,true);
  choice.value='old';choice.dispatch('change');assert.equal(f.get('submit','z').disabled,true);
- assert.equal(f.get('close').textContent,'关闭');
+ assert.equal(f.get('close').getAttribute('aria-label'),'关闭');assert.equal(f.get('submit','z').getAttribute('aria-label'),'切换 z');
 });
 test('R33 modal: cancel and native Esc close restore the opening trigger',()=>{
  const f=setup();f.get('close').click();assert.equal(f.panel.open,false);assert.equal(f.document.activeElement,f.trigger);
