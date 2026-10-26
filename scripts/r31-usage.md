@@ -1,77 +1,106 @@
-# R31 大数据库升级测试工具
+# R31 合成大库与升级演练工具
 
-仅在维护者安排的测试机独占时段运行。Python 3 标准库，无新 Go 依赖。
+工具只用于维护者安排的独占测试机时段，不用于正式服务。数据库全部是 example 合成数据；不复制真实数据库或凭据。发布演练的安装提示、临时密码及两次升级确认仍由维护者在交互终端回答，工具不记录安装终端输出。
 
-## 本机文件位置
+## 版本登记与正式产物
 
-工作目录为 `D:\Claude-Github\404-probe-codex`。所有生成的数据库、JSON、日志和本机 v1.0.6 校验程序统一放在仓库外 `D:\Claude-Github\r31-fixtures\`；保留的三份数据库为 `r31-reviewed-v2-{snapshot,full,compact}.db`，校验程序为 `r31-server-v1.0.6.exe`。输出目录不得位于任何 Git 仓库内，以免未跟踪文件使发布构建目录变脏。
+`scripts/r31-versions.json` 登记已正式发布的起始版本：版本、GitHub tag 的完整提交、schema、相对上一版的表增删。当前登记 v1.0.6/schema34、v1.0.7/schema35（删除 tcp_mini_high、tcp_mini_state）、v1.0.8/schema35（无表增删）。未登记的起始版本一律拒绝。
 
-不要在主仓库 `D:\Claude-Github\404-probe` 下创建缓存、fixture、日志或临时工作目录；实现文件只写入自己的 worktree，生成物和临时文件放在仓库外。
+每次正式发布后，在下一版准备工作中将该版补入登记表，并核对正式 tag、schema 和表增删；不要把开发分支提交或未发布候选写进去。
+
+每个产物目录使用对应正式版的七件文件：linux amd64/arm64 的 Server/Agent、install.sh、RELEASE-METADATA.json、SHA256SUMS。发布任务先将它们与 GitHub release 的 SHA256SUMS 核对；工具运行时离线复核六个载荷的哈希，并核对元数据版本/提交、元数据中四个二进制哈希、实际 Server `version --json` 的版本/提交及 dirty=false。登记版本还必须匹配登记提交。缺文件、重复清单项、不一致或符号链接都会拒绝。
+
+目标必须是规范且更高的正式版本号。已登记目标采用登记 schema，也可以显式提供并核对；未登记目标（例如即将发布的新版本）必须显式提供 expected_schema，不能猜测。工具不会自行下载产物，也不使用当前分支的迁移代码冒充旧版。
 
 ## 生成数据库
 
-```bash
-python3 scripts/r31-generate.py --server /local/v1.0.6/404-probe-server-linux-amd64 \
-  --scale snapshot --out /local/fixtures/snapshot.db
-```
+v1.0.6 生成主体保持为 schema34 底座，仍由正式 v1.0.6 Server 的 agent list/storage.Open 创建 schema，不手写 DDL。其他起始版本先生成相同底座，再由**所选起始版本的正式 Server**执行 database migrate-protected 和 database verify；例如 v1.0.8 直接由正式 v1.0.8 将底座迁到 schema35，不需要仓库外适配器。
 
-`--scale` 支持 `tiny`、`snapshot`、`full`、`compact`。输出路径及同名 WAL/SHM 必须不存在。输出数据库和 `<数据库>.json`；JSON 记录版本身份、schema 指纹、行数、页数、校验结果和包含校验在内的总耗时。大小口径为字节；换算 MiB 除以 1048576，与 R29 报告一致。
-
-- 固定种子 31、固定 UTC 窗口末端（2026-10-23），同一 SQLite/Server 版本下字节可复现；可用 `--seed`、`--anchor-ms` 明确改变输入。
-- 通过所给 **v1.0.6 正式 Server 的 `agent list --db`** 调用该发布版本的 `storage.Open` 创建空库；没有手写 DDL。要求版本为 v1.0.6、dirty=false、schema=34。用其 `agent list` 再打开成品，并运行 `database verify`。
-- 从官方 schema 填充合成数据；不关外键，不删/关触发器。核对 `integrity_check`、`foreign_key_check`、全部 `quality_totals` 和各 Agent 的 `quality_usage`。填充前后比较所有表、索引、触发器的 schema 指纹。
-- minute_metrics、receipts、minute、三档 buckets、security、jobs 遵循 R29 的时间窗口；full 为 31 Agent × 30 天分钟指标、108 序列 × 30 秒完整质量窗口。二进制 buckets 使用 v1.0.6 的 v1 直方图编码。原始质量样本为 0，与快照一致；小表保留外键遍历量，并包含 43 份套餐/配置（含已校准套餐）供 R30 回填使用。累计流量按时间递增，周期起点位于窗口内，usage_bytes 与起点锚点至最新行的对应方向差值一致；无历史的套餐保留为 partial。131 个目标全部停用，并补齐 quality_retired、tcp_mini_state 和 Google 状态等小表。
-- snapshot 在同一正式表中插入/删除合成分钟行，形成页内碎片和空闲页；无额外填充表。compact 保留同样最终逻辑行数并 VACUUM；full 填满保留窗口并 VACUUM。它们近似 R29 的形状，不能复制真实库每页的布局。
-- 所有内容均为 example 合成值，地址仅用文档保留地址。token_hash 为合成摘要，没有可使用的真实凭据。工具不会启动网络探测。
-- 后续 schema 变化：**保留本适配器和 v1.0.6 产物**，仍可生成该版数据库。为下一次“上一个正式版本”增加独立适配器，调用该版本正式 Server 创建空库，更新填充字段/编码及测试；不要把当前分支迁移代码冒充旧版 schema。此适配器拒绝其他版本/schema。
-
-## Linux 测试机实跑
-
-需要 root、systemd、既有 Server（404-probe 用户/组已存在）、Python 3，以及安装器依赖（bash、curl、sha256sum、runuser 等）；不安装系统软件。只支持 Linux amd64/arm64。两个本地产物目录各包含正式构建的七个文件，运行前核对其 SHA256、LF、Server 版本和 dirty=false。只接受规范 `vX.Y.Z`，目标必须更高。不能有 Agent 混装、未完成升级、候选文件或服务 drop-in。
+生成一份 v1.0.8 起始的 snapshot 的单行示例（路径替换为准备好的本地目录）：
 
 ```bash
-sudo python3 scripts/r31-upgrade.py v1.0.5 v1.0.6 \
-  /local/assets-v1.0.5 /local/assets-v1.0.6 snapshot \
-  --out /local/r31-results --confirm-test-host 'TEST_HOSTNAME'
+python3 -B scripts/r31-generate.py --start-version v1.0.8 --server /local/assets-v1.0.8/404-probe-server-linux-amd64 --base-assets /local/assets-v1.0.6 --scale snapshot --out /var/lib/404-probe-rehearsal/fixtures/snapshot.db
 ```
 
-必须显式传入 `--confirm-test-host`，值要与运行机 hostname 完全相同；此参数不能替代维护者的测试机时段安排，不要在仓库保存真实主机名。
+- `--scale` 为 tiny、snapshot、full、compact。非 tiny 成品必须至少 500,000,000 字节，否则拒绝；不通过填充表或任意 blob 凑大小。输出 DB/WAL/SHM、`.json`、`.schema34.json` 都必须是新路径。
+- JSON 记录底座版本和生成记录、起始版本、每一步官方迁移/verify 的结果及耗时、行数、schema 指纹、页数、大小和总耗时。字节除以1048576换算 MiB。
+- 种子默认31，窗口末端默认固定2026-10-23 UTC；用 `--seed`、`--anchor-ms` 改变输入。schema34 底座在相同 SQLite/Server 下字节可复现；后续官方迁移自己的时间戳不承诺跨次字节相同。
+- 生成后核对 integrity、外键、quality_totals、每 Agent 的 quality_usage、套餐用量和方向计数器；schema 必须等于登记值。行数只允许 schema_migrations 按 schema 差增加，以及登记的表增删；任何其他变化都拒绝。
+- minute_metrics、receipts、三档 buckets、security、jobs 延续原 R29/R31 数据形状、窗口和 v1 直方图编码。snapshot 在正式分钟表中插入/删除合成行，形成页内碎片与空闲页；full 填满保留窗口，compact 使用同样逻辑行数再 VACUUM。它们不复制真实库每页的布局。
+- 不关闭外键或触发器，不启动探测；地址只用文档保留地址，token_hash 是合成摘要。
 
-发布时使用 `v1.0.6 <目标正式版>`。`--expected-schema` 默认 v1.0.6=34、v1.0.7=35；其他目标版本必须显式指定。成功升级后的正式 postcheck JSON 记录在 `post_upgrade_verification` 并断言 schema 和 integrity。当前生成适配器只接受以 v1.0.6 为起始版，或 v1.0.5 → v1.0.6 的流程验证组合。两个 schema 都是 34 的实跑只验证流程和计时，不证明未来新增迁移正确。
+## 发布时的维护者一行入口
 
-流程：
+Linux amd64/arm64，root、systemd、既有 Server 用户/组，以及已安装的 Python3、bash、curl、sha256sum、runuser、flock 等依赖。**Linux 源码、工具链、Go 缓存和大库放在 /var/lib 下专属目录，不放 /tmp**；一些机器的 /tmp 是小型 tmpfs。Go 测试的 socket fixture 则需要短临时路径，见下文。至少留8 GiB空闲，发布任务自行确认独占时段及其他发布门禁。
 
-1. 确认测试机 hostname 和独占时段、至少 8 GiB 空闲空间；提前探测新 `--out` 可写且结果文件不存在，四个 CLI 计时锚点必须各命中一次，其他计时函数/备份边界也须匹配。安装路径必须与备份同一文件系统；仅 root 属主的 `/run/404-probe-upgrade` 可跨 tmpfs，用 cp -a 并比较内容/属主/权限后删除源。停现有 Server；原数据库目录（含 WAL/SHM）、配置、二进制、helper、unit、升级目录和运行锁目录移动到 `/var/lib/404-probe-r31-<编号>/original/`（0700）。保留原启用/活动状态及文件 SHA256、属主、权限快照。
-2. 用本地正式起始产物和未改动的 `install.sh` 安装起始版，参数为 `PROBE_404_LOCAL_ASSET_DIRECTORY`、`PROBE_404_VERSION`。安装交互仍在终端：维护者选择 **Server**，选择回环监听，输入管理员密码；不得输入任何真实服务凭据。工具不代填密码，也不保存终端安装录屏。生成的 Control token 仅由安装器写入私有配置文件，结束时删除。
-3. 停服换入本工具生成的库，重新启动。实跑生成时采用当前 UTC 分钟作为窗口末端，避免未来执行时历史数据已经过期；JSON 会记录 anchor，重现时传同一个 `--anchor-ms`。用服务用户运行 agent list，启动后立即检查服务活动及 HTTP 401 健康，再进入升级。
-4. 从目标本地产物的 installer 创建一次性计时副本：包装真实 `database verify`、`migrate-copy`、`migrate-protected` 命令，分别记退出码和单调时钟耗时。正式产物不改，依然由安装器校验正式资产；包装保留原命令退出码、参数及重定向。布局锚点变化时拒绝运行。
-5. 先在迁移完成及二进制替换后 `exit 87`，调用安装器自身 EXIT trap 自动回滚，单独计时 `restore_server_upgrade`。检查旧二进制哈希、服务活动、pending 已清除。数据库/WAL/SHM 的恢复哈希由安装器自身的备份清单验证，记入结果。然后在恢复的起始版上执行一次成功升级，检查目标二进制哈希及服务活动。两次升级确认由维护者在终端输入 `y`。
-6. 无论成功失败，恢复及写结果期间忽略 INT/TERM/HUP；逐步捕获错误，继续其他独立恢复步骤。stop 返回 5 时仍查询非活动状态，确认没有运行进程才删除生成安装、移回各原文件；reload、enable/disable 和文件核对各自运行并记错。只有原文件核对通过且 reload 成功才尝试启动原服务，避免用不完整数据或未加载的单元启动。输出 `result.json` 和 `summary.md`（不含配置内容/凭据），成功恢复才删除私有备份及全部生成库/临时脚本。资产和结果目录必须在安装路径外，资产不会删除。
+发布任务先准备：
 
-结果中的每个 event 都有 `run`（failure/success）、`phase`、`seconds`、`exit_code`。四个 CLI 阶段为 `precheck-verify`、`migrate-copy`、`migrate-protected`、`postcheck-verify`；后者还保存正式 JSON。`protected-backup` 单独记录 cp、清单和备份验证阶段。回滚拆成 `rollback-total`、`rollback-restore-files`、`rollback-verify-files` 和 `health-observation`；最后一项记录固定最少 5 秒观察及实际函数总时长。rollback-total 同时给出 `health_observation_seconds` 和 `seconds_excluding_health`，Markdown 也列出扣除健康观察的耗时。
+1. 干净源码中的 scripts/r31-rehearse.sh、r31-preflight.py、r31-run-with-evidence.py、r31-upgrade.py、r31-generate.py、r31lib.py、r31-versions.json 保持同一套版本；直接引用该源码目录，或将这几件文件一起复制到仓库外工具目录。
+2. 正式 v1.0.6 底座、所选起始版、目标版各自的七件产物目录；起始版已安装，二进制必须与其产物完全相同。
+3. 仓库外的 root 私有0700工作目录及全新的空 `evidence/`、`results/`（均0700）；没有 run-started、operator-exit.txt、operator-summary.json 或上次恢复残留。
+4. 创建配置文件。下面是 **v1.0.8→v1.0.9、目标 schema35 的示例**；实际目标 schema 由发布任务确认。路径都是参数，不在工具里写死机器、提交或目录：
 
-缓存不主动清空：生成/校验本身会暖缓存，失败运行先做，成功运行的缓存通常更热。JSON/Markdown 明示该顺序；不要把两次时间视为冷缓存对照。工具不执行 drop_caches，若需要冷缓存实验必须另由维护者批准。
+```json
+{
+  "from_version": "v1.0.8",
+  "to_version": "v1.0.9",
+  "from_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.8",
+  "to_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.9",
+  "base_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.6",
+  "work_dir": "/var/lib/404-probe-rehearsal/run",
+  "scale": "snapshot",
+  "expected_schema": 35
+}
+```
 
-恢复异常时 `restored=false`，保留 0700 备份，退出非零，并给出目录；此时不要开始其他任务。SIGKILL、断电、Python 进程自身崩溃不能执行 finally，需要人工恢复：停止 Server，按 `PATHS` 中的零基序号，将 `original/<序号>` 移回对应路径（先保留失败现场，不覆盖唯一备份），daemon-reload，按运行前状态恢复 enable/disable 和 start/stop。先核对原数据/配置/二进制，再删除失败现场。**私有备份含运行前数据和凭据，不上传或打印。**
-
-## 自测
+先只读预检（可以没有TTY；不会创建锁、标记或结果文件）：
 
 ```bash
-R31_PREVIOUS_SERVER=/local/v1.0.6/404-probe-server-linux-amd64 \
-  python3 scripts/test-r31.py -v
-R31_PYTHON=python3 R31_PREVIOUS_SERVER=/local/v1.0.6/404-probe-server-linux-amd64 \
-  go test ./scripts/r31-tooltest -count=1 -v
+sudo bash /path/to/404-probe/scripts/r31-rehearse.sh --check /var/lib/404-probe-rehearsal/config.json
 ```
 
-`R31_BASH` 可指定 bash 路径；`R31_PYTHON` 可指定 Python 路径。未提供 `R31_PREVIOUS_SERVER` 时跳过 tiny 集成；没有 Python 时 Go 包明确 skip。常规 `go build ./...` 不新增工具产品二进制。测试覆盖跨秒 tiny 字节一致性、流量单调/锚点/用量及目标状态、计数器故障、编码、四个锚点/语法、schema 结果与退出码、回滚健康耗时拆分，以及临时根目录和假 systemctl 下的缺失单元 stop=5、部分移动/恢复/清理失败、reload/enable 失败、活跃库拒绝替换、哈希不一致、第二次 Ctrl-C 等恢复场景；真实安装/迁移/回滚/原环境恢复必须在安排好的 Linux 测试机上验证。
+在维护者的交互 root SSH 终端执行这一行启动：
 
+```bash
+sudo bash /path/to/404-probe/scripts/r31-rehearse.sh --config /var/lib/404-probe-rehearsal/config.json
+```
 
-## 可选冻结哈希证据入口
+入口要求 root、交互TTY和 /dev/tty；用 flock 加锁，用 noclobber 原子创建 run-started，只接受一次启动。预检检查起始版身份/哈希、数据库 schema/integrity、服务 active/enabled、没有 pending/candidate/drop-in/混装 Agent/恢复工作区，检查至少8 GiB空间及全新0700证据/结果目录。Linux验收完成记录等发布专用门禁由发布任务自行检查，不写死在工具里。
 
-`scripts/r31-run-with-evidence.py` 是 Linux 实跑时实际使用的 `run-with-evidence.py` 外壳的原样副本，现纳入版本管理。它未经过前一轮轻量档交叉评审；此次增加了隔离测试，不能将自测写成独立评审。
+### 维护者逐条回答的提示
 
-把此入口（可保留文件名）、r31-upgrade.py、r31-generate.py 一起复制到仓库外同一准备目录，提前创建该目录下 root 私有的 `evidence/`（0700），再由维护者在交互 root SSH 终端运行该入口并传入与 r31-upgrade.py 相同的参数。不要直接在仓库目录下生成证据或实跑产物；实际使用目录仍可为 `/var/lib/404-probe-r31-run`。
+1. `Select a role [1-2]`：输入 `1`，选择 Server。
+2. `Web public origin`：回车，采用测试回环默认值。
+3. `Allowed root domain suffixes`：回车，留空。
+4. 管理员密码方式 `Choice [1]`：输入 `2`。
+5. 自己输入至少16字符的**临时测试密码**并确认；不要使用正式密码，也不要把密码发送到对话。
+6. 第一次 `Proceed with this Server upgrade?`：核对配置中的起始版→目标版，输入 `y`。
+7. 等待工具在迁移、二进制替换后故意 `exit 87`，安装器自动回滚；这是预期步骤，不要中断恢复。
+8. 第二次升级确认：再次核对版本，输入 `y`，等待成功路径检查及原安装恢复。
 
-外壳加载原升级工具，仅给两个状态采集点增加 JSON 保存：停服后、移动原安装前的 `before-frozen.json`；恢复文件后、原服务重启前的 `after-restored-frozen.json`。同时输出 `frozen-compare.json`，比较文件 SHA256、模式和 uid/gid，记录差异路径；文件0600。它不读取并保存凭据原文，不改变资产/数据库、安装器和原恢复逻辑的判断；原工具退出码原样传出。证据目录缺失或已存在 before-frozen.json 时拒绝重复运行。
+snapshot 生成和官方旧版迁移可能需要一段无提示时间。演练生成采用当前 UTC 分钟作为 anchor，避免历史过期；JSON记录该anchor。不要把 tiny 流程检查当成大库验收。
 
-这层额外 I/O 也会引入失败点：写证据异常可能触发原工具的异常/恢复路径，不能声称它没有行为影响。Linux 实跑的 before/after/compare、result.json 与当前服务状态必须一起核验。服务恢复启动后 Agent 会继续写库，应比较重启前的冻结哈希，而不是要求运行中的 DB 哈希永久不变。
+入口自动写 work_dir 下的 `operator-exit.txt` 和 `operator-summary.json`；正常应 tool_exit_code=0、status=passed、restored=true、frozen_equal=true、schema与配置相符、integrity=ok、verified=true。任意非零或不一致都停止，不重复启动，不删除唯一恢复备份；只回传脱敏摘要，不发送密码、token或安装终端内容。
+
+## 计时、冻结证据和恢复语义
+
+r31-upgrade.py 保留原先的本地安装、计时、故意失败、自动回滚和原安装恢复流程。起始版从登记表选择；低层CLI增加 --base-assets，目标未登记必须 --expected-schema。维护者应通过上面的加锁单行入口运行。
+
+- 停服后原数据目录（含 WAL/SHM）、配置、二进制、helper、unit、升级目录和运行锁目录移入 /var/lib/404-probe-r31-编号/original（0700）；原 active/enabled 状态及文件 SHA/属主/权限冻结记录不改。
+- 包装真实 precheck-verify、migrate-copy、migrate-protected、postcheck-verify，保留参数、重定向和退出码；四个锚点不唯一就拒绝。protected-backup 另计时；rollback-total、rollback-restore-files、rollback-verify-files、health-observation 仍记录，回滚也给出扣除健康观察的耗时。
+- 先失败回滚，再成功升级。缓存不主动清空，后一次通常更热；不做冷缓存对照，不执行 drop_caches。
+- r31-run-with-evidence.py 只增加原有两个冻结观察点：移动原安装前的 before-frozen、恢复文件后且原服务重启前的 after-restored-frozen，及 frozen-compare。文件0600、证据目录0700且必须为空；不保存配置/凭据原文。`--evidence-dir` 明确指定准备好的目录。
+- finally 恢复期间忽略 INT/TERM/HUP，逐项捕获错误，继续安全的恢复步骤。确认原服务未活动才替换文件；原文件核对和 daemon-reload 通过才重启。保留原有 stop=5、部分恢复、enable/reload失败等处理。
+- 恢复失败时保留0700私有备份，result.json 给出路径；不继续其他任务。SIGKILL、断电或 Python 崩溃不能靠 finally恢复，需维护者按 PATHS 零基编号人工恢复，先核对原数据/配置/二进制，最后才清理失败现场。私有备份含凭据，不上传或打印。
+
+## 隔离自测（不操作运行中的服务）
+
+Windows 按 CLAUDE.md 设置 R31_PYTHON、R31_BASH，在沙箱外跑全仓；Linux 使用有 ::1 的机器，大文件及 GOCACHE/GOMODCACHE 放 /var/lib 专属目录。先只读检查 /tmp：非小型 tmpfs 且空闲至少2 GB时，Go测试不设置 TMPDIR/GOTMPDIR，使用默认短 /tmp；结束后核查和清理本轮残留。Go的 testing.TempDir 直接读取 GOTMPDIR，不能将它设成长路径，否则 Unix socket 路径超过约108字节会失败。若 /tmp 空间不足，需将编译目录与短的测试进程 fixture 路径分开，不能简单把所有临时目录设为同一个长路径。
+
+下面一行以 v1.0.8 为起始做 tiny 集成，底座始终为正式 v1.0.6；分别将 R31_START_VERSION 和 R31_PREVIOUS_SERVER 改为 v1.0.6、v1.0.7、v1.0.8 执行：
+
+```bash
+R31_BASE_SERVER=/local/assets-v1.0.6/404-probe-server-linux-amd64 R31_PREVIOUS_SERVER=/local/assets-v1.0.8/404-probe-server-linux-amd64 R31_START_VERSION=v1.0.8 python3 -B scripts/test-r31.py -v
+```
+
+未给正式产物时 tiny 集成明确跳过；测试其余部分只使用合成资产、临时根目录、假 systemctl 和PTY，不调用真实安装/升级。Linux root 下还验证入口的非TTY拒绝、锁排他、只运行一次和 --check 不修改文件。已有冻结证据、计时锚点、恢复故障及字节可复现测试继续保留。真实的大库安装/升级/回滚演练仍由后续发布任务安排，不能把这些自测写成真实演练通过。
