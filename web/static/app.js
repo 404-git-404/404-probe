@@ -62,7 +62,7 @@ const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinato
   upgradeTargets: id => loadDetailUpgradeTargets(id),
   // Revealed IP addresses never outlive the dialog or a switch to another Agent.
   conceal: () => { for (const view of agentCards.values()) view.egressPanel?.conceal(); },
-  resourceFacts: resourceFactsFor,
+  resourceFacts: agent => resourceFactsFor(agent).filter(row=>row[0]==='DISK'),
   hydrate: id => { if(agents.has(id)&&!agents.get(id).detail_loaded)reconciliation.notify(id); }});
 const revokedAgentIDs = agentState.revokedAgentIDs;
 const selectorController = Selector.create({

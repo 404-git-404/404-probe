@@ -8,7 +8,7 @@
     management=()=>null,overview=()=>null,upgradeTargets=()=>{},resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},network=()=>null,conceal=()=>{}}={}) {
     const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={};
     let current=null,tab='overview',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
-    let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,selected=0,networkIdentity=null,networkPending=false;
+    let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,plots=[],selected=0,networkIdentity=null,networkPending=false;
     const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
     const button=(text,action,cls='')=>{const n=el('button',cls,text);n.type='button';n.addEventListener('click',action);return n;};
     const header=el('header','details-header'),title=el('h2','','设备详情'),machine=el('div','details-machine');title.id='device-details-title';
@@ -28,20 +28,20 @@
       if(!networkIdentity){const first=available.find(t=>t.slot==='telecom'&&t.family==='ipv4'&&t.protocol==='tcp')||available[0];if(first)networkIdentity={target:first.id,family:first.family,kind:'latency'};}
       networkTarget.disabled=!available.length;networkTarget.value=networkIdentity?.target||'';networkHint.textContent=available.length?'现有单目标历史，独立于卡片显示模式':'暂无有效目标；地区配置加载或 Agent 不支持';return available;}
     networkTarget.addEventListener('change',()=>{const chosen=(network()?.historyTargets(current)||[]).find(t=>t.id===networkTarget.value);if(!chosen)return;networkIdentity={target:chosen.id,family:chosen.family,kind:'latency'};restoreNetwork();});
-    const controls=el('div','details-history-controls'),status=el('p','details-history-status'),note=el('p','details-note','持久化一分钟算术均值 · 当前及边缘分钟可能不完整；包含原首次/重置零速率，不证明完整或健康。与卡片近期内存观测不同。'),chart=el('div','details-resource-plot'),output=el('output','details-point');
-    const hoursButtons=new Map();for(const hours of [1,6,24]){const b=button(hours+' 小时',()=>apply({hours}));hoursButtons.set(hours,b);controls.append(b);}
+    const controls=el('div','details-history-controls'),status=el('p','details-history-status'),note=el('p','details-note','按每分钟平均值统计；缺数据处断开，边缘分钟可能不完整。'),chart=el('div','details-resource-plot'),output=el('output','details-point');
+    const hoursButtons=new Map();for(const hours of [1,6,24,168]){const b=button(hours===168?'7 天':hours+' 小时',()=>apply({hours}));hoursButtons.set(hours,b);controls.append(b);}
     controls.append(button('刷新',()=>request()));
-    const metricSelect=el('select');metricSelect.setAttribute('aria-label','历史指标');for(const [key,spec]of Object.entries(H.metrics)){const option=el('option','',spec.label);option.value=key;metricSelect.append(option);}metricSelect.value=metric;metricSelect.addEventListener('change',()=>{metric=metricSelect.value;renderPlot();});controls.append(metricSelect);
+    const metricSelect=el('select');metricSelect.setAttribute('aria-label','历史指标');for(const [key,spec]of Object.entries(H.metrics)){const option=el('option','',spec.label);option.value=key;metricSelect.append(option);}metricSelect.value=metric;metricSelect.addEventListener('change',()=>{metric=metricSelect.value;renderPlot();});metricSelect.hidden=true;
     const custom=el('form','details-custom'),from=el('input'),to=el('input'),rangeError=el('span','details-range-error');
     from.type=to.type='datetime-local';from.step=to.step='1';from.setAttribute('aria-label','自定义开始时间');to.setAttribute('aria-label','自定义结束时间');
     const label=(text,input)=>{const n=el('label','',text);n.append(input);return n;};const applyButton=el('button','','应用自定义范围');applyButton.type='submit';custom.append(label('开始',from),label('结束',to),applyButton,rangeError);
     custom.addEventListener('submit',e=>{e.preventDefault();try{apply(H.range(from.value,to.value));rangeError.textContent='';}catch(err){rangeError.textContent=err.message;}});
     output.tabIndex=0;output.setAttribute('aria-label','分钟观测详情，左右方向键浏览');output.setAttribute('aria-live','polite');
     output.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();select(e.key==='Home'?0:e.key==='End'?(data?.points.length||1)-1:selected+(e.key==='ArrowLeft'?-1:1));});
-    const resourceInfo=el('div','details-resource-facts');panes.resources.append(resourceInfo,controls,custom,note,status,chart,output);
+    const resourceInfo=el('div','details-resource-facts');panes.resources.append(controls,custom,note,status,chart,resourceInfo,output);custom.hidden=true;controls.append(button('自定义时间…',()=>{custom.hidden=!custom.hidden;if(!custom.hidden)from.focus();}));
     function renderResourceFacts(){const rows=resourceFacts(agents.get(current));resourceInfo.hidden=!rows.length;for(let i=0;i<rows.length;i++){let row=resourceInfo.children[i];if(!row){row=el('div');row.append(el('strong'),el('span'));resourceInfo.append(row);}if(row.children[0].textContent!==rows[i][0])row.children[0].textContent=rows[i][0];if(row.children[1].textContent!==rows[i][1])row.children[1].textContent=rows[i][1];}while(resourceInfo.children.length>rows.length)resourceInfo.lastElementChild.remove();}
     function active(key,id=current){return !dead&&dialog.open&&!doc.hidden&&tab===key&&current===id&&agents.has(id);}
-    function destroyPlot(){resize?.disconnect();resize=null;if(tap)plot?.over?.removeEventListener('pointerdown',tap);tap=null;plot?.destroy();plot=null;chart.replaceChildren();output.textContent='';}
+    function destroyPlot(){resize?.disconnect();resize=null;for(const p of plots)p.destroy();plots=[];plot=null;chart.replaceChildren();output.textContent='';}
     function release(){serial++;loading=false;coordinator.release(owner);destroyPlot();}
     function leave(){if(tab==='resources'){pending=loading;release();}if(tab==='network'){networkPending=false;network()?.releaseHistory();}}
     function restoreNetwork(){if(!active('network')||!networkIdentity)return;
@@ -93,22 +93,35 @@
       if(!data){status.textContent=error|| (loading?'正在读取指定分钟窗口…':'暂无分钟数据');return;}
       status.textContent=`${error?'读取失败 · 上次可信历史（非当前） · ':''}请求 ${new Date(data.from).toLocaleString()} — ${new Date(data.to).toLocaleString()} · 实际覆盖 ${data.points.length?new Date(data.oldest_timestamp).toLocaleString()+' — '+new Date(data.last_timestamp).toLocaleString():'无数据'} · 部分记录 · 一分钟算术均值 · 服务器时间 ${new Date(data.server_now).toLocaleString()}`;}
     async function request(){if(!active('resources')||loading)return;loading=true;pending=false;const generation=serial,id=current,wanted={...query};statusText();
-      const params=new URLSearchParams(Object.hasOwn(wanted,'hours')?{hours:String(wanted.hours)}:{from:String(wanted.from),to:String(wanted.to)});
-      try{const value=await coordinator.request(JSON.stringify(['resources',id,wanted]),owner,signal=>C.transportLease(tracked=>state.fetchJSON(`/api/v1/web/agents/${encodeURIComponent(id)}/resources/history?${params}`,{signal,fetcher:tracked,timeoutMs:10000,unauthorized}),H.boundedFetcher(fetcher)));
-        if(generation!==serial||!active('resources',id))return;data=H.validate(value,id,wanted);error='';selected=Math.max(0,data.points.length-1);renderPlot();
+      try{const value=await H.load(wanted,async part=>{
+        if(generation!==serial||!active('resources',id))throw Object.assign(new Error('cancelled'),{name:'AbortError'});
+        const params=new URLSearchParams(Object.hasOwn(part,'hours')?{hours:String(part.hours)}:{from:String(part.from),to:String(part.to)});
+        const raw=await coordinator.request(JSON.stringify(['resources',id,part]),owner,signal=>C.transportLease(tracked=>state.fetchJSON(`/api/v1/web/agents/${encodeURIComponent(id)}/resources/history?${params}`,{signal,fetcher:tracked,timeoutMs:10000,unauthorized}),H.boundedFetcher(fetcher)));
+        return H.validate(raw,id,part);
+      });
+        if(generation!==serial||!active('resources',id))return;data=value;error='';selected=Math.max(0,data.points.length-1);renderPlot();
       }catch(err){if(generation===serial&&active('resources',id)&&err.name!=='AbortError'){error='资源历史读取失败；未采用新响应';statusText();}}
       finally{if(generation===serial){loading=false;statusText();}}
     }
-    function select(index){selected=Math.max(0,Math.min((data?.points.length||1)-1,index));const point=data?.points[selected],spec=H.metrics[metric];output.textContent=point?`${new Date(point.timestamp).toLocaleString()} · 一分钟算术均值 · ${spec.keys.map((key,i)=>spec.names[i]+' '+(spec.unit==='B/s'?root.TrafficChart?.bytes?.(point[key])||point[key]+' B/s':point[key].toFixed(2)+(spec.unit==='%'?'%':' load'))).join(' · ')}`:'';}
-    function renderPlot(){destroyPlot();statusText();if(!active('resources')||!data)return;const adapted=H.columns(data,metric),measured=data.points.length;
-      if(!measured||!Plot){chart.append(el('p','',!measured?'暂无可绘制分钟数据；不补零':'本地图表库未加载'));return;}
-      const width=()=>Math.max(240,Math.floor(chart.getBoundingClientRect().width)),spec=adapted.spec;
-      plot=new Plot({width:width(),height:300,legend:{show:true},cursor:{drag:{x:false,y:false}},scales:{x:{time:true},y:{auto:true}},
-        axes:[{stroke:'#69727a',font:'10px system-ui',size:52,grid:{stroke:'#e7e1d7'}},{stroke:'#69727a',font:'10px system-ui',size:76,grid:{stroke:'#e7e1d7'},values:(_u,ticks)=>ticks.map(v=>spec.unit==='B/s'?(root.TrafficChart?.bytes?.(v)||v+' B/s').replace('.00 ',' '):(Math.abs(v)>=10000?v.toExponential(1):Number(v.toPrecision(4)))+(spec.unit==='%'?'%':' load'))}],
-        series:[{},...spec.names.map((label,i)=>({label,stroke:['#168577','#9270ad','#bb8a37'][i],width:2,spanGaps:false,points:{show:true,size:4}}))],
-        hooks:{setCursor:[u=>{const p=adapted.points[u.cursor.idx];if(p&&active('resources'))select(data.points.indexOf(p));}]}},adapted.data,chart);
-      tap=e=>{if(!active('resources')||!['touch','pen'].includes(e.pointerType)||e.isPrimary===false)return;const rect=plot.over.getBoundingClientRect();if(rect.width<=0||e.clientX<rect.left||e.clientX>rect.right)return;const p=adapted.points[plot.posToIdx(e.clientX-rect.left)];if(p)select(data.points.indexOf(p));};plot.over?.addEventListener('pointerdown',tap);
-      if(Resize){resize=new Resize(()=>{if(active('resources')&&plot)plot.setSize({width:width(),height:300});});resize.observe(chart);}select(selected);
+    function select(index){selected=Math.max(0,Math.min((data?.points.length||1)-1,index));const point=data?.points[selected];output.textContent=point?`${new Date(point.timestamp).toLocaleString()} · 按每分钟平均值 · CPU ${point.cpu.toFixed(2)}% · 内存 ${point.ram_percent.toFixed(2)}% · ↓ ${root.TrafficChart?.bytes?.(point.rx_rate)||point.rx_rate+' B/s'} · ↑ ${root.TrafficChart?.bytes?.(point.tx_rate)||point.tx_rate+' B/s'}`:'';}
+    function renderPlot(){destroyPlot();statusText();if(!active('resources')||!data)return;
+      if(!data.points.length||!Plot){chart.append(el('p','',!data.points.length?'暂无可绘制分钟数据；不补零':'本地图表库未加载'));return;}
+      const stats=H.statistics(data),fmt=v=>v==null?'—':root.TrafficChart?.bytes?.(v)||v+' B',percent=v=>v?`平均 ${v.mean.toFixed(1)}% · 最高 ${v.max.toFixed(1)}%（按每分钟平均值）`:'暂无数据';
+      for(const key of ['cpu','memory','traffic']){
+        const box=el('section','details-box resource-chart'),heading=el('div','details-box-head'),summary=el('span','details-note'),canvas=el('div','resource-canvas');
+        heading.append(el('h2','',key==='cpu'?'CPU':key==='memory'?'内存':'流量'));box.append(heading,summary,canvas);chart.append(box);
+        summary.textContent=key==='cpu'?percent(stats.cpu):key==='memory'?percent(stats.memory):`区间累计差 ↓ ${fmt(stats.rx_total)} · ↑ ${fmt(stats.tx_total)} · 峰值 ↓ ${fmt(stats.rx?.max)}/s · ↑ ${fmt(stats.tx?.max)}/s（按每分钟平均值）`;
+        if(key==='traffic'){box.classList.add('resource-wide');box.append(el('p','details-note',`合计实际覆盖 ${new Date(stats.from).toLocaleString()} — ${new Date(stats.to).toLocaleString()}；按累计值差计算，非完整起止区间承诺。`));}
+        const adapted=H.columns(data,key),spec=adapted.spec,width=()=>Math.max(210,Math.floor(canvas.getBoundingClientRect().width));
+        const p=new Plot({width:width(),height:key==='traffic'?190:170,legend:{show:key==='traffic'},cursor:{drag:{x:false,y:false}},scales:{x:{time:true},y:{auto:true}},
+          axes:[{stroke:'#6E655B',font:'10px system-ui',size:28,grid:{stroke:'#E6DDD1'}},{stroke:'#6E655B',font:'10px system-ui',size:62,grid:{stroke:'#E6DDD1'},values:(_u,ticks)=>ticks.map(v=>spec.unit==='B/s'?(root.TrafficChart?.bytes?.(v)||v+' B/s'):Number(v.toFixed(1))+'%')}],
+          series:[{},...spec.names.map((label,i)=>({label,stroke:key==='memory'?'#3D6FA8':['#1F7A6C','#7A4FA0'][i],fill:key==='memory'?'#3D6FA818':i?'#7A4FA016':'#1F7A6C20',width:1.5,spanGaps:false,points:{show:false}}))],
+          hooks:{setCursor:[u=>{const point=adapted.points[u.cursor.idx];if(point&&active('resources'))select(data.points.indexOf(point));}]}},adapted.data,canvas);
+        p.over?.addEventListener('pointerdown',e=>{if(!active('resources')||e.isPrimary===false)return;const r=p.over.getBoundingClientRect(),point=adapted.points[p.posToIdx(e.clientX-r.left)];if(point)select(data.points.indexOf(point));});
+        plots.push(p);if(!plot)plot=p;
+        if(Resize){if(!resize)resize=new Resize(()=>{if(active('resources'))plots.forEach(u=>{const n=u.root?.parentNode;if(n)u.setSize({width:Math.max(210,Math.floor(n.getBoundingClientRect().width)),height:u===plots.at(-1)?190:170});});});resize.observe(canvas);}
+      }
+      select(selected);
     }
     function visibility(){if(doc.hidden){if(tab==='resources'){pending=loading;release();}if(dialog.open&&tab==='network'){networkPending=Boolean(networkIdentity);network()?.releaseHistory();}}
       else if(active('network')){network()?.ensureHistoryTargets?.(current);if(networkPending){networkPending=false;restoreNetwork();}}

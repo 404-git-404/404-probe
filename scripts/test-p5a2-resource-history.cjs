@@ -6,7 +6,7 @@ function dto(){const p={timestamp:now-60000,cpu:0,ram_percent:50,swap_percent:0,
 const read=(fetcher,{signal,timeoutMs=1000}={})=>C.transportLease(tracked=>S.fetchJSON('/resources/history',{fetcher:tracked,signal,timeoutMs}),H.boundedFetcher(fetcher));
 test('P5a2 real Response stream parsed under physical lease; known DTO fields and zero kept, totals not treated as exact',async()=>{
  const lease=read(async()=>new Response(JSON.stringify(dto())));const v=H.validate(await lease.result,id);await lease.settled;
- assert.equal(v.points[0].cpu,0);assert.equal(v.points[0].tx_rate,0);assert.equal(v.points[0].rx_total,undefined);assert.equal(v.points[0].secret,undefined);
+ assert.equal(v.points[0].cpu,0);assert.equal(v.points[0].tx_rate,0);assert.equal(v.points[0].rx_total,null);assert.equal(v.points[0].secret,undefined);
  assert.equal(H.columns(v).data[1][0],1000000);assert.equal(H.columns(v,'cpu').data[1][0],0);
 });
 test('P5a2 actual standard stream incrementally rejects byte overflow and cancels/releases reader',async()=>{
@@ -39,5 +39,14 @@ test('P5a2 missing-minute separators bounded by points; no edge extrapolation, z
  const v=H.validate(dto(),id);v.points.unshift({...v.points[0],timestamp:now-240000});const a=H.columns(v);
  assert.equal(a.data[0].length,3);assert.equal(a.points[1],null);assert.equal(a.data[1][1],null);assert.equal(a.data[2][2],0);
  assert.equal(a.data[0][0],(now-240000)/1000);assert.equal(a.data[0].at(-1),(now-60000)/1000);assert.equal(H.columns({points:[]}).data[0].length,0);
- assert.throws(()=>H.range('bad','bad',now));assert.throws(()=>H.range(now-86400001,now,now));assert.deepEqual(H.range(now-3600000,now,now),{from:now-3600000,to:now});
+ assert.throws(()=>H.range('bad','bad',now));assert.throws(()=>H.range(now-7*86400000-1,now,now));assert.deepEqual(H.range(now-3600000,now,now),{from:now-3600000,to:now});
+});
+
+test('R09 seven-day read fixes one Server endpoint, serially bounds day slices, deduplicates minutes and keeps totals',async()=>{
+ const calls=[];let active=0,max=0;const result=await H.load({hours:168},async q=>{active++;max=Math.max(max,active);calls.push(q);await new Promise(r=>setImmediate(r));const end=q.to??now,start=q.from??end-86400000;active--;assert.ok(end-start<=86400000);return {agent_id:id,server_now:now,from:start,to:end,points:[{timestamp:start,rx_total:start,tx_total:start},{timestamp:end,rx_total:end,tx_total:end}]};});
+ assert.equal(calls.length,7);assert.equal(max,1);assert.equal(result.to,now);assert.equal(result.from,now-7*86400000);assert.equal(result.points.length,8);assert.equal(H.statistics(result).rx_total,7*86400000);
+});
+test('R09 stopped segmented read never launches later windows; custom range stays within seven and thirty days',async()=>{
+ let n=0;await assert.rejects(H.load({hours:168},async()=>{n++;throw Object.assign(Error('cancelled'),{name:'AbortError'});}));assert.equal(n,1);
+ assert.throws(()=>H.range(now-31*86400000,now-30*86400000,now));assert.deepEqual(H.range(now-7*86400000,now,now),{from:now-7*86400000,to:now});
 });

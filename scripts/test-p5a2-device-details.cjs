@@ -6,7 +6,7 @@ const flush=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r))
 function dom(){
  const doc={hidden:false,activeElement:null,listeners:new Map()};
  class Element {
-  constructor(tag){this.tagName=tag;this.children=[];this.dataset={};this.attributes={};this.listeners=new Map();this.style={};this.isConnected=true;this.hidden=false;this.open=false;this.value='';this.textContent='';}
+  constructor(tag){this.tagName=tag;this.children=[];this.dataset={};this.attributes={};this.listeners=new Map();this.style={};this.isConnected=true;this.hidden=false;this.open=false;this.value='';this.textContent='';this.classList={add:c=>{this.className=((this.className||'')+' '+c).trim();}};}
   append(...nodes){for(const node of nodes){if(node.parent)node.parent.children=node.parent.children.filter(n=>n!==node);node.parent=this;this.children.push(node);}}
   get firstElementChild(){return this.children[0]||null;}get lastElementChild(){return this.children.at(-1)||null;}
   get parentNode(){return this.parent||null;}get nextElementSibling(){const a=this.parent?.children||[];return a[a.indexOf(this)+1]||null;}
@@ -41,21 +41,17 @@ test('OS1b actual security pane distinguishes platform unavailable from setup an
 });
 
 test('P5a2 production stable dialog keeps active custom drafts/caret/tab across 20 metadata updates with no history reads',async()=>{
- const f=fixture();f.details.open(id,'resources');await flush();assert.equal(f.requests.length,1);assert.equal(f.plots.length,1);assert.equal(f.plots[0].data[0].length,1);assert.equal(f.plots[0].options.series[1].points.show,true);
+ const f=fixture();f.details.open(id,'resources');await flush();assert.equal(f.requests.length,1);assert.equal(f.plots.length,3);assert.equal(f.plots[0].data[0].length,1);assert.equal(f.plots[0].options.series[1].spanGaps,false);
  const custom=f.dialog.querySelector('.details-custom'),from=custom.all().find(n=>n.attributes['aria-label']==='自定义开始时间');from.value='2026-10-03T12:34';from.selectionStart=5;from.focus();
  for(let i=0;i<20;i++)f.details.update({...f.agents.get(id),name:'SSE'+i});await flush();assert.equal(f.details.snapshot().tab,'resources');assert.equal(f.details.snapshot().draft.from,'2026-10-03T12:34');assert.equal(f.doc.activeElement,from);assert.equal(from.selectionStart,5);assert.equal(f.requests.length,1);
- const spec=f.dialog.querySelector('.details-history-controls').all().find(n=>n.tagName==='select');spec.value='cpu';spec.dispatch('change');assert.equal(f.requests.length,1);assert.equal(f.plots[1].data[1][0],0);assert.ok(f.plots[0].destroyed);f.close();
+ assert.equal(f.plots[0].data[1][0],0);assert.equal(f.plots[1].data[1][0],50);assert.equal(f.plots[2].data[1][0],1000);f.close();
 });
-test('P5a2 actual detail plot compact axes keep units, large CPU/Load ticks bounded and point values full',async()=>{
- const f=fixture();f.details.open(id,'resources');await flush();
- assert.equal(f.plots[0].options.axes[1].font,'10px system-ui');
- assert.equal(f.plots[0].options.axes[0].size,52);
- assert.deepEqual(f.plots[0].options.axes[1].values(null,[0,250,500]),['0 B/s','250 B/s','500 B/s']);
- const spec=f.dialog.querySelector('.details-history-controls').all().find(n=>n.tagName==='select');
- spec.value='cpu';spec.dispatch('change');assert.deepEqual(f.plots.at(-1).options.axes[1].values(null,[0,50,100,1e12]),['0%','50%','100%','1.0e+12%']);
- spec.value='load';spec.dispatch('change');assert.deepEqual(f.plots.at(-1).options.axes[1].values(null,[1.234567,1e12]),['1.235 load','1.0e+12 load']);
- assert.match(f.dialog.querySelector('.details-point').textContent,/Load 1 1\.00 load/);assert.equal(f.requests.length,1);f.close();
+test('R09 CPU, memory and traffic share data and keep percentage/rate axes and keyboard point detail',async()=>{
+ const f=fixture();f.details.open(id,'resources');await flush();assert.equal(f.plots.length,3);
+ assert.deepEqual(f.plots[0].options.axes[1].values(null,[0,50,100]),['0%','50%','100%']);assert.deepEqual(f.plots[2].options.axes[1].values(null,[0,250,500]),['0 B/s','250 B/s','500 B/s']);
+ const point=f.dialog.querySelector('.details-point');point.dispatch('keydown',{key:'Home'});assert.match(point.textContent,/CPU 0.00%/);assert.match(point.textContent,/内存 50.00%/);assert.equal(f.requests.length,1);f.close();
 });
+
 test('P5a2 production tab/device/close cancellation destroys plot and fences late real stream data',async()=>{
  let resolve;const f=fixture(()=>new Promise(r=>resolve=r));f.details.open(id,'resources');await flush();assert.equal(f.requests.length,1);
  f.dialog.querySelector('#details-tab-management').dispatch('click');assert.equal(f.requests[0].options.signal.aborted,true);
@@ -65,7 +61,7 @@ test('P5a2 production tab/device/close cancellation destroys plot and fences lat
 test('P5a2 production hidden abort retains lease until body settles; visible restores only pending active read',async()=>{
  let cancelCount=0;const f=fixture((_url,options)=>f.requests.length===1?Promise.resolve(new Response(new ReadableStream({pull(){},cancel(){cancelCount++;}}))):Promise.resolve(new Response(JSON.stringify(dto()))));
  f.details.open(id,'resources');await flush();f.doc.hidden=true;f.doc.dispatch('visibilitychange');await flush();assert.equal(cancelCount,1);assert.equal(f.queue.snapshot().active,0);assert.equal(f.plots.length,0);
- f.doc.hidden=false;f.doc.dispatch('visibilitychange');await flush();assert.equal(f.requests.length,2);assert.equal(f.plots.length,1);f.dialog.querySelector('#details-tab-management').dispatch('click');assert.ok(f.plots[0].destroyed);
+ f.doc.hidden=false;f.doc.dispatch('visibilitychange');await flush();assert.equal(f.requests.length,2);assert.equal(f.plots.length,3);f.dialog.querySelector('#details-tab-management').dispatch('click');assert.ok(f.plots[0].destroyed);
  f.doc.hidden=true;f.doc.dispatch('visibilitychange');f.doc.hidden=false;f.doc.dispatch('visibilitychange');await flush();assert.equal(f.requests.length,2);f.close();
 });
 test('P5a2 production network host tab switch releases exact owner, no native dialog stack and unsupported security stays observation',()=>{

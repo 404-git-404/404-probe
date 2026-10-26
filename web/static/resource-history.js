@@ -50,6 +50,7 @@
     const points=value.points.map(point=>{
       if(!point||!safe(point.timestamp)||point.timestamp%MINUTE!==0||point.timestamp<=previous||point.timestamp<value.bucket_from||point.timestamp>value.bucket_to)fail();
       previous=point.timestamp;const out={timestamp:point.timestamp};
+      for(const key of ['rx_total','tx_total'])out[key]=Number.isSafeInteger(point[key])&&point[key]>=0?point[key]:null;
       for(const key of fields){if(typeof point[key]!=='number'||!Number.isFinite(point[key])||point[key]<0)fail();out[key]=point[key];}return out;
     });
     if(value.oldest_timestamp!==(points[0]?.timestamp??null)||value.last_timestamp!==(points.at(-1)?.timestamp??null))fail();
@@ -68,9 +69,25 @@
   }
   function range(from,to,now=Date.now()) {
     const start=new Date(from).getTime(),end=new Date(to).getTime();
-    if(!safe(start)||!safe(end)||end<=start||end-start>DAY||start<now-30*DAY||end>now)throw Error('选择最近30天内、最长24小时的有效起止时间');
+    if(!safe(start)||!safe(end)||end<=start||end-start>7*DAY||start<now-30*DAY||end>now)throw Error('选择最近30天内、最长7天的有效起止时间');
     return {from:start,to:end};
   }
-  const api={MAX_BYTES,MAX_POINTS,MINUTE,metrics,boundedFetcher,validate,columns,range};
+  async function load(query,read) {
+    if(Object.hasOwn(query,'hours')&&query.hours<=24)return read(query);
+    let from=query.from,to=query.to,parts=[];
+    if(Object.hasOwn(query,'hours')){if(query.hours!==168)throw Error('Unsupported history range');const last=await read({hours:24});parts.push(last);to=last.to;from=to-7*DAY;}
+    if(!safe(from)||!safe(to)||to<=from||to-from>7*DAY)throw Error('Invalid history range');
+    const end=parts.length?parts[0].from:to;
+    for(let start=from;start<end;start+=DAY)parts.push(await read({from:start,to:Math.min(start+DAY,end)}));
+    const points=new Map();for(const part of parts)for(const point of part.points)points.set(point.timestamp,point);
+    const sorted=[...points.values()].sort((a,b)=>a.timestamp-b.timestamp);if(sorted.length>10081)throw Error('Too many history points');
+    return {...parts[0],from,to,bucket_from:Math.floor(from/MINUTE)*MINUTE,bucket_to:Math.floor(to/MINUTE)*MINUTE,points:sorted,oldest_timestamp:sorted[0]?.timestamp??null,last_timestamp:sorted.at(-1)?.timestamp??null};
+  }
+  function statistics(data) {
+    const points=data?.points||[],aggregate=key=>{const values=points.map(p=>p[key]);return values.length?{mean:values.reduce((a,b)=>a+b,0)/values.length,max:Math.max(...values)}:null;};
+    const first=points[0],last=points.at(-1),total=key=>first&&last&&first[key]!=null&&last[key]!=null&&last[key]>=first[key]?last[key]-first[key]:null;
+    return {cpu:aggregate('cpu'),memory:aggregate('ram_percent'),rx:aggregate('rx_rate'),tx:aggregate('tx_rate'),rx_total:points.length>1?total('rx_total'):null,tx_total:points.length>1?total('tx_total'):null,from:first?.timestamp,to:last?.timestamp};
+  }
+  const api={MAX_BYTES,MAX_POINTS,MINUTE,metrics,boundedFetcher,validate,columns,range,load,statistics};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.ResourceHistory=api;
 })(globalThis);
