@@ -27,22 +27,23 @@
  }
  function create({document:doc=root.document,window:win=root,agents,canWrite,csrf,begin,finish,edit,opening=()=>{},changed=()=>{},write=(...args)=>root.Management.write(...args),now=()=>Date.now(),crypto=root.crypto,position=root.PlanEditor.position}={}){
   const get=id=>doc.querySelector('#renewal-'+id),dialog=get('dialog'),field=get('field'),confirm=get('confirm');
+  dialog.classList?.add('dialog-shell','dialog-small');root.DialogShell?.attach(dialog,{decorate:false});
   const records=new Map();let id=null,origin=null,scroll=null,generation=0,preview=null,previewFacts='',previewController=null,loading=false,undoAsk=false,dead=false;
   const record=key=>{if(!records.has(key))records.set(key,{unknown:null,latest:null,revision:'',facts:'',error:'',message:'',owner:null,controller:null,serverUndo:null});return records.get(key);};
   const live=(key,serial)=>!dead&&id===key&&generation===serial&&dialog.open&&agents.has(key);
   function undoAvailable(r){return !!(r.latest&&r.serverUndo?.available&&r.serverUndo.operation_id===r.latest.request_id&&r.revision&&facts(agents.get(id)?.plan)===r.facts&&now()>=r.latest.applied_at&&now()<r.latest.undo_until);}
-  function place(){if(!dialog.open)return;const card=doc.querySelector(`.agent-card[data-agent-id="${id}"]`),p=position(card?.getBoundingClientRect(),dialog.getBoundingClientRect().height,{width:win.innerWidth||1366,height:win.innerHeight||900});Object.assign(dialog.style,{left:p.left+'px',top:p.top+'px',width:p.width+'px'});}
+  function place(){if(!dialog.open)return;const card=doc.querySelector(`.agent-card[data-agent-id="${id}"]`),p=position(card?.getBoundingClientRect(),dialog.getBoundingClientRect().height,{width:win.innerWidth||1366,height:win.innerHeight||900,dialogWidth:420});Object.assign(dialog.style,{left:p.left+'px',top:p.top+'px',width:p.width+'px'});}
   function draw(){if(!dialog.open||!id||dead)return;const r=record(id),busy=!!r.owner;
    get('name').textContent=agents.get(id)?.name||agents.get(id)?.state?.hostname||'未命名设备';
    get('error').textContent=r.error;get('error').hidden=!r.error;
    get('result').textContent=r.message;get('result').hidden=!r.message;
-   get('recovery').hidden=!r.unknown;get('request-id').textContent=r.unknown?.dto.request_id||'';
+   get('recovery').hidden=!r.unknown;get('request-id').textContent=r.unknown?'核实信息 ⓘ':'';get('request-id').title=r.unknown?.dto.request_id||'';
    get('verify').disabled=busy||!canWrite(id);get('copy').disabled=!r.unknown;
    get('undo').hidden=!r.latest;get('undo').disabled=busy||loading||!canWrite(id)||!!r.unknown||!undoAvailable(r);
-   get('edit').hidden=!!preview?.eligible||undoAsk;get('edit').disabled=busy||!!r.unknown||!canWrite(id);
-   get('refresh').disabled=busy||loading||!!r.unknown||!canWrite(id);
+   get('edit').hidden=undoAsk;get('edit').disabled=busy||!!r.unknown||!canWrite(id);
+   get('refresh').hidden=!!preview?.eligible||loading||!!r.unknown||undoAsk;get('refresh').disabled=busy||loading||!!r.unknown||!canWrite(id);
    field.disabled=busy||loading||!!r.unknown||undoAsk;
-   get('loading').textContent=loading?'正在读取服务端预览…':!preview&&!r.unknown&&!undoAsk?'请重新预览后确认。':'';
+   get('loading').textContent=loading?'正在读取…':!preview&&!r.unknown&&!undoAsk?'请重新预览后确认。':'';
    get('dates').hidden=undoAsk?!r.latest:!preview?.eligible;
    if(undoAsk&&r.latest){const other=fields.find(f=>f!==r.latest.field);field.value=r.latest.field;get('from').textContent=r.latest.to_date;get('to').textContent=r.latest.from_date;
     get('detail').textContent=`撤销本次登记 · ${labels[r.latest.field]}恢复原日期 · 时区 ${agents.get(id)?.plan?.timezone||'UTC'}。${labels[other]} ${agents.get(id)?.plan?.[other]||'未设置'} 保持不变。`;
@@ -52,7 +53,8 @@
     get('warning').textContent=preview.new_overdue?'新日期仍已过期；确认只从原日期顺延一期，不自动补齐。':preview.due_today?'新日期今天到期；仍从原日期顺延一期。':'';
     get('anchor').textContent=preview.anchor_source==='current_date'?'以原当前日期为锚点；没有可兼容的购买日，不猜测未知历史月末。':'沿原购买日锚定，月末或闰日按服务端夹取。';
    }else{get('detail').textContent=preview?(reasons[preview.reason]+' 请编辑套餐后再登记。'):'';get('warning').textContent='';get('anchor').textContent='';}
-   confirm.textContent=undoAsk?'确认撤销此次登记':'确认登记已续费';
+   if(preview?.eligible&&!undoAsk){get('detail').title=get('detail').textContent+' '+get('anchor').textContent;get('detail').textContent=labels[preview.field]+'日顺延'+(preview.period==='yearly'?'一年':'一期')+'：';}get('anchor').hidden=true;
+   confirm.textContent=undoAsk?'确认撤销此次登记':'确认已续费';
    confirm.disabled=busy||loading||!!r.unknown||!canWrite(id)||(undoAsk?!undoAvailable(r):!preview?.eligible);
    get('undo-note').hidden=!undoAsk;place();
   }

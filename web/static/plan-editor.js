@@ -2,14 +2,13 @@
 (function(root){
  'use strict';
  function position(rect,height,viewport){
-  const margin=16,w=Math.min(Math.max(rect?.width||560,360),620,viewport.width-2*margin),h=Math.min(height,viewport.height-2*margin);
-  if(viewport.width<=620)return{left:0,top:0,width:viewport.width};
-  const x=rect?rect.left:margin,y=rect?(rect.top+h<=viewport.height-margin?rect.top:rect.bottom-h):margin;
-  return{left:Math.max(margin,Math.min(x,viewport.width-w-margin)),top:Math.max(margin,Math.min(y,viewport.height-h-margin)),width:w};
+  const margin=16,w=Math.min(viewport.dialogWidth||560,viewport.width-2*margin),h=Math.min(height,viewport.height-2*margin);
+  return {left:Math.max(margin,(viewport.width-w)/2),top:Math.max(margin,(viewport.height-h)/2),width:w};
  }
  function create({document:doc=root.document,window:win=root,agents,read,onclose=()=>{},onclear=()=>{}}){
   const get=id=>doc.querySelector('#'+id),dialog=get('plan-dialog'),save=get('plan-save'),clear=get('plan-clear');
   const confirmation=get('plan-confirmation'),note=get('plan-confirm-note'),resume=get('plan-continue'),discard=get('plan-discard');
+  dialog.classList?.add('dialog-shell');const shell=root.DialogShell?.attach(dialog,{decorate:false,requestClose});
   let id=null,origin=null,baseline='',generation=0,busy=false,action=null,scroll=null,dead=false;
   const dirty=()=>JSON.stringify(read())!==baseline;
   const buttons=()=>{save.disabled=clear.disabled=busy;};
@@ -24,7 +23,7 @@
   }
   function close(){if(dialog.open)dialog.close();ended();}
   function ask(kind,next=null){action={kind,next,focus:doc.activeElement};confirmation.hidden=false;
-   note.textContent=kind==='clear'?'清除这台设备的套餐与计费周期资料？永久流量累计不会删除。':busy?'提交可能仍在服务器执行。关闭不代表未写入；再次打开后核对实际资料。':'有未保存的修改。放弃后不会自动保存。';
+   note.textContent=kind==='clear'?'将清除：价格、购买记录、下次续费、到期日和带宽。保留：流量配额、统计周期、计费方向、对账状态、时区和出口地区；设备累计与历史不会删除。':busy?'提交可能仍在服务器执行。关闭不代表未写入；再次打开后核对实际资料。':'有未保存的修改。放弃后不会自动保存。';
    discard.textContent=kind==='clear'?'确认清除套餐资料':'放弃修改';resume.focus({preventScroll:true});
   }
   function requestClose(){if(!dialog.open)return;if(dirty()||busy)ask('close');else close();}
@@ -37,7 +36,7 @@
   get('plan-cancel').addEventListener('click',requestClose);get('plan-dismiss').addEventListener('click',requestClose);
   clear.addEventListener('click',()=>{if(!busy&&dialog.open)ask('clear');});
   const cancel=e=>{e.preventDefault();if(action){const focus=action.focus;hide();focus?.focus({preventScroll:true});}else requestClose();};
-  dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',ended);win.addEventListener('resize',place);
+  if(!shell)dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',ended);win.addEventListener('resize',place);
   return{open,requestClose,close,dirty,place,
    handoff(next){if(dead)return false;if(dialog.open&&(dirty()||busy)){const owner=generation,old=id;ask('switch',()=>{if(!dead&&generation===owner+1&&agents.has(old))next();});return false;}close();if(!dead)next();return true;},
    canSubmit:()=>!dead&&dialog.open&&!busy&&agents.has(id),

@@ -100,44 +100,50 @@
   </dialog>
   <dialog id="plan-dialog" class="plan-drawer plan-editor" aria-labelledby="plan-title">
     <form id="plan-form" autocomplete="off">
-      <div class="drawer-head"><div><span class="eyebrow">套餐资料</span><h2 id="plan-title">编辑套餐</h2><p id="plan-agent-name"></p></div><button id="plan-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
+      <div class="drawer-head shell-head"><div><h2 id="plan-title">套餐与续费</h2><p id="plan-agent-name"></p></div><button id="plan-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
       <div class="plan-editor-body">
-      <details class="plan-section" open><summary>基本套餐 · 带宽与续费价格</summary><div class="form-grid three"><label>套餐带宽<input id="plan-bandwidth-value" inputmode="decimal" placeholder="1000"></label><label>单位<select id="plan-bandwidth-unit"><option>Mbps</option><option>Gbps</option></select></label><label>币种<input id="plan-currency" maxlength="3" placeholder="USD"></label></div><div class="form-grid two"><label>续费价格<input id="plan-renewal-price" inputmode="decimal" placeholder="可选"></label><label>价格续费周期（非流量周期）<select id="plan-renewal-period"><option value="">—</option><option value="monthly">每月</option><option value="yearly">每年</option><option value="once">一次性</option></select></label><label>下次续费<input id="plan-renewal-date" type="date"></label><label>到期日期<input id="plan-expiry-date" type="date"></label></div><label>时区<input id="plan-timezone" list="timezone-hints" placeholder="Asia/Shanghai"></label></details>
-      <details class="plan-section" open><summary>流量周期 · 独立于价格续费周期</summary>
-        <label class="toggle-row"><span><strong>统计计费流量</strong><small>持续统计套餐用量，缺测会明确标记</small></span><input id="plan-traffic-enabled" type="checkbox"></label>
-        <div id="plan-traffic-fields" class="progressive-fields hidden">
-          <div class="form-grid three"><label>计费方向<select id="plan-traffic-mode"><option value="sum">RX + TX</option><option value="tx">仅 TX</option><option value="rx">仅 RX</option></select></label><label>套餐流量<input id="plan-quota-value" inputmode="decimal" placeholder="5"></label><label>单位<select id="plan-quota-unit"><option>TB</option><option>GB</option></select></label></div>
-          <p id="plan-quota-note" class="field-note"></p>
-          <div class="form-grid three"><label>周期<select id="plan-cycle-kind"><option value="monthly">月</option><option value="yearly">年</option><option value="days">天</option></select></label><label>每<input id="plan-cycle-count" type="number" min="1" max="120" value="1"></label><label>周期起点<input id="plan-cycle-anchor" type="date"></label></div>
-        </div>
-      </details>
-      <details class="plan-section"><summary>高级 · 购买记录、用量校准与出站国家/地区</summary>
-      <div class="form-grid two"><label>购买价格<input id="plan-purchase-price" inputmode="decimal" placeholder="可选"></label><label>原始价格周期<select id="plan-purchase-period"><option value="">—</option><option value="once">一次性</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label><label>购买日期<input id="plan-purchase-date" type="date"></label></div>
-      <div class="calibration-row"><label>当前周期已用量校准<input id="plan-calibration-value" inputmode="decimal" placeholder="可选，仅在对账时填写"></label><label>单位<select id="plan-calibration-unit"><option>GB</option><option>TB</option></select></label><small>校准不会声称补齐过去的采样，只从此值继续累计；只有启用流量统计且明确填写时才提交。</small></div>
-      <div class="plan-section"><h3>出站国家/地区</h3><div class="form-grid two"><div><label>搜索国家/地区<input id="plan-country-search" type="search" placeholder="中文、英文或两字母代码"></label><label>手动覆盖<select id="plan-country-code"></select></label><span id="plan-country-preview"></span><button id="plan-country-auto" type="button">使用 Agent 识别值</button><p id="plan-country-status" class="field-note" role="status"></p></div><p class="field-note">使用 Agent 识别值时，采用安装时缓存或最近一次成功的主动重取。失败保留原值；手动覆盖优先。选择或清空只改变草稿，保存套餐后才生效。</p></div></div>
-      <button id="plan-clear" class="text-danger" type="button">清除套餐资料</button>
-      </details>
+        <section id="plan-information">
+          <label>价格</label><div class="plan-price-row"><select id="plan-currency"><option value="USD">USD $</option><option value="CNY">CNY ¥</option><option value="EUR">EUR €</option><option value="HKD">HKD $</option><option value="JPY">JPY ¥</option><option value="GBP">GBP £</option></select><input id="plan-renewal-price" inputmode="decimal" aria-label="续费价格"><select id="plan-renewal-period" aria-label="续费价格周期"><option value="">未设置</option><option value="monthly">每月</option><option value="yearly">每年</option><option value="once">一次性</option></select></div>
+          <label>带宽</label><div class="plan-amount-row"><input id="plan-bandwidth-value" inputmode="decimal" aria-label="带宽"><select id="plan-bandwidth-unit" aria-label="带宽单位"><option>Mbps</option><option>Gbps</option></select></div>
+          <div class="form-grid two"><label>下次续费<input id="plan-renewal-date" type="text" inputmode="numeric" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" placeholder="YYYY-MM-DD"><small>点“已续费”时自动顺延一期</small></label><label>到期日 <span class="field-note">（可选）</span><input id="plan-expiry-date" type="text" inputmode="numeric" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" placeholder="YYYY-MM-DD"><small>到期前 7 天开始提醒</small></label></div>
+          <details class="plan-more"><summary>更多（购买记录、时区）</summary><div class="form-grid two"><label>购买日期<input id="plan-purchase-date" type="text" inputmode="numeric" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" placeholder="YYYY-MM-DD"></label><label>首次购买价<input id="plan-purchase-price" inputmode="decimal"></label><label>首次价周期<select id="plan-purchase-period"><option value="">未设置</option><option value="once">一次性</option><option value="monthly">每月</option><option value="yearly">每年</option></select></label><label>时区<input id="plan-timezone" list="timezone-hints"></label></div></details>
+          <p class="field-note plan-information-note">流量额度在“流量配额”里设置。只记录信息，不会自动付款。</p>
+        </section>
+        <section id="quota-information" hidden>
+          <label class="quota-master"><input id="plan-traffic-enabled" type="checkbox"> 统计套餐流量</label>
+          <div id="plan-traffic-fields">
+            <label>每期额度</label><div class="quota-segments" data-quota-segment="limit"><button type="button" data-value="limited">有限额</button><button type="button" data-value="unlimited">不限流量</button></div><input id="quota-limit" type="hidden" value="limited">
+            <div id="quota-amount" class="plan-amount-row"><input id="plan-quota-value" inputmode="decimal" aria-label="每期额度"><select id="plan-quota-unit" aria-label="额度单位"><option>TB</option><option>GB</option></select></div>
+            <p id="plan-quota-note" class="field-note">选“不限流量”时照样统计每期用量，卡片上不显示进度条和百分比。</p>
+            <label>怎么计算用量</label><div class="quota-segments" data-quota-segment="direction"><button type="button" data-value="sum">下行 + 上行</button><button type="button" data-value="rx">只算下行</button><button type="button" data-value="tx">只算上行</button></div><select id="plan-traffic-mode" hidden><option value="sum">下行 + 上行</option><option value="rx">只算下行</option><option value="tx">只算上行</option></select>
+            <label>什么时候清零</label><div class="quota-cycle-row"><select id="plan-cycle-kind" aria-label="清零周期"><option value="monthly">每月</option><option value="yearly">每年</option><option value="days">每 N 天</option></select><input id="quota-cycle-day" type="number" min="1" max="31" aria-label="每月清零日"><span id="quota-cycle-day-label">日</span></div>
+            <p id="quota-cycle-summary" class="field-note"></p><details class="quota-cycle-more"><summary>其他周期选项</summary><div class="form-grid two"><label>每隔几期<input id="plan-cycle-count" type="number" min="1" max="120"></label><label>周期起点<input id="plan-cycle-anchor" type="text" inputmode="numeric" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}" placeholder="YYYY-MM-DD"></label></div><span id="quota-timezone" class="field-note"></span></details>
+            <div class="quota-calibration"><label>和服务商对账 <span class="field-note">（可选）</span></label><div class="plan-amount-row"><input id="plan-calibration-value" inputmode="decimal" placeholder="服务商显示的本期已用量"><select id="plan-calibration-unit" aria-label="对账单位"><option>GB</option><option>TB</option></select></div><small>只有和服务商面板对不上时才填，之后从这个数继续累计。</small></div>
+          </div>
+          <section id="quota-off-confirm" class="plan-confirmation" hidden><p>关闭统计将清空配额、周期和对账资料，设备累计与价格信息会保留。</p><button id="quota-keep-on" type="button">继续统计</button><button id="quota-confirm-off" type="button">确认关闭统计</button></section>
+        </section>
+        <input id="plan-country-code" type="hidden">
       </div>
       <section id="plan-confirmation" class="plan-confirmation" aria-label="套餐编辑确认" role="region" hidden><p id="plan-confirm-note" role="status"></p><div><button id="plan-continue" type="button">继续编辑</button><button id="plan-discard" type="button">放弃修改</button></div></section>
       <div id="plan-error" class="dialog-error hidden" role="alert"></div>
-      <div class="drawer-actions"><button id="plan-dismiss" type="button">取消</button><button id="plan-save" class="primary-action" type="submit">保存</button></div>
+      <div class="drawer-actions"><button id="plan-clear" class="text-danger" type="button">清除套餐信息…</button><span id="quota-decimal-note" class="field-note" hidden>1 TB = 1000 GB</span><button id="plan-dismiss" type="button">取消</button><button id="plan-save" class="primary-action" type="submit">保存</button></div>
     </form>
   </dialog>
   <datalist id="timezone-hints"><option value="UTC"><option value="Asia/Shanghai"><option value="Asia/Hong_Kong"><option value="America/Los_Angeles"><option value="Europe/London"></datalist>
   <dialog id="renewal-dialog" class="plan-renewal" aria-labelledby="renewal-title">
-    <div class="drawer-head"><div><span class="eyebrow">仅登记套餐日期 · 不执行付款</span><h2 id="renewal-title">已续费</h2><p id="renewal-name"></p></div><button id="renewal-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
+    <div class="drawer-head shell-head"><div><h2 id="renewal-title">确认已续费</h2><p id="renewal-name"></p></div><button id="renewal-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
     <div class="renewal-body">
-      <label for="renewal-field">登记日期</label><select id="renewal-field"><option value="renewal_date">下次续费</option><option value="expiry_date">到期日期</option></select>
+      <select id="renewal-field" hidden aria-label="登记日期"><option value="renewal_date">下次续费</option><option value="expiry_date">到期日期</option></select>
       <p id="renewal-loading" role="status"></p>
-      <div id="renewal-dates" class="renewal-dates" hidden><span><small>当前</small><strong id="renewal-from"></strong></span><span aria-hidden="true">→</span><span><small>新日期</small><strong id="renewal-to"></strong></span></div>
+      <div id="renewal-dates" class="renewal-dates" hidden><span><small>现在</small><strong id="renewal-from"></strong></span><span aria-hidden="true">→</span><span><small>续费后</small><strong id="renewal-to"></strong></span></div>
       <p id="renewal-detail"></p><p id="renewal-anchor" class="field-note"></p><p id="renewal-warning" class="renewal-warning" role="status"></p>
       <p id="renewal-result" role="status" hidden></p>
       <p id="renewal-undo-note" class="renewal-warning" hidden>确认仅撤销本页最近一次登记；是否可撤销及期限由服务器最终裁定，不恢复更早操作。</p>
-      <div class="renewal-tools"><button id="renewal-refresh" type="button">重新预览</button><button id="renewal-edit" type="button">编辑套餐</button><button id="renewal-undo" type="button" hidden>撤销本次登记</button></div>
+      <div class="renewal-tools"><button id="renewal-refresh" type="button">重新预览</button><span class="field-note">只更新日期，不会付款。</span><button id="renewal-edit" class="renewal-edit-link" type="button">改成其他日期</button><button id="renewal-undo" type="button" hidden>撤销本次登记</button></div>
     </div>
-    <section id="renewal-recovery" class="renewal-recovery" aria-label="核实原操作" hidden><p>结果未确认。仅可用原 ID 和同一确认内容核实。刷新、离开或退出本页会丢失本地核实记录，请先复制 ID；不会自动重试。</p><code id="renewal-request-id"></code><div><button id="renewal-copy" type="button">复制请求 ID</button><button id="renewal-verify" type="button">核实原操作</button></div></section>
+    <section id="renewal-recovery" class="renewal-recovery" aria-label="核实原操作" hidden><p>结果尚未确认，请核实上次操作。离开本页会丢失核实信息，请先复制留存；不会自动重试。</p><code id="renewal-request-id"></code><div><button id="renewal-copy" type="button">复制核实信息</button><button id="renewal-verify" type="button">核实原操作</button></div></section>
     <div id="renewal-error" class="renewal-error" role="alert" hidden></div>
-    <div class="drawer-actions"><button id="renewal-dismiss" type="button">关闭</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认登记已续费</button></div>
+    <div class="drawer-actions"><button id="renewal-dismiss" type="button">取消</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认登记已续费</button></div>
   </dialog>
   <footer>数据通过 Server 安全汇总</footer>
   <dialog id="network-quality-history" class="nq-history" aria-labelledby="nq-history-title"></dialog>

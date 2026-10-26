@@ -13,7 +13,7 @@
   const tiles=['CPU','内存','磁盘','下行','上行'].map((label,i)=>{const n=el('div','details-box details-metric');n.append(el('span','details-label',label));const main=value('metric'+i,n),sub=value('sub'+i,n);main.className='metric-value';sub.className='details-note';metrics.append(n);return n;});
   const plan=section('套餐与续费'),editButton=button('编辑',n=>edit(current,n),'detail-plan');plan.h.append(editButton);
   fact(plan,'价格','price');values.price.className='details-price';fact(plan,'带宽','bandwidth');fact(plan,'下次续费','renewal');const renewal=button('已续费…',n=>renew(current,n),'detail-renewal');values.renewal.parentNode.append(renewal);fact(plan,'到期日','expiry');
-  const traffic=section('流量'),quota=button('编辑配额',n=>edit(current,n),'detail-quota');traffic.h.append(quota);value('usage',traffic.n);
+  const traffic=section('流量'),quota=button('编辑配额',n=>edit(current,n,'quota'),'detail-quota');traffic.h.append(quota);value('usage',traffic.n);
   const track=el('div','details-progress'),fill=el('span');track.append(fill);traffic.n.append(track);value('cycle',traffic.n).className='details-note';fact(traffic,'设备累计','total');value('coverage',traffic.n).className='details-note';
   const network=section('网络地址');network.n.append(egress.addresses);fact(network,'出口地区','country');
   const system=section('系统');fact(system,'主机名','hostname');fact(system,'配置','config');values.config.className='details-config';fact(system,'Agent','version');fact(system,'最近上报','seen');

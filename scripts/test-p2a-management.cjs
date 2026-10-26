@@ -32,3 +32,13 @@ test('revoke device name confirmation preserves case and interior whitespace, pe
  for(const value of ['', 'dedirock-lax-1','DediRock-LAX-2'])assert.equal(require('../web/static/management.js').matchesDeviceName(value,'DediRock-LAX-1'),false);
  assert.equal(require('../web/static/management.js').matchesDeviceName('A B','A  B'),false);assert.equal(require('../web/static/management.js').matchesDeviceName('   ',' '),false);
 });
+
+test('split plan presentations preserve hidden fields, clear scope, unlimited and exact binary quota',()=>{
+ const M=require('../web/static/management.js'),U=require('../web/static/plan-units.js');
+ const old={traffic_mode:'tx',quota_value:'1.123',quota_unit:'TiB',cycle_kind:'days',cycle_count:37,cycle_anchor:'2026-01-31',timezone:'Pacific/Kiritimati',purchase_price:'19.95',purchase_price_period:'once',renewal_price:'2.9',renewal_price_period:'once',country_code_override:'JP'};
+ const price=M.planSectionPayload(old,'plan',{...old,renewal_price:'6.85'});for(const key of ['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','country_code_override','purchase_price_period'])assert.equal(price[key],old[key],key);
+ const session=U.open(old),fields={...old,quota_value:session.shown.value,quota_unit:session.shown.unit};const quota=M.planSectionPayload(old,'quota',fields,{enabled:true,limited:true,quotaSession:session});for(const key of ['quota_value','quota_unit','purchase_price','purchase_price_period','renewal_price_period','timezone','country_code_override'])assert.equal(quota[key],old[key],key);
+ const unlimited=M.planSectionPayload(old,'quota',fields,{enabled:true,limited:false,quotaSession:session});assert.equal(unlimited.quota_value,'');assert.equal(unlimited.quota_unit,'');assert.equal(unlimited.traffic_mode,'tx');assert.equal(unlimited.cycle_count,37);
+ const cleared=M.planSectionPayload(old,'clear');for(const key of ['quota_value','quota_unit','cycle_kind','cycle_count','traffic_mode','timezone','country_code_override'])assert.equal(cleared[key],old[key],key);assert.equal(cleared.purchase_price,'');assert.equal(cleared.renewal_price,'');assert.ok(!('calibration_value' in cleared));
+ const off=M.planSectionPayload(old,'quota',fields,{enabled:false});assert.equal(off.traffic_mode,'');assert.equal(off.cycle_count,0);assert.equal(off.purchase_price,'19.95');
+});

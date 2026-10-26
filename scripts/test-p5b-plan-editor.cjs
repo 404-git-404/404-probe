@@ -23,11 +23,11 @@ function fixture(){
  const open=(id='a',initial={})=>editor.open(id,cards.get(id).trigger,()=>{values={text:'old',number:'1',select:'auto',checkbox:false,country:'',...initial};});
  return{editor,open,nodes,cards,agents,doc,win,listeners,set:(key,value)=>values[key]=value,values:()=>({...values}),closes:()=>closes,clears:()=>clears};
 }
-test('production geometry anchors, flips and clamps near every viewport edge',()=>{
- assert.deepEqual(PlanEditor.position({left:100,top:80,bottom:380,width:450},400,{width:1366,height:900}),{left:100,top:80,width:450});
- assert.deepEqual(PlanEditor.position({left:1200,top:790,bottom:850,width:450},600,{width:1366,height:900}),{left:900,top:250,width:450});
- assert.deepEqual(PlanEditor.position({left:-200,top:-100,bottom:100,width:800},1000,{width:1366,height:900}),{left:16,top:16,width:620});
- assert.deepEqual(PlanEditor.position(null,800,{width:390,height:844}),{left:0,top:0,width:390});
+test('production geometry stays centered at 560px and bounds narrow viewports',()=>{
+ assert.deepEqual(PlanEditor.position({left:100,top:80,bottom:380,width:450},400,{width:1366,height:900}),{left:403,top:250,width:560});
+ assert.deepEqual(PlanEditor.position({left:1200,top:790,bottom:850,width:450},600,{width:1366,height:900}),{left:403,top:150,width:560});
+ assert.deepEqual(PlanEditor.position({left:-200,top:-100,bottom:100,width:800},1000,{width:1366,height:900}),{left:403,top:16,width:560});
+ assert.deepEqual(PlanEditor.position(null,800,{width:390,height:844}),{left:16,top:22,width:358});
 });
 test('every persisted value is dirty, reversion is clean, unrelated focus and search are ignored',()=>{
  const f=fixture();f.open();const original=f.values();
@@ -45,7 +45,7 @@ test('escape from confirmation returns to editing without losing draft',()=>{
  const f=fixture();f.open();f.set('number','9');f.nodes.get('plan-clear').focus();f.editor.requestClose();f.nodes.get('plan-dialog').emit('cancel');assert.equal(f.editor.snapshot().confirmation,null);assert.equal(f.editor.snapshot().open,true);assert.equal(f.doc.activeElement,f.nodes.get('plan-clear'));assert.equal(f.values().number,'9');
 });
 test('clear requires explicit inline confirmation and cancellation never calls the mutation',()=>{
- const f=fixture();f.open();f.nodes.get('plan-clear').emit('click');assert.equal(f.editor.snapshot().confirmation,'clear');assert.match(f.nodes.get('plan-confirm-note').textContent,/永久流量累计不会删除/);assert.equal(f.clears(),0);
+ const f=fixture();f.open();f.nodes.get('plan-clear').emit('click');assert.equal(f.editor.snapshot().confirmation,'clear');assert.match(f.nodes.get('plan-confirm-note').textContent,/保留：流量配额、统计周期、计费方向、对账状态、时区和出口地区/);assert.equal(f.clears(),0);
  f.nodes.get('plan-continue').emit('click');assert.equal(f.clears(),0);f.nodes.get('plan-clear').emit('click');f.nodes.get('plan-discard').emit('click');assert.equal(f.clears(),1);assert.equal(f.editor.snapshot().open,true);
 });
 test('dirty device switch waits for consent and initializes the next device only once',()=>{
@@ -59,7 +59,7 @@ test('pending submission cannot repeat or clear; close warning is honest; old fi
 });
 test('SSE identity replacement and resize change positioning only; closing restores current trigger and original scroll',()=>{
  const f=fixture();f.open();f.set('country','JP');f.nodes.get('plan-clear').focus();const old=f.cards.get('a');old.trigger.isConnected=false;const replacement={rect:{left:800,top:200,bottom:650,width:420},trigger:{focus(){f.doc.activeElement=this;}},getBoundingClientRect(){return this.rect;}};f.cards.set('a',replacement);
- f.editor.sync();f.listeners.get('resize')();assert.equal(f.nodes.get('plan-dialog').style.left,'800px');assert.equal(f.values().country,'JP');assert.equal(f.doc.activeElement,f.nodes.get('plan-clear'));assert.equal(f.editor.snapshot().open,true);
+ f.editor.sync();f.listeners.get('resize')();assert.equal(f.nodes.get('plan-dialog').style.left,'403px');assert.equal(f.values().country,'JP');assert.equal(f.doc.activeElement,f.nodes.get('plan-clear'));assert.equal(f.editor.snapshot().open,true);
  f.editor.close();assert.equal(f.doc.activeElement,replacement.trigger);assert.deepEqual(f.win.scrollCalls,[[2,340]]);
 });
 test('agent removal closes without restoring another agent focus; shutdown removes lifecycle listeners',()=>{

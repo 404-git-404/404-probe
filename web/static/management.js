@@ -70,8 +70,29 @@
     const keys=['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','timezone','bandwidth_value','bandwidth_unit','currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','country_code_override'];
     return {...Object.fromEntries(keys.map(k=>[k,plan[k]??(k==='cycle_count'?0:'')])),...patch};
   }
+  // Both presentations edit a disjoint subset of one full PUT contract.
+  function planSectionPayload(plan={},section,fields={},options={}) {
+    const copy=keys=>Object.fromEntries(keys.map(k=>[k,String(fields[k]??'').trim()]));
+    const information=['currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','bandwidth_value','bandwidth_unit'];
+    if(section==='clear')return planPayload(plan,Object.fromEntries(information.map(k=>[k,''])));
+    if(section==='plan'){
+      const patch=copy([...information,'timezone']);patch.currency=patch.currency.toUpperCase();
+      for(const [amount,unit]of [['bandwidth_value','bandwidth_unit'],['purchase_price','purchase_price_period'],['renewal_price','renewal_price_period']])if(!patch[amount])patch[unit]='';
+      return planPayload(plan,patch);
+    }
+    if(section!=='quota')throw Error('未知套餐编辑范围');
+    const patch=copy(['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor']);patch.cycle_count=Number(patch.cycle_count||0);patch.timezone=plan.timezone||String(fields.timezone||'UTC');
+    if(!options.enabled){for(const k of ['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_anchor'])patch[k]='';patch.cycle_count=0;return planPayload(plan,patch);}
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(patch.cycle_anchor))throw Error('请选择有效的周期起点日期');
+    if(!options.limited){patch.quota_value='';patch.quota_unit='';}
+    else if(!patch.quota_value)throw Error('请填写每期额度，或选择“不限流量”');
+    const units=root.PlanUnits||(typeof require==='function'?require('./plan-units.js'):null);
+    const result=units.payload(options.quotaSession, {...patch,calibration_value:String(fields.calibration_value||'').trim(),calibration_unit:String(fields.calibration_unit||'GB')},true);
+    const payload=planPayload(plan,result);if(result.calibration_value){payload.calibration_value=result.calibration_value;payload.calibration_unit=result.calibration_unit;}
+    return payload;
+  }
   const matchesDeviceName=(input,name)=>typeof name==='string'&&!!name.trim()&&typeof input==='string'&&input.trim()===name.trim();
-  const api = {matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
+  const api = {planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Management = api;
 })(globalThis);
@@ -81,7 +102,7 @@
  'use strict';
  const stack=[];let saved=null;
  const visible=n=>!!(n?.isConnected&&!n.disabled&&n.getClientRects?.().length&&!n.closest?.('[hidden],.hidden'));
- function attach(dialog,{size='medium',title='',subtitle='',trigger=null,onclose=()=>{},decorate=true}={}){
+ function attach(dialog,{size='medium',title='',subtitle='',trigger=null,onclose=()=>{},decorate=true,requestClose=null}={}){
   if(dialog._shell)return dialog._shell;
   const doc=dialog.ownerDocument||root.document;
   if(decorate)dialog.classList.add('dialog-shell','dialog-'+size);
@@ -98,15 +119,16 @@
    stack.push(dialog);doc.body.style.overflow='hidden';nativeOpen();
   }
   function close(){if(dialog.open)nativeClose();end();}
+  const dismiss=()=>requestClose?requestClose():close();
   const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);};
   dialog.addEventListener('pointerdown',e=>{pressed=e.button===0&&e.isPrimary!==false&&outside(e);});
   dialog.addEventListener('pointercancel',()=>{pressed=false;});
-  dialog.addEventListener('click',e=>{const dismiss=pressed&&outside(e);pressed=false;if(dismiss)close();});
+  dialog.addEventListener('click',e=>{const dismiss=pressed&&outside(e);pressed=false;if(dismiss){if(requestClose)requestClose();else close();}});
   dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const nodes=[...dialog.querySelectorAll('button,input,select,textarea,a[href],[tabindex]')].filter(n=>visible(n)&&n.tabIndex!==-1),first=nodes[0],last=nodes.at(-1);if(!first){e.preventDefault();dialog.focus();}else if(e.shiftKey&&doc.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&doc.activeElement===last){e.preventDefault();first.focus();}});
-  dialog.addEventListener('cancel',e=>{e.preventDefault();close();});dialog.addEventListener('close',end);
+  dialog.addEventListener('cancel',e=>{e.preventDefault();dismiss();});dialog.addEventListener('close',end);
   // Existing controllers may continue using showModal/close; no request logic moves here.
   dialog.showModal=()=>open();dialog.close=close;
-  function heading(text=title,device=subtitle){let head=dialog.querySelector(':scope > .shell-head');if(!head){head=doc.createElement('div');head.className='shell-head';const group=doc.createElement('div'),h=doc.createElement('h2'),p=doc.createElement('p'),x=doc.createElement('button');h.id=dialog.id+'-shell-title';dialog.setAttribute('aria-labelledby',h.id);group.append(h,p);x.type='button';x.textContent='×';x.setAttribute('aria-label','关闭');x.addEventListener('click',close);head.append(group,x);dialog.prepend(head);}head.querySelector('h2').textContent=text;head.querySelector('p').textContent=device;head.querySelector('p').title=device;}
+  function heading(text=title,device=subtitle){let head=dialog.querySelector(':scope > .shell-head');if(!head){head=doc.createElement('div');head.className='shell-head';const group=doc.createElement('div'),h=doc.createElement('h2'),p=doc.createElement('p'),x=doc.createElement('button');h.id=dialog.id+'-shell-title';dialog.setAttribute('aria-labelledby',h.id);group.append(h,p);x.type='button';x.textContent='×';x.setAttribute('aria-label','关闭');x.addEventListener('click',dismiss);head.append(group,x);dialog.prepend(head);}head.querySelector('h2').textContent=text;head.querySelector('p').textContent=device;head.querySelector('p').title=device;}
   if(title)heading();
   return dialog._shell={open,close,heading,setOrigin:n=>{origin=n;}};
  }

@@ -54,6 +54,7 @@ async function run(){
  const shot=async(file,selector='#device-details')=>{await page.locator(selector).screenshot({path:path.join(out,file+'.png')});};
  const tabs=async key=>{await page.locator('#details-tab-'+key).click();await page.waitForTimeout(80);};
  const openDetails=async()=>{if(!await page.locator('#device-details').evaluate(n=>n.open))await page.locator('.detail-toggle').click();};
+ if(process.env.V109_TASK_TWO==='1'){await require('./lib/v109-task-two-browser.cjs')({page,browser,current,ID,out,openDetails,tabs});return;}
  if(reference){await require('./lib/v109-rework-reference.cjs')({page,browser,current,ID,out,openDetails,tabs});return;}
  await openDetails();await shot('details-overview');assert.deepEqual(await page.locator('.details-tabs button').allTextContents(),['概览','资源','安全','管理']);
  const rect=await page.locator('#device-details').boundingBox();assert.equal(rect.width,960);assert.equal(rect.height,680);
@@ -93,5 +94,5 @@ async function run(){
  await openDetails();await tabs('management');await page.locator('#details-pane-management .upgrade-agent').click();await page.evaluate(id=>{agents.delete(id);render();},ID);assert.equal(await page.evaluate(()=>document.body.style.overflow),'hidden');await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.body.style.overflow),'');assert.equal(await page.locator('#add-agent').evaluate(n=>n===document.activeElement),true,'removed origin falls back to visible button');
  assert.deepEqual(errors,[]);if(fs.existsSync(path.join(out,'failure.txt')))fs.unlinkSync(path.join(out,'failure.txt'));fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({boundary:'Real loopback Server + isolated SQLite for auth/assets; browser routes supply synthetic data and mutation receipts',keyboard,posts:posts.map(p=>({path:p.path,method:p.method})),jobNumber,errors},null,2));console.log('R09/R38 browser acceptance passed; '+keyboard.length+' dialog keyboard checks');
 }
-const watchdog=setTimeout(()=>{console.error('acceptance exceeded 150s');process.exit(2);},150000);
+const watchdog=setTimeout(()=>{console.error('acceptance exceeded 150s');process.exit(2);},process.env.V109_TASK_TWO==='1'?300000:150000);
 run().catch(e=>{fs.writeFileSync(path.join(out,'failure.txt'),e.stack);console.error(e.stack);process.exitCode=1;}).finally(async()=>{clearTimeout(watchdog);gate?.();await browser?.close();if(server&&server.exitCode===null){server.kill();await new Promise(r=>server.once('exit',r));}fs.rmSync(tmp,{recursive:true,force:true});});

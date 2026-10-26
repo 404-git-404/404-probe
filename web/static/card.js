@@ -131,7 +131,7 @@
     };
     if(!cycle)return {...view,bar:{kind:'none',text:'未设置流量配额 · 点此编辑套餐'}};
     const days=cycleDays(plan,now),dayText=days?`第 ${days.day}/${days.total} 天`:'周期尚未开始',right=`${dayText} · ${view.bandwidth}`;
-    if(plan.quota_bytes==null)return {...view,bar:{kind:'nocap',left:'未设配额',right,time:days?days.elapsed:null}};
+    if(plan.quota_bytes==null)return {...view,bar:{kind:'nocap',left:'不限流量',right,time:days?days.elapsed:null}};
     const used=Number(plan.usage_bytes||0),quota=Number(plan.quota_bytes),percent=quota>0?used/quota*100:0;
     const quotaText=quotaDisplay?`${quotaDisplay.value} ${quotaDisplay.unit}`:sig3(quota);
     return {...view,bar:{kind:'bar',left:`已用 ${sig3(used)} / ${quotaText} · `,percent:percent.toFixed(1)+'%',tone:percent>=90?'crit':percent>=80?'warn':'ok',fill:Math.max(0,Math.min(100,percent)),right,time:days?days.elapsed:null,

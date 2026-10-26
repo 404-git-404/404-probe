@@ -541,7 +541,7 @@ const planFields = {
   country_code_override: '#plan-country-code',
 };
 const planEditor = PlanEditor.create({agents,
-  read: () => ({traffic_enabled: planTrafficEnabled.checked, ...Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value]))}),
+  read: () => ({limited:document.querySelector('#quota-limit').value,traffic_enabled: planTrafficEnabled.checked, ...Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value]))}),
   onclose: () => { pendingPlanAgentID = ''; planEditGeneration++; }, onclear: () => clearPlan(),
 });
 const planRenewal = PlanRenewal.create({agents,
@@ -550,7 +550,7 @@ const planRenewal = PlanRenewal.create({agents,
   finish: (token,patch) => finishPlanResource(token,patch),
   changed: () => { if(!suspended)render(); },
   opening: () => { selectorView.hide(); },
-  edit: (id,trigger) => { const agent=agents.get(id);if(agent)openPlanDialog(agent,trigger); },
+  edit: (id,trigger) => { const agent=agents.get(id);if(agent){openPlanDialog(agent,trigger);document.querySelector('#plan-renewal-date').focus();} },
 });
 function openPlanRenewal(agent,trigger=null) {
   if(!agents.has(agent.agent_id)||agent.revoked||agentState.blocked(agent.agent_id))return;
@@ -561,26 +561,23 @@ function togglePlanTrafficFields() {
   planTrafficFields.classList.toggle('hidden', !planTrafficEnabled.checked);
 }
 
-function openPlanDialog(agent, trigger = null) {
+let planDialogMode='plan',quotaOffConfirmed=true;
+function openPlanDialog(agent, trigger = null, mode='plan') {
   if(planRenewal.unconfirmed(agent.agent_id))return;
   planRenewal.close();
   planEditor.open(agent.agent_id,trigger,()=>{
+  planDialogMode=mode;planDialog.dataset.mode=mode;document.querySelector('#plan-title').textContent=mode==='quota'?'流量配额':'套餐与续费';document.querySelector('#plan-information').hidden=mode==='quota';document.querySelector('#quota-information').hidden=mode!=='quota';document.querySelector('#plan-clear').hidden=mode==='quota';document.querySelector('#quota-decimal-note').hidden=mode!=='quota';quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;
   planEditGeneration++;
   pendingPlanAgentID = agent.agent_id;
   planForm.reset();
   const plan = agent.plan || {};
   planQuotaSession = PlanUnits.open(plan);
-  planCountryPicker ||= Management.countryPicker({
-    search: document.querySelector('#plan-country-search'), select: document.querySelector('#plan-country-code'),
-    clear: document.querySelector('#plan-country-auto'), preview: document.querySelector('#plan-country-preview'),
-    status: document.querySelector('#plan-country-status'), onchange: () => { planEditGeneration++; },
-  });
-  planCountryPicker.set(plan.country_code_override || '');
-  planAgentName.textContent = agent.name || agent.state?.hostname || '未命名 Agent';
+  planAgentName.textContent = agent.name || agent.state?.hostname || '未命名 Agent';planAgentName.title=planAgentName.textContent;
   planTrafficEnabled.checked = Boolean(plan.traffic_mode);
   for (const [key, selector] of Object.entries(planFields)) {
     const input = document.querySelector(selector);
     const fallback = key === 'cycle_count' ? '1' : key === 'timezone' ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : '';
+    if(input.tagName==='SELECT'&&plan[key]&&!Array.from(input.options).some(o=>o.value===String(plan[key]))){const o=document.createElement('option');o.value=o.textContent=String(plan[key]);input.append(o);}
     input.value = key.startsWith('calibration_') ? (key === 'calibration_unit' ? 'GB' : '') : (plan[key] ?? fallback);
   }
   if (!plan.traffic_mode) document.querySelector('#plan-traffic-mode').value = 'sum';
@@ -590,15 +587,23 @@ function openPlanDialog(agent, trigger = null) {
     document.querySelector('#plan-quota-unit').value = planQuotaSession.shown.unit;
   }
   const quotaNote = document.querySelector('#plan-quota-note');
-  quotaNote.textContent = planQuotaSession.legacy ? '旧额度已精确换算为十进制。未改额度保存时保留原字节定义；修改后的额度最多 3 位小数。' : '流量单位采用十进制：1 TB = 1000 GB；额度与校准最多 3 位小数。';
-  if (!plan.cycle_kind) document.querySelector('#plan-cycle-kind').value = 'monthly';
+  quotaNote.title = planQuotaSession.legacy ? '旧额度已精确换算为十进制。未改额度保存时保留原字节定义；修改后的额度最多 3 位小数。' : '流量单位采用十进制：1 TB = 1000 GB；额度与校准最多 3 位小数。';
+  quotaNote.textContent='选“不限流量”时照样统计每期用量，卡片上不显示进度条和百分比。';
+  if (!plan.cycle_kind) document.querySelector('#plan-cycle-kind').value = 'monthly';if(!plan.cycle_anchor)document.querySelector('#plan-cycle-anchor').value=new Intl.DateTimeFormat('en-CA').format(new Date());document.querySelector('#quota-cycle-day').value=Number(document.querySelector('#plan-cycle-anchor').value.slice(-2))||1;document.querySelector('#quota-limit').value=plan.traffic_mode&&!plan.quota_value?'unlimited':'limited';document.querySelector('#quota-timezone').textContent='时区：'+document.querySelector('#plan-timezone').value;const days=Card.cycleDays(plan,Date.now());document.querySelector('#quota-cycle-summary').textContent=plan.cycle_start&&plan.cycle_end?'当前周期 '+shortPlanDate(plan.cycle_start)+' – '+shortPlanDate(plan.cycle_end)+(days?'，已过 '+Math.max(0,days.day-1)+' 天':''):'';syncQuotaPresentation();
   planError.classList.add('hidden');
   planError.textContent = '';
   togglePlanTrafficFields();
   });
 }
 
-planTrafficEnabled.addEventListener('change', togglePlanTrafficFields);
+const shortPlanDate=v=>{const d=new Date(v);return String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+function syncQuotaPresentation(){const limit=document.querySelector('#quota-limit').value;document.querySelector('#quota-amount').hidden=limit==='unlimited';for(const group of document.querySelectorAll('[data-quota-segment]')){const value=group.dataset.quotaSegment==='limit'?limit:document.querySelector('#plan-traffic-mode').value;for(const b of group.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.value===value));}const monthly=document.querySelector('#plan-cycle-kind').value==='monthly';document.querySelector('#quota-cycle-day').hidden=document.querySelector('#quota-cycle-day-label').hidden=!monthly;}
+for(const group of document.querySelectorAll('[data-quota-segment]'))for(const b of group.querySelectorAll('button'))b.addEventListener('click',()=>{document.querySelector(group.dataset.quotaSegment==='limit'?'#quota-limit':'#plan-traffic-mode').value=b.dataset.value;planEditGeneration++;syncQuotaPresentation();});
+planTrafficEnabled.addEventListener('change',()=>{if(!planTrafficEnabled.checked&&agents.get(pendingPlanAgentID)?.plan?.traffic_mode){quotaOffConfirmed=false;document.querySelector('#quota-off-confirm').hidden=false;}else{quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();}});
+document.querySelector('#quota-keep-on').addEventListener('click',()=>{planTrafficEnabled.checked=true;quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();});
+document.querySelector('#quota-confirm-off').addEventListener('click',()=>{quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();});
+document.querySelector('#quota-cycle-day').addEventListener('input',e=>{const input=document.querySelector('#plan-cycle-anchor');input.value=input.value.slice(0,8)+String(e.target.value).padStart(2,'0');});
+document.querySelector('#plan-cycle-kind').addEventListener('change',syncQuotaPresentation);
 planForm.addEventListener('input', () => { planEditGeneration++; });
 planForm.addEventListener('change', () => { planEditGeneration++; });
 
@@ -611,9 +616,8 @@ async function savePlanPayload(agentID, payload, signal) {
 planForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (!pendingPlanAgentID || !mutationCSRFToken || !planEditor.canSubmit() || planRenewal.unconfirmed(pendingPlanAgentID)) return;
-  let payload = {};
-  for (const [key, selector] of Object.entries(planFields)) payload[key] = document.querySelector(selector).value.trim();
-  try { payload = PlanUnits.payload(planQuotaSession, payload, planTrafficEnabled.checked); }
+  if(planDialogMode==='quota'&&!planTrafficEnabled.checked&&!quotaOffConfirmed)return;
+  let payload;try {payload=Management.planSectionPayload(agents.get(pendingPlanAgentID)?.plan||{},planDialogMode,Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value])),{enabled:planTrafficEnabled.checked,limited:document.querySelector('#quota-limit').value==='limited',quotaSession:planQuotaSession});}
   catch (error) { planError.textContent = error.message; planError.classList.remove('hidden'); return; }
   const agentID = pendingPlanAgentID, editGeneration = planEditGeneration;
   const mutation = agentState.beginMutation(agentID, ['plan', 'country']);
@@ -621,18 +625,6 @@ planForm.addEventListener('submit', async event => {
   const editorToken = planEditor.begin();
   const controller = new AbortController(); planWriteControllers.set(agentID, controller);
   planError.classList.add('hidden');
-  payload.cycle_count = Number(payload.cycle_count || 0);
-  payload.currency = payload.currency.toUpperCase();
-  payload.country_code_override = payload.country_code_override.toUpperCase();
-  if (!planTrafficEnabled.checked) {
-    for (const key of ['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_anchor','calibration_value','calibration_unit']) payload[key] = '';
-    payload.cycle_count = 0;
-  }
-  if (!payload.quota_value) payload.quota_unit = '';
-  if (!payload.calibration_value) payload.calibration_unit = '';
-  if (!payload.bandwidth_value) payload.bandwidth_unit = '';
-  if (!payload.purchase_price) payload.purchase_price_period = '';
-  if (!payload.renewal_price) payload.renewal_price_period = '';
   try {
     const plan = await savePlanPayload(agentID, payload, controller.signal);
     planRenewal.invalidate(agentID);
@@ -659,9 +651,9 @@ async function clearPlan() {
   const editorToken = planEditor.begin();
   const controller = new AbortController(); planWriteControllers.set(agentID, controller);
   try {
-    await savePlanPayload(agentID, {}, controller.signal);
+    const plan=await savePlanPayload(agentID, Management.planSectionPayload(agents.get(agentID)?.plan||{},'clear'), controller.signal);
     planRenewal.invalidate(agentID);
-    if (!finishPlanResource(mutation, {plan: null})) return;
+    if (!finishPlanResource(mutation, {plan})) return;
     if (pendingPlanAgentID === agentID && planEditGeneration === editGeneration) planDialog.close();
     if(!suspended)render();
   } catch (error) {
@@ -1474,7 +1466,7 @@ function createAgentCard(initialAgent) {
 
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
-      edit:(a,n)=>openPlanDialog(a,n),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a)});
+      edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a)});
     detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id));
     const overviewPanel=summary.overview;
     return {card, detailPanel, egressPanel, overviewPanel, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
