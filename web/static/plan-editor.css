@@ -51,3 +51,5 @@
 #plan-dialog .quota-cycle-title{display:flex;align-items:baseline;gap:6px;margin:14px 0 6px}#plan-dialog .quota-cycle-title label{margin:0}#plan-dialog #quota-cycle-options{padding:0;border:0;background:none;color:#1F6F62;font-size:12px;line-height:18px}#plan-dialog .quota-cycle-more:not([open]){margin:0}#plan-dialog .quota-cycle-more[open]{padding:8px 0}
 
 #plan-dialog #quota-decimal-note:not([hidden]){display:inline}
+
+#plan-dialog[data-mode=quota]{line-height:1.4}#plan-dialog .quota-master input{margin:0;padding:0;min-width:18px;flex:0 0 18px}#plan-dialog #quota-cycle-options{width:18px;height:18px}#plan-dialog[data-mode=quota] .field-note,#plan-dialog[data-mode=quota] small{line-height:1.4}
