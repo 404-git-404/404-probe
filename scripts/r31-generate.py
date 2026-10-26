@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""R31 schema-34 synthetic fixture. Python standard library only; never uses a live DB.
-
-The supplied v1.0.6 Server creates the schema via `agent list`/storage.Open.
-This data adapter intentionally refuses other schemas. For the next release retain
-this adapter and the old release binary; add a separately tested adapter for the
-new previous-release schema, never copy handwritten DDL into this tool.
-"""
+"""R31 synthetic fixtures: retain the schema34 base and migrate with official releases."""
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -16,6 +10,7 @@ import struct
 import subprocess
 import time
 from pathlib import Path
+import r31lib as releases
 
 NOW = 1792713600000  # fixed 2026-10-23 UTC; reproducible retention windows
 DAY = 86400000
@@ -85,7 +80,7 @@ def validate(c):
             raise RuntimeError(f'quality_usage mismatch: {kind}')
 
 
-def generate(server, output, scale, seed=31, anchor_ms=NOW):
+def generate_base(server, output, scale, seed=31, anchor_ms=NOW):
     global NOW
     NOW = anchor_ms
     start = time.monotonic()
@@ -273,15 +268,108 @@ def generate(server, output, scale, seed=31, anchor_ms=NOW):
     return result
 
 
+def audit(path, schema):
+    with sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro', uri=True) as c:
+        c.execute('PRAGMA query_only=ON')
+        validate(c)
+        if c.execute('SELECT max(version) FROM schema_migrations').fetchone()[0] != schema:
+            raise ValueError('fixture schema differs from registry')
+        tables = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        rows = {t: c.execute('SELECT count(*) FROM "'+t.replace('"','""')+'"').fetchone()[0] for t in tables}
+        if schema >= 35:
+            if c.execute('SELECT count(*) FROM quality_config WHERE slow_threshold_ms NOT BETWEEN 50 AND 3000').fetchone()[0]:
+                raise ValueError('invalid slow threshold')
+            for mode, usage, rx, tx, basis in c.execute("SELECT COALESCE(traffic_mode,''),usage_bytes,cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis FROM agent_plans"):
+                billed = {'rx': rx, 'tx': tx, 'sum': rx+tx, '': 0}.get(mode)
+                if billed is None or min(usage, rx, tx) < 0:
+                    raise ValueError('invalid plan counters')
+                if basis in ('exact', 'backfill'):
+                    if billed != usage:
+                        raise ValueError('direction counters differ from billed usage')
+                elif basis == 'since':
+                    if billed > usage:
+                        raise ValueError('partial counters exceed billed usage')
+                else:
+                    raise ValueError('invalid plan counter basis')
+        else:
+            for agent, start, mode, usage in c.execute('SELECT agent_id,cycle_start,traffic_mode,usage_bytes FROM agent_plans'):
+                first = c.execute('SELECT rx_total,tx_total FROM minute_metrics WHERE agent_id=? AND bucket<=? ORDER BY bucket DESC LIMIT 1', (agent,start)).fetchone()
+                last = c.execute('SELECT rx_total,tx_total FROM minute_metrics WHERE agent_id=? ORDER BY bucket DESC LIMIT 1', (agent,)).fetchone()
+                if mode not in ('rx','tx','sum') or usage < 0:
+                    raise ValueError('invalid base plan counters')
+                if first and last:
+                    rx, tx = last[0]-first[0], last[1]-first[1]
+                    if min(rx,tx) < 0 or usage != {'rx':rx,'tx':tx,'sum':rx+tx}[mode]:
+                        raise ValueError('base plan counters differ from history')
+        return dict(rows=rows, schema_sha256=fingerprint(c),
+                    page_size=c.execute('PRAGMA page_size').fetchone()[0],
+                    page_count=c.execute('PRAGMA page_count').fetchone()[0],
+                    freelist_count=c.execute('PRAGMA freelist_count').fetchone()[0])
+
+
+def generate(server, output, scale, seed=31, anchor_ms=NOW, start_version='v1.0.6', base_assets=None):
+    started = time.monotonic()
+    entry = releases.registered(start_version)  # reject unknown versions before any write
+    server, output = Path(server).resolve(strict=True), Path(output).absolute()
+    arch = server.name.removeprefix('404-probe-server-linux-')
+    _, official, identity = releases.assets(server.parent, start_version, arch, True)
+    if official != server:
+        raise ValueError('Server must be the named official asset')
+    base_directory = server.parent if start_version == 'v1.0.6' else base_assets
+    if base_directory is None:
+        raise ValueError('--base-assets (official v1.0.6) required for later starting versions')
+    _, base_server, _ = releases.assets(base_directory, 'v1.0.6', arch, True)
+    for sidecar in (Path(str(output)+'.json'), Path(str(output)+'.schema34.json')):
+        if sidecar.exists() or sidecar.is_symlink():
+            raise ValueError('fixture evidence must not exist')
+    base = generate_base(base_server, output, scale, seed, anchor_ms)
+    # The schema34 generator above is retained unchanged; only official binaries migrate it.
+    Path(str(output)+'.json').rename(Path(str(output)+'.schema34.json'))
+    steps = []
+    if start_version != 'v1.0.6':
+        begin = time.monotonic()
+        migrated = json.loads(run(official, 'database', 'migrate-protected', '--db', output))
+        migration_seconds = time.monotonic()-begin
+        if migrated.get('integrity') != 'ok' or migrated.get('schema_version') != entry['schema']:
+            raise ValueError('official migration did not reach registered schema')
+        begin = time.monotonic()
+        verified = json.loads(run(official, 'database', 'verify', '--db', output))
+        verify_seconds = time.monotonic()-begin
+        steps.append(dict(from_version='v1.0.6', to_version=start_version, server=identity,
+                          migration=migrated, migration_seconds=round(migration_seconds,3),
+                          verification=verified, verify_seconds=round(verify_seconds,3)))
+    else:
+        verified = base['verify']
+    if verified.get('integrity') != 'ok' or verified.get('schema_version') != entry['schema']:
+        raise ValueError('official verification differs from registered schema')
+    with sqlite3.connect(output) as c:
+        if c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0] != 0:
+            raise ValueError('fixture checkpoint busy')
+    after = audit(output, entry['schema'])
+    releases.check_counts(base['rows'], after['rows'], 'v1.0.6', start_version)
+    size = output.stat().st_size
+    if scale != 'tiny' and size < 500_000_000:
+        raise ValueError('non-tiny fixture below 500 MB')
+    result = dict(scale=scale, seed=seed, anchor_ms=anchor_ms, base_version='v1.0.6',
+                  starting_version=start_version, server=identity, base_generation=base,
+                  official_migrations=steps, verify=verified, file_bytes=size,
+                  integrity='ok', foreign_keys='ok', counters='ok', rows_checked=True,
+                  elapsed_seconds=round(time.monotonic()-started,3), **after)
+    Path(str(output)+'.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
+    return result
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--server',required=True,type=Path)
+    p.add_argument('--start-version',default='v1.0.6',help='registered starting release')
+    p.add_argument('--base-assets',type=Path,help='official v1.0.6 assets for the unchanged schema34 base')
     p.add_argument('--out',required=True,type=Path)
     p.add_argument('--scale',choices=['tiny','snapshot','full','compact'],required=True)
     p.add_argument('--seed',type=int,default=31)
     p.add_argument('--anchor-ms',type=int,default=NOW,help='UTC window end; fixed by default, use current minute for live upgrade rehearsal')
     a=p.parse_args()
-    print(json.dumps(generate(a.server.absolute(),a.out,a.scale,a.seed,a.anchor_ms),indent=2))
+    print(json.dumps(generate(a.server.absolute(),a.out,a.scale,a.seed,a.anchor_ms,a.start_version,a.base_assets),indent=2))
 
 if __name__ == '__main__':
     main()

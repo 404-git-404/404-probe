@@ -23,6 +23,7 @@ import tempfile
 import subprocess
 import sys
 import time
+import r31lib as releases
 sys.dont_write_bytecode = True
 
 HANDLED_SIGNALS=[getattr(signal,name) for name in ['SIGINT','SIGTERM','SIGHUP'] if hasattr(signal,name)]
@@ -62,27 +63,7 @@ def tree_state(paths):
 
 
 def assets(directory,version,arch):
-    directory=Path(directory).resolve(strict=True)
-    names=['404-probe-'+role+'-linux-'+cpu for role in ['server','agent'] for cpu in ['amd64','arm64']]
-    names+=['install.sh','RELEASE-METADATA.json']
-    manifest={}
-    for line in (directory/'SHA256SUMS').read_text().splitlines():
-        match=re.fullmatch(r'([a-f0-9]{64})  ([A-Za-z0-9_.-]+)',line)
-        if not match:
-            raise ValueError('invalid local asset manifest')
-        manifest[match[2]]=match[1]
-    for name in names:
-        p=directory/name
-        if p.is_symlink() or not p.is_file() or digest(p)!=manifest.get(name):
-            raise ValueError(f'asset checksum/type mismatch: {name}')
-    for name in ['install.sh','RELEASE-METADATA.json','SHA256SUMS']:
-        if b'\r' in (directory/name).read_bytes():
-            raise ValueError(f'CR in {name}')
-    server=directory/f'404-probe-server-linux-{arch}'
-    identity=json.loads(subprocess.check_output([server,'version','--json']))
-    if identity.get('version')!=version or identity.get('dirty') is not False:
-        raise ValueError('asset Server version/clean identity mismatch')
-    return directory,server,identity
+    return releases.assets(directory,version,arch)
 
 
 def instrument(text,helper,events,fail=False):
@@ -300,15 +281,19 @@ def rehearse(args):
         versions.append(tuple(map(int,v[1:].split('.'))))
     if versions[0]>=versions[1]:
         raise ValueError('target must be newer')
+    releases.registered(args.from_version)
+    expected_schema=releases.expected_schema(args.to_version,args.expected_schema)
+    if expected_schema < releases.registered(args.from_version)['schema']:
+        raise ValueError('target schema cannot precede starting schema')
     arch={'x86_64':'amd64','aarch64':'arm64'}.get(platform.machine())
     if not arch:
         raise ValueError('only linux amd64/arm64 supported')
     old,old_server,old_identity=assets(args.from_assets,args.from_version,arch)
     new,new_server,new_identity=assets(args.to_assets,args.to_version,arch)
-    # The generator adapter is pinned to v1.0.6. v1.0.5 has the identical schema34.
-    fixture_server=new_server if args.to_version=='v1.0.6' else old_server
-    if 'v1.0.6' not in [args.from_version,args.to_version]:
-        raise ValueError('this adapter requires v1.0.6 as source (or v1.0.5 → v1.0.6 flow check)')
+    base_assets=Path(args.base_assets) if args.base_assets else old if args.from_version=='v1.0.6' else None
+    if base_assets is None:
+        raise ValueError('--base-assets required for later starting versions')
+    assets(base_assets,'v1.0.6',arch)
     if not BINARY.is_file() or not DB.is_file():
         raise ValueError('requires an existing Server installation to restore')
     for p in PATHS+CANDIDATES:
@@ -322,8 +307,6 @@ def rehearse(args):
         raise ValueError('mixed Agent installation or pending candidate; no changes made')
     if Path('/var/lib/404-probe-upgrade/pending').exists():
         raise ValueError('pending upgrade requires recovery before rehearsal')
-    expected_schema=args.expected_schema if args.expected_schema is not None else {'v1.0.6':34,'v1.0.7':35}.get(args.to_version)
-    if not expected_schema or expected_schema<1: raise ValueError('provide --expected-schema for this target version')
     out=Path(args.out).resolve()
     work=Path('/var/lib')/('404-probe-r31-'+str(time.time_ns()))
     # Output/assets must be outside the paths that are moved/restored.
@@ -370,7 +353,8 @@ def rehearse(args):
         import importlib.util
         spec=importlib.util.spec_from_file_location('r31_generate',generator)
         module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-        result['fixture']=module.generate(fixture_server,work/'fixture.db',args.scale,anchor_ms=int(time.time()//60)*60000)
+        result['fixture']=module.generate(old_server,work/'fixture.db',args.scale,anchor_ms=int(time.time()//60)*60000,
+                                          start_version=args.from_version,base_assets=base_assets)
         if install(old,args.from_version)!=0:
             raise RuntimeError('starting-version local installation failed/cancelled')
         call('systemctl','stop',SERVICE)
@@ -470,7 +454,8 @@ def main():
     p.add_argument('scale',choices=['tiny','snapshot','full','compact'])
     p.add_argument('--out',required=True)
     p.add_argument('--confirm-test-host',required=True,help='type this test machine hostname exactly; never use on production')
-    p.add_argument('--expected-schema',type=int,help='defaults: v1.0.6=34, v1.0.7=35; required for other targets')
+    p.add_argument('--expected-schema',type=int,help='registered target schema, or required explicit schema for a new target')
+    p.add_argument('--base-assets',help='official v1.0.6 assets for the schema34 fixture base')
     return rehearse(p.parse_args())
 
 if __name__=='__main__':

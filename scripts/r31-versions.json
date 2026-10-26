@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "base_version": "v1.0.6",
+  "versions": {
+    "v1.0.6": {
+      "commit": "9326788f838699e2b2014f8e2d95b5f89fde2ed0",
+      "schema": 34,
+      "previous_version": null,
+      "added_tables": [],
+      "removed_tables": []
+    },
+    "v1.0.7": {
+      "commit": "bba70f798a470e41d6173ecb0bbc766c2b5123e0",
+      "schema": 35,
+      "previous_version": "v1.0.6",
+      "added_tables": [],
+      "removed_tables": ["tcp_mini_high", "tcp_mini_state"]
+    },
+    "v1.0.8": {
+      "commit": "5bd4623c558f4fd7ee3d3149e6829c5a3e246d14",
+      "schema": 35,
+      "previous_version": "v1.0.7",
+      "added_tables": [],
+      "removed_tables": []
+    }
+  }
+}

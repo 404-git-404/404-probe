@@ -70,7 +70,7 @@ class ToolTests(unittest.TestCase):
         with self.assertRaises(ValueError): upgrade.instrument('unsupported installer',Path('/h'),Path('/e'),True)
 
     def test_corrupt_counter_is_rejected(self):
-        server=os.environ.get('R31_PREVIOUS_SERVER')
+        server=os.environ.get('R31_BASE_SERVER') or os.environ.get('R31_PREVIOUS_SERVER')
         if not server: self.skipTest('R31_PREVIOUS_SERVER not provided')
         with tempfile.TemporaryDirectory() as d:
             first=Path(d)/'first.db'; second=Path(d)/'second.db'
@@ -320,7 +320,7 @@ def main():
         return subprocess.run([sys.executable,'-B',str(self.wrapper)],capture_output=True,text=True)
 
     def test_records_exact_before_and_after_only_at_intended_callbacks(self):
-        evidence=self.root/'evidence'; evidence.mkdir()
+        evidence=self.root/'evidence'; evidence.mkdir(mode=0o700)
         result=self.run_wrapper()
         self.assertEqual(result.returncode,0,result.stderr)
         before=json.loads((evidence/'before-frozen.json').read_text())
@@ -333,7 +333,7 @@ def main():
             for p in evidence.iterdir(): self.assertEqual(p.stat().st_mode&0o777,0o600)
 
     def test_records_hash_difference_and_forwards_original_exit_code(self):
-        evidence=self.root/'evidence'; evidence.mkdir()
+        evidence=self.root/'evidence'; evidence.mkdir(mode=0o700)
         result=self.run_wrapper(changed=True)
         self.assertEqual(result.returncode,9,result.stderr)
         comparison=json.loads((evidence/'frozen-compare.json').read_text())
@@ -345,11 +345,211 @@ def main():
         self.assertFalse((self.root/'main-called').exists())
 
     def test_existing_run_evidence_is_not_overwritten(self):
-        evidence=self.root/'evidence'; evidence.mkdir()
+        evidence=self.root/'evidence'; evidence.mkdir(mode=0o700)
         before=evidence/'before-frozen.json'; before.write_text('example previous evidence')
         result=self.run_wrapper()
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(before.read_text(),'example previous evidence')
         self.assertFalse((self.root/'main-called').exists())
+
+releases=module('r31releases','r31lib.py')
+preflight=module('r31preflight','r31-preflight.py')
+
+
+def fake_assets(directory, version, commit=None):
+    directory=Path(directory); directory.mkdir()
+    commit=commit or releases.registered(version)['commit']
+    for name in releases.BINARIES: (directory/name).write_bytes(name.encode()+b' synthetic asset')
+    (directory/'install.sh').write_bytes((ROOT.parent/'install.sh').read_bytes())
+    metadata=dict(version=version,commit=commit,assets=[dict(name=n,sha256=releases.digest(directory/n)) for n in sorted(releases.BINARIES)])
+    (directory/'RELEASE-METADATA.json').write_text(json.dumps(metadata),encoding='utf-8')
+    refresh_manifest(directory)
+    return directory
+
+
+def refresh_manifest(directory):
+    (directory/'SHA256SUMS').write_text(''.join(releases.digest(directory/n)+'  '+n+'\n' for n in sorted(releases.PAYLOADS)),encoding='utf-8',newline='\n')
+
+
+class RegisteredReleaseTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.assets=fake_assets(self.root/'assets','v1.0.8')
+        self.identity=dict(version='v1.0.8',commit=releases.registered('v1.0.8')['commit'],dirty=False)
+
+    def test_unknown_start_and_unregistered_target_schema(self):
+        with self.assertRaisesRegex(ValueError,'unregistered'):
+            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.0.9')
+        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.0.9')
+        self.assertEqual(releases.expected_schema('v1.0.9',36),36)
+        self.assertEqual(releases.expected_schema('v1.0.8',35),35)
+        with self.assertRaises(ValueError): releases.expected_schema('v1.0.8',36)
+        for value in (0,-1,True):
+            with self.assertRaises(ValueError): releases.expected_schema('v1.0.9',value)
+        for value in ('v1.0.9-rc.1','1.0.8','v01.0.8'):
+            with self.assertRaises(ValueError): releases.version_tuple(value)
+
+    def test_identity_all_three_sources_must_agree(self):
+        with mock.patch.object(releases.subprocess,'check_output',return_value=json.dumps(self.identity).encode()):
+            self.assertEqual(releases.assets(self.assets,'v1.0.8','amd64')[2],self.identity)
+        for changed in (dict(self.identity,dirty=True),dict(self.identity,commit='a'*40),dict(self.identity,version='v1.0.7')):
+            with mock.patch.object(releases.subprocess,'check_output',return_value=json.dumps(changed).encode()):
+                with self.assertRaises(ValueError): releases.assets(self.assets,'v1.0.8','amd64')
+        metadata=json.loads((self.assets/'RELEASE-METADATA.json').read_text()); metadata['commit']='b'*40
+        (self.assets/'RELEASE-METADATA.json').write_text(json.dumps(metadata)); refresh_manifest(self.assets)
+        with self.assertRaisesRegex(ValueError,'registry'): releases.assets(self.assets,'v1.0.8','amd64')
+
+    def test_checksums_and_metadata_asset_hashes_cannot_disagree(self):
+        binary=self.assets/'404-probe-agent-linux-arm64'; binary.write_bytes(b'tampered')
+        with self.assertRaisesRegex(ValueError,'checksum'): releases.assets(self.assets,'v1.0.8','amd64')
+        refresh_manifest(self.assets)
+        with self.assertRaisesRegex(ValueError,'metadata/manifest'): releases.assets(self.assets,'v1.0.8','amd64')
+
+    def test_metadata_version_and_manifest_metadata_hash_are_checked(self):
+        p=self.assets/'RELEASE-METADATA.json'; doc=json.loads(p.read_text()); doc['version']='v1.0.7';p.write_text(json.dumps(doc))
+        with self.assertRaisesRegex(ValueError,'checksum'): releases.assets(self.assets,'v1.0.8','amd64')
+        refresh_manifest(self.assets)
+        with self.assertRaisesRegex(ValueError,'metadata identity'): releases.assets(self.assets,'v1.0.8','amd64')
+
+    def test_registered_table_changes_and_only_migration_count_may_change(self):
+        before=dict(agents=71,schema_migrations=34,tcp_mini_high=7,tcp_mini_state=71)
+        after=dict(agents=71,schema_migrations=35)
+        releases.check_counts(before,after,'v1.0.6','v1.0.7')
+        releases.check_counts(before,after,'v1.0.6','v1.0.8')
+        releases.check_counts(after,after,'v1.0.7','v1.0.8')
+        for bad in (dict(after,agents=70),dict(after,schema_migrations=34),dict(after,new_table=0),dict(after,tcp_mini_state=0)):
+            with self.assertRaises(ValueError): releases.check_counts(before,bad,'v1.0.6','v1.0.8')
+
+
+class StartingVersionIntegrationTests(unittest.TestCase):
+    def test_registered_start_official_migration_and_post_audit(self):
+        server=os.environ.get('R31_PREVIOUS_SERVER');version=os.environ.get('R31_START_VERSION')
+        if not server or not version: self.skipTest('set R31_PREVIOUS_SERVER and R31_START_VERSION for official integration')
+        base=os.environ.get('R31_BASE_SERVER',server)
+        with tempfile.TemporaryDirectory() as directory:
+            db=Path(directory)/'fixture.db'
+            result=gen.generate(Path(server),db,'tiny',start_version=version,base_assets=Path(base).parent)
+            self.assertEqual(result['verify']['schema_version'],releases.registered(version)['schema'])
+            self.assertEqual(result['base_version'],'v1.0.6');self.assertEqual(result['starting_version'],version)
+            self.assertTrue(result['rows_checked']);self.assertEqual(result['rows']['agents'],71)
+            self.assertEqual(len(result['official_migrations']),int(version!='v1.0.6'))
+            if version!='v1.0.6': self.assertNotIn('tcp_mini_state',result['rows'])
+            with sqlite3.connect(db) as c:c.execute('DELETE FROM agent_google_status WHERE agent_id=(SELECT agent_id FROM agent_google_status LIMIT 1)')
+            after=gen.audit(db,releases.registered(version)['schema'])
+            with self.assertRaisesRegex(ValueError,'record count'):
+                releases.check_counts(result['base_generation']['rows'],after['rows'],'v1.0.6',version)
+            with sqlite3.connect(db) as c:c.execute("UPDATE quality_totals SET value=value+1 WHERE kind='minute'")
+            with self.assertRaisesRegex(RuntimeError,'quality_totals'):gen.audit(db,releases.registered(version)['schema'])
+
+
+class PreflightTests(unittest.TestCase):
+    def setUp(self):
+        import types
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
+        self.old=fake_assets(self.root/'old','v1.0.8');self.base=fake_assets(self.root/'base','v1.0.6')
+        self.new=fake_assets(self.root/'new','v1.0.9','c'*40)
+        self.work=self.root/'work';self.work.mkdir(mode=0o700)
+        for name in ('evidence','results'):(self.work/name).mkdir(mode=0o700)
+        paths=[self.root/p for p in ['var/lib/404-probe','etc/404-probe','usr/local/bin/404-probe-server',
+               'usr/local/sbin/404-probe-install','etc/systemd/system/404-probe-server.service','var/lib/404-probe-upgrade','run/404-probe-upgrade']]
+        for i,p in enumerate(paths):
+            p.parent.mkdir(parents=True,exist_ok=True)
+            if i in (0,1,5,6):p.mkdir(exist_ok=True)
+            else:p.write_text('example')
+        shutil.copyfile(self.old/'404-probe-server-linux-amd64',paths[2])
+        self.control_calls=[]
+        self.m=types.SimpleNamespace(PATHS=paths,CANDIDATES=[self.root/'candidate'],BINARY=paths[2],DB=paths[0]/'404-probe.db',SERVICE='example.service',
+             systemctl=lambda *a:self.control_calls.append(a) or types.SimpleNamespace(returncode=0),
+             preflight_filesystems=lambda *a:None,instrument=upgrade.instrument)
+        self.raw=dict(from_version='v1.0.8',to_version='v1.0.9',from_assets=str(self.old),to_assets=str(self.new),base_assets=str(self.base),work_dir=str(self.work),scale='tiny',expected_schema=35)
+        self.config=self.root/'config.json';self.config.write_text(json.dumps(self.raw))
+        self.doc=preflight.configuration(self.config)
+        def output(args):
+            if args[0]=='runuser':return json.dumps(dict(schema_version=35,integrity='ok')).encode()
+            if Path(args[0])==self.m.BINARY:return json.dumps(dict(version='v1.0.8',commit=releases.registered('v1.0.8')['commit'],dirty=False)).encode()
+            meta=json.loads(Path(args[0]).parent.joinpath('RELEASE-METADATA.json').read_text())
+            return json.dumps(dict(version=meta['version'],commit=meta['commit'],dirty=False)).encode()
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(preflight.platform,'machine',return_value='x86_64').start()
+        mock.patch.object(preflight.subprocess,'check_output',side_effect=output).start()
+        mock.patch.object(preflight.subprocess,'run',return_value=types.SimpleNamespace(returncode=0)).start()
+        mock.patch.object(preflight.shutil,'disk_usage',return_value=types.SimpleNamespace(free=9*1024**3)).start()
+
+    def test_check_is_read_only_and_only_queries_service_state(self):
+        before=upgrade.tree_state([self.root])
+        self.assertTrue(preflight.check(self.doc,self.m)['ready'])
+        self.assertEqual(before,upgrade.tree_state([self.root]))
+        self.assertEqual(self.control_calls,[('is-active','--quiet','example.service'),('is-enabled','--quiet','example.service')])
+
+    def test_pending_dropin_candidate_and_stale_results_rejected(self):
+        for p in (self.m.PATHS[5]/'pending',self.m.CANDIDATES[0],self.m.PATHS[4].with_name(self.m.PATHS[4].name+'.d'),self.work/'run-started',self.work/'results/result.json'):
+            p.write_text('example')
+            with self.assertRaises(ValueError):preflight.check(self.doc,self.m)
+            p.unlink()
+
+    def test_mismatched_schema_and_insufficient_space_rejected(self):
+        with mock.patch.object(preflight.shutil,'disk_usage',return_value=type('Disk',(),dict(free=0))()):
+            with self.assertRaisesRegex(ValueError,'8 GiB'):preflight.check(self.doc,self.m)
+        with mock.patch.object(preflight.subprocess,'check_output',return_value=b'{"version":"wrong"}'):
+            with self.assertRaises(ValueError):preflight.check(self.doc,self.m)
+
+    def test_operator_summary_is_automatic_and_rejects_incomplete_result(self):
+        (self.work/'run-started').touch()
+        valid=dict(status='passed',restored=True,restore_errors=[],restore_warnings=[],from_version='v1.0.8',to_version='v1.0.9',post_upgrade_verification=dict(schema_version=35,integrity='ok'))
+        (self.work/'results/result.json').write_text(json.dumps(valid));(self.work/'evidence/frozen-compare.json').write_text('{"equal":true}')
+        with mock.patch.object(preflight.sys,'platform','linux'),mock.patch.object(preflight.os,'geteuid',return_value=0,create=True),mock.patch.object(preflight.sys.stdin,'isatty',return_value=True),mock.patch.object(preflight.sys.stdout,'isatty',return_value=True):
+            self.assertEqual(preflight.operator_run(self.doc),0)
+        self.assertTrue(json.loads((self.work/'operator-summary.json').read_text())['verified'])
+        self.assertEqual((self.work/'operator-exit.txt').read_text(),'0\n')
+        (self.work/'operator-summary.json').unlink();(self.work/'operator-exit.txt').unlink()
+        (self.work/'evidence/frozen-compare.json').write_text('{"equal":false}')
+        with mock.patch.object(preflight.sys,'platform','linux'),mock.patch.object(preflight.os,'geteuid',return_value=0,create=True),mock.patch.object(preflight.sys.stdin,'isatty',return_value=True),mock.patch.object(preflight.sys.stdout,'isatty',return_value=True):
+            self.assertEqual(preflight.operator_run(self.doc),2)
+        self.assertFalse(json.loads((self.work/'operator-summary.json').read_text())['verified'])
+
+
+@unittest.skipUnless(sys.platform=='linux' and hasattr(os,'geteuid') and os.geteuid()==0,'entry TTY/flock tests require Linux root; run on isolated test host')
+class ShellEntryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
+        self.script=self.root/'r31-rehearse.sh';shutil.copyfile(ROOT/'r31-rehearse.sh',self.script)
+        (self.root/'r31-preflight.py').write_text("import sys,pathlib\np=pathlib.Path(sys.argv[2]);mode=sys.argv[1]\nif mode=='--work-dir':print(p)\nelif mode=='--operator-run':(p/'operator-called').write_text('once')\n",encoding='utf-8')
+
+    def terminal(self):
+        import pty
+        pid,fd=pty.fork()
+        if pid==0:os.execv('/bin/bash',['bash',str(self.script),'--config',str(self.root)])
+        output=b''
+        while True:
+            try:b=os.read(fd,4096)
+            except OSError:break
+            if not b:break
+            output+=b
+        os.close(fd);_,status=os.waitpid(pid,0)
+        return os.waitstatus_to_exitcode(status),output
+
+    def test_non_tty_refuses_before_creating_files(self):
+        before=upgrade.tree_state([self.root])
+        p=subprocess.run(['bash',str(self.script),'--config',str(self.root)],capture_output=True)
+        self.assertNotEqual(p.returncode,0);self.assertIn(b'interactive',p.stderr)
+        self.assertEqual(before,upgrade.tree_state([self.root]))
+
+    def test_check_creates_no_lock_or_start_marker(self):
+        before=upgrade.tree_state([self.root])
+        p=subprocess.run(['bash',str(self.script),'--check',str(self.root)],capture_output=True)
+        self.assertEqual(p.returncode,0,p.stderr);self.assertEqual(before,upgrade.tree_state([self.root]))
+
+    def test_run_once_and_lock_exclusion(self):
+        import fcntl
+        with (self.root/'rehearsal.lock').open('w') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            rc,out=self.terminal();self.assertNotEqual(rc,0);self.assertIn(b'another rehearsal',out)
+        rc,out=self.terminal();self.assertEqual(rc,0,out)
+        marker=(self.root/'run-started').stat().st_mtime_ns
+        rc,out=self.terminal();self.assertNotEqual(rc,0)
+        self.assertEqual((self.root/'run-started').stat().st_mtime_ns,marker)
+        self.assertEqual((self.root/'operator-called').read_text(),'once')
+
 
 if __name__=='__main__': unittest.main()
