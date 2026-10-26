@@ -67,7 +67,7 @@
    previewController?.abort();const controller=new AbortController();previewController=controller;const serial=++generation;loading=true;preview=null;undoAsk=false;draw();
    try{const value=validPreview(await write(`/api/v1/web/agents/${encodeURIComponent(key)}/plan/renewal/preview`,{csrf:csrf(),payload:selected?{field:selected}:{},signal:controller.signal,unauthorized:()=>root.location.assign('/login')}));
     if(!live(key,serial))return;
-    preview=value;previewFacts=facts(agents.get(key)?.plan);
+    preview=value;previewFacts=facts(agents.get(key)?.plan);r.error='';if(!r.latest)r.message='';
     if(r.latest&&value.expected_revision!==r.revision){r.latest=null;r.serverUndo=null;r.message='套餐已被其他编辑改变，原登记不再可撤销。';}
    }catch(error){if(live(key,serial)&&error.name!=='AbortError')r.error=error.message||'预览失败，请显式重新预览。';}
    finally{if(live(key,serial)){loading=false;previewController=null;draw();}}
@@ -115,7 +115,7 @@
   // Native close events are queued: an earlier close must not end a reopened modal.
   dialog.addEventListener('cancel',e=>{e.preventDefault();close();});dialog.addEventListener('close',()=>{if(!dialog.open)end();});win.addEventListener('resize',place);
   return {open,close,load,confirm:confirmAction,verify(){const p=id&&record(id).unknown;return p?submit(p.kind,p.dto):undefined;},unconfirmed:key=>!!records.get(key)?.unknown,
-   invalidate(key){const r=records.get(key);if(r){r.latest=null;r.serverUndo=null;r.revision='';r.message='套餐已编辑，原登记不再可撤销。';}if(id===key){preview=null;undoAsk=false;draw();}},
+   invalidate(key){const r=records.get(key);if(r){const hadReceipt=!!r.latest;r.latest=null;r.serverUndo=null;r.revision='';r.message=hadReceipt?'套餐已编辑，原登记不再可撤销。':id===key?'套餐资料已改变，请重新预览。':'';}if(id===key){preview=null;undoAsk=false;draw();}},
    sync(){for(const key of records.keys())if(!agents.has(key)){records.get(key).controller?.abort();records.delete(key);if(id===key)close();}
     if(id&&agents.has(id)){const r=record(id);if(r.latest&&facts(agents.get(id)?.plan)!==r.facts&&!r.owner)this.invalidate(id);if(preview&&previewFacts!==facts(agents.get(id)?.plan)&&!r.owner){preview=null;undoAsk=false;r.message='套餐资料已改变，请重新预览。';}if(agents.get(id)?.revoked){preview=null;r.latest=null;r.serverUndo=null;}draw();}},
    shutdown(){dead=true;close();for(const r of records.values())r.controller?.abort();records.clear();win.removeEventListener?.('resize',place);},
