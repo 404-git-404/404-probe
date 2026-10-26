@@ -37,7 +37,7 @@
    get('name').textContent=agents.get(id)?.name||agents.get(id)?.state?.hostname||'未命名设备';
    get('error').textContent=r.error;get('error').hidden=!r.error;
    get('result').textContent=r.message;get('result').hidden=!r.message;
-   get('recovery').hidden=!r.unknown;get('request-id').textContent=r.unknown?'核实信息 ⓘ':'';get('request-id').title=r.unknown?.dto.request_id||'';
+   get('recovery').hidden=!r.unknown;get('request-id').textContent=r.unknown?.dto.request_id||'';get('request-id').title=r.unknown?.dto.request_id||'';
    get('verify').disabled=busy||!canWrite(id);get('copy').disabled=!r.unknown;
    get('undo').hidden=!r.latest;get('undo').disabled=busy||loading||!canWrite(id)||!!r.unknown||!undoAvailable(r);
    get('edit').hidden=undoAsk;get('edit').disabled=busy||!!r.unknown||!canWrite(id);
@@ -76,7 +76,7 @@
   async function submit(kind,dto){const key=id;if(!key||dead||!canWrite(key))return;const r=record(key);if(r.owner)return;
    const mutation=begin(key);if(!mutation)return;
    const owner={},controller=new AbortController(),serial=generation;r.owner=owner;r.controller=controller;
-   const pending=r.unknown||Object.freeze({kind,dto:Object.freeze({...dto})});r.unknown=pending;r.error='结果未确认：请保留原请求 ID；关闭不代表服务器未写入。';draw();changed();
+   const pending=r.unknown||Object.freeze({kind,dto:Object.freeze({...dto})});r.unknown=pending;r.error='结果未确认：请保留核实信息；关闭窗口不代表登记失败。';draw();changed();
    let completed=false;
    try{const result=validResult(await write(`/api/v1/web/agents/${encodeURIComponent(key)}/plan/renewal/${pending.kind}`,{csrf:csrf(),payload:pending.dto,signal:controller.signal,unauthorized:()=>root.location.assign('/login')}),key,pending.kind,pending.dto);
     if(dead||records.get(key)!==r||!agents.has(key))return;
@@ -89,7 +89,7 @@
     if(live(key,serial)){preview=null;undoAsk=false;}
    }catch(error){if(dead||records.get(key)!==r||!agents.has(key))return;
     const certain=[400,403,404,409,413,415,429].includes(error.status);
-    r.error=(error.message||'请求失败')+(certain?(error.status===409?' 请重新预览并明确确认。':error.status===429?' 请稍后再试，不自动重试。':''):' 结果未确认；仅可用原请求 ID 和同一确认内容核实。');
+    r.error=(error.message||'请求失败')+(certain?(error.status===409?' 请重新预览并明确确认。':error.status===429?' 请稍后再试，不自动重试。':''):' 结果未确认，请核实上次操作；不会重复登记。');
     if(certain){r.unknown=null;if([403,404,409].includes(error.status)){r.latest=null;r.serverUndo=null;}if(live(key,serial)){preview=null;undoAsk=false;}}
    }finally{
     if(!completed)finish(mutation);
@@ -109,7 +109,7 @@
   // A same-value external PUT is fenced by the server's undo revision CAS.
   get('undo').addEventListener('click',()=>{const r=id&&record(id);if(r&&undoAvailable(r)&&!r.unknown&&!r.owner&&canWrite(id)){previewController?.abort();previewController=null;generation++;loading=false;preview=null;undoAsk=true;draw();}else if(r){r.message='撤销窗口已结束或资格已改变；以服务器最终裁定为准。';draw();}});
   get('verify').addEventListener('click',()=>{const p=id&&record(id).unknown;if(p)return submit(p.kind,p.dto);});
-  get('copy').addEventListener('click',async()=>{const key=id,serial=generation,p=key&&record(key).unknown;if(!p)return;try{await win.navigator.clipboard.writeText(p.dto.request_id);}catch(_){if(live(key,serial)){record(key).error='复制失败，请手动复制下方请求 ID。';draw();}}});
+  get('copy').addEventListener('click',async()=>{const key=id,serial=generation,p=key&&record(key).unknown;if(!p)return;try{await win.navigator.clipboard.writeText(p.dto.request_id);}catch(_){if(live(key,serial)){record(key).error='复制失败，请展开核实信息后手动复制。';draw();}}});
   get('edit').addEventListener('click',()=>{const key=id,trigger=origin;if(!key||record(key).unknown||record(key).owner)return;close();edit(key,trigger);});
   for(const name of ['cancel','dismiss'])get(name).addEventListener('click',close);
   // Native close events are queued: an earlier close must not end a reopened modal.

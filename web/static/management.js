@@ -70,20 +70,21 @@
     const keys=['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','timezone','bandwidth_value','bandwidth_unit','currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','country_code_override'];
     return {...Object.fromEntries(keys.map(k=>[k,plan[k]??(k==='cycle_count'?0:'')])),...patch};
   }
+  function validPlanDate(value){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value);if(!m||+m[1]<1)return false;const d=new Date(0);d.setUTCFullYear(+m[1],+m[2]-1,+m[3]);return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3];}
   // Both presentations edit a disjoint subset of one full PUT contract.
   function planSectionPayload(plan={},section,fields={},options={}) {
     const copy=keys=>Object.fromEntries(keys.map(k=>[k,String(fields[k]??'').trim()]));
     const information=['currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','bandwidth_value','bandwidth_unit'];
     if(section==='clear')return planPayload(plan,Object.fromEntries(information.map(k=>[k,''])));
     if(section==='plan'){
-      const patch=copy([...information,'timezone']);patch.currency=patch.currency.toUpperCase();
+      const patch=copy([...information,'timezone']);patch.currency=patch.currency.toUpperCase();for(const key of ['purchase_date','renewal_date','expiry_date'])if(patch[key]&&!validPlanDate(patch[key]))throw Error('请填写有效日期（YYYY-MM-DD）');
       for(const [amount,unit]of [['bandwidth_value','bandwidth_unit'],['purchase_price','purchase_price_period'],['renewal_price','renewal_price_period']])if(!patch[amount])patch[unit]='';
       return planPayload(plan,patch);
     }
     if(section!=='quota')throw Error('未知套餐编辑范围');
     const patch=copy(['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor']);patch.cycle_count=Number(patch.cycle_count||0);patch.timezone=plan.timezone||String(fields.timezone||'UTC');
     if(!options.enabled){for(const k of ['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_anchor'])patch[k]='';patch.cycle_count=0;return planPayload(plan,patch);}
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(patch.cycle_anchor))throw Error('请选择有效的周期起点日期');
+    if(!validPlanDate(patch.cycle_anchor))throw Error('请选择有效的周期起点日期');
     if(!options.limited){patch.quota_value='';patch.quota_unit='';}
     else if(!patch.quota_value)throw Error('请填写每期额度，或选择“不限流量”');
     const units=root.PlanUnits||(typeof require==='function'?require('./plan-units.js'):null);

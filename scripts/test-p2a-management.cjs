@@ -42,3 +42,8 @@ test('split plan presentations preserve hidden fields, clear scope, unlimited an
  const cleared=M.planSectionPayload(old,'clear');for(const key of ['quota_value','quota_unit','cycle_kind','cycle_count','traffic_mode','timezone','country_code_override'])assert.equal(cleared[key],old[key],key);assert.equal(cleared.purchase_price,'');assert.equal(cleared.renewal_price,'');assert.ok(!('calibration_value' in cleared));
  const off=M.planSectionPayload(old,'quota',fields,{enabled:false});assert.equal(off.traffic_mode,'');assert.equal(off.cycle_count,0);assert.equal(off.purchase_price,'19.95');
 });
+
+test('short text dates keep calendar validation before a PUT',()=>{
+ const M=require('../web/static/management.js');for(const value of ['2026-02-30','2026-13-01','0000-01-01','2026-2-01'])assert.throws(()=>M.planSectionPayload({},'plan',{renewal_date:value}),/有效日期/);
+ assert.equal(M.planSectionPayload({},'plan',{renewal_date:'2024-02-29'}).renewal_date,'2024-02-29');
+});

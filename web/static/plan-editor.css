@@ -49,3 +49,5 @@
 #plan-dialog #plan-cancel{border-color:#D8CEBF}#plan-dialog .plan-editor-body p{line-height:1.5}#plan-dialog #plan-traffic-fields>label{margin-top:14px}#plan-dialog #plan-traffic-fields>label:first-child{margin-top:0}
 
 #plan-dialog .quota-cycle-title{display:flex;align-items:baseline;gap:6px;margin:14px 0 6px}#plan-dialog .quota-cycle-title label{margin:0}#plan-dialog #quota-cycle-options{padding:0;border:0;background:none;color:#1F6F62;font-size:12px;line-height:18px}#plan-dialog .quota-cycle-more:not([open]){margin:0}#plan-dialog .quota-cycle-more[open]{padding:8px 0}
+
+#plan-dialog #quota-decimal-note:not([hidden]){display:inline}

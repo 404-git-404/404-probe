@@ -141,7 +141,7 @@
       <p id="renewal-undo-note" class="renewal-warning" hidden>确认仅撤销本页最近一次登记；是否可撤销及期限由服务器最终裁定，不恢复更早操作。</p>
       <div class="renewal-tools"><button id="renewal-refresh" type="button">重新预览</button><span class="field-note">只更新日期，不会付款。</span><button id="renewal-edit" class="renewal-edit-link" type="button">改成其他日期</button><button id="renewal-undo" type="button" hidden>撤销本次登记</button></div>
     </div>
-    <section id="renewal-recovery" class="renewal-recovery" aria-label="核实原操作" hidden><p>结果尚未确认，请核实上次操作。离开本页会丢失核实信息，请先复制留存；不会自动重试。</p><code id="renewal-request-id"></code><div><button id="renewal-copy" type="button">复制核实信息</button><button id="renewal-verify" type="button">核实原操作</button></div></section>
+    <section id="renewal-recovery" class="renewal-recovery" aria-label="核实原操作" hidden><p>结果尚未确认，请核实上次操作。离开本页会丢失核实信息，请先复制留存；不会自动重试。</p><details><summary>核实信息</summary><code id="renewal-request-id"></code></details><div><button id="renewal-copy" type="button">复制核实信息</button><button id="renewal-verify" type="button">核实原操作</button></div></section>
     <div id="renewal-error" class="renewal-error" role="alert" hidden></div>
     <div class="drawer-actions"><button id="renewal-dismiss" type="button">取消</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认登记已续费</button></div>
   </dialog>
