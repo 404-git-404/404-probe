@@ -77,9 +77,9 @@ function loadApp() {
     location: {search: '', assign() {}}, setInterval() {}, setTimeout, queueMicrotask, addEventListener() {},
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/detail-summary.js'),'utf8'),sandbox);
-  for (const file of ['management.js', 'selector.js', 'range-slider.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'card.js', 'resource-history.js', 'detail-summary.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js', 'plan-units.js', 'youtube-status.js', 'public-egress-check.js', 'agent-enrollment.js', 'latency-mini.js', 'app.js'])
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '../web/static', file), 'utf8'), sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
+  for (const file of ['management.js', 'selector.js', 'range-slider.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'card.js', 'resource-history.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js', 'plan-units.js', 'youtube-status.js', 'public-egress-check.js', 'agent-enrollment.js', 'latency-mini.js', 'app.js'])
+    vm.runInContext((file==='app.js'?"globalThis.DialogShell={attach:()=>({heading(){}}),confirm:async()=>true};\n":'')+fs.readFileSync(path.join(__dirname, '../web/static', file), 'utf8'), sandbox);
   const render = input => {sandbox.input = input; return vm.runInContext('(()=>{const e=createPublicEgress("a");e.update(input);return e.element;})()', sandbox);};
   render.live = () => {const e = vm.runInContext('createPublicEgress("a")', sandbox); return input => {sandbox.live = e; sandbox.input = input; vm.runInContext('live.update(input)', sandbox); return e.element;};};
   return render;

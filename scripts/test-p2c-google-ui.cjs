@@ -26,8 +26,9 @@ function page(file) {
     location:{search:'?id='+('a'.repeat(32)),assign(){}},setInterval(){},setTimeout,queueMicrotask,addEventListener(){},
     navigator:{clipboard:{writeText:async()=>{}}},crypto:{randomUUID:()=> 'b'.repeat(32)},
     fetch:()=>new Promise(()=>{}),EventSource:class{addEventListener(){}close(){}}};
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/detail-summary.js'),'utf8'),sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/management.js'),'utf8'),sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/selector.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/network-quality-core.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/network-quality.js'),'utf8'),sandbox);

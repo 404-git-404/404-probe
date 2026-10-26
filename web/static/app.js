@@ -43,10 +43,8 @@ const removeShell = DialogShell.attach(removeAgentDialog,{size:'small',title:'�
 const agentState = AgentState.create();
 const monitorCoordinator = NetworkQualityCore.coordinator();
 const networkQuality = NetworkQuality.create({csrf: () => mutationCSRFToken, coordinator: monitorCoordinator,
-  onConfig: (id,config) => {latencyCharts.bindConfig(id,config);deviceDetails.networkChanged(id);},
-  onFamily: id => latencyCharts.familyChanged(id),
-  historyHost: {open: (id,trigger,exact) => deviceDetails.open(id,'network',trigger,exact), container: () => deviceDetails.networkContainer(),
-    active: id => deviceDetails.active('network',id), close: () => deviceDetails.close()}});
+  onConfig: (id,config) => {latencyCharts.bindConfig(id,config);},
+  onFamily: id => latencyCharts.familyChanged(id)});
 const latencyCharts = LatencyMini.create({coordinator: monitorCoordinator,
   family: id => networkQuality.familyOf(id), setFamily: (id,value) => networkQuality.setFamily(id,value), openSettings: (id,trigger) => networkQuality.openSettings(id,trigger)});
 const trafficCharts = TrafficChart.create({coordinator: monitorCoordinator});
@@ -56,7 +54,7 @@ const agents = agentState.agents;
 let overviewReady = false;
 const overview = Overview.create({size:CardMetrics.size,deadline:planDeadline});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
-  network: () => networkQuality, identity: agent => countryMark(agent?.country_code,agent?.country_source),
+  identity: agent => countryMark(agent?.country_code,agent?.country_source),
   management: agent => agentCards.get(agent.agent_id)?.detailPanel,
   overview: agent => agentCards.get(agent.agent_id)?.overviewPanel,
   upgradeTargets: id => loadDetailUpgradeTargets(id),
@@ -189,8 +187,9 @@ async function openUpgradeAgentDialog(agent) {
       upgradeReleaseSelect.append(option);
     }
     upgradeReleaseSelect.value = upgradeReleaseTargets.length ? '0' : '';
-    upgradeReleaseSelect.hidden=upgradeReleaseTargets.length===1;
-    document.querySelector('#upgrade-release-label').hidden=upgradeReleaseTargets.length===1;
+    const soleStable=upgradeReleaseTargets.length===1&&upgradeReleaseTargets[0].channel==='stable';
+    upgradeReleaseSelect.hidden=soleStable;
+    document.querySelector('#upgrade-release-label').hidden=soleStable;
     upgradeReleaseSelect.disabled=upgradeReleaseTargets.length<2;
     refreshUpgradeSelection();
     if (!upgradeReleaseTargets.length) {
@@ -259,7 +258,9 @@ const enrollmentDialog = AgentEnrollment.createController({
   unauthorized: () => location.assign('/login'),
 });
 
+let manualEnrollmentGeneration=0;
 function clearEnrollmentDialog() {
+  manualEnrollmentGeneration++;
   createdInstallCommand.textContent = '';
 	copyInstallCommand.disabled = true;
   createdEnrollment.textContent = '';
@@ -285,7 +286,8 @@ addAgentDialog.addEventListener('close', clearEnrollmentDialog);
 
 addAgentForm.addEventListener('submit', async event => {
   event.preventDefault();
-  if (!mutationCSRFToken) return;
+  if (!mutationCSRFToken || addAgentSubmit.disabled) return;
+  const generation=manualEnrollmentGeneration;
   addAgentSubmit.disabled = true;
   addAgentError.classList.add('hidden');
   try {
@@ -301,6 +303,7 @@ addAgentForm.addEventListener('submit', async event => {
     }
     if (!response.ok) throw new Error(response.statusText);
     const enrollment = await response.json();
+    if(generation!==manualEnrollmentGeneration||!addAgentDialog.open)return;
     createdInstallCommand.textContent = enrollment.install_available ? enrollment.install_command : (enrollment.install_message || '当前 Server 构建无法生成安全安装命令');
 	copyInstallCommand.disabled = !enrollment.install_available;
     createdEnrollment.textContent = enrollment.enrollment_value;
@@ -308,6 +311,7 @@ addAgentForm.addEventListener('submit', async event => {
     addAgentResult.classList.remove('hidden');
     await refresh();
   } catch (error) {
+    if(generation!==manualEnrollmentGeneration)return;
     addAgentError.classList.remove('hidden');
     addAgentSubmit.disabled = false;
   }
@@ -1397,7 +1401,7 @@ function createAgentCard(initialAgent) {
     management.append(remove);
     const resetTraffic = document.createElement('button');
     resetTraffic.type = 'button'; resetTraffic.dataset.focusKey = 'traffic-reset';
-    resetTraffic.textContent = trafficResetRequests.has(agent.agent_id) ? '用原请求核实累计起点' : '重新开始累计统计';
+    resetTraffic.textContent = trafficResetRequests.has(agent.agent_id) ? '核实前次请求' : '重新开始…';
     resetTraffic.disabled = !canResetTraffic(agent);
     resetTraffic.addEventListener('click', () => resetAccumulatedTraffic(agent.agent_id));
     const resetFeedback = document.createElement('span');resetFeedback.setAttribute('aria-live','polite');
@@ -1524,7 +1528,7 @@ function createAgentCard(initialAgent) {
       setCardText(recheck, agent.google_status?.pending ? '检测中…' : '重新检测');
       recheck.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || agent.revoked || !agent.google_status?.supported || agent.google_status?.pending || agentState.busy(agent.agent_id, 'google') || agentState.blocked(agent.agent_id);
       setCardText(checkFeedback, agentActionErrors.get(`${agent.agent_id}/google`) || '');
-      setCardText(resetTraffic, trafficResetRequests.has(agent.agent_id) ? '用原请求核实累计起点' : '重新开始累计统计');
+      setCardText(resetTraffic, trafficResetRequests.has(agent.agent_id) ? '核实前次请求' : '重新开始…');
       resetTraffic.disabled = !canResetTraffic(agent);
       setCardText(resetFeedback, trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量');
       editPlan.disabled = planActionBlocked(agent);

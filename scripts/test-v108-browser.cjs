@@ -26,7 +26,9 @@ function summary(){const v=v5Card(config(),'ipv4',now());if(scenario==='real')re
   if(scenario==='special'&&i===0)l.tcp.blocks.slice(2,10).forEach(b=>b.judged=5);
   if(scenario==='normal'&&i===2)l.tcp.blocks.slice(0,10).forEach(b=>b.judged=4);
  });return v;}
-function resources(){const n=now(),to=Math.floor(n/M)*M,from=n-DAY,points=Array.from({length:1440},(_,i)=>{const k=i/15,spike=Math.max(0,1-Math.abs(k-62));return {timestamp:to-(1439-i)*M,cpu:1,ram_percent:15.9,swap_percent:0,disk_percent:19.3,load1:.09,load5:.06,load15:.01,rx_rate:500+300*Math.abs(Math.sin(k*.37))+spike*5000+(k>30&&k<40?1500*Math.sin((k-30)/10*Math.PI):0),tx_rate:250+150*Math.abs(Math.cos(k*.41))+spike*1500};});return {agent_id:ID,server_now:n,from,to:n,bucket_from:Math.floor(from/M)*M,bucket_to:to,interval_ms:M,source:'minute_metrics',aggregation:'arithmetic_mean',retention_days:30,coverage:'partial',point_limit:1441,oldest_timestamp:points[0].timestamp,last_timestamp:points.at(-1).timestamp,points};}
+function resources(q=new URLSearchParams()){const n=now(),end=q.has('to')?Number(q.get('to')):n,from=q.has('from')?Number(q.get('from')):end-(Number(q.get('hours'))||24)*3600000,start=Math.floor(from/M)*M,last=Math.floor(end/M)*M,points=[];
+ for(let t=start;t<=last;t+=M){const i=Math.floor(t/M),k=i/15;points.push({timestamp:t,cpu:1+Math.abs(Math.sin(k))*3,ram_percent:15.9,swap_percent:0,disk_percent:19.3,load1:.09,load5:.06,load15:.01,rx_rate:500+Math.abs(Math.sin(k*.37))*5000,tx_rate:250+Math.abs(Math.cos(k*.41))*1500,rx_total:i*1000000,tx_total:i*700000});}
+ return {agent_id:ID,server_now:n,from,to:end,bucket_from:start,bucket_to:last,interval_ms:M,source:'minute_metrics',aggregation:'arithmetic_mean',retention_days:30,coverage:'partial',point_limit:1441,oldest_timestamp:points[0]?.timestamp??null,last_timestamp:points.at(-1)?.timestamp??null,points};}
 function history(targetID){const t=C.adapt(config()).targets.find(t=>t.id===targetID);if(!t)return {};
  const n=now(),start=Math.floor(n/M)*M-1439*M,idx=C.slots.indexOf(t.slot);
  const points=Array.from({length:1440},(_,i)=>{const v=[149,258,236][idx]+Math.sin(i*.4)*5+(idx===2&&i>1400&&i<1420?400:0);return {start:start+i*M,end:Math.min(start+(i+1)*M,n),count:2,valid_rtts:2,not_executed:0,sent:6,received:5,p50_5m_ms:v,p50_ms:v,p95_ms:v+10,completeness:'complete',execution_coverage:'unverified',config_revision_min:'2',config_revision_max:'2',slot_revision_min:t.slot_revision,slot_revision_max:t.slot_revision};});
@@ -42,7 +44,7 @@ before(async()=>{
   if(u.pathname.endsWith('/jobs'))return json({items:[]});
   if(u.pathname.endsWith('/v4/config'))return json(config());
   if(u.pathname.endsWith('/v5/card'))return json(summary());
-  if(u.pathname.endsWith('/resources/history'))return json(resources());
+  if(u.pathname.endsWith('/resources/history'))return json(resources(u.searchParams));
   if(u.pathname.endsWith('/v3/history'))return json(history(u.searchParams.get('target_id')));
   if(u.pathname===`/api/v1/web/agents/${ID}`)return json(agent());
   if(u.pathname.startsWith('/api/'))return json({},404);
@@ -119,7 +121,7 @@ test('400px card: long outbound names never truncate YouTube region; many choice
   assert.equal(layout.cardWidth,400);assert.match(layout.text,/地区 US/);assert.equal(layout.fits,true);assert.ok(layout.labelRight<=layout.buttonLeft);assert.ok(layout.buttonRight<=layout.cardRight);
   await shot(page,'400-long-outbound');await page.click('.selector-trigger');
   assert.equal(await page.locator('.selector-row').count(),2);assert.equal(await page.locator('.selector-row select option').count(),202);assert.equal(await page.locator('input[type=radio]').count(),0);
-  assert.ok((await page.locator('.selector-dialog').boundingBox()).height<350);
+  const dialogRect=await page.locator('.selector-dialog').boundingBox();assert.equal(dialogRect.width,560);assert.ok(dialogRect.height<500);
   for(let i=0;i<2;i++)await page.locator('.selector-row select').nth(i).selectOption('出站-3');
   const before=posts.length;await page.locator('[data-selector-kind=submit]').nth(1).click();await page.waitForSelector('.selector-error');
   assert.equal(posts.length,before+1);assert.equal(posts.at(-1).body.selector,'出站备用组');assert.equal(posts.at(-1).body.choice,'出站-3');
@@ -146,6 +148,7 @@ test('R09 overview/management preserve the fixed frame and state labels',browser
   await page.locator('#details-tab-management').click();assert.equal((await page.locator('#device-details').boundingBox()).height,680);
   assert.match(await page.locator('#details-pane-management').innerText(),/随上报自动更新/);
   assert.match(await page.locator('#details-pane-management').innerText(),/撤销 Agent/);
+  await page.locator('#details-tab-resources').click();await page.waitForSelector('.resource-wide');const stats=await page.locator('.resource-wide .details-note').first().innerText();assert.doesNotMatch(stats,/\/s\/s/);assert.match(stats,/按每分钟平均值/);
   await page.keyboard.press('Escape');assert.equal(await page.locator('#device-details').evaluate(n=>n.open),false);assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });

@@ -84,6 +84,7 @@
       if(els.choiceName)els.choiceName.value='';
       const ok=Boolean(available());
       els.chooseOneClick.disabled=!ok;
+      if(els.next){method=ok?'oneclick':'manual';els.chooseOneClick.setAttribute('aria-checked',String(ok));els.chooseManual.setAttribute('aria-checked',String(!ok));}
       els.reason.textContent=ok?'':(unavailableReason()||'当前 Server 构建无法使用一键安装');
       els.reason.classList.toggle('hidden',ok);
     }
@@ -134,7 +135,7 @@
         els.error.classList.remove('hidden');
         els.submit.disabled=false;
         return false;
-      }finally{submitting=false;}
+      }finally{if(serial===generation)submitting=false;}
     }
 
     async function copy(){

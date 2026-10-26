@@ -64,11 +64,6 @@ test('P5a2 production hidden abort retains lease until body settles; visible res
  f.doc.hidden=false;f.doc.dispatch('visibilitychange');await flush();assert.equal(f.requests.length,2);assert.equal(f.plots.length,3);f.dialog.querySelector('#details-tab-management').dispatch('click');assert.ok(f.plots[0].destroyed);
  f.doc.hidden=true;f.doc.dispatch('visibilitychange');f.doc.hidden=false;f.doc.dispatch('visibilitychange');await flush();assert.equal(f.requests.length,2);f.close();
 });
-test('P5a2 production network host tab switch releases exact owner, no native dialog stack and unsupported security stays observation',()=>{
- const f=fixture();f.details.open(id,'network',null,{target:'exact-v6',family:'ipv6',kind:'ratio'});assert.equal(f.details.active('network',id),true);assert.equal(f.details.active('network',other),false);assert.equal(f.restored(),0);
- f.dialog.querySelector('#details-tab-security').dispatch('click');assert.equal(f.released(),1);assert.equal(f.details.snapshot().tab,'security');assert.equal(f.requests.length,0);
- f.dialog.querySelector('#details-tab-network').dispatch('click');assert.equal(f.restored(),1);f.agents.delete(id);f.details.sync();assert.equal(f.dialog.open,false);f.close();
-});
 test('P5a2 production native cancel/close cleanup and exact connected focus return without another device borrowing',()=>{
  const f=fixture(),trigger=new f.Element('button');trigger.dataset.focusKey='manage';f.doc.body.append(trigger);
  f.details.open(id,'management',trigger);f.dialog.dispatch('cancel');assert.equal(f.doc.activeElement,trigger);assert.equal(f.doc.body.style.overflow,undefined);
@@ -79,40 +74,6 @@ test('M04 queued close from the previous dialog cannot close an immediately reop
  for(let i=0;i<30;i++){f.details.open(id,'resources',trigger);f.dialog.dispatch('cancel');assert.equal(f.doc.activeElement,trigger);f.details.open(id,'resources',trigger);f.dialog.dispatch('close');assert.equal(f.dialog.open,true);assert.equal(f.details.snapshot().tab,'resources');assert.equal(f.doc.body.style.overflow,'hidden');}
  f.dialog.close();assert.equal(f.doc.activeElement,trigger);assert.equal(f.doc.body.style.overflow,undefined);f.close();
 });
-test('P5a2 production exact network visible return restores once; inactive/closed/device removal never restores',()=>{
- const f=fixture();f.details.open(id,'network',null,{target:'exact-v6',family:'ipv6',kind:'ratio'});
- f.doc.hidden=true;f.doc.dispatch('visibilitychange');assert.equal(f.released(),1);
- f.doc.hidden=false;f.doc.dispatch('visibilitychange');assert.equal(f.restored(),1);f.doc.dispatch('visibilitychange');assert.equal(f.restored(),1);
- f.doc.hidden=true;f.doc.dispatch('visibilitychange');f.dialog.querySelector('#details-tab-management').dispatch('click');f.doc.hidden=false;f.doc.dispatch('visibilitychange');assert.equal(f.restored(),1);
- f.details.open(id,'network',null,{target:'exact-v6',family:'ipv6',kind:'ratio'});f.doc.hidden=true;f.doc.dispatch('visibilitychange');f.details.close();f.doc.hidden=false;f.doc.dispatch('visibilitychange');assert.equal(f.restored(),1);
- f.details.open(id,'network',null,{target:'exact-v6',family:'ipv6',kind:'ratio'});f.doc.hidden=true;f.doc.dispatch('visibilitychange');f.agents.delete(id);f.details.sync();f.doc.hidden=false;f.doc.dispatch('visibilitychange');assert.equal(f.restored(),1);f.close();
-});
-test('P5a2 combined actual Details + N3 host exact V6 ratio hidden/visible once, inactive no poll, removed target no borrow',async()=>{
- const {doc,dialog,Element}=dom(),standalone=new Element('dialog');standalone.id='network-quality-history';doc.body.append(standalone);
- const agent={agent_id:id,name:'exact-host',online:true},agents=new Map([[id,agent]]),queue=C.coordinator(),requests=[],plots=[];
- const targets=['ipv4','ipv6'].map((family,i)=>({id:String(i+3).repeat(32),family,slot:'telecom',status:'active',protocol:'tcp',source:'catalog',region:'synthetic'}));
- let cfg={supported:true,enabled:true,ipv6:true,revision:'1',targets},ui,details;
- class Plot{constructor(){this.over=new Element('div');plots.push(this);}destroy(){this.destroyed=true;}setSize(){}}
- const fetcher=async(url,init)=>{requests.push({url,signal:init.signal});let value;
-  if(url.endsWith('/catalog'))value={regions:[]};else if(url.endsWith('/config'))value=cfg;
-  else{const target=targets.find(t=>t.id===new URL(url,'http://fixture').searchParams.get('target_id'));value={target,now,partial:true,completeness:'unverified',window:{attempts:2,failure_percent:0},blocks:[{start:now-120000,end:now-60000,p50_ms:1,p95_ms:2,attempts:2,failure_percent:0},{start:now-60000,end:now,p50_ms:0,p95_ms:1,attempts:2,failure_percent:0}]};}
-  return new Response(JSON.stringify(value));};
- details=D.create({document:doc,state:S,agents,coordinator:queue,Plot,Resize:null,network:()=>ui,fetcher});
- ui=N.create({document:doc,state:S,coordinator:queue,Plot,Resize:null,Observer:null,interval:()=>1,clear:()=>{},fetcher,
-  historyHost:{open:(id,trigger,exact)=>details.open(id,'network',trigger,exact),container:()=>details.networkContainer(),active:id=>details.active('network',id),close:()=>details.close()}});
- const node=ui.mount(agent);doc.body.append(node);ui.setVisible(id,true);await flush();ui.setVisible(id,false);await flush();
- assert.equal(ui.openHistoryFor(id,targets[1].id,'ipv6','ratio'),true);await flush();assert.equal(standalone.open,false);assert.equal(ui.snapshot().history.family,'ipv6');assert.equal(ui.snapshot().history.kind,'ratio');assert.ok(plots.length);
- const before=requests.length;doc.hidden=true;doc.dispatch('visibilitychange');await flush();assert.equal(ui.snapshot().history,null);assert.ok(plots.at(-1).destroyed);assert.equal(queue.snapshot().active,0);
- doc.hidden=false;doc.dispatch('visibilitychange');await flush();assert.equal(requests.length,before+1);assert.equal(ui.snapshot().history.family,'ipv6');assert.ok(requests.at(-1).url.includes(targets[1].id));doc.dispatch('visibilitychange');await flush();assert.equal(requests.length,before+1);
- dialog.querySelector('#details-tab-management').dispatch('click');const inactive=requests.length;ui.tick();await flush();assert.equal(requests.length,inactive);assert.equal(ui.snapshot().history,null);
- // Same family requested after its actual config is replaced: no fallback target.
- cfg={...cfg,revision:'2',targets:[targets[0]]};ui.setVisible(id,true); // Existing card config reload belongs to the real controller.
- node.querySelector('.nq-link').dispatch('click');await flush();ui.setVisible(id,false);
- assert.equal(ui.openHistoryFor(id,targets[1].id,'ipv6','ratio'),false);
- dialog.querySelector('#details-tab-network').dispatch('click');await flush();assert.equal(ui.snapshot().history,null);assert.ok(details.networkContainer().children[0].textContent.includes('不可用'));
- details.shutdown();ui.close();queue.close();
-});
-
 test('J2 closing the dialog or switching device returns revealed IP addresses to half hidden',()=>{
  const {doc,dialog,Element}=dom(),queue=C.coordinator(),PE=require('../web/static/public-egress-check.js');
  const agents=new Map([[id,{agent_id:id,name:'设备',detail_loaded:true}],[other,{agent_id:other,name:'另一个',detail_loaded:true}]]);
@@ -130,4 +91,13 @@ test('J2 closing the dialog or switching device returns revealed IP addresses to
   eye.dispatch('click');assert.equal(ipv4(),'IPv4：203.0.113.9');
   details.open(other,'management');assert.equal(ipv4(),'IPv4：203.0.*.*','another device starts half hidden');
  }finally{details.shutdown();queue.close();}
+});
+
+test('R09 four tabs exclude network and attempts cannot open its removed host',()=>{
+ const f=fixture();f.details.open(id);assert.equal(f.details.snapshot().tab,'overview');assert.equal(f.dialog.querySelector('#details-tab-network'),undefined);f.details.open(id,'network');assert.equal(f.details.snapshot().tab,'overview');f.close();
+});
+test('R09 security records are bounded, incomplete sources are explicit, and shares use total events',()=>{
+ const f=fixture(),sources=Array.from({length:100},(_,i)=>({ip:'198.51.100.'+(i+1),count:100-i,first_seen:now-60000,last_seen:now}));
+ f.agents.get(id).security={supported:true,status:'partial',updated_at:now,current:{status:'partial',window_start:now-86400000,window_end:now,collected_at:now,total_events:10000,tracked_sources:154,dropped_sources:54,sources}};
+ f.details.open(id,'security');const text=f.dialog.all().map(n=>n.textContent).join(' ');assert.match(text,/最近一次检查/);assert.doesNotMatch(text,/近 24 小时/);assert.match(text,/只记录了前 100 个来源/);assert.match(text,/1.0%/);const rows=f.dialog.querySelectorAll('.details-security-row').slice(1);assert.equal(rows.filter(n=>!n.hidden).length,8);const toggle=f.dialog.all().find(n=>n.textContent==='显示全部已记录来源（100 个）');toggle.dispatch('click');assert.equal(rows.filter(n=>!n.hidden).length,100);f.close();
 });

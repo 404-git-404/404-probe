@@ -82,8 +82,9 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
       if(route) {const value=route(url,options); if(value !== undefined) Promise.resolve(value).then(d.resolve,d.reject);}
       return d.promise;
     },EventSource:class {constructor(){this.listeners=new Map();sources.push(this);}close(){this.closed=true;}addEventListener(type,f){this.listeners.set(type,f);}}};
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/detail-summary.js'),'utf8'),sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/management.js'),'utf8'),sandbox,{filename:'management.js'});
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/selector.js'),'utf8'),sandbox,{filename:'selector.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/network-quality-core.js'),'utf8'),sandbox,{filename:'network-quality-core.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/network-quality.js'),'utf8'),sandbox,{filename:'network-quality.js'});
@@ -714,7 +715,7 @@ test('P2a actual traffic uncertain retry uses original ID, duplicate disabled, m
   const one=app.request('/traffic/reset');const original=JSON.parse(one.options.body).request_id;
   assert.equal(app.state.agents.get(A).traffic.rx_total,100);assert.equal(app.eval('trafficRequest'),original);
   assert.match(app.nodes.get('#traffic-reset-feedback').textContent,/不确定/);
-  button.disabled=false;const second=button.emit('click');const two=app.request('/traffic/reset');assert.equal(JSON.parse(two.options.body).request_id,original);
+  button.disabled=false;const second=button.emit('click');await flush();const two=app.request('/traffic/reset');assert.equal(JSON.parse(two.options.body).request_id,original);
   two.resolve(response({rx_total:0,tx_total:0,started_at:2}));await second;
   assert.equal(app.state.agents.get(A).traffic.rx_total,100);assert.equal(app.state.agents.get(A).plan.currency,'USD');assert.equal(app.eval('trafficRequest'),null);
   assert.match(app.nodes.get('#traffic-reset-feedback').textContent,/已确认原请求执行/);
@@ -723,7 +724,7 @@ test('P2a actual traffic uncertain retry uses original ID, duplicate disabled, m
 test('P2a actual traffic cancelled/deleted entity cannot accept late totals or feedback',async()=>{
   for(const action of ['delete','pagehide']) {
     const app=dashboard('history.js');seed(app.state,{...dto(),traffic:{rx_total:100,started_at:1}});app.eval(`currentAgent=agentState.agents.get('${A}')`);
-    app.nodes.get('#traffic-reset').disabled=false;const work=app.nodes.get('#traffic-reset').emit('click');const write=app.request('/traffic/reset');
+    app.nodes.get('#traffic-reset').disabled=false;const work=app.nodes.get('#traffic-reset').emit('click');await flush();const write=app.request('/traffic/reset');
     if(action==='delete') app.eval(`agentState.beginDelete('${A}')`);else app.windowEvent('pagehide');
     write.resolve(response({rx_total:0,started_at:2}));await work;
     assert.equal(app.state.agents.get(A).traffic.rx_total,100);assert.doesNotMatch(app.nodes.get('#traffic-reset-feedback').textContent,/已从当前有效样本/);
@@ -742,7 +743,7 @@ test('P2a actual late name failure does not annotate subsequently changed input'
 test('P2a actual old reset receipt cannot roll back later reset/sample; detail confirms current',async()=>{
   const app=dashboard('history.js');seed(app.state,{...dto(),traffic:{rx_total:45,tx_total:67,started_at:300}});
   app.eval(`currentAgent=agentState.agents.get('${A}');trafficRequest='${'d'.repeat(32)}'`);
-  app.nodes.get('#traffic-reset').disabled=false;const work=app.nodes.get('#traffic-reset').emit('click');
+  app.nodes.get('#traffic-reset').disabled=false;const work=app.nodes.get('#traffic-reset').emit('click');await flush();
   app.request('/traffic/reset').resolve(response({rx_total:0,tx_total:0,started_at:100}));await work;await flush();
   assert.equal(app.state.agents.get(A).traffic.rx_total,45);assert.equal(app.state.agents.get(A).traffic.started_at,300);
   app.request('/'+A).resolve(response({...dto(),traffic:{rx_total:50,tx_total:70,started_at:300}}));await flush();

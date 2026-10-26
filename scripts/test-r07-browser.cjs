@@ -28,7 +28,7 @@ async function open(raw, {dialog = true, history = null, plot = false, host = fa
   await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host" class="c7"></div><dialog id="network-quality-history"></dialog></body></html>');
   for (const css of ['style.css', 'network-quality.css', 'card-v7.css']) await page.addStyleTag({content: read(css)});
   if (plot) { await page.addStyleTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.min.css'), 'utf8')}); await page.addScriptTag({content: fs.readFileSync(path.join(root, 'vendor', 'uplot', 'uPlot.iife.min.js'), 'utf8')}); }
-  for (const js of ['dialog-shell.js','agent-state.js', 'management.js', 'network-quality-core.js', 'network-quality.js']) await page.addScriptTag({content: read(js)});
+  for (const js of ['agent-state.js', 'management.js', 'network-quality-core.js', 'network-quality.js']) await page.addScriptTag({content: read(js)});
   await page.evaluate(({raw, agent, history, plot, host, scrollerHeight, v5}) => {
     window.__hist = history; window.__v5 = v5; window.__plots = []; window.__scrollerHeight = scrollerHeight;
     const Plot = plot ? function(opts, data, target) { const u = new window.uPlot(opts, data, target); window.__plots.push(u); return u; } : undefined;
@@ -267,3 +267,7 @@ test('Scroll (Chromium): a change elsewhere in the configuration neither closes 
   } finally { await page.close(); }
 });
 
+
+test('R09 card lines have no button semantics or history opening on click',{skip:!available},async()=>{
+ const {page}=await open(load('v4-running'),{dialog:false});try{const row=page.locator('.nq7-row').first();assert.equal(await row.evaluate(n=>n.tagName),'DIV');assert.equal(await row.getAttribute('title'),null);await row.click();assert.equal(await page.locator('#network-quality-history').evaluate(n=>n.open),false);}finally{await page.close();}
+});

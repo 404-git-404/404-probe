@@ -13,7 +13,6 @@
   <link rel="stylesheet" href="/plan-editor.css">
   <link rel="stylesheet" href="/plan-renewal.css">
   <link rel="stylesheet" href="/overview.css">
-  <link rel="stylesheet" href="/dialog-shell.css">
 </head>
 <body>
   <header><div><h1>404-probe</h1><p>已认证 Agent 观测 · <span id="server-version">Server unknown</span></p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
@@ -78,7 +77,7 @@
   <dialog id="upgrade-agent-dialog" class="agent-dialog" aria-labelledby="upgrade-agent-title">
     <h2 id="upgrade-agent-title">升级 Agent</h2>
 
-    <div class="upgrade-versions"><span>当前版本 <strong id="upgrade-current-version"></strong></span><span>目标版本 <strong id="upgrade-target-version"></strong></span></div>
+    <div class="upgrade-versions"><strong id="upgrade-current-version"></strong><span aria-hidden="true">→</span><strong id="upgrade-target-version"></strong></div><p class="upgrade-same-server">与 Server 相同</p>
     <form id="upgrade-agent-form">
       <label id="upgrade-release-label" for="upgrade-release">升级目标（与 Server 相同）</label>
       <select id="upgrade-release" name="release"></select>
@@ -142,7 +141,6 @@
   <footer>数据通过 Server 安全汇总</footer>
   <dialog id="network-quality-history" class="nq-history" aria-labelledby="nq-history-title"></dialog>
   <dialog id="device-details" class="device-details" aria-labelledby="device-details-title"></dialog>
-  <script src="/dialog-shell.js" defer></script>
   <script src="/agent-state.js" defer></script>
   <script src="/management.js" defer></script>
   <script src="/selector.js" defer></script>
@@ -155,7 +153,6 @@
   <script src="/card-metrics.js" defer></script>
   <script src="/card.js" defer></script>
   <script src="/resource-history.js" defer></script>
-  <script src="/detail-summary.js" defer></script>
   <script src="/device-details.js" defer></script>
   <script src="/plan-editor.js" defer></script>
   <script src="/plan-renewal.js" defer></script>

@@ -7,6 +7,8 @@ const E = require('../web/static/agent-enrollment.js');
 class El {
   constructor() { this.textContent = ''; this.value = ''; this.disabled = false; this.listeners = {}; this.classes = new Set(['hidden']); this.classList = {
     add: c => this.classes.add(c), remove: c => this.classes.delete(c), toggle: (c, on) => { if (on === undefined) on = !this.classes.has(c); on ? this.classes.add(c) : this.classes.delete(c); return on; }, contains: c => this.classes.has(c) }; }
+  setAttribute(k,v){this[k]=v;}
+  reportValidity(){return !!this.value.trim();}
   addEventListener(type, f) { (this.listeners[type] || (this.listeners[type] = [])).push(f); }
   async fire(type, event = {preventDefault() {}}) { for (const f of this.listeners[type] || []) await f(event); }
   get hidden() { return this.classes.has('hidden'); }
@@ -17,7 +19,7 @@ const COMMAND = 'curl -fsSL https://github.com/404-git-404/404-probe/releases/do
 const T0 = 1800000000000;
 
 function harness(options = {}) {
-  const els = Object.fromEntries(names.map(n => [n, new El()]));
+  const els = Object.fromEntries((options.frontChoice?[...names,'choiceName','next']:names).map(n => [n, new El()]));
   const clock = {now: T0}, calls = [], copied = [], timers = new Map(); let nextTimer = 1, unauthorizedCalls = 0;
   const respond = options.respond || ((url, init) => url.endsWith('/revoke')
     ? {status: 200, ok: true, json: async () => ({revoked: true})}
@@ -258,4 +260,11 @@ test('N1: every failure reason has its own text; only a truly unknown one is gen
   await broken.els.chooseOneClick.fire('click');
   await broken.controller.submit();
   assert.equal(broken.els.error.textContent, '生成失败，请重试。');
+});
+
+test('R38 name and method selection create no credentials before explicit next/generate',async()=>{
+ const h=harness({frontChoice:true});h.els.choiceName.value='synthetic';await h.els.chooseManual.fire('click');assert.deepEqual(visible(h.els),['choice']);assert.equal(h.calls.length,0);await h.els.chooseOneClick.fire('click');await h.els.next.fire('click');assert.deepEqual(visible(h.els),['oneclick']);assert.equal(h.els.name.value,'synthetic');assert.equal(h.calls.length,0);await h.controller.submit();assert.equal(h.calls.length,1);
+});
+test('R38 late enrollment response after closing never restores secret or opens a result',async()=>{
+ let resolve;const h=harness({respond:()=>new Promise(r=>resolve=r)});h.controller.chooseOneClick();h.els.name.value='synthetic';const task=h.controller.submit();h.controller.close();resolve({ok:true,status:201,json:async()=>({command:COMMAND,enrollment_id:'e',expires_at:T0+60000})});await task;assert.equal(h.els.command.textContent,'');assert.deepEqual(visible(h.els),['choice']);assert.equal(h.controller.hasCommand,false);
 });

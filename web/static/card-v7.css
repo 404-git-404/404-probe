@@ -158,7 +158,7 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
 .c7 .network-quality .nq7-btn,.c7 .network-quality .lm7-btn{flex:none;padding:2px 7px;border:1px solid var(--c7-line);border-radius:6px;background:var(--c7-card);color:var(--c7-text);font-size:11px;line-height:1.4;cursor:pointer}
 .c7 .network-quality .nq7-btn:hover,.c7 .network-quality .lm7-btn:hover{background:var(--c7-mod-hover)}
 .c7 .nq7-rows{display:flex;flex:1;flex-direction:column;justify-content:space-between;gap:0}
-.c7 .network-quality .nq7-row{display:grid;grid-template-columns:62px minmax(0,1fr) 56px;align-items:center;gap:8px;width:100%;height:34px;padding:0;border:0;border-radius:0;background:transparent;color:var(--c7-text);text-align:left;cursor:pointer}
+.c7 .network-quality .nq7-row{display:grid;grid-template-columns:62px minmax(0,1fr) 56px;align-items:center;gap:8px;width:100%;height:34px;padding:0;border:0;border-radius:0;background:transparent;color:var(--c7-text);text-align:left;cursor:default}
 .c7 .network-quality .nq7-row:disabled{cursor:default;opacity:1}
 .c7 .network-quality .nq7-row:not(:disabled):hover{background:transparent}
 .c7 .nq7-label{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

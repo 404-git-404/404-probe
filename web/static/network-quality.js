@@ -138,12 +138,11 @@
       card.node.append(faceA);
     }
     function buildRow(card,key) {
-      const node=el('button','nq7-row'),label=el('span','nq7-label'),mid=el('span','nq7-mid'),blocks=el('span','nq7-blocks'),text=el('span','nq7-text'),right=el('span','nq7-right');
-      node.type='button';node.dataset.slot=key;node.dataset.focusKey=`nq-row-${key}`;node.title='点击进入详情页的这条线路';
+      const node=el('div','nq7-row'),label=el('span','nq7-label'),mid=el('span','nq7-mid'),blocks=el('span','nq7-blocks'),text=el('span','nq7-text'),right=el('span','nq7-right');
+      node.dataset.slot=key;
       const cells=Array.from({length:20},(_,i)=>{const c=el('span','nq7-b');c.dataset.i=String(i);blocks.append(c);return c;});
       mid.append(blocks,text);node.append(label,mid,right);
       const view={node,label,blocks,text,right,cells,tcp:null,icmp:null};
-      node.addEventListener('click',()=>{const t=view.tcp?.id?view.tcp:view.icmp?.id?view.icmp:null;if(t)openHistory(card,t,t.protocol==='tcp'?'latency':'ratio',node);});
       return view;
     }
     // Before the first answer, or when the device is gone: a lane described by the configuration alone.
@@ -190,7 +189,7 @@
           view.node.setAttribute('aria-label',`${label}，${shown.text}；${right.text}`);
         }
         set(view.right,right.text);view.right.title=right.title;view.right.dataset.tone=right.tone;
-        view.node.disabled=!(view.tcp?.id||view.icmp?.id);
+
         view.node.dataset.stale=String(!!card.summaryError&&!!summary);
       }
       for(const [key,view]of card.rows)if(!live.has(key)){view.node.remove();card.rows.delete(key);}
