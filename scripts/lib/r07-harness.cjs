@@ -144,7 +144,7 @@ function setup(options = {}) {
 }
 
 // Every element in the page, for the checks that no user text ever became markup.
-const allowedTags = new Set(['SECTION', 'DIV', 'BUTTON', 'SPAN', 'SMALL', 'P', 'LABEL', 'INPUT', 'SELECT', 'OPTION', 'FIELDSET', 'LEGEND', 'H2', 'STRONG', 'OUTPUT', 'DIALOG', 'BODY']);
+const allowedTags = new Set(['SECTION', 'DIV', 'BUTTON', 'SPAN', 'SMALL', 'P', 'LABEL', 'INPUT', 'SELECT', 'OPTION', 'FIELDSET', 'LEGEND', 'H2', 'STRONG', 'OUTPUT', 'DIALOG', 'BODY', 'DATALIST']);
 const tags = root => [root, ...root.all()].map(n => n.tagName);
 
 module.exports = {v5Card, C, UI, State, load, clone, flush, dom, setup, cardHistory, allowedTags, tags, AGENT, fixtureDir};

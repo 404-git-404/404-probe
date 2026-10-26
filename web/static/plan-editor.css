@@ -47,3 +47,5 @@
 @media(max-width:620px){#plan-dialog.plan-editor,#plan-dialog.plan-editor[data-mode=quota]{height:auto;max-height:calc(100dvh - 32px);max-width:calc(100vw - 32px);border:1px solid #E2D9CC;border-radius:16px}#plan-dialog form{height:auto;max-height:calc(100dvh - 34px)}#plan-dialog .plan-editor-body{padding:18px 16px;flex:1;max-height:calc(100dvh - 210px)}#plan-dialog .drawer-head,#plan-dialog .drawer-actions{padding:14px 16px}#plan-dialog .plan-price-row{grid-template-columns:86px minmax(0,1fr) 90px}#plan-dialog .plan-amount-row{grid-template-columns:minmax(0,1fr) 90px}}
 
 #plan-dialog #plan-cancel{border-color:#D8CEBF}#plan-dialog .plan-editor-body p{line-height:1.5}#plan-dialog #plan-traffic-fields>label{margin-top:14px}#plan-dialog #plan-traffic-fields>label:first-child{margin-top:0}
+
+#plan-dialog .quota-cycle-title{display:flex;align-items:baseline;gap:6px;margin:14px 0 6px}#plan-dialog .quota-cycle-title label{margin:0}#plan-dialog #quota-cycle-options{padding:0;border:0;background:none;color:#1F6F62;font-size:12px;line-height:18px}#plan-dialog .quota-cycle-more:not([open]){margin:0}#plan-dialog .quota-cycle-more[open]{padding:8px 0}

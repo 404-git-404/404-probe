@@ -60,8 +60,8 @@ test('M1 (Chromium): a clean dialog shows no question; each question appears alo
   try {
     assert.deepEqual(await visibleGuards(page), []);
     await page.fill('[data-nq-field="telecom-port"]', '444');
-    await page.click('[data-nq-field="enabled"]'); // the switch stays off and asks
-    assert.deepEqual(await visibleGuards(page), ['有未保存的修改，先保存吗？']);
+    await page.click('[data-nq-field="enabled"]');assert.deepEqual(await visibleGuards(page),[]);await page.click('[data-nq-field="save-bottom"]');
+    assert.deepEqual(await visibleGuards(page),['开启后会开始检测这些目标。请仅检测你有权检测的目标。']);
     await page.click('[data-nq-field="guard-cancel"]');
     assert.deepEqual(await visibleGuards(page), []);
     await page.click('[data-nq-field="close"]');
@@ -128,7 +128,7 @@ test('R1 (Chromium): ICMP unsupported + a literal address of the other family: e
       for (const k of clear) assert.equal((await box(k)).disabled, false, `${literal}: ${k} must stay clearable`);
       for (const k of clear) await page.uncheck(`[data-nq-field="telecom-${k}"]`);
       for (const k of clear) assert.deepEqual(await box(k), {checked: false, disabled: true}, `${literal}: ${k} cannot be ticked again`);
-      await page.click('[data-nq-field="save-top"]');
+      await page.click('[data-nq-field="save-bottom"]');
       await page.waitForFunction(() => window.__writes.length === 1);
       const telecom = (await page.evaluate(() => window.__writes[0])).slots[0];
       assert.equal(telecom.host, literal);

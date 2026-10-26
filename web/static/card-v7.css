@@ -277,3 +277,5 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
   .c7 .renew-plan .c7-money-side::after{content:'✓';font-size:13px}
   .c7 .c7-traffic-a{gap:10px}
 }
+
+.c7 .c7-quota[data-kind=nocap]{background:transparent}

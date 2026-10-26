@@ -239,224 +239,103 @@
         return response;
       },unauthorized,timeoutMs:10000}),fetcher)).finally(()=>queue.release(card.writeOwner));
     }
-    const dirty=p=>C.isDirty(p.draft,p.baseDraft);
-    // What the keyboard can reach: enabled, shown controls only (a hidden guard's buttons are not among them).
-    const focusables=p=>[...p.node.querySelectorAll('button,input,select')].filter(n=>!n.disabled&&!n.hidden&&!n.parentNode?.hidden);
+    const dirty=p=>C.isDirty(p.draft,p.baseDraft)||p.draftEnabled!==p.baseEnabled;
+    const ispName=value=>C.isps.find(([key])=>key===value)?.[1]||value;
+    const focusables=p=>[...p.node.querySelectorAll('button,input,select,summary')].filter(n=>!n.disabled&&!n.hidden&&(!n.closest||!n.closest('[hidden]'))&&!n.parentNode?.hidden);
+    function replaceDraft(p,draft,enabled){p.draft=C.clone(draft);p.baseDraft=C.clone(draft);p.baseEnabled=p.draftEnabled=enabled;p.labels=new Map(draft.slots.map(slot=>[slot.slot,{...slot}]));p.present=new Set(draft.slots.filter(slot=>slot.host||slot.slot_enabled).map(slot=>slot.slot));p.newSlots=new Set();}
     function openPanel(card,trigger) {
       if(panel&&!closePanel(false))return;
-      const config=card.config;
-      panel={card,trigger,config,draft:config?C.draftOf(config):{interval_ms:30000,slow_threshold_ms:String(C.THRESHOLD_DEFAULT),slots:C.slots.map(slot=>C.slotDraft({slot,kind:'builtin',region:'',isp:slot,host:'',port:0,slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false}))},
-        baseDraft:null,base:config?.settings_revision,loaded:!!config,saving:false,toggling:false,guard:null,message:'',outdated:false,errors:{},node:el('div','nq-overlay')};
-      panel.baseDraft=C.clone(panel.draft);
-      panel.node.dataset.nqPanel='open';
-      doc.body.append(panel.node);renderPanel();
-      const usable=focusables(panel);((panel.enabled&&usable.includes(panel.enabled)?panel.enabled:usable[0])||panel.box).focus({preventScroll:true});
-      loadConfig(card,true);
+      const config=card.config,draft=config?C.draftOf(config):{interval_ms:30000,slow_threshold_ms:String(C.THRESHOLD_DEFAULT),slots:C.slots.map(slot=>C.slotDraft({slot,kind:'builtin',region:'',isp:slot,host:'',port:0,slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false}))};
+      const p=panel={card,trigger,config,base:config?.settings_revision,loaded:!!config,saving:false,toggling:false,guard:null,message:'',outdated:false,errors:{},node:el('dialog','nq-overlay')};replaceDraft(p,draft,!!config?.enabled);
+      p.node.id='network-quality-settings';p.node.dataset.nqPanel='open';p.node.setAttribute('aria-labelledby','nq-dialog-title');doc.body.append(p.node);renderPanel();
+      p.shell=root.DialogShell?.attach(p.node,{decorate:false,requestClose:()=>closePanel()});p.overflow=doc.body.style.overflow;
+      if(p.shell)p.shell.open(trigger);else{doc.body.style.overflow='hidden';p.node.showModal();p.node.addEventListener('cancel',e=>{e.preventDefault();closePanel();});}
+      const usable=focusables(p);(usable.includes(p.enabled)?p.enabled:usable[0]||p.box).focus({preventScroll:true});loadConfig(card,true);
     }
-    // What the Server has now. A clean draft follows it. An edited draft is never merged with it: when the content differs the
-    // user is asked whether to load the latest (the draft is dropped) or to keep editing. The base revision then stays as it was,
-    // so a save of the kept draft is refused again instead of overwriting the other page's change.
     function panelAdopt(p,config) {
-      if(panel!==p)return;
-      const latest=C.draftOf(config),first=!p.loaded;
-      p.loaded=true;p.config=config;
-      if(first){p.base=config.settings_revision;p.baseDraft=latest;p.draft=C.clone(latest);renderPanel();return;}
-      p.latest=config;
-      if(C.sameContent(latest,p.baseDraft))p.base=config.settings_revision; // the content we edit from: only its number moved
-      else if(!dirty(p)){p.base=config.settings_revision;p.baseDraft=latest;p.draft=C.clone(latest);p.message='配置已被修改，已载入最新内容';}
-      else if(C.sameContent(latest,p.draft)){p.base=config.settings_revision;p.baseDraft=latest;p.message='已确认：当前内容已保存';} // our own write that was not confirmed
+      if(panel!==p)return;const latest=C.draftOf(config),first=!p.loaded;p.loaded=true;p.config=config;p.latest=config;
+      const sameBase=C.sameContent(latest,p.baseDraft)&&config.enabled===p.baseEnabled,sameDraft=C.sameContent(latest,p.draft)&&config.enabled===p.draftEnabled;
+      if(first||!dirty(p)||sameDraft){const changed=!first&&!sameBase;p.base=config.settings_revision;replaceDraft(p,latest,config.enabled);if(changed)p.message=sameDraft?'已确认：当前设置已保存':'设置已改变，已载入最新内容';}
+      else if(sameBase)p.base=config.settings_revision;
       else if(p.guard!=='conflict'&&p.dismissed!==config.settings_revision){p.guard='conflict';p.message=CONFLICT;}
+      if(p.partial){p.message=p.partial+'设备当前'+(config.enabled?'已启用':'未启用')+'检测；请核对后再保存。';p.partial='';}
       renderPanel();
     }
     function closePanel(force=false) {
       if(!panel)return true;
       if((panel.saving||panel.toggling)&&!force){panel.message='正在提交，请等待结果';renderPanel();return false;}
       if(dirty(panel)&&!force){panel.guard='discard';renderPanel();return false;}
-      const old=panel;panel=null;queue.release(old.card.panelReadOwner);old.card.configSerial++;old.card.reading=false;old.card.refreshing=null;
-      old.node.remove();if(old.trigger?.isConnected)old.trigger.focus({preventScroll:true});return true;
+      const old=panel;panel=null;old.copyDialog?.close();queue.release(old.copyOwner);queue.release(old.card.panelReadOwner);old.card.configSerial++;old.card.reading=false;old.card.refreshing=null;
+      if(old.shell)old.shell.close();else{old.node.close();doc.body.style.overflow=old.overflow;}old.node.remove();if(old.trigger?.isConnected)old.trigger.focus({preventScroll:true});return true;
     }
     function changed(){if(panel){if(panel.guard==='conflict')panel.dismissed=panel.latest?.settings_revision;panel.guard=null;panel.message='';panel.errors={};renderPanel();}}
-    const fieldError=(p,slot,field)=>{const code=p.errors[slot]?.[field]||C.hints(p.draft)[slot]?.[field];return code?(C.errorText[code]||code):'';};
-    function buildPanel(p) {
-      const n=p.node;n.className='nq-overlay';
-      p.box=el('section','nq-dialog');p.box.setAttribute('role','dialog');p.box.setAttribute('aria-modal','true');p.box.setAttribute('aria-labelledby','nq-dialog-title');
-      const header=el('div','nq-dialog-head'),title=el('h2','','网络质量设置');title.id='nq-dialog-title';
-      const actions=el('div','nq-dialog-actions');
-      p.saveTop=button('保存',()=>savePanel(),'nq-save');p.saveTop.dataset.nqField='save-top';
-      p.closeButton=button('关闭',()=>closePanel(),'nq-link');p.closeButton.dataset.nqField='close';
-      actions.append(p.saveTop,p.closeButton);header.append(title,actions);
-      p.guardDiscard=el('div','nq-status nq-guard');p.guardDiscard.setAttribute('role','alertdialog');
-      p.guardDiscard.append(el('p','','放弃修改？'),button('放弃修改',()=>closePanel(true),'nq-link'),button('继续编辑',()=>{p.guard=null;renderPanel();},'nq-link'));
-      p.guardDiscard.querySelectorAll('button').forEach((b,i)=>{b.dataset.nqField=i?'guard-keep':'guard-discard';});
-      p.guardConflict=el('div','nq-status nq-guard');p.guardConflict.setAttribute('role','alertdialog');
-      p.loadLatest=button('载入最新配置',()=>{const latest=p.latest;if(!latest||p.saving||p.toggling)return;p.base=latest.settings_revision;p.baseDraft=C.draftOf(latest);p.draft=C.clone(p.baseDraft);p.guard=null;p.errors={};p.latest=null;p.message='已载入最新配置，本页草稿已放弃';renderPanel();},'nq-link');p.loadLatest.dataset.nqField='guard-load-latest';
-      const keepDraft=button('取消',()=>{p.dismissed=p.latest?.settings_revision;p.guard=null;p.message='';renderPanel();},'nq-link');keepDraft.dataset.nqField='guard-conflict-cancel';
-      p.guardConflict.append(el('p','',CONFLICT),p.loadLatest,keepDraft);
-      p.guardEnable=el('div','nq-status nq-guard');p.guardEnable.setAttribute('role','alertdialog');
-      p.guardEnable.append(el('p','','有未保存的修改，先保存吗？'),
-        button('保存并开启',()=>savePanel({thenEnable:true}),'nq-link'),
-        button('不保存，按上次保存的配置开启',()=>{p.guard=null;setEnabled(true);},'nq-link'),
-        button('取消',()=>{p.guard=null;renderPanel();},'nq-link'));
-      p.guardEnable.querySelectorAll('button').forEach((b,i)=>{b.dataset.nqField=['guard-save-enable','guard-enable-saved','guard-cancel'][i];});
-      const body=el('div','nq-dialog-body');
-      // Master switch: takes effect at once and runs the last saved configuration.
-      const master=el('label','nq-master');p.enabled=el('input');p.enabled.type='checkbox';p.enabled.dataset.nqField='enabled';
-      p.enabled.addEventListener('change',()=>{const on=p.enabled.checked;if(on&&dirty(p)){p.enabled.checked=false;p.guard='enable';renderPanel();}else setEnabled(on);});
-      master.append(p.enabled,el('span','','启用检测（立即生效，按最后一次保存的配置执行）'));
-      p.masterNote=el('small','nq-muted');
-      const freq=el('label','nq-field');p.interval=el('select');p.interval.dataset.nqField='interval';
-      for(const ms of C.intervals){const o=el('option','',`${ms/1000} 秒`);o.value=String(ms);p.interval.append(o);}
-      p.interval.addEventListener('change',()=>{p.draft.interval_ms=Number(p.interval.value);changed();});
-      freq.append(el('span','','检测频率'),p.interval,el('small','nq-muted','30–300 秒，每档 30 秒，3 个卡槽共用'));
-      p.frequencyNote=el('small','nq-muted');
-      const slow=el('label','nq-field');p.threshold=el('input');p.threshold.dataset.nqField='threshold';p.threshold.inputMode='numeric';p.threshold.maxLength=4;p.threshold.autocomplete='off';
-      p.thresholdError=el('small','nq-field-error');p.thresholdError.setAttribute('role','alert');
-      p.threshold.addEventListener('input',()=>{p.draft.slow_threshold_ms=p.threshold.value;p.guard=null;p.message='';delete p.errors.threshold;renderPanel();});
-      slow.append(el('span','','慢连接门槛（毫秒）'),p.threshold,p.thresholdError,el('small','nq-muted','连接时间超过它算“慢”，50–3000 的整数，3 个卡槽共用，默认 500'));
-      body.append(master,p.masterNote,freq,p.frequencyNote,slow,el('p','nq-notice','请仅检测你有权检测的目标'));
-      p.slots=new Map();
-      for(const [index,slot] of C.slots.entries()) {
-        const set=el('fieldset','nq-slot'),legend=el('legend');
-        const on=el('input');on.type='checkbox';on.dataset.nqField=`${slot}-enabled`;on.setAttribute('aria-label',`启用卡槽 ${index+1}`);
-        on.addEventListener('change',()=>{draftOf(slot).slot_enabled=on.checked;changed();});
-        legend.append(on,el('span','',` 卡槽 ${index+1}`));set.append(legend);
-        const kinds=el('div','nq-kinds'),radios={};
-        for(const [kind,text] of [['builtin','内置'],['custom','自定义']]) {
-          const l=el('label','nq-kind'),r=el('input');r.type='radio';r.name=`nq-kind-${slot}`;r.value=kind;r.dataset.nqField=`${slot}-kind-${kind}`;
-          r.addEventListener('change',()=>{if(r.checked){const i=p.draft.slots.findIndex(s=>s.slot===slot);p.draft.slots[i]=C.switchKind(p.draft.slots[i],kind);changed();}});
-          l.append(r,el('span','',text));kinds.append(l);radios[kind]=r;
-        }
-        set.append(kinds);
-        const region=el('div','nq-field'),regionSelect=el('select'),regionText=el('input');
-        regionSelect.dataset.nqField=`${slot}-region-select`;regionText.dataset.nqField=`${slot}-region-text`;regionText.maxLength=64;regionSelect.setAttribute('aria-label','地区');regionText.setAttribute('aria-label','地区（自定义）');
-        regionSelect.append(Object.assign(el('option','','请选择地区'),{value:''}));for(const name of C.provinces)regionSelect.append(Object.assign(el('option','',name),{value:name}));
-        regionSelect.addEventListener('change',()=>{draftOf(slot).region=regionSelect.value;changed();});
-        regionText.addEventListener('input',()=>{draftOf(slot).region=regionText.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
-        const regionError=el('small','nq-field-error');regionError.setAttribute('role','alert');
-        region.append(el('span','','地区'),regionSelect,regionText,regionError);
-        const isp=el('div','nq-field'),ispSelect=el('select'),ispText=el('input');
-        ispSelect.dataset.nqField=`${slot}-isp-select`;ispText.dataset.nqField=`${slot}-isp-text`;ispText.maxLength=64;ispSelect.setAttribute('aria-label','ISP');ispText.setAttribute('aria-label','ISP（自定义）');
-        ispSelect.append(Object.assign(el('option','','请选择 ISP'),{value:''}));for(const [value,text] of C.isps)ispSelect.append(Object.assign(el('option','',text),{value}));
-        ispSelect.addEventListener('change',()=>{draftOf(slot).isp=ispSelect.value;changed();});
-        ispText.addEventListener('input',()=>{draftOf(slot).isp=ispText.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
-        const ispError=el('small','nq-field-error');ispError.setAttribute('role','alert');
-        isp.append(el('span','','ISP'),ispSelect,ispText,ispError);
-        set.append(region,isp);
-        const host=el('div','nq-field'),hostInput=el('input'),hostError=el('small','nq-field-error');hostInput.dataset.nqField=`${slot}-host`;hostInput.setAttribute('aria-label','目标地址');hostInput.maxLength=253;hostInput.autocomplete='off';hostError.setAttribute('role','alert');
-        hostInput.addEventListener('input',()=>{draftOf(slot).host=hostInput.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
-        const portInput=el('input'),portError=el('small','nq-field-error');portInput.dataset.nqField=`${slot}-port`;portInput.setAttribute('aria-label','TCP 端口');portInput.inputMode='numeric';portInput.maxLength=5;portError.setAttribute('role','alert');
-        portInput.addEventListener('input',()=>{draftOf(slot).port=portInput.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
-        host.append(el('span','','目标地址'),hostInput,hostError,el('span','','TCP 端口'),portInput,portError);set.append(host);
-        const subs=el('div','nq-subs'),checks=new Map(),subNotes=new Map();
-        for(const [key,text] of C.subItems) {
-          const l=el('label','nq-sub'),c=el('input');c.type='checkbox';c.dataset.nqField=`${slot}-${key}`;
-          c.addEventListener('change',()=>{draftOf(slot)[key]=c.checked;changed();});
-          const note=el('small','nq-field-error');subNotes.set(key,note);l.append(c,el('span','',text),note);subs.append(l);checks.set(key,c);
-        }
-        set.append(subs);body.append(set);
-        p.slots.set(slot,{on,radios,regionSelect,regionText,regionError,ispSelect,ispText,ispError,hostInput,hostError,portInput,portError,checks,subNotes});
-      }
-      body.append(el('small','nq-muted','地区和 ISP 是你的标注，404-probe 不核对。'),el('small','nq-muted','保存只保存配置，不会开启检测。'));
-      p.messageNode=el('p','nq-status');p.messageNode.setAttribute('role','status');
-      p.saveBottom=button('保存',()=>savePanel(),'nq-save');p.saveBottom.dataset.nqField='save-bottom';
-      const foot=el('div','nq-dialog-foot');foot.append(p.messageNode,p.saveBottom);
-      p.box.tabIndex=-1;p.box.append(header,p.guardDiscard,p.guardEnable,p.guardConflict,body,foot);n.append(p.box);
-      n.addEventListener('pointerdown',event=>{if(event.target===n)closePanel();});
-    }
+    const fieldError=(p,slot,field)=>{const code=p.errors[slot]?.[field]||C.hints(p.draft)[slot]?.[field];return code?(C.errorText[code]||'请检查此项'):'';};
     const draftOf=slot=>panel.draft.slots.find(s=>s.slot===slot);
-    function renderPanel() {
-      if(!panel)return;const p=panel;
-      if(!p.box)buildPanel(p);
-      const value=(input,next)=>{if(input.value!==next)input.value=next;};
-      p.guardDiscard.hidden=p.guard!=='discard';p.guardEnable.hidden=p.guard!=='enable';p.guardConflict.hidden=p.guard!=='conflict';p.loadLatest.disabled=!p.latest||p.saving||p.toggling;
-      const config=p.config||p.card.config;
-      p.enabled.checked=!!config?.enabled;p.enabled.disabled=p.toggling||p.saving||p.outdated||!config||!config.supported&&!config.enabled;
-      p.masterNote.textContent=!config?'配置尚未读取':!config.supported?C.cardNotice(config)||'Agent 尚未支持':'';
-      value(p.interval,String(p.draft.interval_ms));
-      if(doc.activeElement!==p.threshold)value(p.threshold,String(p.draft.slow_threshold_ms));
-      p.thresholdError.textContent=(code=>code?(C.errorText[code]||code):'')(p.errors.threshold||C.thresholdHint(p.draft));
-      p.frequencyNote.textContent=config&&config.effective_interval_ms!==config.interval_ms?`实际间隔 ${config.effective_interval_ms/1000} 秒（Server 容量限制）`:'';
-      const hints=C.hints(p.draft);
-      // Only the Server's capability answer disables an ICMP box; "unknown" (not negotiated yet, no session) leaves it open.
-      const icmpOff=new Set(['ipv4','ipv6'].filter(family=>config?.icmpSupport?.[family]==='unsupported'));
-      for(const s of p.draft.slots) {
-        const v=p.slots.get(s.slot);v.on.checked=s.slot_enabled;
-        v.radios.builtin.checked=s.kind==='builtin';v.radios.custom.checked=s.kind==='custom';
-        const builtin=s.kind==='builtin';
-        v.regionSelect.hidden=!builtin;v.regionText.hidden=builtin;v.ispSelect.hidden=!builtin;v.ispText.hidden=builtin;
-        // An unknown stored value stays selectable so that a saved configuration is never silently changed.
-        for(const [select,current] of [[v.regionSelect,s.region],[v.ispSelect,s.isp]]) {
-          const known=[...select.children].some(o=>o.value===current);
-          select.querySelector('[data-extra]')?.remove();
-          if(builtin&&current&&!known){const o=Object.assign(el('option','',current),{value:current});o.dataset.extra='1';select.append(o);}
-        }
-        value(v.regionSelect,s.region);value(v.ispSelect,s.isp);
-        if(doc.activeElement!==v.regionText)value(v.regionText,s.region);if(doc.activeElement!==v.ispText)value(v.ispText,s.isp);
-        if(doc.activeElement!==v.hostInput)value(v.hostInput,s.host);if(doc.activeElement!==v.portInput)value(v.portInput,s.port);
-        for(const [node,field] of [[v.regionError,'region'],[v.ispError,'isp'],[v.hostError,'host'],[v.portError,'port']])node.textContent=field==='host'||field==='port'||s.host.trim()||p.errors[s.slot]?.[field]?fieldError(p,s.slot,field):'';
-        const lockLiteral=C.disabledSubs(s.host);
-        for(const [key,,fam,proto] of C.subItems) {
-          const box=v.checks.get(key),icmpBlocked=proto==='icmp'&&icmpOff.has(fam);
-          // A box can always be unticked; only ticking is refused (other address family, ICMP the host cannot send).
-          box.checked=!!s[key];box.disabled=(lockLiteral[key]||icmpBlocked)&&!s[key];
-          box.title=lockLiteral[key]?(s[key]?'地址是另一个地址族的字面量，请取消勾选':'地址是另一个地址族的字面量，不能勾选'):icmpBlocked?(s[key]?'当前环境不支持 ICMP，可以取消勾选':'当前环境不支持 ICMP'):'';
-          v.subNotes.get(key).textContent=icmpBlocked?'当前环境不支持 ICMP':fieldError(p,s.slot,key);
-        }
+    function editLabels(p,slot){const original=p.labels.get(slot),v=p.slots.get(slot),row=draftOf(slot),region=v.regionText.value,isp=v.ispText.value;
+      if(original?.kind==='builtin'&&region===original.region&&isp===ispName(original.isp)){row.kind='builtin';row.region=original.region;row.isp=original.isp;}
+      else{row.kind='custom';row.region=region;row.isp=isp;}changed();
+    }
+    function addSlot(p){const slot=C.slots.find(key=>!p.present.has(key));if(!slot)return;const row=draftOf(slot);Object.assign(row,{kind:'custom',region:'',isp:'',host:'',port:'443',slot_enabled:true,ipv4_tcp:true,ipv4_icmp:true,ipv6_tcp:true,ipv6_icmp:true});p.present.add(slot);p.newSlots.add(slot);p.labels.set(slot,{...row});changed();p.slots.get(slot).regionText.focus({preventScroll:true});}
+    function removeSlot(p,slot){Object.assign(draftOf(slot),{kind:'builtin',region:'',isp:slot,host:'',port:'',slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false});p.present.delete(slot);p.newSlots.delete(slot);changed();}
+    function openCopy(p){
+      if(p.copyDialog?.open||p.saving||p.toggling)return;const d=el('dialog','dialog-shell dialog-small'),body=el('div','shell-content'),choose=el('select'),status=el('p','nq-muted'),actions=el('div','shell-actions');d.setAttribute('aria-label','从其他设备复制');choose.setAttribute('aria-label','来源设备');
+      for(const card of cards.values())if(card.id!==p.card.id&&!card.agent.revoked){const option=el('option','',card.agent.name||card.agent.state?.hostname||'未命名设备');option.value=card.id;choose.append(option);}
+      const cancel=button('取消',()=>d.close()),apply=button('复制到当前草稿',async()=>{const id=choose.value;if(!id||!cards.has(id))return;apply.disabled=true;status.textContent='正在读取来源设备…';
+        try{const raw=await read(JSON.stringify(['copy-config',id]),p.copyOwner,path(id)+'v4/config'),source=C.adapt(raw);if(panel!==p||!d.open||p.copyDialog!==d)return;if(!cards.has(id)||raw.agent_id!==id)throw Error('来源设备已不可用');
+          const copied=C.draftOf(source);p.draft={interval_ms:copied.interval_ms,slow_threshold_ms:copied.slow_threshold_ms,slots:copied.slots.map((row,i)=>({...row,slot:C.slots[i]}))};p.labels=new Map(p.draft.slots.map(row=>[row.slot,{...row}]));p.present=new Set(p.draft.slots.filter(row=>row.host||row.slot_enabled).map(row=>row.slot));p.newSlots=new Set();p.guard=null;p.errors={};p.message='已复制到当前草稿，保存后生效';d.close();renderPanel();
+        }catch(error){if(panel===p&&d.open)status.textContent=error.message||'无法读取来源设备';}finally{if(d.open)apply.disabled=!choose.value;}
+      },'primary-action');apply.disabled=!choose.value;choose.addEventListener('change',()=>{apply.disabled=!choose.value;});status.textContent=choose.children.length?'只复制间隔、慢阈值和线路内容，保存后才生效。':'没有其他可复制的设备。';body.append(choose,status);actions.append(cancel,apply);d.append(body,actions);doc.body.append(d);p.copyDialog=d;p.copyOwner={};
+      const shell=root.DialogShell?.attach(d,{title:'从其他设备复制',size:'small',subtitle:p.card.agent.name||''});d.addEventListener('close',()=>{queue.release(p.copyOwner);if(p.copyDialog===d)p.copyDialog=null;d.remove();});if(shell)shell.open(p.copyButton);else d.showModal();choose.focus({preventScroll:true});
+    }
+    function buildPanel(p) {
+      const n=p.node;p.box=el('section','nq-dialog');const header=el('div','nq-dialog-head shell-head'),titleGroup=el('div'),title=el('h2','','网络质量设置'),subtitle=el('p','nq-device',p.card.agent.name||p.card.agent.state?.hostname||'未命名设备');title.id='nq-dialog-title';subtitle.title=subtitle.textContent;titleGroup.append(title,subtitle);
+      p.closeButton=button('×',()=>closePanel(),'nq-link');p.closeButton.setAttribute('aria-label','关闭');p.closeButton.dataset.nqField='close';header.append(titleGroup,p.closeButton);
+      p.guardDiscard=el('div','nq-status nq-guard');p.guardDiscard.setAttribute('role','alertdialog');p.guardDiscard.append(el('p','','放弃修改？'),button('放弃修改',()=>closePanel(true),'nq-link'),button('继续编辑',()=>{p.guard=null;renderPanel();},'nq-link'));p.guardDiscard.querySelectorAll('button').forEach((b,i)=>{b.dataset.nqField=i?'guard-keep':'guard-discard';});
+      p.guardConflict=el('div','nq-status nq-guard');p.guardConflict.setAttribute('role','alertdialog');p.loadLatest=button('载入最新配置',()=>{const latest=p.latest;if(!latest||p.saving||p.toggling)return;p.base=latest.settings_revision;replaceDraft(p,C.draftOf(latest),latest.enabled);p.guard=null;p.errors={};p.message='已载入最新配置，本页草稿已放弃';renderPanel();},'nq-link');p.loadLatest.dataset.nqField='guard-load-latest';const keepDraft=button('继续编辑',()=>{p.dismissed=p.latest?.settings_revision;p.guard=null;p.message='';renderPanel();},'nq-link');keepDraft.dataset.nqField='guard-conflict-cancel';p.guardConflict.append(el('p','',CONFLICT),p.loadLatest,keepDraft);
+      p.guardEnable=el('div','nq-status nq-guard');p.guardEnable.setAttribute('role','alertdialog');const enable=button('保存并开启',()=>savePanel({confirmedEnable:true}),'nq-link'),enableCancel=button('取消',()=>{p.guard=null;renderPanel();},'nq-link');enable.dataset.nqField='guard-save-enable';enableCancel.dataset.nqField='guard-cancel';p.guardEnable.append(el('p','','开启后会开始检测这些目标。请仅检测你有权检测的目标。'),enable,enableCancel);
+      const body=el('div','nq-dialog-body'),settings=el('div','nq-settings-line'),master=el('label','nq-master');p.enabled=el('input');p.enabled.type='checkbox';p.enabled.dataset.nqField='enabled';p.enabled.addEventListener('change',()=>{p.draftEnabled=p.enabled.checked;changed();});master.append(p.enabled,el('strong','','启用检测'));settings.append(master,el('span','','每隔'));
+      p.interval=el('select');p.interval.setAttribute('aria-label','检测间隔');p.interval.dataset.nqField='interval';for(const ms of C.intervals){const option=el('option','',ms/1000+' 秒');option.value=String(ms);p.interval.append(option);}p.interval.addEventListener('change',()=>{p.draft.interval_ms=Number(p.interval.value);changed();});settings.append(p.interval,el('span','','测一次'),el('span','','超过'));
+      p.threshold=el('input');p.threshold.setAttribute('aria-label','慢阈值');p.threshold.dataset.nqField='threshold';p.threshold.inputMode='numeric';p.threshold.maxLength=4;p.threshold.addEventListener('input',()=>{p.draft.slow_threshold_ms=p.threshold.value;delete p.errors.threshold;p.guard=null;p.message='';renderPanel();});settings.append(p.threshold,el('span','','ms 算慢'));p.thresholdError=el('small','nq-field-error');p.masterNote=el('small','nq-muted');p.frequencyNote=el('small','nq-muted');body.append(settings,p.masterNote,p.frequencyNote,p.thresholdError);
+      const columns=el('div','nq-columns');for(const label of ['地区','运营商','目标地址','TCP 端口','测什么（默认全测）',''])columns.append(el('span','',label));body.append(columns);p.slots=new Map();
+      const suggestions=el('datalist');suggestions.id='nq-isp-hints';for(const label of ['电信','联通','移动']){const option=el('option');option.value=label;suggestions.append(option);}body.append(suggestions);
+      for(const slot of C.slots){const set=el('fieldset','nq-slot');set.dataset.nqSlot=slot;const regionText=el('input'),ispText=el('input'),hostInput=el('input'),portInput=el('input'),errors=el('small','nq-field-error'),checks=new Map(),subNotes=new Map();errors.setAttribute('role','alert');
+        for(const [input,key,label,max]of [[regionText,'region-text','地区',32],[ispText,'isp-text','运营商',32],[hostInput,'host','目标地址',253],[portInput,'port','TCP 端口',5]]){input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',label);input.maxLength=max;input.autocomplete='off';}ispText.setAttribute('list','nq-isp-hints');portInput.inputMode='numeric';regionText.addEventListener('input',()=>editLabels(p,slot));ispText.addEventListener('input',()=>editLabels(p,slot));
+        hostInput.addEventListener('input',()=>{const row=draftOf(slot);row.host=hostInput.value;if(p.newSlots.has(slot)){const family=C.literalFamily(row.host);for(const [key,,fam]of C.subItems)row[key]=!family||family===fam;}p.guard=null;p.message='';delete p.errors[slot];renderPanel();});portInput.addEventListener('input',()=>{draftOf(slot).port=portInput.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
+        const subs=el('div','nq-subs');for(const [key,,family,protocol]of C.subItems){const label=el('label','nq-sub'),input=el('input');input.type='checkbox';input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase());input.addEventListener('change',()=>{draftOf(slot)[key]=input.checked;p.newSlots.delete(slot);changed();});label.append(input,el('span','',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase()));subs.append(label);checks.set(key,input);subNotes.set(key,label);}
+        const remove=button('×',()=>removeSlot(p,slot),'nq-remove');remove.setAttribute('aria-label','删除线路 '+(C.slots.indexOf(slot)+1));remove.dataset.nqField=slot+'-remove';const resume=button('启用这条线路',()=>{draftOf(slot).slot_enabled=true;changed();},'nq-link');resume.dataset.nqField=slot+'-resume';const note=el('small','nq-row-note');set.append(regionText,ispText,hostInput,portInput,subs,remove,errors,resume,note);body.append(set);p.slots.set(slot,{set,regionText,ispText,hostInput,portInput,checks,subNotes,errors,resume,note});}
+      p.add=button('+ 添加线路',()=>addSlot(p),'nq-add');p.add.dataset.nqField='add';body.append(p.add,el('p','nq-footnote','亮着的就会测，点一下关掉。这台机器没有 IPv6 时自动跳过 v6；容器里测不了 ICMP 时会自动变灰。'),el('p','nq-footnote','只检测你有权检测的目标。地区和运营商是你自己的标注，404-probe 不核对。'));
+      p.messageNode=el('p','nq-status');p.messageNode.setAttribute('role','status');p.saveBottom=button('保存',()=>savePanel(),'nq-save');p.saveBottom.dataset.nqField='save-bottom';p.copyButton=button('从其他设备复制…',()=>openCopy(p),'nq-link');p.copyButton.dataset.nqField='copy';const cancel=button('取消',()=>closePanel(),'nq-link');cancel.dataset.nqField='cancel';const foot=el('div','nq-dialog-foot');foot.append(p.copyButton,cancel,p.saveBottom);p.box.tabIndex=-1;p.box.append(header,p.guardDiscard,p.guardEnable,p.guardConflict,body,p.messageNode,foot);n.append(p.box);
+      let pressed=false;const outside=e=>{if(e.target!==n)return false;const r=n.getBoundingClientRect();return e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom;};n.addEventListener('pointerdown',e=>{pressed=e.button===0&&outside(e);});n.addEventListener('pointercancel',()=>{pressed=false;});n.addEventListener('click',e=>{const dismiss=pressed&&outside(e);pressed=false;if(dismiss)closePanel();});
+    }
+    function renderPanel(){if(!panel)return;const p=panel;if(!p.box)buildPanel(p);const config=p.config||p.card.config,locked=p.saving||p.toggling,value=(node,next)=>{if(doc.activeElement!==node&&node.value!==next)node.value=next;};
+      p.guardDiscard.hidden=p.guard!=='discard';p.guardEnable.hidden=p.guard!=='enable';p.guardConflict.hidden=p.guard!=='conflict';p.loadLatest.disabled=!p.latest||locked;p.enabled.checked=p.draftEnabled;p.enabled.disabled=locked||p.outdated||!config||!config.supported&&!config.enabled;p.interval.disabled=p.threshold.disabled=locked;
+      p.masterNote.textContent=!config?'正在读取设置…':!config.supported?C.cardNotice(config)||'Agent 尚未支持':'';p.masterNote.hidden=!p.masterNote.textContent;value(p.interval,String(p.draft.interval_ms));value(p.threshold,String(p.draft.slow_threshold_ms));p.thresholdError.textContent=(C.errorText[p.errors.threshold||C.thresholdHint(p.draft)]||'');p.thresholdError.hidden=!p.thresholdError.textContent;p.frequencyNote.textContent=config&&config.effective_interval_ms!==config.interval_ms?'实际每隔 '+config.effective_interval_ms/1000+' 秒检测一次（当前负载限制）':'';p.frequencyNote.hidden=!p.frequencyNote.textContent;
+      const noV6=config&&[...config.lanes.values()].some(l=>l.status==='no_ipv6'),icmpOff=new Set(['ipv4','ipv6'].filter(f=>config?.icmpSupport?.[f]==='unsupported'));
+      for(const row of p.draft.slots){const v=p.slots.get(row.slot);v.set.hidden=!p.present.has(row.slot);v.set.disabled=locked;value(v.regionText,row.region);value(v.ispText,row.kind==='builtin'?ispName(row.isp):row.isp);value(v.hostInput,row.host);value(v.portInput,row.port);const hints=['region','isp','host','port'].map(field=>fieldError(p,row.slot,field));v.errors.textContent=[...new Set(hints.filter(Boolean))].join(' · ');v.errors.hidden=!v.errors.textContent;v.resume.hidden=row.slot_enabled||!row.host;
+        const literal=C.disabledSubs(row.host);for(const [key,,family,protocol]of C.subItems){const input=v.checks.get(key),unsupported=protocol==='icmp'&&icmpOff.has(family);input.checked=!!row[key];input.disabled=locked||(literal[key]||unsupported)&&!row[key];input.title=literal[key]?'地址属于另一个地址族，请取消不匹配的勾选':unsupported?'当前环境不支持 ICMP；已选项仍可取消':'';v.subNotes.get(key).dataset.unavailable=String(unsupported);}
+        v.note.textContent=[noV6?'这台机器没有 IPv6，v6 会自动跳过':'',icmpOff.size?'当前环境不支持 ICMP（部分地址族）；已勾选的仍可取消':''].filter(Boolean).join(' · ');v.note.hidden=!v.note.textContent;
       }
-      const blocked=p.saving||p.toggling||p.outdated||!p.base||!csrf();
-      p.messageNode.textContent=p.message||(p.outdated?OUTDATED:dirty(p)?'有未保存的修改':'');
-      for(const b of [p.saveTop,p.saveBottom]){b.textContent=p.saving?'保存中…':'保存';b.disabled=blocked;}
+      const remaining=C.slots.length-p.present.size;p.add.textContent='+ 添加线路（还可加 '+remaining+' 条）';p.add.disabled=!remaining||locked;p.add.hidden=!remaining;p.copyButton.disabled=locked;p.messageNode.textContent=p.message||(p.outdated?OUTDATED:dirty(p)?'有未保存的修改':'');p.messageNode.hidden=!p.messageNode.textContent;p.saveBottom.textContent=p.saving?'保存中…':'保存';p.saveBottom.disabled=locked||p.outdated||!p.base||!csrf();
     }
-    async function submit(p,suffix,payload) {
-      const card=p.card;card.configSerial++;card.reading=false;card.refreshing=null;queue.release(card.configOwner);queue.release(card.panelReadOwner);
-      const raw=await write(card,suffix,payload);
-      return {raw,config:C.adapt(raw)};
-    }
-    function failed(p,error) {
-      if(p.card.dead||panel!==p)return;
-      p.saving=false;p.toggling=false;
+    async function submit(p,suffix,payload){const card=p.card;card.configSerial++;card.reading=false;card.refreshing=null;queue.release(card.configOwner);queue.release(card.panelReadOwner);const raw=await write(card,suffix,payload);return {raw,config:C.adapt(raw)};}
+    function failed(p,error){if(p.card.dead||panel!==p)return;p.saving=false;p.toggling=false;
       if(error.status===410){p.outdated=true;p.message=OUTDATED;}
       else if(error.status===409&&error.code==='revision_conflict'){p.latest=null;p.dismissed=undefined;p.guard='conflict';p.message=CONFLICT;loadConfig(p.card,true);}
-      else if(error.status===409&&error.code==='quality_quota')p.message='目标数量达到上限，请减少子项后再试';
-      else if(error.status===409)p.message='当前 Agent 不支持自定义目标（需升级或平台不支持）';
+      else if(error.status===409&&error.code==='quality_quota')p.message='目标数量达到上限，请减少检测项目后再试';
+      else if(error.status===409)p.message='当前 Agent 不支持自定义目标，请升级后重试';
       else if(error.status===503&&error.code==='storage_pressure')p.message='Server 存储压力大，暂时不能保存';
       else if(error.status===503)p.message='地址检查繁忙，请稍后重试';
-      else if(error.status===400) {
-        p.errors={};for(const d of error.details||[]){if(d.slot){(p.errors[d.slot]||(p.errors[d.slot]={}))[d.field]=d.code;}else if(d.field==='slow_threshold_ms')p.errors.threshold=d.code;}
-        p.message=Object.keys(p.errors).length?'请检查标出的输入':`保存失败：${C.errorText[error.details?.[0]?.code]||error.message}`;
-      }
-      else {p.message=`未确认保存成功：${error.message||'网络错误'}`;loadConfig(p.card,true);}
-      renderPanel();
+      else if(error.status===400){p.errors={};for(const d of error.details||[]){if(d.slot)(p.errors[d.slot]||(p.errors[d.slot]={}))[d.field]=d.code;else if(d.field==='slow_threshold_ms')p.errors.threshold=d.code;}p.message=Object.keys(p.errors).length?'请检查标出的输入':'保存失败：'+(C.errorText[error.details?.[0]?.code]||error.message);}
+      else{p.message='保存结果未确认，请核对实际状态';loadConfig(p.card,true);}renderPanel();
     }
-    async function savePanel({thenEnable=false}={}) {
-      const p=panel;if(!p||p.saving||p.toggling||p.outdated||!p.base||!csrf())return;
-      const found=C.hints(p.draft);if(Object.values(found).some(e=>Object.keys(e).length)||C.thresholdHint(p.draft)){p.errors={};p.message='请检查标出的输入';p.guard=null;renderPanel();return;}
-      let data;try{data=C.savePayload(p.draft,p.base);if(new TextEncoder().encode(JSON.stringify(data)).length>16384)throw Error('配置超过 16384 字节');}
-      catch(error){p.message=error.message;renderPanel();return;}
-      p.saving=true;p.guard=null;p.message='';p.errors={};renderPanel();
-      try {
-        const {raw,config}=await submit(p,'v4/config',data);
-        if(p.card.dead||panel!==p)return;
-        p.saving=false;p.card.raw=raw;p.config=config;p.base=config.settings_revision;p.baseDraft=C.draftOf(config);p.draft=C.clone(p.baseDraft);
-        p.message=config.enabled?'已保存，已按新配置执行':'已保存（未开启检测）';
-        bindConfig(p.card,config);renderPanel();
-        if(thenEnable)await setEnabled(true);
-      }catch(error){failed(p,error);}
-    }
-    // The master switch is a separate request. Switching on needs the revision the user has seen; switching off never does.
-    async function setEnabled(on) {
-      const p=panel;if(!p||p.saving||p.toggling||p.outdated||!p.base||!csrf())return;
-      let data;try{data=C.enabledPayload(p.base,on);}catch(error){p.message=error.message;renderPanel();return;}
-      p.toggling=true;p.message='';renderPanel();
-      try {
-        const {raw,config}=await submit(p,'v4/enabled',data);
-        if(p.card.dead||panel!==p)return;
-        p.toggling=false;p.card.raw=raw;
-        const before=p.baseDraft,contentChanged=JSON.stringify(C.draftOf(config))!==JSON.stringify(before);
-        panelAdopt(p,config);
-        if(!contentChanged)p.message=on?'已开启，按最后一次保存的配置执行':'已关闭';
-        bindConfig(p.card,config);renderPanel();
-      }catch(error){failed(p,error);}
+    async function savePanel({confirmedEnable=false}={}){const p=panel;if(!p||p.saving||p.toggling||p.outdated||!p.base||!csrf())return;const found=C.hints(p.draft);if(Object.values(found).some(error=>Object.keys(error).length)||C.thresholdHint(p.draft)){p.errors={};p.message='请检查标出的输入';p.guard=null;renderPanel();return;}
+      if(p.draftEnabled&&!p.baseEnabled&&!confirmedEnable){p.guard='enable';renderPanel();return;}
+      let data;try{data=C.savePayload(p.draft,p.base);if(new TextEncoder().encode(JSON.stringify(data)).length>16384)throw Error('配置内容过长');}catch(error){p.message=error.message;renderPanel();return;}
+      const wanted=p.draftEnabled;p.saving=true;p.guard=null;p.message='';p.errors={};let configurationSaved=false;renderPanel();
+      try{let {raw,config}=await submit(p,'v4/config',data);if(p.card.dead||panel!==p)return;configurationSaved=true;p.card.raw=raw;p.config=config;p.base=config.settings_revision;p.baseDraft=C.draftOf(config);p.baseEnabled=config.enabled;p.labels=new Map(p.baseDraft.slots.map(row=>[row.slot,{...row}]));bindConfig(p.card,config);
+        if(config.enabled!==wanted){const enabledResult=await submit(p,'v4/enabled',C.enabledPayload(config.settings_revision,wanted));if(p.card.dead||panel!==p)return;raw=enabledResult.raw;config=enabledResult.config;}
+        p.saving=false;p.card.raw=raw;p.config=config;p.base=config.settings_revision;replaceDraft(p,C.draftOf(config),config.enabled);p.message=config.enabled?'已保存，已按新配置执行':'已保存（未开启检测）';bindConfig(p.card,config);renderPanel();
+      }catch(error){if(configurationSaved&&panel===p){p.saving=false;p.partial='线路配置已保存；启用状态未确认。';p.message=p.partial+'正在读取实际状态。';if(error.status===409&&error.code==='revision_conflict')p.guard='conflict';renderPanel();loadConfig(p.card,true);}else failed(p,error);}
     }
     function destroyPlot(){resize?.disconnect();resize=null;plot?.destroy();plot=null;}
     function closeHistory(){if(!history)return;const old=history;history=null;queue.release(dialogOwner);destroyPlot();if(historyHost){historyContainer()?.replaceChildren();return;}if(dialog.open)dialog.close();doc.body.style.overflow=old.overflow;old.trigger?.isConnected&&old.trigger.focus();root.scrollTo?.(old.scrollX,old.scrollY);}
@@ -531,7 +410,7 @@
       },data,chart);
       if(Resize){resize=new Resize(()=>{if(history===h&&historyActive(h)&&plot)plot.setSize({width:width(),height:320});});resize.observe(chart);}
     }
-    function keydown(event){if(event.key==='Escape'&&panel){event.preventDefault();closePanel();}else if(event.key==='Tab'&&panel){
+    function keydown(event){if(event.defaultPrevented||panel?.copyDialog?.open)return;if(event.key==='Escape'&&panel){event.preventDefault();closePanel();}else if(event.key==='Tab'&&panel){
       const nodes=focusables(panel),first=nodes[0],last=nodes.at(-1),active=doc.activeElement;
       if(!nodes.length){event.preventDefault();panel.box.focus();}
       else if(!panel.node.contains(active)){event.preventDefault();(event.shiftKey?last:first).focus();}
@@ -563,7 +442,7 @@
       if(!observer){root.removeEventListener?.('scroll',fallbackVisibility);root.removeEventListener?.('resize',fallbackVisibility);}
       dialog.removeEventListener('cancel',cancelDialog);dialog.removeEventListener('close',dialogClosed);dialog.removeEventListener('click',backdrop);},
       // Production lifecycle hooks exposed for deterministic synthetic verification.
-      snapshot:()=>({requests:queue.snapshot(),cards:cards.size,panel:panel?{dirty:dirty(panel),base:panel.base,draft:structuredClone(panel.draft),guard:panel.guard,message:panel.message,outdated:panel.outdated}:null,history:history?{target:history.target.id,family:history.target.family,hours:history.hours,kind:history.kind}:null}),
+      snapshot:()=>({requests:queue.snapshot(),cards:cards.size,panel:panel?{dirty:dirty(panel),base:panel.base,draft:structuredClone(panel.draft),enabled:panel.draftEnabled,guard:panel.guard,message:panel.message,outdated:panel.outdated}:null,history:history?{target:history.target.id,family:history.target.family,hours:history.hours,kind:history.kind}:null}),
       releaseHistory:closeHistory,
       openHistoryFor(id,targetId,family,kind,trigger){const card=cards.get(id),target=card?.config?.targets?.find(t=>t.id===targetId&&t.family===family);if(!target||!['latency','ratio'].includes(kind))return false;
         // Asked for what is already open (the page restores its history after every configuration change): nothing to do.

@@ -53,7 +53,7 @@ async function run(){
  await page.goto(base+'/login');await page.locator('#password').fill(password);await page.locator('button[type=submit]').click();await page.waitForSelector('.detail-toggle');
  const shot=async(file,selector='#device-details')=>{await page.locator(selector).screenshot({path:path.join(out,file+'.png')});};
  const tabs=async key=>{await page.locator('#details-tab-'+key).click();await page.waitForTimeout(80);};
- const openDetails=async()=>{if(!await page.locator('#device-details').evaluate(n=>n.open))await page.locator('.detail-toggle').click();};
+ const openDetails=async()=>{if(!await page.locator('#device-details').evaluate(n=>n.open))await page.locator(`[data-agent-id="${ID}"] .detail-toggle`).click();};
  if(process.env.V109_TASK_TWO==='1'){await require('./lib/v109-task-two-browser.cjs')({page,browser,current,ID,out,openDetails,tabs});return;}
  if(reference){await require('./lib/v109-rework-reference.cjs')({page,browser,current,ID,out,openDetails,tabs});return;}
  await openDetails();await shot('details-overview');assert.deepEqual(await page.locator('.details-tabs button').allTextContents(),['概览','资源','安全','管理']);

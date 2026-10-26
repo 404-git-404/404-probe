@@ -8,7 +8,7 @@
  function create({document:doc=root.document,window:win=root,agents,read,onclose=()=>{},onclear=()=>{}}){
   const get=id=>doc.querySelector('#'+id),dialog=get('plan-dialog'),save=get('plan-save'),clear=get('plan-clear');
   const confirmation=get('plan-confirmation'),note=get('plan-confirm-note'),resume=get('plan-continue'),discard=get('plan-discard');
-  dialog.classList?.add('dialog-shell');const shell=root.DialogShell?.attach(dialog,{decorate:false,requestClose});
+  dialog.classList?.add('dialog-shell');const shell=root.DialogShell?.attach(dialog,{decorate:false,requestClose:()=>cancel({preventDefault(){}})});
   let id=null,origin=null,baseline='',generation=0,busy=false,action=null,scroll=null,dead=false;
   const dirty=()=>JSON.stringify(read())!==baseline;
   const buttons=()=>{save.disabled=clear.disabled=busy;};

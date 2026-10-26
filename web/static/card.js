@@ -218,7 +218,7 @@
       if(kind==='none'){empty.textContent=view.bar.text;}
       else{
         bar.dataset.kind=kind;bar.dataset.tone=view.bar.tone||'ok';fill.style.width=kind==='bar'?view.bar.fill+'%':'0%';fill.hidden=kind!=='bar';
-        tick.hidden=view.bar.time==null;if(view.bar.time!=null)tick.style.left=(view.bar.time*100).toFixed(1)+'%';
+        tick.hidden=kind!=='bar'||view.bar.time==null;if(view.bar.time!=null)tick.style.left=(view.bar.time*100).toFixed(1)+'%';
         left.textContent=kind==='bar'?view.bar.left:view.bar.left;pctNode.textContent=kind==='bar'?view.bar.percent:'';right.textContent=view.bar.right;bar.title=view.bar.title||'';
       }
       const label=spark.querySelector('.tc7-label'),parts=detail.day24.split(/(?=↓|↑)/);

@@ -96,7 +96,7 @@ func TestR07QualityPageSources(t *testing.T) {
 		}
 	}
 	page := read("network-quality.js")
-	for _, need := range []string{"v4/config", "v4/enabled", "请仅检测你有权检测的目标", "放弃修改？", "保存并开启", "不保存，按上次保存的配置开启", "页面已过期，请刷新", "网络质量设置"} {
+	for _, need := range []string{"v4/config", "v4/enabled", "请仅检测你有权检测的目标", "放弃修改？", "保存并开启", "开启后会开始检测这些目标", "页面已过期，请刷新", "网络质量设置"} {
 		if !strings.Contains(page, need) {
 			t.Fatalf("network-quality.js lacks %q", need)
 		}

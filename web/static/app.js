@@ -377,8 +377,7 @@ removeAgentForm.addEventListener('submit', async event => {
     render();
     await refresh();
   } catch (error) {
-    removeAgentError.classList.remove('hidden');
-    removeAgentInput.disabled=false;removeAgentConfirm.disabled=!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);
+    if(pendingRemoveAgentID===agentID){removeAgentError.classList.remove('hidden');removeAgentInput.disabled=false;removeAgentConfirm.disabled=!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);}
   } finally {
     if (!removed) {
       agentState.finishDelete(barrier, false);
@@ -540,8 +539,8 @@ const planFields = {
   purchase_date: '#plan-purchase-date', renewal_date: '#plan-renewal-date', expiry_date: '#plan-expiry-date',
   country_code_override: '#plan-country-code',
 };
-const planEditor = PlanEditor.create({agents,
-  read: () => ({limited:document.querySelector('#quota-limit').value,traffic_enabled: planTrafficEnabled.checked, ...Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value]))}),
+const readPlanDraft=()=>({limited:document.querySelector('#quota-limit').value,traffic_enabled:planTrafficEnabled.checked,...Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value]))});
+const planEditor = PlanEditor.create({agents,read:readPlanDraft,
   onclose: () => { pendingPlanAgentID = ''; planEditGeneration++; }, onclear: () => clearPlan(),
 });
 const planRenewal = PlanRenewal.create({agents,
@@ -589,7 +588,7 @@ function openPlanDialog(agent, trigger = null, mode='plan') {
   const quotaNote = document.querySelector('#plan-quota-note');
   quotaNote.title = planQuotaSession.legacy ? '旧额度已精确换算为十进制。未改额度保存时保留原字节定义；修改后的额度最多 3 位小数。' : '流量单位采用十进制：1 TB = 1000 GB；额度与校准最多 3 位小数。';
   quotaNote.textContent='选“不限流量”时照样统计每期用量，卡片上不显示进度条和百分比。';
-  if (!plan.cycle_kind) document.querySelector('#plan-cycle-kind').value = 'monthly';if(!plan.cycle_anchor)document.querySelector('#plan-cycle-anchor').value=new Intl.DateTimeFormat('en-CA').format(new Date());document.querySelector('#quota-cycle-day').value=Number(document.querySelector('#plan-cycle-anchor').value.slice(-2))||1;document.querySelector('#quota-limit').value=plan.traffic_mode&&!plan.quota_value?'unlimited':'limited';document.querySelector('#quota-timezone').textContent='时区：'+document.querySelector('#plan-timezone').value;const days=Card.cycleDays(plan,Date.now());document.querySelector('#quota-cycle-summary').textContent=plan.cycle_start&&plan.cycle_end?'当前周期 '+shortPlanDate(plan.cycle_start)+' – '+shortPlanDate(plan.cycle_end)+(days?'，已过 '+Math.max(0,days.day-1)+' 天':''):'';syncQuotaPresentation();
+  if (!plan.cycle_kind) document.querySelector('#plan-cycle-kind').value = 'monthly';if(!plan.cycle_anchor)document.querySelector('#plan-cycle-anchor').value=new Intl.DateTimeFormat('en-CA').format(new Date());document.querySelector('#quota-cycle-day').value=Number(document.querySelector('#plan-cycle-anchor').value.slice(-2))||1;document.querySelector('#quota-limit').value=plan.traffic_mode&&!plan.quota_value?'unlimited':'limited';document.querySelector('#quota-timezone').textContent='时区：'+document.querySelector('#plan-timezone').value;const cycleMore=document.querySelector('.quota-cycle-more');cycleMore.open=plan.cycle_kind&&plan.cycle_kind!=='monthly'||Number(plan.cycle_count||1)!==1||!plan.timezone;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded',String(cycleMore.open));const days=Card.cycleDays(plan,Date.now());document.querySelector('#quota-cycle-summary').textContent=plan.cycle_start&&plan.cycle_end?'当前周期 '+shortPlanDate(plan.cycle_start)+' – '+shortPlanDate(plan.cycle_end)+(days?'，已过 '+Math.max(0,days.day-1)+' 天':''):'';syncQuotaPresentation();
   planError.classList.add('hidden');
   planError.textContent = '';
   togglePlanTrafficFields();
@@ -603,7 +602,8 @@ planTrafficEnabled.addEventListener('change',()=>{if(!planTrafficEnabled.checked
 document.querySelector('#quota-keep-on').addEventListener('click',()=>{planTrafficEnabled.checked=true;quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();});
 document.querySelector('#quota-confirm-off').addEventListener('click',()=>{quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();});
 document.querySelector('#quota-cycle-day').addEventListener('input',e=>{const input=document.querySelector('#plan-cycle-anchor');input.value=input.value.slice(0,8)+String(e.target.value).padStart(2,'0');});
-document.querySelector('#plan-cycle-kind').addEventListener('change',syncQuotaPresentation);
+document.querySelector('#plan-cycle-kind').addEventListener('change',()=>{syncQuotaPresentation();if(document.querySelector('#plan-cycle-kind').value!=='monthly'){document.querySelector('.quota-cycle-more').open=true;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded','true');}});
+document.querySelector('#quota-cycle-options').addEventListener('click',()=>{const more=document.querySelector('.quota-cycle-more');more.open=!more.open;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded',String(more.open));if(more.open)document.querySelector('#plan-cycle-count').focus();});
 planForm.addEventListener('input', () => { planEditGeneration++; });
 planForm.addEventListener('change', () => { planEditGeneration++; });
 
@@ -619,7 +619,7 @@ planForm.addEventListener('submit', async event => {
   if(planDialogMode==='quota'&&!planTrafficEnabled.checked&&!quotaOffConfirmed)return;
   let payload;try {payload=Management.planSectionPayload(agents.get(pendingPlanAgentID)?.plan||{},planDialogMode,Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value])),{enabled:planTrafficEnabled.checked,limited:document.querySelector('#quota-limit').value==='limited',quotaSession:planQuotaSession});}
   catch (error) { planError.textContent = error.message; planError.classList.remove('hidden'); return; }
-  const agentID = pendingPlanAgentID, editGeneration = planEditGeneration;
+  const agentID=pendingPlanAgentID,submittedDraft=JSON.stringify(readPlanDraft());
   const mutation = agentState.beginMutation(agentID, ['plan', 'country']);
   if (!mutation) return;
   const editorToken = planEditor.begin();
@@ -629,10 +629,10 @@ planForm.addEventListener('submit', async event => {
     const plan = await savePlanPayload(agentID, payload, controller.signal);
     planRenewal.invalidate(agentID);
     if (!finishPlanResource(mutation, {plan})) return;
-    if (pendingPlanAgentID === agentID && planEditGeneration === editGeneration) planDialog.close();
+    if (pendingPlanAgentID === agentID && planEditor.snapshot().generation===editorToken&&JSON.stringify(readPlanDraft())===submittedDraft) planDialog.close();
     if(!suspended)render();
   } catch (error) {
-    if (!controller.signal.aborted && !agentState.blocked(agentID) && pendingPlanAgentID === agentID && planEditGeneration === editGeneration) {
+    if (!controller.signal.aborted && !agentState.blocked(agentID) && pendingPlanAgentID === agentID && planEditor.snapshot().generation===editorToken&&JSON.stringify(readPlanDraft())===submittedDraft) {
       planError.textContent = error.message || '套餐资料保存失败';
       planError.classList.remove('hidden');
     }
@@ -645,7 +645,7 @@ planForm.addEventListener('submit', async event => {
 
 async function clearPlan() {
   if (!pendingPlanAgentID || !mutationCSRFToken || !planEditor.canSubmit() || planRenewal.unconfirmed(pendingPlanAgentID)) return;
-  const agentID = pendingPlanAgentID, editGeneration = planEditGeneration;
+  const agentID=pendingPlanAgentID,submittedDraft=JSON.stringify(readPlanDraft());
   const mutation = agentState.beginMutation(agentID, ['plan', 'country']);
   if (!mutation) return;
   const editorToken = planEditor.begin();
@@ -654,10 +654,10 @@ async function clearPlan() {
     const plan=await savePlanPayload(agentID, Management.planSectionPayload(agents.get(agentID)?.plan||{},'clear'), controller.signal);
     planRenewal.invalidate(agentID);
     if (!finishPlanResource(mutation, {plan})) return;
-    if (pendingPlanAgentID === agentID && planEditGeneration === editGeneration) planDialog.close();
+    if (pendingPlanAgentID === agentID && planEditor.snapshot().generation===editorToken&&JSON.stringify(readPlanDraft())===submittedDraft) planDialog.close();
     if(!suspended)render();
   } catch (error) {
-    if (!controller.signal.aborted && !agentState.blocked(agentID) && pendingPlanAgentID === agentID && planEditGeneration === editGeneration) {
+    if (!controller.signal.aborted && !agentState.blocked(agentID) && pendingPlanAgentID === agentID && planEditor.snapshot().generation===editorToken&&JSON.stringify(readPlanDraft())===submittedDraft) {
       planError.textContent = error.message || '套餐资料清除失败';
       planError.classList.remove('hidden');
     }
