@@ -539,7 +539,8 @@ const planFields = {
   purchase_date: '#plan-purchase-date', renewal_date: '#plan-renewal-date', expiry_date: '#plan-expiry-date',
   country_code_override: '#plan-country-code',
 };
-const readPlanDraft=()=>({limited:document.querySelector('#quota-limit').value,traffic_enabled:planTrafficEnabled.checked,...Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value]))});
+const planFieldValues=()=>Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,key==='currency'&&document.querySelector(selector).value==='__custom__'?document.querySelector('#plan-currency-custom').value:document.querySelector(selector).value]));
+const readPlanDraft=()=>({limited:document.querySelector('#quota-limit').value,traffic_enabled:planTrafficEnabled.checked,...planFieldValues()});
 const planEditor = PlanEditor.create({agents,read:readPlanDraft,
   onclose: () => { pendingPlanAgentID = ''; planEditGeneration++; }, onclear: () => clearPlan(),
 });
@@ -579,6 +580,7 @@ function openPlanDialog(agent, trigger = null, mode='plan') {
     if(input.tagName==='SELECT'&&plan[key]&&!Array.from(input.options).some(o=>o.value===String(plan[key]))){const o=document.createElement('option');o.value=o.textContent=String(plan[key]);input.append(o);}
     input.value = key.startsWith('calibration_') ? (key === 'calibration_unit' ? 'GB' : '') : (plan[key] ?? fallback);
   }
+  document.querySelector('#plan-currency-custom').hidden=true;document.querySelector('#plan-currency-custom').required=false;
   if (!plan.traffic_mode) document.querySelector('#plan-traffic-mode').value = 'sum';
   if (!plan.quota_unit) document.querySelector('#plan-quota-unit').value = 'TB';
   if (plan.quota_value) {
@@ -604,6 +606,7 @@ document.querySelector('#quota-confirm-off').addEventListener('click',()=>{quota
 document.querySelector('#quota-cycle-day').addEventListener('input',e=>{const input=document.querySelector('#plan-cycle-anchor');input.value=input.value.slice(0,8)+String(e.target.value).padStart(2,'0');});
 document.querySelector('#plan-cycle-kind').addEventListener('change',()=>{syncQuotaPresentation();if(document.querySelector('#plan-cycle-kind').value!=='monthly'){document.querySelector('.quota-cycle-more').open=true;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded','true');}});
 document.querySelector('#quota-cycle-options').addEventListener('click',()=>{const more=document.querySelector('.quota-cycle-more');more.open=!more.open;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded',String(more.open));if(more.open)document.querySelector('#plan-cycle-count').focus();});
+document.querySelector('#plan-currency').addEventListener('change',()=>{const input=document.querySelector('#plan-currency-custom'),custom=document.querySelector('#plan-currency').value==='__custom__';input.hidden=!custom;input.required=custom;if(custom)input.focus();});
 planForm.addEventListener('input', () => { planEditGeneration++; });
 planForm.addEventListener('change', () => { planEditGeneration++; });
 
@@ -617,7 +620,7 @@ planForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (!pendingPlanAgentID || !mutationCSRFToken || !planEditor.canSubmit() || planRenewal.unconfirmed(pendingPlanAgentID)) return;
   if(planDialogMode==='quota'&&!planTrafficEnabled.checked&&!quotaOffConfirmed)return;
-  let payload;try {payload=Management.planSectionPayload(agents.get(pendingPlanAgentID)?.plan||{},planDialogMode,Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,document.querySelector(selector).value])),{enabled:planTrafficEnabled.checked,limited:document.querySelector('#quota-limit').value==='limited',quotaSession:planQuotaSession});}
+  let payload;try {payload=Management.planSectionPayload(agents.get(pendingPlanAgentID)?.plan||{},planDialogMode,planFieldValues(),{enabled:planTrafficEnabled.checked,limited:document.querySelector('#quota-limit').value==='limited',quotaSession:planQuotaSession});}
   catch (error) { planError.textContent = error.message; planError.classList.remove('hidden'); return; }
   const agentID=pendingPlanAgentID,submittedDraft=JSON.stringify(readPlanDraft());
   const mutation = agentState.beginMutation(agentID, ['plan', 'country']);
