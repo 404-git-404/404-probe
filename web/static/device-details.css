@@ -75,3 +75,5 @@ html { scrollbar-gutter: stable; }
 @media(max-width:620px){.details-addresses .pe-row[data-row=ipv4]{grid-template-columns:70px minmax(0,1fr) auto auto}.details-addresses .pe-row[data-row=ipv4] .pe-text{max-width:none}.details-history-status{white-space:normal}}
 
 .details-region .country-lookup-controls>span[data-attention=true]{display:block;font-size:12px;color:#9E2F2A;margin-top:6px}
+
+.details-title-line{min-width:0;max-width:100%}.details-title-line strong{max-width:100%}.details-identity>.details-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
