@@ -16,7 +16,7 @@
   const traffic=section('流量'),quota=button('编辑配额',n=>edit(current,n),'detail-quota');traffic.h.append(quota);value('usage',traffic.n);
   const track=el('div','details-progress'),fill=el('span');track.append(fill);traffic.n.append(track);value('cycle',traffic.n).className='details-note';fact(traffic,'设备累计','total');value('coverage',traffic.n).className='details-note';
   const network=section('网络地址');network.n.append(egress.addresses);fact(network,'出口地区','country');
-  const system=section('系统');fact(system,'主机名','hostname');fact(system,'配置','config');fact(system,'Agent','version');fact(system,'最近上报','seen');
+  const system=section('系统');fact(system,'主机名','hostname');fact(system,'配置','config');values.config.className='details-config';fact(system,'Agent','version');fact(system,'最近上报','seen');
   const agentGroup=section('Agent',groups),checks=section('检测与统计',groups),danger=section('危险操作',management);danger.n.classList.add('details-danger');
   function row(box,title,key,control){const n=el('div','details-action-row'),left=el('div');left.append(el('strong','',title));value(key,left).className='details-note';n.append(left);if(control)n.append(control);box.n.append(n);return n;}
   row(agentGroup,'升级','upgrade',actions.upgrade);row(agentGroup,'系统信息','sample');
@@ -54,7 +54,7 @@
    set('hostname',s.hostname||'—');set('config',`${s.cpu_cores?s.cpu_cores+' 核':'核心数未知'} · ${s.ram_total?format(s.ram_total,true):'—'} 内存 · ${s.disk_total?format(s.disk_total,true):'—'} 磁盘 · ${s.swap_total==null?'—':format(s.swap_total,true)} Swap`);
    actions.upgrade.disabled=actions.upgrade.disabled||!target?.supported;
    const upgrade=target?.supported?`可升级到 ${target.version}`:'';values.version.replaceChildren(el('span','',a.version||'—'));if(upgrade)values.version.append(el('span','details-upgrade-badge',upgrade));set('upgrade',(a.version||'—')+(target?' → '+target.version+(target.supported?'（与 Server 相同）':' · '+(target.reason||'不可升级')):' · '+(a.online?'正在读取目标版本':'离线')));
-   set('seen',time(a.last_seen));values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
+   set('seen',a.last_seen?time(a.last_seen)+':'+String(new Date(a.last_seen).getSeconds()).padStart(2,'0'):'未知');values.config.title=values.config.textContent;values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('google',a.google_status?.checked_at?'上次 '+time(a.google_status.checked_at):'尚未检测');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','停止接收数据，保留历史记录');values.revoke.title='Agent 程序不会被卸载';
    [editButton,quota,renewal].forEach(n=>{n.disabled=!canWrite(a);});
   }

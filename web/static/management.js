@@ -70,7 +70,8 @@
     const keys=['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','timezone','bandwidth_value','bandwidth_unit','currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','country_code_override'];
     return {...Object.fromEntries(keys.map(k=>[k,plan[k]??(k==='cycle_count'?0:'')])),...patch};
   }
-  const api = {validName, write, countries, matches, countryPicker, planPayload};
+  const matchesDeviceName=(input,name)=>typeof name==='string'&&!!name.trim()&&typeof input==='string'&&input.trim()===name.trim();
+  const api = {matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Management = api;
 })(globalThis);
@@ -109,10 +110,10 @@
   if(title)heading();
   return dialog._shell={open,close,heading,setOrigin:n=>{origin=n;}};
  }
- function confirm({title,device='',message,confirmText='确认',danger=false,trigger=null}={}){
+ function confirm({title,device='',message,messageTitle='',confirmText='确认',danger=false,trigger=null}={}){
   const doc=root.document,d=doc.createElement('dialog');d.id='action-confirm';doc.body.append(d);
   const shell=attach(d,{size:'small',title,subtitle:device});
-  const body=doc.createElement('div');body.className='shell-content';const p=doc.createElement('p');p.textContent=message;body.append(p);
+  const body=doc.createElement('div');body.className='shell-content';const p=doc.createElement('p');p.textContent=message;p.title=messageTitle;body.append(p);
   const actions=doc.createElement('div');actions.className='shell-actions';const cancel=doc.createElement('button'),yes=doc.createElement('button');cancel.type=yes.type='button';cancel.textContent='取消';yes.textContent=confirmText;yes.className=danger?'danger-action':'primary-action';actions.append(cancel,yes);d.append(body,actions);
   return new Promise(resolve=>{let accepted=false;yes.addEventListener('click',()=>{accepted=true;shell.close();});cancel.addEventListener('click',shell.close);d.addEventListener('close',()=>{resolve(accepted);d.remove();},{once:true});shell.open(trigger);cancel.focus({preventScroll:true});});
  }

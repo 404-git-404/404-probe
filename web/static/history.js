@@ -104,7 +104,7 @@ function renderAgentRuntime(agent) {
 
 trafficReset.addEventListener('click', async () => {
   if (trafficReset.disabled || !currentAgent) return;
-  if (!await DialogShell.confirm({title:'重新开始设备累计',device:currentAgent.name,message:trafficRequest ? `使用原请求 ${trafficRequest} 核实同一次累计重新起算，不创建新重置。继续？` : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？',confirmText:'确认重新开始',danger:true,trigger:trafficReset})) return;
+  if (!await DialogShell.confirm({title:'重新开始设备累计',device:currentAgent.name,messageTitle:trafficRequest?'原请求编号：'+trafficRequest:'',message:trafficRequest ? '核实上次的重新开始是否已生效，不会创建新的重置。继续？' : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？',confirmText:'确认重新开始',danger:true,trigger:trafficReset})) return;
   const mutation = agentState.beginMutation(id, ['traffic']);
   if (!mutation) return;
   const verifying = Boolean(trafficRequest);
@@ -130,7 +130,7 @@ trafficReset.addEventListener('click', async () => {
     const uncertain = !error.status || error.status >= 500;
     if (!uncertain) trafficRequest = null;
     trafficResetFeedback.textContent = uncertain
-      ? `响应不确定，保留原累计和请求 ${operationID}；不会自动重试，可用原请求核实。`
+      ? '结果未确认，保留原累计；可核实上次的重新开始是否已生效。'
       : error.message || '无法重新开始累计统计';
   } finally {
     if (trafficWriteController === controller) trafficWriteController = null;

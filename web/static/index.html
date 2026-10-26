@@ -92,7 +92,8 @@
     <p>停止接收数据，保留历史记录；Agent 程序不会被卸载。</p>
     <div class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
     <p class="remove-warning">撤销后不能恢复原身份。历史记录、计划和任务会保留。</p>
-    <form id="remove-agent-form">
+    <form id="remove-agent-form" autocomplete="off">
+      <label id="remove-agent-prompt" for="remove-agent-input"></label><input id="remove-agent-input" aria-labelledby="remove-agent-prompt" required>
       <div id="remove-agent-error" class="dialog-error hidden" role="alert">移除失败，请重试。</div>
       <div class="dialog-actions"><button id="remove-agent-cancel" type="button">取消</button><button id="remove-agent-confirm" class="danger-action" type="submit">确认撤销</button></div>
     </form>

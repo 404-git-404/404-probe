@@ -15,6 +15,8 @@ const createdEnrollment = document.querySelector('#created-enrollment');
 const removeAgentDialog = document.querySelector('#remove-agent-dialog');
 const removeAgentForm = document.querySelector('#remove-agent-form');
 const removeAgentName = document.querySelector('#remove-agent-name');
+const removeAgentInput = document.querySelector('#remove-agent-input');
+const removeAgentPrompt = document.querySelector('#remove-agent-prompt');
 const removeAgentConfirm = document.querySelector('#remove-agent-confirm');
 const removeAgentError = document.querySelector('#remove-agent-error');
 const serverVersion = document.querySelector('#server-version');
@@ -321,24 +323,25 @@ function clearRemoveAgentDialog() {
   pendingRemoveAgentID = '';
   removeAgentName.textContent = '';
   removeAgentError.classList.add('hidden');
-  removeAgentConfirm.disabled = false;
+  removeAgentInput.value='';removeAgentInput.disabled=false;removeAgentConfirm.disabled = true;
 }
 
 function openRemoveAgentDialog(agent) {
   removeShell.heading('撤销 Agent',agent.name);
   clearRemoveAgentDialog();
   pendingRemoveAgentID = agent.agent_id;
-  removeAgentName.textContent = agent.name || '未命名 Agent';
+  removeAgentName.textContent = agent.name || '未命名 Agent';removeAgentPrompt.textContent='输入设备名 '+removeAgentName.textContent+' 以确认';
   removeAgentDialog.showModal();
 }
 
+removeAgentInput.addEventListener('input',()=>{removeAgentConfirm.disabled=removeAgentInput.disabled||!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);});
 document.querySelector('#remove-agent-cancel').addEventListener('click', () => removeAgentDialog.close());
 removeAgentDialog.addEventListener('close', clearRemoveAgentDialog);
 
 removeAgentForm.addEventListener('submit', async event => {
   event.preventDefault();
   const agentID = pendingRemoveAgentID;
-  if (!mutationCSRFToken || !agentID) return;
+  if (!mutationCSRFToken || !agentID || removeAgentInput.disabled || !Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent)) return;
   const barrier = agentState.beginDelete(agentID);
   if (!barrier) return;
   reconciliation.cancel(agentID);
@@ -349,7 +352,7 @@ removeAgentForm.addEventListener('submit', async event => {
   selectorController.cancel(agentID);
   pendingTelemetry.delete(agentID);
   let removed = false;
-  removeAgentConfirm.disabled = true;
+  removeAgentConfirm.disabled = true;removeAgentInput.disabled=true;
   removeAgentError.classList.add('hidden');
   try {
     const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agentID)}/revoke`, {
@@ -375,7 +378,7 @@ removeAgentForm.addEventListener('submit', async event => {
     await refresh();
   } catch (error) {
     removeAgentError.classList.remove('hidden');
-    removeAgentConfirm.disabled = false;
+    removeAgentInput.disabled=false;removeAgentConfirm.disabled=!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);
   } finally {
     if (!removed) {
       agentState.finishDelete(barrier, false);
@@ -1547,7 +1550,7 @@ function canResetTraffic(agent) {
 async function resetAccumulatedTraffic(id) {
   const agent=agents.get(id);if(!canResetTraffic(agent))return;
   const oldRequest=trafficResetRequests.get(id);
-  if(!await DialogShell.confirm({title:'重新开始设备累计',device:agent.name,message:oldRequest ? `使用原请求 ${oldRequest} 核实同一次累计重新起算，不创建新重置。继续？` : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？',confirmText:'确认重新开始',danger:true}))return;
+  if(!await DialogShell.confirm({title:'重新开始设备累计',device:agent.name,messageTitle:oldRequest?'原请求编号：'+oldRequest:'',message:oldRequest ? '核实上次的重新开始是否已生效，不会创建新的重置。继续？' : '只重新开始页面累计入站/出站统计；历史与套餐周期用量不会改变。继续？',confirmText:'确认重新开始',danger:true}))return;
   const mutation=agentState.beginMutation(id,['traffic']);if(!mutation)return;
   const verifying=Boolean(oldRequest),operationID=oldRequest||crypto.randomUUID().replaceAll('-','');trafficResetRequests.set(id,operationID);
   const controller=new AbortController();trafficResetControllers.set(id,controller);trafficResetFeedback.set(id,'正在记录新的累计起点…');render();
@@ -1559,7 +1562,7 @@ async function resetAccumulatedTraffic(id) {
   } catch(error) {
     if(controller.signal.aborted||agentState.blocked(id)||!agents.has(id))return;
     const uncertain=!error.status||error.status>=500;if(!uncertain)trafficResetRequests.delete(id);
-    trafficResetFeedback.set(id,uncertain?`响应不确定，保留原累计和请求 ${operationID}；不会自动重试，可用原请求核实。`:error.message||'无法重新开始累计统计');
+    trafficResetFeedback.set(id,uncertain?'结果未确认，保留原累计；可核实上次的重新开始是否已生效。':error.message||'无法重新开始累计统计');
   } finally {
     if(trafficResetControllers.get(id)===controller)trafficResetControllers.delete(id);
     agentState.finishMutation(mutation);reconciliation.notify(id);if(!suspended)render();

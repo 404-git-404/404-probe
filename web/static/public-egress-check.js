@@ -131,7 +131,7 @@
       if(note.textContent!==model.note)note.textContent=model.note;
       for(const key of Object.keys(rowNodes)){
         const item=model.rows[key],n=rowNodes[key];n.r.hidden=!item;n.ip='';
-        if(item){n.ip=item.ip;let text=splitMode?item.text.replace(/^IPv[46]：/,''):item.text;if(splitMode&&key.startsWith('last_'))text=text.replace(/（.*）/, '（'+shortDate(agent?.state?.public_egress?.[key.slice(5)]?.last_success?.checked_at)+'）');n.text.title=item.text;if(n.text.textContent!==text)n.text.textContent=text;}
+        if(item){n.ip=item.ip;let text=splitMode?item.text.replace(/^IPv[46]：/,''):item.text;if(splitMode&&key==='ipv6'&&agent?.state?.public_egress?.ipv6?.checked_at&&agent.state.public_egress.ipv6.status==='unavailable')text='无';if(splitMode&&key.startsWith('last_'))text=text.replace(/（.*）/, '（'+shortDate(agent?.state?.public_egress?.[key.slice(5)]?.last_success?.checked_at)+'）');n.text.title=item.text;if(n.text.textContent!==text)n.text.textContent=text;}
         n.copy.hidden=!item||!item.ip;
       }
       eye.hidden=!model.hasAddress;

@@ -77,3 +77,5 @@ html { scrollbar-gutter: stable; }
 .details-region .country-lookup-controls>span[data-attention=true]{display:block;font-size:12px;color:#9E2F2A;margin-top:6px}
 
 .details-title-line{min-width:0;max-width:100%}.details-title-line strong{max-width:100%}.details-identity>.details-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.details-config{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

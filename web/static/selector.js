@@ -328,7 +328,6 @@
         submit.disabled=Boolean(success||blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selector.choices?.includes(value)||value===selector.current);
         row.append(label,select,submit);section.append(row);
         if(value!==selector.current)section.append(el('p',`当前：${selector.current||'—'} → 切换后：${value||'—'}`,'selector-draft'));
-        if(success)section.append(el('p','“✓ 已切换”约 3 秒后自动消失，按钮恢复','selector-feedback'));
         if(status&&!status.pending&&!success){const feedback=el('p',status.message,status.error?'selector-error':'selector-feedback');feedback.setAttribute('aria-live','polite');feedback.title=status.detail||'';section.append(feedback);}
         content.append(section);
       }

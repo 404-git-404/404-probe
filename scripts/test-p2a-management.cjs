@@ -25,3 +25,10 @@ test('R09 country-only full plan payload preserves every hidden configuration an
  const M=require('../web/static/management.js'),plan={traffic_mode:'rx',cycle_kind:'days',cycle_count:45,cycle_anchor:'2026-09-01',timezone:'Europe/Berlin',quota_value:'1.234',quota_unit:'TiB',purchase_price_period:'once',renewal_price_period:'once',currency:'USD',usage_bytes:123,calibration_value:'10',country_code_override:'US'};
  const p=M.planPayload(plan,{country_code_override:'JP'});for(const key of ['traffic_mode','cycle_kind','cycle_count','cycle_anchor','timezone','quota_value','quota_unit','purchase_price_period','renewal_price_period','currency'])assert.equal(p[key],plan[key]);assert.equal(p.country_code_override,'JP');assert.equal(p.calibration_value,undefined);assert.equal(p.usage_bytes,undefined);
 });
+
+
+test('revoke device name confirmation preserves case and interior whitespace, permits paste and trim',()=>{
+ assert.equal(require('../web/static/management.js').matchesDeviceName(' DediRock-LAX-1 ','DediRock-LAX-1'),true);
+ for(const value of ['', 'dedirock-lax-1','DediRock-LAX-2'])assert.equal(require('../web/static/management.js').matchesDeviceName(value,'DediRock-LAX-1'),false);
+ assert.equal(require('../web/static/management.js').matchesDeviceName('A B','A  B'),false);assert.equal(require('../web/static/management.js').matchesDeviceName('   ',' '),false);
+});
