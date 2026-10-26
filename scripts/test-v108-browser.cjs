@@ -95,7 +95,7 @@ test('R33 special states, hover/title and native outbound dialog: draft, per-gro
   assert.equal(await page.locator('#selector-dialog-title').textContent(),'出站选择');
   assert.equal(await page.locator('.selector-options select').first().inputValue(),'直连');
   assert.equal(await page.locator('.selector-options select').nth(1).inputValue(),'备用');
-  assert.equal(await page.locator('.selector-actions').textContent(),'关闭');
+  assert.equal(await page.locator('.selector-actions button').textContent(),'关闭');
   const switches=page.locator('[data-selector-kind=submit]');assert.equal(await switches.count(),2);
   assert.equal(await switches.first().isDisabled(),true);assert.equal(await switches.nth(1).isDisabled(),true);
   await shot(page,'outbound-dialog','body');
@@ -133,7 +133,7 @@ test('one outbound group uses the same labelled select row and disabled initial 
  const {page,errors}=await open('single-outbound');try{
   await page.click('.selector-trigger');assert.equal(await page.locator('.selector-row').count(),1);
   assert.equal(await page.getByLabel('出站主组',{exact:true}).inputValue(),'直连');assert.equal(await page.locator('[data-selector-kind=submit]').isDisabled(),true);
-  assert.equal(await page.locator('.selector-actions').textContent(),'关闭');assert.deepEqual(errors,[]);
+  assert.equal(await page.locator('.selector-actions button').textContent(),'关闭');assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });
 test('R33 real local measurements screenshot (optional sample path)',{skip:!available||!process.env.R33_REAL_SAMPLE},async()=>{
@@ -148,7 +148,7 @@ test('R09 overview/management preserve the fixed frame and state labels',browser
   await page.locator('#details-tab-management').click();assert.equal((await page.locator('#device-details').boundingBox()).height,680);
   assert.match(await page.locator('#details-pane-management').innerText(),/随上报自动更新/);
   assert.match(await page.locator('#details-pane-management').innerText(),/撤销 Agent/);
-  await page.locator('#details-tab-resources').click();await page.waitForSelector('.resource-wide');const stats=await page.locator('.resource-wide .details-note').first().innerText();assert.doesNotMatch(stats,/\/s\/s/);assert.match(stats,/按每分钟平均值/);
+  await page.locator('#details-tab-resources').click();await page.waitForSelector('.resource-wide');const stats=await page.locator('.resource-wide .details-note').first().innerText();assert.doesNotMatch(stats,/\/s\/s/);assert.doesNotMatch(stats,/按每分钟平均值/);assert.match(await page.locator('.details-history-status').getAttribute('title'),/按每分钟平均值/);
   await page.keyboard.press('Escape');assert.equal(await page.locator('#device-details').evaluate(n=>n.open),false);assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });

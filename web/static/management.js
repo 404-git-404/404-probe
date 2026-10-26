@@ -105,7 +105,7 @@
   dialog.addEventListener('cancel',e=>{e.preventDefault();close();});dialog.addEventListener('close',end);
   // Existing controllers may continue using showModal/close; no request logic moves here.
   dialog.showModal=()=>open();dialog.close=close;
-  function heading(text=title,device=subtitle){let head=dialog.querySelector(':scope > .shell-head');if(!head){head=doc.createElement('div');head.className='shell-head';const group=doc.createElement('div'),h=doc.createElement('h2'),p=doc.createElement('p'),x=doc.createElement('button');h.id=dialog.id+'-shell-title';dialog.setAttribute('aria-labelledby',h.id);group.append(h,p);x.type='button';x.textContent='×';x.setAttribute('aria-label','关闭');x.addEventListener('click',close);head.append(group,x);dialog.prepend(head);}head.querySelector('h2').textContent=text;head.querySelector('p').textContent=device;}
+  function heading(text=title,device=subtitle){let head=dialog.querySelector(':scope > .shell-head');if(!head){head=doc.createElement('div');head.className='shell-head';const group=doc.createElement('div'),h=doc.createElement('h2'),p=doc.createElement('p'),x=doc.createElement('button');h.id=dialog.id+'-shell-title';dialog.setAttribute('aria-labelledby',h.id);group.append(h,p);x.type='button';x.textContent='×';x.setAttribute('aria-label','关闭');x.addEventListener('click',close);head.append(group,x);dialog.prepend(head);}head.querySelector('h2').textContent=text;head.querySelector('p').textContent=device;head.querySelector('p').title=device;}
   if(title)heading();
   return dialog._shell={open,close,heading,setOrigin:n=>{origin=n;}};
  }

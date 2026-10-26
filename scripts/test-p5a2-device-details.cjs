@@ -31,7 +31,7 @@ function fixture(fetch){const {doc,dialog,Element}=dom(),agents=new Map([[id,{ag
  return{doc,dialog,Element,agents,queue,details,requests,plots,pane,released:()=>released,restored:()=>restored,close(){details.shutdown();queue.close();}};
 }
 test('OS1b actual security pane distinguishes platform unavailable from setup and other statuses',()=>{
- const f=fixture();try{for(const [status,reason,label]of [['unavailable','platform_unsupported','此平台暂不支持（v1.1）'],['unavailable','setup_required','需要配置'],['failed','platform_unsupported','采集失败'],['unavailable','sandbox_unavailable','不可用：systemd 沙箱不可用'],['unavailable','collector_start_failed','不可用：本地安全采集服务启动失败'],['no_data','no_sing_box_logs','未发现 sing-box 日志（本机可能未安装或未运行 sing-box）'],['failed','journal_read_failed','采集失败 · journal_read_failed'],['failed','invalid_export','采集失败 · invalid_export']]){
+ const f=fixture();try{for(const [status,reason,label]of [['unavailable','platform_unsupported','此平台暂不支持安全观察'],['unavailable','setup_required','需要配置'],['failed','platform_unsupported','采集失败'],['unavailable','sandbox_unavailable','当前环境无法运行安全观察'],['unavailable','collector_start_failed','本地安全采集服务启动失败'],['no_data','no_sing_box_logs','未发现 sing-box 日志'],['failed','journal_read_failed','采集失败'],['failed','invalid_export','采集失败']]){
   f.agents.get(id).security={supported:true,status,reason};f.details.open(id,'security');f.details.update(f.agents.get(id));
   const text=f.dialog.querySelector('#details-pane-security').all().map(n=>n.textContent).join(' ');assert.ok(text.includes(label),text);
   if(reason==='platform_unsupported'&&status==='unavailable'){assert.ok(!text.includes('需要配置'));assert.ok(!text.includes('0 条'));}
@@ -48,8 +48,8 @@ test('P5a2 production stable dialog keeps active custom drafts/caret/tab across 
 });
 test('R09 CPU, memory and traffic share data and keep percentage/rate axes and keyboard point detail',async()=>{
  const f=fixture();f.details.open(id,'resources');await flush();assert.equal(f.plots.length,3);
- assert.deepEqual(f.plots[0].options.axes[1].values(null,[0,50,100]),['0%','50%','100%']);assert.deepEqual(f.plots[2].options.axes[1].values(null,[0,250,500]),['0 B/s','250 B/s','500 B/s']);
- const point=f.dialog.querySelector('.details-point');point.dispatch('keydown',{key:'Home'});assert.match(point.textContent,/CPU 0.00%/);assert.match(point.textContent,/内存 50.00%/);assert.equal(f.requests.length,1);f.close();
+ assert.deepEqual(f.plots[0].options.axes[1].values(null,[0,50,100]),[]);assert.deepEqual(f.plots[2].options.axes[1].values(null,[0,250,500]),[]);
+ assert.equal(f.plots[1].options.series.length,2,'memory has one visible RAM series');assert.equal(f.plots[1].data.length,2);const point=f.dialog.querySelector('.details-point');point.dispatch('keydown',{key:'Home'});assert.match(point.textContent,/CPU 0.00%/);assert.match(point.textContent,/内存 50.00%/);assert.equal(f.requests.length,1);f.close();
 });
 
 test('P5a2 production tab/device/close cancellation destroys plot and fences late real stream data',async()=>{
@@ -99,5 +99,5 @@ test('R09 four tabs exclude network and attempts cannot open its removed host',(
 test('R09 security records are bounded, incomplete sources are explicit, and shares use total events',()=>{
  const f=fixture(),sources=Array.from({length:100},(_,i)=>({ip:'198.51.100.'+(i+1),count:100-i,first_seen:now-60000,last_seen:now}));
  f.agents.get(id).security={supported:true,status:'partial',updated_at:now,current:{status:'partial',window_start:now-86400000,window_end:now,collected_at:now,total_events:10000,tracked_sources:154,dropped_sources:54,sources}};
- f.details.open(id,'security');const text=f.dialog.all().map(n=>n.textContent).join(' ');assert.match(text,/最近一次检查/);assert.doesNotMatch(text,/近 24 小时/);assert.match(text,/只记录了前 100 个来源/);assert.match(text,/1.0%/);const rows=f.dialog.querySelectorAll('.details-security-row').slice(1);assert.equal(rows.filter(n=>!n.hidden).length,8);const toggle=f.dialog.all().find(n=>n.textContent==='显示全部已记录来源（100 个）');toggle.dispatch('click');assert.equal(rows.filter(n=>!n.hidden).length,100);f.close();
+ f.details.open(id,'security');const text=f.dialog.all().map(n=>n.textContent).join(' ');assert.match(text,/最近一次检查/);assert.doesNotMatch(text,/近 24 小时/);assert.match(text,/只记录了次数最多的 100 个来源/);assert.match(text,/1.0%/);const rows=f.dialog.querySelectorAll('.details-security-row').slice(1);assert.equal(rows.filter(n=>!n.hidden).length,8);const toggle=f.dialog.all().find(n=>n.textContent==='显示全部已记录来源（100 个）');toggle.dispatch('click');assert.equal(rows.filter(n=>!n.hidden).length,100);f.close();
 });

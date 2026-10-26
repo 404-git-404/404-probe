@@ -29,9 +29,9 @@
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <div id="add-agent-choice">
       <h2 id="add-agent-title">添加 Agent</h2>
-      <p>把一台新机器接入面板</p>
-      <label for="add-agent-choice-name">设备名称</label><input id="add-agent-choice-name" maxlength="128" required>
-      <p>安装方式</p><div class="install-choices" role="radiogroup" aria-label="安装方式"><button id="add-agent-choose-oneclick" type="button" role="radio" aria-checked="true"><strong>一键安装 · 推荐</strong><small>生成一条命令，在新机器上运行。30 分钟有效，只能使用一次。</small></button><button id="add-agent-choose-manual" type="button" role="radio" aria-checked="false"><strong>手动安装</strong><small>先运行安装器，再填写注册码。适合自己控制每一步。</small></button></div>
+
+      <label for="add-agent-choice-name">设备名称</label><input id="add-agent-choice-name" placeholder="例如 DediRock-LAX-2" maxlength="128" required>
+      <p>安装方式</p><div class="install-choices" role="radiogroup" aria-label="安装方式"><button id="add-agent-choose-oneclick" type="button" role="radio" aria-checked="true"><strong>一键安装 <span class="install-recommended">推荐</span></strong><small>生成一条命令，在新机器上粘贴运行即可。命令 30 分钟内有效，只能用一次。</small></button><button id="add-agent-choose-manual" type="button" role="radio" aria-checked="false"><strong>手动安装</strong><small>先在机器上运行安装器，再把这里给出的注册码填进去。适合需要自己控制每一步的情况。</small></button></div>
       <p id="add-agent-oneclick-reason" class="install-note hidden" role="status"></p>
       <div class="dialog-actions"><button id="add-agent-choice-cancel" type="button">取消</button><button id="add-agent-next" class="primary-action" type="button">下一步</button></div>
     </div>
@@ -77,7 +77,7 @@
   <dialog id="upgrade-agent-dialog" class="agent-dialog" aria-labelledby="upgrade-agent-title">
     <h2 id="upgrade-agent-title">升级 Agent</h2>
 
-    <div class="upgrade-versions"><strong id="upgrade-current-version"></strong><span aria-hidden="true">→</span><strong id="upgrade-target-version"></strong></div><p class="upgrade-same-server">与 Server 相同</p>
+    <div class="upgrade-versions"><strong id="upgrade-current-version"></strong><span aria-hidden="true">→</span><strong id="upgrade-target-version"></strong><span class="upgrade-same-server">与 Server 相同</span></div>
     <form id="upgrade-agent-form">
       <label id="upgrade-release-label" for="upgrade-release">升级目标（与 Server 相同）</label>
       <select id="upgrade-release" name="release"></select>

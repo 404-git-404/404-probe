@@ -15,7 +15,7 @@
     agent_offline: 'Agent 离线，无法执行切换',
     outbounds_not_configured: 'Agent 未配置出站发现',
     outbounds_unavailable: 'Clash API 当前不可用',
-    selector_choice_not_allowed: '目标已不在最新快照中，请刷新后重试',
+    selector_choice_not_allowed: '目标已不在设备最新状态中，请刷新后重试',
   };
   function reason(agent, csrf) {
     const out = agent?.outbounds;
@@ -26,7 +26,7 @@
     if (out.status === 'auth_required') return errors.clash_api_auth_required;
     if (out.status === 'not_detected') return errors.clash_api_not_detected;
     if (!out.available) return 'Clash API 当前不可用';
-    if (out.stale) return '状态已过期，等待最新快照';
+    if (out.stale) return '状态已过期，等待设备更新';
     if (!csrf) return '等待安全会话';
     return '';
   }
@@ -197,7 +197,7 @@
         }
         if (!state.finishMutation(mutation, {outbounds: latest.outbounds})) return false;
         if (g.generation === operation.generation) {
-          g.feedback = m.intent===operation.intent ? {message: reflected ? '✓ 已切换' : '已完成，等待快照确认', error:false,uncertain:!reflected,completed:!reflected,target} : null;
+          g.feedback = m.intent===operation.intent ? {message: reflected ? '✓ 已切换' : '已完成，等待设备确认', error:false,uncertain:!reflected,completed:!reflected,target} : null;
           if(reflected&&m.open){const feedback=g.feedback;g.feedbackTimer=setTimeout(()=>{if(g.feedback===feedback){g.feedback=null;changed(id);}},3000);}
           if (reflected) {
             g.draft = null;
@@ -208,7 +208,7 @@
       } catch (error) {
         if (m.intent===operation.intent && g.generation === operation.generation && !disposed && state.agents.has(id) && !state.blocked(id)) {
           const uncertain = !error.definitive && error.name !== 'AbortError';
-          g.feedback = {message: uncertain ? `${error.message}（请求 ${operation.requestID}）` : error.message,
+          g.feedback = {message:error.message, detail:uncertain?`请求 ${operation.requestID}`:'',
             error: !uncertain && error.name !== 'AbortError', uncertain, requestID: operation.requestID, jobID: operation.jobID};
         }
         return false;
@@ -304,7 +304,7 @@
       const focusedName = focus?.dataset?.selectorName, focusedKind = focus?.dataset?.selectorKind;
       const content=el('div','');
       const heading=el('h2','出站选择');heading.id='selector-dialog-title';
-      const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device');device.id='selector-dialog-device';
+      const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device');device.id='selector-dialog-device';device.title=device.textContent;
       const header=el('div','','shell-head'),group=el('div',''),x=el('button','×');x.type='button';x.dataset.selectorKind='close';x.setAttribute('aria-label','关闭');group.append(heading,device);header.append(group,x);content.append(header);
       const out=agent.outbounds||{},blocked=reason(agent,csrf());
       let index=0;
@@ -322,20 +322,21 @@
           const option=el('option',choice===selector.current?`${choice}（当前）`:choice);option.value=choice;select.append(option);
         }
         select.value=value??'';select.disabled=Boolean(blocked||m.active);
-        const submit=el('button',m.active&&g.feedback?.pending?'正在切换…':'切换');submit.type='button';
+        const status=g.feedback||g.recovered,success=status?.message==='✓ 已切换';const submit=el('button',m.active&&g.feedback?.pending?'正在切换…':success?'✓ 已切换':'切换',success?'selector-success':'');submit.type='button';
         submit.setAttribute('aria-label',`切换 ${selector.name}`);
         submit.dataset.selectorKind='submit';submit.dataset.selectorName=selector.name;
-        submit.disabled=Boolean(blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selector.choices?.includes(value)||value===selector.current);
+        submit.disabled=Boolean(success||blocked||m.active||m.inspection||m.recoveryIncomplete||g.remotePending||!selector.choices?.includes(value)||value===selector.current);
         row.append(label,select,submit);section.append(row);
-        const status=g.feedback||g.recovered;
-        if(status){const feedback=el('p',status.message,status.error?'selector-error':'selector-feedback');feedback.setAttribute('aria-live','polite');section.append(feedback);}
+        if(value!==selector.current)section.append(el('p',`当前：${selector.current||'—'} → 切换后：${value||'—'}`,'selector-draft'));
+        if(success)section.append(el('p','“✓ 已切换”约 3 秒后自动消失，按钮恢复','selector-feedback'));
+        if(status&&!status.pending&&!success){const feedback=el('p',status.message,status.error?'selector-error':'selector-feedback');feedback.setAttribute('aria-live','polite');feedback.title=status.detail||'';section.append(feedback);}
         content.append(section);
       }
       const message=blocked||(m.inspection?'正在核对待执行切换…':m.recoveryMessage)||(!out.selectors?.length?'未发现 Selector':'');
       if(message)content.append(el('p',message,'selector-status'));
       const actions=el('div','','selector-actions'),cancel=el('button','关闭');
       cancel.type='button';cancel.dataset.selectorKind='close';
-      actions.append(cancel);content.append(actions);
+      actions.append(el('span','切换记录可在 Probe Jobs 查看','selector-record-hint'),cancel);content.append(actions);
       patchChildren(panel,content);
       if (focus?.isConnected && panel.contains(focus)) return;
       const liveClose = panel.querySelector('[data-selector-kind="close"]');

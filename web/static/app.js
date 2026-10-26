@@ -37,7 +37,7 @@ const planAgentName = document.querySelector('#plan-agent-name');
 const planTrafficEnabled = document.querySelector('#plan-traffic-enabled');
 const planTrafficFields = document.querySelector('#plan-traffic-fields');
 const planError = document.querySelector('#plan-error');
-const addShell = DialogShell.attach(addAgentDialog,{title:'添加 Agent'});
+const addShell = DialogShell.attach(addAgentDialog,{title:'添加 Agent',subtitle:'把一台新机器接入面板'});
 const upgradeShell = DialogShell.attach(upgradeAgentDialog,{size:'small',title:'升级 Agent'});
 const removeShell = DialogShell.attach(removeAgentDialog,{size:'small',title:'撤销 Agent'});
 const agentState = AgentState.create();
@@ -916,7 +916,7 @@ async function refreshCountryCodeLookup(agent, button, feedback, newAfterVerific
     || ['requested', 'delivered'].includes(agent.country_code_lookup_operation?.status)) return;
   if (!await DialogShell.confirm({title:'重新识别出口地区',device:agent.name,trigger:button,message:newAfterVerification
     ? '前请求结果仍不确定，服务器未见新的操作记录；是否明确发起一个新的单次识别？这不是原请求重试，前请求可能仍执行；服务器会拒绝已有待执行操作。取消可继续核实。'
-    : '将由 Agent 向 ipwho.is 发起一次 HTTPS 国家/地区识别请求，只回传 ISO 两字母代码。失败时保留当前值。继续？',confirmText:'重新识别'})) return;
+    : 'Agent 将向 ipwho.is 查询国家/地区，只回传两字母代码；查询失败时保留当前值。是否继续？',confirmText:'重新识别'})) return;
   const mutation = agentState.beginMutation(agent.agent_id, ['country']);
   if (!mutation) return;
   const controller = new AbortController(); countryWriteControllers.set(agent.agent_id, controller);
@@ -1061,7 +1061,7 @@ function countryCodeLookupControls(agent) {
   }
   const capable = Boolean(agent.management?.country_code_lookup);
   const pending = operation?.status === 'requested' || operation?.status === 'delivered';
-  setCardText(button, !capable ? '升级 Agent 后可重新识别' : pending ? '识别中…' : uncertainCountryRequests.has(agent.agent_id) ? '核实前次识别请求' : '重新识别一次');
+  setCardText(button, !capable ? '升级 Agent 后可重新识别' : pending ? '识别中…' : uncertainCountryRequests.has(agent.agent_id) ? '核实前次识别请求' : '重新识别');
   button.disabled = !mutationCSRFToken || !capable || !agent.online || Boolean(agent.disabled_at) || agent.revoked || pending || countryWriteControllers.has(agent.agent_id) || agentState.busy(agent.agent_id, 'country') || agentState.blocked(agent.agent_id);
   button.title = !capable ? '当前 Agent 版本不支持主动重取，需要升级' : !agent.online ? 'Agent 离线时不能触发' : pending ? '本次请求只会触发一次，等待结果或状态超时' : '手动触发一次 HTTPS 国家/地区识别';
   if (!capable) statusText = '需要升级 Agent 后才能主动重新识别。';
@@ -1077,7 +1077,7 @@ function countryCodeLookupControls(agent) {
   if (agent.plan?.country_code_override) statusText += ' 当前启用了手动覆盖，识别结果不会改变当前显示。';
   if (agentActionErrors.has(`${agent.agent_id}/country`)) statusText = agentActionErrors.get(`${agent.agent_id}/country`);
   if (uncertainCountryRequests.has(agent.agent_id)) statusText += ' 提交结果不确定，不会自动重试；请刷新状态核实，当前值保留。';
-    setCardText(status, statusText);
+    setCardText(status, statusText);status.title=statusText;controls.title=statusText;button.title=statusText;status.dataset.attention=String(operation?.status==='failed'||agentActionErrors.has(`${agent.agent_id}/country`));
   }
   update(agent);
   button.addEventListener('click', () => uncertainCountryRequests.has(agent.agent_id)
@@ -1405,7 +1405,7 @@ function createAgentCard(initialAgent) {
     resetTraffic.disabled = !canResetTraffic(agent);
     resetTraffic.addEventListener('click', () => resetAccumulatedTraffic(agent.agent_id));
     const resetFeedback = document.createElement('span');resetFeedback.setAttribute('aria-live','polite');
-    resetFeedback.textContent = trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量';
+    resetFeedback.textContent = trafficResetFeedback.get(agent.agent_id) || '';
     detailActions.append(resetTraffic,resetFeedback);
     const countryControls = countryCodeLookupControls(agent);
     // Public IP detection lives in the same panel as the other device management actions.
@@ -1530,7 +1530,7 @@ function createAgentCard(initialAgent) {
       setCardText(checkFeedback, agentActionErrors.get(`${agent.agent_id}/google`) || '');
       setCardText(resetTraffic, trafficResetRequests.has(agent.agent_id) ? '核实前次请求' : '重新开始…');
       resetTraffic.disabled = !canResetTraffic(agent);
-      setCardText(resetFeedback, trafficResetFeedback.get(agent.agent_id) || '只改变累计显示，不改历史或套餐周期用量');
+      setCardText(resetFeedback, trafficResetFeedback.get(agent.agent_id) || '');
       editPlan.disabled = planActionBlocked(agent);
       renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
 

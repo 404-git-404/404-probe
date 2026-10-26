@@ -117,29 +117,30 @@
     const feedback=el('p','pe-feedback','');feedback.setAttribute('aria-live','polite');
     node.append(head,switchLabel,note,lines,status,times,feedback);
     const addresses=el('div','details-addresses'),controls=el('div','details-egress-controls');
-    function split(){addresses.append(eye,lines,status,times);controls.append(switchLabel,check,note,feedback);return {addresses,controls};}
+    let splitMode=false;function split(){splitMode=true;for(const key of ['ipv4','ipv6']){const n=rowNodes[key],label=el('span','details-label',key==='ipv4'?'IPv4':'IPv6');n.r.prepend(label);}rowNodes.ipv4.r.insertBefore(eye,rowNodes.ipv4.copy);addresses.append(lines,status,times);controls.append(switchLabel,check,note,feedback);return {addresses,controls};}
 
     let agent=null,revealed=false,busy=false,copyTimer=null,currentId=agentId||null;
     const say=text=>{if(feedback.textContent!==text)feedback.textContent=text;};
+    const shortDate=v=>{const d=new Date(v),p=n=>String(n).padStart(2,'0');return (d.getFullYear()!==new Date(now()).getFullYear()?d.getFullYear()+'-':'')+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());};
     function render(){
       const model=view(agent,now(),{reveal:revealed});
       if(toggle.checked!==model.enabled)toggle.checked=model.enabled;
       toggle.disabled=!csrf()||!agent||model.switchDisabled||busy;
       check.disabled=!csrf()||!agent||model.buttonDisabled||busy;
-      check.textContent=model.buttonLabel;
+      check.textContent=model.buttonLabel;check.title=model.note;
       if(note.textContent!==model.note)note.textContent=model.note;
       for(const key of Object.keys(rowNodes)){
         const item=model.rows[key],n=rowNodes[key];n.r.hidden=!item;n.ip='';
-        if(item){n.ip=item.ip;if(n.text.textContent!==item.text)n.text.textContent=item.text;}
+        if(item){n.ip=item.ip;let text=splitMode?item.text.replace(/^IPv[46]：/,''):item.text;if(splitMode&&key.startsWith('last_'))text=text.replace(/（.*）/, '（'+shortDate(agent?.state?.public_egress?.[key.slice(5)]?.last_success?.checked_at)+'）');n.text.title=item.text;if(n.text.textContent!==text)n.text.textContent=text;}
         n.copy.hidden=!item||!item.ip;
       }
       eye.hidden=!model.hasAddress;
       eye.setAttribute('aria-pressed',String(revealed));
-      const eyeText=revealed?'隐藏 IP':'显示完整 IP';if(eye.textContent!==eyeText)eye.textContent=eyeText;
-      const timeText=model.enabled?[model.times.last?`上次检测：${new Date(model.times.last).toLocaleString()}`:'上次检测：尚无记录',
+      const eyeText=splitMode?(revealed?'隐藏':'显示'):(revealed?'隐藏 IP':'显示完整 IP');if(eye.textContent!==eyeText)eye.textContent=eyeText;
+      const timeText=splitMode?(model.enabled?'公网 IP 每 7 天检测一次 · 上次 '+(model.times.last?shortDate(model.times.last):'尚无记录'):'公网 IP 检测：未启用'):model.enabled?[model.times.last?`上次检测：${new Date(model.times.last).toLocaleString()}`:'上次检测：尚无记录',
         model.times.next?`下次检测：${model.times.next<=now()?'即将开始':new Date(model.times.next).toLocaleString()}`:'下次检测：等待调度'].join(' · '):'';
       if(times.textContent!==timeText)times.textContent=timeText;
-      times.hidden=!timeText;
+      times.hidden=!timeText;times.title=model.times.last?new Date(model.times.last).toLocaleString():'';
     }
     // Revealed addresses live in memory only and go back to the half-hidden form on any change of context.
     function conceal(){revealed=false;if(copyTimer!==null){clearTimer(copyTimer);copyTimer=null;}say('');render();}
