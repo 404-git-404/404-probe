@@ -1,24 +1,24 @@
 # 404-probe
 
-> v1.0.8 Stable：流量 A 面放大周期用量、B 面恢复近 24 小时曲线；网络 A 面右侧固定为 TCP 失败率，B 面移除标记条及底部图例、改用悬停提示；出站选择采用居中对话框，每组独立下拉选择并确认，卡片按钮固定显示图标和“出站选择”。数据库仍为 schema 35，本版无新增迁移。
+> v1.0.9 Stable：设备详情重做为概览、资源、安全、管理四个页签；统一套餐、流量配额、续费、网络质量、出站与 Agent 管理弹窗。数据库仍为 schema 35，无新增迁移；Agent 无功能变化。
 > 支持 Debian 12/13 systemd；Alpine 3.24.x OpenRC 仅支持 Agent 基础功能。
 > 真实网络质量评分仍待后续开发；Alpine 自动升级/回滚、安全观察、远程永久删除尚未提供，未确定发布版本。
 > **从 v1.0.4 或更早版本升级前请先读 [v1.0.5 发布说明](RELEASE_NOTES_v1.0.5.md) 的“升级前必读”**：早期网络目标迁移会关闭旧检测，需要重新填写目标；早期数据库仍需补齐至 schema 35。
-> **Agent 升级规则已变化：先升级 Server，再从面板升级 Agent；Agent 只能升级到与 Server 完全相同的版本和构建，不能更高、不能回退，回退需重新安装。** 打开升级对话框不再连接 GitHub；旧版偶发的“版本兼容信息读取失败”不再出现。升级后请刷新面板。详情见 [v1.0.8 发布说明](RELEASE_NOTES_v1.0.8.md)。
+> **Agent 升级规则已变化：先升级 Server，再从面板升级 Agent；Agent 只能升级到与 Server 完全相同的版本和构建，不能更高、不能回退，回退需重新安装。** 打开升级对话框不再连接 GitHub；旧版偶发的“版本兼容信息读取失败”不再出现。升级后请刷新面板。详情见 [v1.0.9 发布说明](RELEASE_NOTES_v1.0.9.md)。
 
-## 快速开始：安装与升级到 v1.0.8 Stable
+## 快速开始：安装与升级到 v1.0.9 Stable
 
 在 Debian 12/13 systemd 主机运行以下固定版本命令，按提示选择 Server 或 Agent。已有受支持 Server 会进入升级确认流程；已有 Agent 不会被这个命令自动升级。
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.8/install.sh | sudo PROBE_404_VERSION=v1.0.8 bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.9/install.sh | sudo PROBE_404_VERSION=v1.0.9 bash
 ```
 
-无参数入口在新主机显示角色菜单（选择 Server），在已有 Server 上直接进入升级确认；不要追加 `server` 参数。在 root SSH 中可省略 `sudo`，使用 `curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.8/install.sh | PROBE_404_VERSION=v1.0.8 bash`。
+无参数入口在新主机显示角色菜单（选择 Server），在已有 Server 上直接进入升级确认；不要追加 `server` 参数。在 root SSH 中可省略 `sudo`，使用 `curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.9/install.sh | PROBE_404_VERSION=v1.0.9 bash`。
 
 Server 新装需输入公开 HTTPS 地址并设置 Web 管理员密码（默认由安装器生成 43 个字符的随机密码，在终端显示一次，请立即保存；也可以选择自己输入，至少 16 个字符）；反向代理或 Cloudflare Tunnel 由你自行配置，安装器不管理 Tunnel。Agent 新装先在 Server 创建 Agent，复制显示一次的 enrollment 值，然后在 Agent 主机的隐藏提示中粘贴；不要把凭据放进命令、URL 或历史记录。
 
-**现有受支持 Server 升级（包括 v0.9.3/v1.0.0/v1.0.1/v1.0.2/v1.0.3/v1.0.4/v1.0.5/v1.0.6/v1.0.7）：**在 Server 主机运行上面的同一命令，确认目标 v1.0.8。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。从 v1.0.7 升级仍为 schema 35，无新增迁移；更早数据库按需补齐至 schema 35（29→30→31→32→33→34→35；包含旧库历史的有界恢复回填、本周期分方向计数及旧 TCP Mini 告警数据删除）；迁移后恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。
+**现有受支持 Server 升级（包括 v0.9.3/v1.0.0/v1.0.1/v1.0.2/v1.0.3/v1.0.4/v1.0.5/v1.0.6/v1.0.7/v1.0.8）：**在 Server 主机运行上面的同一命令，确认目标 v1.0.9。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。从 v1.0.7 / v1.0.8 升级仍为 schema 35，无新增迁移；更早数据库按需补齐至 schema 35（29→30→31→32→33→34→35；包含旧库历史的有界恢复回填、本周期分方向计数及旧 TCP Mini 告警数据删除）；迁移后恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。
 
 **现有 v1.0.7/v1.0.6/v1.0.5/v1.0.4/v1.0.3/v1.0.2/v1.0.1 Agent，或更早正式 Agent 且 Updater 正常：**先升级 Server，再登录 Web，打开设备管理中的升级操作。唯一目标与当前 Server 的版本及构建完全相同；只有更低版本的 Agent 可以升级，同版本显示“已是最新版本”，更高版本禁止回退，回退需重新安装。Server 为 RC/Beta 时仍需在当前单台 Agent 操作中显式确认，并保留原有能力门禁。仅在线、未暂停/撤销、具有所需 updater 能力的受支持 Agent 可执行；逐台核对健康版本上报，失败由 updater 恢复升级前安装。打开对话框不再连接 GitHub；实际升级仍需 Updater 下载并验证对应的正式发布资产。Web 路径只替换 Agent 二进制，不安装新的 root helper。
 
@@ -28,14 +28,14 @@ Server 新装需输入公开 HTTPS 地址并设置 Web 管理员密码（默认�
 curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.1/install.sh | sudo PROBE_404_VERSION=v1.0.1 bash -s -- upgrade-agent
 ```
 
-失败或中断后按错误提示重跑同一固定入口，恢复标记和事务用于继续恢复；不要删除它们或手动替换二进制。这是特意保留的 v1.0.1 历史桥接入口，不使用 v1.0.8 程序冒充旧迁移 runner；桥接成功后再从 Web 逐台升级至 v1.0.8。已有正常 Stable Updater 的 Agent 继续使用 Web 升级。Alpine 自动升级尚未提供，未确定发布版本，不要在现有 Alpine Agent 上把新装命令当作升级命令。
+失败或中断后按错误提示重跑同一固定入口，恢复标记和事务用于继续恢复；不要删除它们或手动替换二进制。这是特意保留的 v1.0.1 历史桥接入口，不使用 v1.0.9 程序冒充旧迁移 runner；桥接成功后再从 Web 逐台升级至 v1.0.9。已有正常 Stable Updater 的 Agent 继续使用 Web 升级。Alpine 自动升级尚未提供，未确定发布版本，不要在现有 Alpine Agent 上把新装命令当作升级命令。
 
-Alpine 3.24.x 新装仅选 Agent，并须预先具备完整 OpenRC 启动环境和 Bash、GNU coreutils/tar、util-linux、shadow、curl、CA；以 root 运行固定版本 installer。v1.0.8 不提供 Alpine Server，也不提供已装 Alpine Agent 的自动升级、安全观察或远程永久删除。
+Alpine 3.24.x 新装仅选 Agent，并须预先具备完整 OpenRC 启动环境和 Bash、GNU coreutils/tar、util-linux、shadow、curl、CA；以 root 运行固定版本 installer。v1.0.9 不提供 Alpine Server，也不提供已装 Alpine Agent 的自动升级、安全观察或远程永久删除。
 
 在满足上述条件的 Alpine 新主机上，以 root 执行（替换 Server HTTPS 地址，凭据仍在隐藏提示输入）：
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.8/install.sh | PROBE_404_VERSION=v1.0.8 bash -s -- agent --server 'https://probe.example.com'
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.9/install.sh | PROBE_404_VERSION=v1.0.9 bash -s -- agent --server 'https://probe.example.com'
 ```
 
 ### 域名后缀：本地入口与可复制命令
@@ -158,11 +158,11 @@ change to the selected device set rebuilds the affected baseline and reports
 that metric as unknown. CPU and disk baselines are independent, so an unavailable
 disk topology does not suppress CPU steal (and vice versa). Older Agents omit the
 fields and remain compatible. These fields were introduced with schema 24;
-the current v1.0.8 Server migrates an existing database through the older steps
+the current v1.0.9 Server migrates an existing database through the older steps
 to schema 35. Preserve the protected upgrade backup and do not directly
 downgrade the migrated database.
 
-## 历史升级说明：V0.9（不是当前 v1.0.8 命令）
+## 历史升级说明：V0.9（不是当前 v1.0.9 命令）
 
 V0.9 adds local sing-box REALITY security observability. A root-only, fixed-purpose daily systemd oneshot reads only `sing-box.service` journal JSON, stores its cursor and private outbox under `/var/lib/404-probe-security/private`, and exports bounded aggregate batches under `/var/lib/404-probe-security/export`. The normal locked `404-probe` Agent can read those aggregates but cannot read the private cursor/outbox, write the export, invoke arbitrary journal queries, or perform firewall/ban actions. It uploads only canonical source IP, counts, time bounds, and typed classifications; raw journal messages and ports never leave the host.
 
@@ -279,7 +279,7 @@ Uninstall is intentionally destructive in v1.0: it shows the exact role and requ
 The installed helper removes itself last. To retry after an interrupted or completed uninstall, use the official version-pinned entry point; the command is idempotent:
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.8/install.sh | sudo PROBE_404_VERSION=v1.0.8 bash -s -- uninstall agent --confirm-delete-data
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.9/install.sh | sudo PROBE_404_VERSION=v1.0.9 bash -s -- uninstall agent --confirm-delete-data
 ```
 
 Replace `agent` with `server` for the Server role. Local uninstall does not contact the Server or remove the Agent's Server-side telemetry; Web “permanent delete” is a separate tracked v1.0 operation.
