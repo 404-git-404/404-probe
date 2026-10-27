@@ -13,6 +13,8 @@ go test ./... -count=1
 ```
 
 - **施工方交付前、评审方评审时**都必须跑全仓 `go test ./... -count=1` 和相关 Node 测试，不能只跑改动的包。相关测试指加载或测试了本次改动文件的 `scripts/test-*.cjs` 和 `scripts/test-*.sh`；先用 `git diff --name-only <基准提交>` 列出改动文件，再按完整路径、文件名或模块名搜索，例如 `rg -n 'selector\.js|test-m02-real-chain' scripts -g 'test-*.cjs' -g 'test-*.sh'`，并沿公共测试 harness 的加载关系确认需要执行的脚本；改动的测试脚本本身也要执行，在报告中列出选取依据。
+- **重复测试超时：** `-count=20` 必须显式带 `-timeout=60m`，发布验证同样适用；首次结果和复测分别记录，不覆盖首次日志。
+- **真实安装主机上的 root 测试限制：** 在装有真实 Agent/Updater/Server 的机器上，测试隔离修复（按 ROADMAP 下一版第一项推进）完成前，一律不得以 root 跑全仓 `go test`。跑前先检查 `/run/404-probe`、`/etc/404-probe`、`/var/lib/404-probe*`，任一路径存在就按本条禁止执行，改用没有真实安装的隔离测试环境。
 - **Windows 全仓测试一律在沙箱外跑。** 沙箱内可能出现临时文件 rename/读写被拒绝、本机 HTTP fixture 不可访问等环境失败；如实保留首次结果，不把沙箱外重跑通过写成首次通过。
 - Windows 的 `TestR31Tools` 需要设置 `R31_PYTHON` 指向真正的 Python（本机 `python3` 是 Microsoft Store 假别名）；实际查找方法是 PowerShell `Get-Command python | Select-Object -ExpandProperty Source`，再执行找到的解释器 `--version` 确认。Git Bash 不在 PATH 时还要设置 `R31_BASH`：先用 `Get-Command bash -ErrorAction SilentlyContinue` 查找；找不到时用 `Get-Command git | Select-Object -ExpandProperty Source` 确认 Git 安装位置，再用 `Test-Path 'C:/Program Files/Git/bin/bash.exe'` 核实已有 Git Bash，设置 `$env:R31_BASH='C:/Program Files/Git/bin/bash.exe'`（其他安装位置用实际路径）。直接运行 `python scripts/test-r31.py` 时，Git Bash 不在 PATH 里也要设置 `R31_BASH`。用 `$env:R31_PYTHON=(Get-Command python).Source` 设置真实解释器，不使用带本机用户名的固定路径；未提供 `R31_PREVIOUS_SERVER` 导致的可选集成用例跳过应照实报告。
 - **已知清单处理**：下面已列出的 Windows / Linux 偶发和旧 Node 套件基线失败，首次结果（包括失败）照实报告，不阻塞；复测单独记录，不能覆盖首次结果。清单以外的失败一律算问题，要么在授权范围内修复，要么停下来问，不自行归入基线。
@@ -36,7 +38,7 @@ go test ./... -count=1
 ## 发布流程（v1.0.2、v1.0.3 的做法）
 
 1. **发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
-2. **发布前做独立 High 评审**，并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20`。
+2. **发布前做独立 High 评审**，并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20 -timeout=60m`。
 3. **从精确的、干净的发布提交构建产物，输出目录放在仓库外：**
 
    ```bash
