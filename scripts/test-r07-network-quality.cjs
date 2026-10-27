@@ -164,7 +164,7 @@ test('ICMP: the Server\'s capability answer disables the ICMP boxes of that fami
   // (unicom's address is an IPv4 literal, which locks its IPv6 boxes on its own account; telecom is a name.)
   assert.deepEqual(icmpBoxes(f, 'telecom'), {ipv4: true, ipv6: true, tcp4: false, tcp6: false});
   assert.equal(f.field('unicom-ipv4_icmp').disabled, true); assert.equal(f.field('mobile-ipv6_icmp').disabled, true);
-  assert.match(f.panel().all().map(n => n.textContent).join('|'), /当前环境不支持 ICMP/);
+  assert.match(f.panel().all().map(n => n.textContent).join('|'), /这台机器不支持 .* ICMP/);
   // A saved tick is kept, shown, and can be taken back - it only cannot be put there.
   const g = setup({raw: load('v4-no-ipv6-no-icmp')});
   await g.open();
@@ -185,6 +185,7 @@ test('ICMP matrix (review M5): the same unsupported answer disables the boxes wi
     const f = setup({raw}); await f.open();
     const got = icmpBoxes(f); assert.deepEqual([got.ipv4, got.ipv6], expect[what], what);
     assert.equal(got.tcp4 || got.tcp6, false, 'TCP is never affected');
+    const note=f.panel().all().filter(n=>n.className==='nq-capability-note');assert.equal(note.length,1);const families=expect[what].flatMap((off,i)=>off?[(i?'v6':'v4')+' ICMP']:[]).join(' / ');assert.ok(note[0].textContent.includes('这台机器不支持 '+families+'，'),what);
   }
 });
 
@@ -195,7 +196,7 @@ test('ICMP matrix: "unknown", a missing field or a value we do not know never di
   })) {
     const f = setup({raw}); await f.open();
     assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false}, what);
-    assert.doesNotMatch(f.panel().all().map(n => n.textContent).join('|'), /当前环境不支持 ICMP/, what);
+    assert.doesNotMatch(f.panel().all().map(n => n.textContent).join('|'), /这台机器不支持 .* ICMP/, what);
   }
   assert.deepEqual(C.adapt(load('v4-negotiating')).icmpSupport, {ipv4: 'unknown', ipv6: 'unknown'});
   assert.deepEqual(C.adapt(withIcmp('v4-saved-off')).icmpSupport, {ipv4: 'unknown', ipv6: 'unknown'});

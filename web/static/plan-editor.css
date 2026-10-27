@@ -55,3 +55,5 @@
 #plan-dialog[data-mode=quota]{line-height:1.4}#plan-dialog .quota-master input{margin:0;padding:0;min-width:18px;flex:0 0 18px}#plan-dialog #quota-cycle-options{width:18px;height:18px}#plan-dialog[data-mode=quota] .field-note,#plan-dialog[data-mode=quota] small{line-height:1.4}
 
 #plan-dialog .plan-currency-field{display:flex;flex-direction:column;gap:6px;min-width:0}#plan-dialog .plan-price-row{align-items:start}
+
+#plan-dialog:has(#plan-confirmation:not([hidden])) .plan-information-note{display:none}
