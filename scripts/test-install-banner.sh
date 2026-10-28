@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Pure function extraction only; no main, file writes, or fixture required.
-eval "$(awk '/^readonly DEFAULT_VERSION=/{print} /^(die|release_version|canonical_version|target_version|print_install_banner)\(\) \{/{copy=1} copy{print} copy && /^\}/{copy=0}' "${root}/install.sh")"
+eval "$(awk '/^readonly DEFAULT_VERSION=/{print} /^(die|release_version|canonical_version|target_version|print_install_banner)\(\) \{/{copy= !seen[$1]++} copy{print} copy && /^\}/{copy=0}' "${root}/install.sh")"
 
 check_banner() {
   local expected="$1" actual
