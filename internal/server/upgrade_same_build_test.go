@@ -32,6 +32,8 @@ func rejectUpgradeHTTP(t *testing.T) {
 func TestSameBuildUpgradeVersionRelationsWithoutHTTP(t *testing.T) {
 	rejectUpgradeHTTP(t)
 	for _, release := range []struct{ name, version, lower, higher, channel string }{
+		{"two-digit-target", "v1.0.10", "v1.0.9", "v1.0.11", "stable"},
+		{"two-digit-source", "v1.0.9", "v1.0.8", "v1.0.10", "stable"},
 		{"stable", "v1.0.8", "v1.0.7", "v1.0.9", "stable"},
 		{"rc", "v1.0.8-rc.2", "v1.0.8-rc.1", "v1.0.8-rc.3", "beta"},
 		{"beta", "v1.0.8-beta.2", "v1.0.8-beta.1", "v1.0.8-beta.3", "beta"},
@@ -201,9 +203,9 @@ func TestSameBuildPreservesAgentGatesWithoutHTTP(t *testing.T) {
 			app, store, id := newWebAuthenticationTestApp(t)
 			defer store.Close()
 			defer app.Shutdown()
-			app.buildInfo = buildinfo.Info{Version: "v1.0.8", Commit: strings.Repeat("a", 40)}
+			app.buildInfo = buildinfo.Info{Version: "v1.0.10", Commit: strings.Repeat("a", 40)}
 			r := reportFor(id, 1)
-			r.AgentVersion, r.AgentUpgradeCapable, r.AgentUpgradeV2 = "v1.0.7", true, true
+			r.AgentVersion, r.AgentUpgradeCapable, r.AgentUpgradeV2 = "v1.0.9", true, true
 			// Apply state gates before reporting; lifecycle gates after the report.
 			if gate.name != "paused" && gate.name != "revoked" && gate.name != "offline" {
 				gate.prepare(app, store, id, &r)

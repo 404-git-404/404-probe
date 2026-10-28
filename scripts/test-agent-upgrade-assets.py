@@ -64,16 +64,16 @@ class ReleasePreflightTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 assets.stable_version(version)
         self.assertEqual(assets.stable_version("v1.10.0"), (1, 10, 0))
-        for source, target in (("v1.0.3", "v1.0.3"), ("v1.0.4", "v1.0.3"), ("v0.9.3", "v1.0.4")):
+        for source, target in (("v1.0.3", "v1.0.3"), ("v1.0.4", "v1.0.3"), ("v1.0.10", "v1.0.9"), ("v1.0.10", "v1.0.10"), ("v0.9.3", "v1.0.4")):
             with self.subTest(source=source, target=target), self.assertRaises(ValueError):
                 assets.validate_pair(source, target, self.root, self.root, "go")
 
     def test_future_pair_passes_each_selected_version_and_directory(self):
         with patch.object(assets, "validate_release", side_effect=["a" * 40, "b" * 40]) as validate:
-            self.assertEqual(assets.validate_pair("v1.0.4", "v1.0.5", "/source", "/target", "go"),
+            self.assertEqual(assets.validate_pair("v1.0.9", "v1.0.10", "/source", "/target", "go"),
                              ("a" * 40, "b" * 40))
         self.assertEqual([call.args for call in validate.call_args_list],
-                         [("/source", "v1.0.4", "go"), ("/target", "v1.0.5", "go")])
+                         [("/source", "v1.0.9", "go"), ("/target", "v1.0.10", "go")])
 
     def test_missing_asset_rejected_before_inspection(self):
         for name in assets.PAYLOADS | {"SHA256SUMS"}:

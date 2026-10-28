@@ -832,3 +832,16 @@ test('P5b1c actual undo confirmation shows inverse receipt, no forward preview, 
 test('P5b1c actual year 9999 undo bypasses forward preview; equal-value external PUT CAS409 stays visible without auto repeat',async()=>{
  const app=dashboard();seed(app.state,{...dto(),plan:{...renewalPlan,renewal_date:'9999-11-30'}});app.eval(`openPlanRenewal(agents.get('${A}'))`);app.request('/renewal/preview').resolve(response({...renewalPreview(),from_date:'9999-11-30',to_date:'9999-12-31'}));await flush();const apply=app.eval('planRenewal.confirm()'),req=app.request('/renewal/apply');req.resolve(response(renewalResult(req,{...renewalPlan,renewal_date:'9999-12-31'})));await apply;const count=app.requests.length;await app.nodes.get('#renewal-undo').emit('click');assert.equal(app.requests.length,count);assert.equal(app.nodes.get('#renewal-from').textContent,'9999-12-31');assert.equal(app.nodes.get('#renewal-to').textContent,'9999-11-30');assert.equal(app.nodes.get('#renewal-confirm').disabled,false);const undo=app.eval('planRenewal.confirm()'),u=app.request('/renewal/undo');assert.equal(JSON.parse(u.options.body).expected_revision,'2'.repeat(32));u.resolve(response({error:{message:'synthetic equal-value PUT revision conflict'}},409));await undo;assert.match(app.nodes.get('#renewal-error').textContent,/重新预览/);assert.equal(app.state.agents.get(A).plan.renewal_date,'9999-12-31');assert.equal(app.eval('planRenewal.snapshot().records[0].latest'),null);const after=app.requests.length;await app.eval('planRenewal.confirm()');assert.equal(app.requests.length,after);assert.doesNotMatch(app.nodes.get('#renewal-result').textContent,/撤销已确认/);
 });
+
+
+test('v110 initial and SSE render share the formal 9/10 comparator',()=>{
+ const app=dashboard('app.js',1000,true);seed(app.state,{...dto(),version:'v1.0.9'});
+ app.eval("document.createElementNS=(_ns,tag)=>document.createElement(tag);var v110nodes=[];var v110create=document.createElement;document.createElement=(...args)=>{const n=v110create(...args);n.prepend=(...children)=>{for(const child of children)child.parent=n;n.children.unshift(...children)};n.style.setProperty=(key,value)=>{n.style[key]=value};const append=n.append.bind(n);n.append=(...children)=>{for(const child of children)child.parent=n;append(...children)};v110nodes.push(n);return n};serverBuild={version:'v1.0.10',upgrade_eligible:true};detailUpgradeTargets.set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',{version:'v1.0.10',supported:true}); actualDashboardRender()");
+ const button=app.eval("v110nodes.find(n=>n.className==='upgrade-agent')");
+ assert.equal(button.disabled,false,JSON.stringify(app.eval("({agent:agents.values().next().value,serverBuild,mutationCSRFToken,busy:agentState.busy(agents.keys().next().value,'upgrade'),blocked:agentState.blocked(agents.keys().next().value)})")));
+ app.event({agent_id:A,version:'v1.0.10'});app.eval('actualDashboardRender()');
+ assert.equal(button.disabled,true);
+ app.event({agent_id:A,version:'v1.0.9'});app.eval('actualDashboardRender()');
+ assert.equal(button.disabled,false);
+ assert.equal(app.eval("AgentState.compareStableVersions('unknown','v1.0.10')"),null);
+});

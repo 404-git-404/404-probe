@@ -301,3 +301,53 @@ func TestRollbackJournalFailureCannotHandoff(t *testing.T) {
 		t.Fatal("original not restored", err)
 	}
 }
+
+func TestTwoDigitInterruptedJournalRecovers(t *testing.T) {
+	for _, status := range []string{"claimed", "downloading", "verifying", "staging", "installing", "restarting", "health_check"} {
+		t.Run(status, func(t *testing.T) {
+			engine, request, live, previous, _ := versionedEngineFixture(t, "v1.0.10", 2)
+			engine.config.CurrentVersion = "v1.0.9"
+			request.Channel = "stable"
+			request.ServerVersion = "v1.0.10"
+			saved := State{OperationID: request.OperationID, TargetVersion: request.TargetVersion, ReleaseCommit: request.TargetCommit, ProtocolVersion: 2, Channel: request.Channel, TargetCommit: request.TargetCommit, ServerVersion: request.ServerVersion, Status: status}
+			if err := writeRootFile(filepath.Join(engine.config.StateDirectory, "operation.json"), marshalStateFile(t, saved), 0600); err != nil {
+				t.Fatal(err)
+			}
+			postInstall := status == "installing" || status == "restarting" || status == "health_check"
+			if postInstall {
+				if err := os.Link(live, previous); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(live); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(live, []byte("new-agent"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			recovered, err := NewEngine(engine.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recovered.Recover()
+			if !postInstall {
+				state := waitLocalStatus(t, recovered, request, "failed")
+				if !stateMatches(state, request) || state.FailureCode != "updater_restarted" {
+					t.Fatal("authorization changed", state)
+				}
+				return
+			}
+			waitLocalStatus(t, recovered, request, "health_check")
+			request.Action = ActionHealthy
+			wrong := request
+			wrong.TargetCommit = strings.Repeat("f", 40)
+			if _, err := recovered.Healthy(wrong); err == nil {
+				t.Fatal("different target authorization confirmed health")
+			}
+			if _, err := recovered.Healthy(request); err != nil {
+				t.Fatal(err)
+			}
+			waitLocalStatus(t, recovered, request, "succeeded")
+		})
+	}
+}

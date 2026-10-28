@@ -113,3 +113,46 @@ func TestLocalMigrationReturnsWithoutDaemonExec(t *testing.T) {
 		t.Fatal("normal daemon not wired to exec", err)
 	}
 }
+
+func TestTwoDigitHandoffOnCommitAndRollback(t *testing.T) {
+	for _, status := range []string{"succeeded", "rolled_back"} {
+		t.Run(status, func(t *testing.T) {
+			state := State{SourceVersion: "v1.0.9", TargetVersion: "v1.0.10", Status: status, ReleaseCommit: strings.Repeat("a", 40)}
+			executed := false
+			ops := updaterHandoffOps{
+				readState: func(path string) (State, error) {
+					if path != "journal" {
+						t.Fatal(path)
+					}
+					return state, nil
+				},
+				protected: func(path string) error {
+					if path != "live" {
+						t.Fatal(path)
+					}
+					return nil
+				},
+				inspect: func(path, version string) (CandidateBuildInfo, error) {
+					want := state.TargetVersion
+					if status == "rolled_back" {
+						want = state.SourceVersion
+					}
+					if path != "live" || version != want {
+						t.Fatal(path, version)
+					}
+					return CandidateBuildInfo{Path: "404-probe/cmd/agent", Version: version, Commit: state.ReleaseCommit, GOOS: "linux", GOARCH: runtime.GOARCH}, nil
+				},
+				exec: func(path string, args, env []string) error {
+					if path != "live" || !reflect.DeepEqual(args, []string{"live", "updater"}) || !reflect.DeepEqual(env, []string{"FIXTURE=1"}) {
+						t.Fatal(path, args, env)
+					}
+					executed = true
+					return nil
+				},
+			}
+			if err := handoffConfirmedUpdater(state, "live", "journal", []string{"FIXTURE=1"}, ops); err != nil || !executed {
+				t.Fatal(err)
+			}
+		})
+	}
+}

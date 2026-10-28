@@ -1348,10 +1348,7 @@ function createAgentCard(initialAgent) {
     upgrade.type = 'button';
     upgrade.textContent = '升级…';
     upgrade.dataset.focusKey = 'upgrade';
-    const versionParts = value => /^v\d+\.\d+\.\d+$/.test(value || '') ? value.slice(1).split('.').map(Number) : null;
-    const currentParts = versionParts(agent.version);
-    const targetParts = versionParts(serverBuild.version);
-    const newer = currentParts && targetParts && targetParts.some((part, index) => part > currentParts[index] && targetParts.slice(0, index).every((value, prior) => value === currentParts[prior]));
+    const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
     upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
     upgrade.title = upgradeHint(agent);
     upgrade.addEventListener('click', () => openUpgradeAgentDialog(agent));
@@ -1515,8 +1512,7 @@ function createAgentCard(initialAgent) {
       setCardText(price, compactPrice(agent.plan));
       setCardText(editHint, agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎'); editPlan.title = agent.plan ? '编辑套餐' : '添加套餐';
       detailFacts().forEach((fact, index) => updateDisplay(facts.children[index], fact));
-      const currentParts = versionParts(agent.version), targetParts = versionParts(serverBuild.version);
-      const newer = currentParts && targetParts && targetParts.some((part, index) => part > currentParts[index] && targetParts.slice(0, index).every((value, prior) => value === currentParts[prior]));
+      const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
       remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
       stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
       setCardText(stateAction, agent.disabled_at ? '恢复监控' : '暂停…');

@@ -1,6 +1,21 @@
 /* Arrival/request barriers for the actual unversioned Web DTO. No wall-clock ordering. */
 (function (root) {
   'use strict';
+  // Public formal-release ordering, also used by the pending-upgrade summary.
+  // null means incomparable; never label unknown/pre-release builds "latest".
+  function compareStableVersions(left, right) {
+    const parts = value => {
+      if(typeof value!=='string'||!/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value))return null;
+      const p=value.slice(1).split('.'),max='18446744073709551615';
+      return p.some(n=>n.length>max.length||(n.length===max.length&&n>max))?null:p;
+    };
+    const a=parts(left),b=parts(right);if(!a||!b)return null;
+    for(let i=0;i<3;i++){
+      if(a[i].length!==b[i].length)return a[i].length<b[i].length?-1:1;
+      if(a[i]!==b[i])return a[i]<b[i]?-1:1;
+    }
+    return 0;
+  }
   const resource = key => ({
     name: 'name', revoked: 'lifecycle', disabled_at: 'lifecycle', created_at: 'lifecycle',
     country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country',
@@ -203,7 +218,7 @@
     }, close() { closed = true; for (const id of jobs.keys()) cancel(id); },
     size: () => jobs.size};
   }
-  const api = {create, resource, fullEvent, reconcile, fetchJSON};
+  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AgentState = api;
 })(globalThis);

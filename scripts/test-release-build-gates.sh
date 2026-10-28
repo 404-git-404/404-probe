@@ -96,3 +96,12 @@ rm -rf -- "${PROBE_404_RELEASE_OUTPUT}"; mkdir -p "${PROBE_404_RELEASE_OUTPUT}";
 check 'failed build in an existing directory keeps unrelated files' 'vcs.modified is not false' FIXTURE_ELF_MODE=1 FIXTURE_ELF_MODIFIED=true PROBE_404_RELEASE_COMMIT="${FIXTURE_HEAD}"
 [[ -f "${PROBE_404_RELEASE_OUTPUT}/keep.txt" && ! -e "${PROBE_404_RELEASE_OUTPUT}/install.sh" ]] || { ls -la "${PROBE_404_RELEASE_OUTPUT}"; exit 1; }
 printf 'Release build gate tests passed (mock compiler; not a release build).\n'
+
+# Decimal-boundary identities are exact, independent of the real product default.
+for version in v1.0.9 v1.0.10; do
+  if env FIXTURE_TAG=1 FIXTURE_INSTALLER_VERSION="$version" PROBE_404_RELEASE_COMMIT= bash "${root}/scripts/build-release-assets.sh" "$version" >"${temporary}/result" 2>&1; then exit 1; fi
+  grep -Fq COMPILE_GATE_REACHED "${temporary}/result" || { cat "${temporary}/result"; exit 1; }
+done
+if env FIXTURE_TAG=1 FIXTURE_INSTALLER_VERSION=v1.0.9 PROBE_404_RELEASE_COMMIT= bash "${root}/scripts/build-release-assets.sh" v1.0.10 >"${temporary}/result" 2>&1; then exit 1; fi
+grep -Fq 'stable installer default does not match' "${temporary}/result"
+printf 'PASS 9/10 exact tag and installer default build gates\n'
