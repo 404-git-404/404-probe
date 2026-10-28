@@ -37,7 +37,7 @@ func TestUpgradeReasonCodesKeepOriginalDiagnosticsAndDecisions(t *testing.T) {
 		{"v1.0.9-rc.1", "v1.0.10", false, true, true, 2, "rc_updater_required", "当前RC Agent未证明RC-aware Updater能力；不能使用旧v1.0.1桥接替代"},
 		{"v1.0.9", "v1.0.10", false, true, true, 2, "legacy_migration_required", "需要先迁移至 v1.0.1 Stable 并启动新版 Updater"},
 		{"v1.0.9", "v1.0.10", true, true, false, 2, "agent_unavailable", "设备离线、暂停或已撤销"},
-		{"unknown", "v1.0.10", true, true, true, 2, "target_not_newer", "目标不是严格更新版本；重复升级与降级不可用"},
+		{"unknown", "v1.0.10", true, true, true, 2, "version_unrecognized", "目标不是严格更新版本；重复升级与降级不可用"},
 		{"v1.0.10", "v1.0.10", true, true, true, 2, "already_latest", "已是最新版本"},
 		{"v1.0.10", "v1.0.9", true, true, true, 2, "agent_newer_than_server", "Agent 版本高于 Server，不能回退；如需回退请重新安装"},
 		{"v1.0.1-beta.1", "v1.0.1", false, true, true, 1, "old_beta_migration_required", "旧 Beta 需要保留身份配置的原地 Stable 迁移入口"},

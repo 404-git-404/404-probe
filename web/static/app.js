@@ -121,11 +121,7 @@ const upgradeLabel = operation => {
   const labels = {requested: '已提交升级请求', claimed: '机器已接到升级请求', downloading: '正在下载新版本', verifying: '正在校验下载文件', staging: '正在准备安装文件', installing: '正在安装新版本', restarting: '正在重启程序', health_check: '正在确认新版本运行正常', succeeded: `已升级到 ${operation.target_version}`, failed: '升级失败，请查看详情后重试', rolled_back: '升级失败，已恢复原来的版本'};
   return labels[operation.status] || operation.status;
 };
-const upgradeHint = agent => AgentState.upgradeReasonDisplay({reason_code:
-  /-beta\./.test(agent.version || '') && !agent.upgrade_v2 ? 'old_beta_migration_required'
-  : !agent.upgrade_capable && ['v0.9.3','v1.0.0'].includes(agent.version) ? 'legacy_migration_required'
-  : !agent.upgrade_capable ? 'updater_unavailable'
-  : !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable' : ''}) || '选择与面板兼容的版本，确认后开始升级';
+const upgradeHint = agent => AgentState.upgradeButtonHint(agent, serverBuild, agentState.busy(agent.agent_id, 'upgrade'));
 
 async function readJSON(path, signal) {
   return AgentState.fetchJSON(path, {fetcher: fetch, signal, unauthorized: () => location.assign('/login')});

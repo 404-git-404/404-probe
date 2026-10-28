@@ -19,18 +19,33 @@
   const upgradeReasons = Object.freeze({
     rc_agent_required: '这台机器的旧版程序不能直接升级到候选测试版，升级按钮已停用。请先在机器上迁移到支持测试版升级的正式版，原有监控仍可使用。',
     updater_unavailable: '这台机器的升级服务暂时连不上，升级按钮已停用。请在机器上检查升级服务（不用重装，原配置和历史都会保留）。',
-    rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先在机器上更新配套的升级服务，保留原配置和历史。',
-    legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上迁移到 v1.0.1 正式版并启动升级服务，保留原配置和历史。',
+    rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先在机器上按对应候选版的说明更新配套升级服务，保留原配置和历史；固定 v1.0.1 install.sh upgrade-agent 仅供旧正式版迁移，不能替代候选版所需服务。',
+    legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。',
     agent_unavailable: '这台机器当前离线、已暂停或已撤销，升级按钮已停用。请先恢复连接或监控；已撤销的机器需要重新添加。',
-    target_not_newer: '目标版本不比这台机器上的新（相同或更旧），升级按钮已停用。面板不能重复升级或降级。',
+    version_unrecognized: '面板无法识别这台机器当前的版本号，升级按钮已停用。请确认这台机器运行的是正式发布的程序（不用重装，原配置和历史会保留）。',
     already_latest: '这台机器已与面板版本相同，无需升级。以后更新面板后可再检查。',
-    agent_newer_than_server: '这台机器的 Agent 比面板新，不能从面板降级；需要降级请在机器上重新安装。',
-    old_beta_migration_required: '这台机器使用较早的测试版，暂时不能从面板升级。请先在机器上迁移到正式版，保留原配置和历史。',
+    agent_newer_than_server: '这台机器的 Agent 比面板新，不能从面板降级；需要降级请在机器上重新安装。重装前请先确认是否需要保留配置和历史。',
+    old_beta_migration_required: '这台机器使用较早的测试版，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。',
     rc_server_agent_required: '面板正在使用候选测试版，这台机器的旧版程序暂时不能从面板升级。请先在机器上更新配套程序，原有监控仍可使用。',
     server_build_ineligible: '当前面板版本不能发起远程升级，升级按钮已停用。请先将面板更新为官方发布的可升级版本。',
   });
   function upgradeReasonDisplay(target) {
     return Object.hasOwn(upgradeReasons,target?.reason_code) ? upgradeReasons[target.reason_code] : target?.reason || '';
+  }
+  function upgradeButtonHint(agent, server, busy = false) {
+    if (busy || (agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status))) return '正在升级，请等待完成';
+    let code = !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable'
+      : !server.upgrade_eligible ? 'server_build_ineligible'
+      : /-beta\./.test(agent.version || '') && !agent.upgrade_v2 ? 'old_beta_migration_required'
+      : !agent.upgrade_capable && ['v0.9.3','v1.0.0'].includes(agent.version) ? 'legacy_migration_required'
+      : !agent.upgrade_capable ? 'updater_unavailable' : '';
+    if (!code) {
+      const order = compareStableVersions(agent.version, server.version);
+      if (order === 0) code = 'already_latest';
+      else if (order === 1) code = 'agent_newer_than_server';
+      else if (order === null && !agent.upgrade_v2) code = 'version_unrecognized';
+    }
+    return upgradeReasonDisplay({reason_code: code}) || '可从面板升级到与面板相同的版本';
   }
   const resource = key => ({
     name: 'name', revoked: 'lifecycle', disabled_at: 'lifecycle', created_at: 'lifecycle',
@@ -234,7 +249,7 @@
     }, close() { closed = true; for (const id of jobs.keys()) cancel(id); },
     size: () => jobs.size};
   }
-  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay};
+  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay, upgradeButtonHint};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AgentState = api;
 })(globalThis);

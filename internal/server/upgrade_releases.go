@@ -258,7 +258,7 @@ func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeT
 		switch {
 		case !ok:
 			target.Reason = "目标不是严格更新版本；重复升级与降级不可用"
-			target.ReasonCode = "target_not_newer"
+			target.ReasonCode = "version_unrecognized"
 		case comparison == 0:
 			target.Reason = "已是最新版本"
 			target.ReasonCode = "already_latest"
