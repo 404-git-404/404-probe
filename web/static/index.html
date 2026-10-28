@@ -89,7 +89,7 @@
   </dialog>
   <dialog id="remove-agent-dialog" class="agent-dialog" aria-labelledby="remove-agent-title">
     <h2 id="remove-agent-title">撤销 Agent</h2>
-    <p>停止接收数据，保留历史记录；Agent 程序不会被卸载。</p>
+    <p>撤销只会让面板不再接收这台机器的数据。要在机器上彻底卸载，请在那台机器上运行：<code>sudo 404-probe-install uninstall agent</code>。运行卸载命令时需确认删除机器上的托管数据。</p>
     <div class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
     <p class="remove-warning">撤销后不能恢复原身份。历史记录、计划和任务会保留。</p>
     <form id="remove-agent-form" autocomplete="off">

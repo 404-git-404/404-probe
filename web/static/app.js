@@ -118,15 +118,14 @@ const seen = value => value ? new Date(value).toLocaleString() : '从未上报';
 const pct = value => `${Number(value || 0).toFixed(1)}%`;
 const upgradeLabel = operation => {
   if (!operation) return '';
-  const labels = {requested: 'Requested', claimed: 'Claimed', downloading: 'Downloading', verifying: 'Verifying', staging: 'Staging', installing: 'Installing', restarting: 'Restarting', health_check: 'Checking health', succeeded: `Upgraded to ${operation.target_version}`, failed: 'Upgrade failed', rolled_back: 'Upgrade failed; previous version restored'};
+  const labels = {requested: '已提交升级请求', claimed: '机器已接到升级请求', downloading: '正在下载新版本', verifying: '正在校验下载文件', staging: '正在准备安装文件', installing: '正在安装新版本', restarting: '正在重启程序', health_check: '正在确认新版本运行正常', succeeded: `已升级到 ${operation.target_version}`, failed: '升级失败，请查看详情后重试', rolled_back: '升级失败，已恢复原来的版本'};
   return labels[operation.status] || operation.status;
 };
-const upgradeHint = agent => /-beta\./.test(agent.version || '') && !agent.upgrade_v2
-  ? '旧 Beta 请运行固定 v1.0.1 install.sh upgrade-agent，保留身份原地迁移'
-  : !agent.upgrade_capable && ['v0.9.3','v1.0.0'].includes(agent.version)
-  ? 'Updater 缺失：运行固定 v1.0.1 install.sh upgrade-agent，保留身份配置原地修复'
-  : !agent.upgrade_capable ? '需要先在主机上完成对应版本的安全 bootstrap'
-  : !agent.online ? 'Agent 离线时不能升级' : agent.disabled_at ? '请先恢复 Agent' : '选择兼容的 Stable 或显式 Beta 版本';
+const upgradeHint = agent => AgentState.upgradeReasonDisplay({reason_code:
+  /-beta\./.test(agent.version || '') && !agent.upgrade_v2 ? 'old_beta_migration_required'
+  : !agent.upgrade_capable && ['v0.9.3','v1.0.0'].includes(agent.version) ? 'legacy_migration_required'
+  : !agent.upgrade_capable ? 'updater_unavailable'
+  : !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable' : ''}) || '选择与面板兼容的版本，确认后开始升级';
 
 async function readJSON(path, signal) {
   return AgentState.fetchJSON(path, {fetcher: fetch, signal, unauthorized: () => location.assign('/login')});
@@ -153,7 +152,7 @@ async function loadMutationSession() {
 function refreshUpgradeSelection() {
   const target = upgradeReleaseTargets[Number(upgradeReleaseSelect.value)];
   upgradeTargetVersion.textContent = target?.version || '—';
-  upgradeReleaseReason.textContent = target?.reason || '';
+  upgradeReleaseReason.textContent = AgentState.upgradeReasonDisplay(target);
   upgradeBetaLabel.hidden = target?.channel !== 'beta';
   upgradeAgentConfirm.disabled = !target?.supported || (target.channel === 'beta' && !upgradeBetaConfirm.checked);
 }
@@ -196,7 +195,7 @@ async function openUpgradeAgentDialog(agent) {
     refreshUpgradeSelection();
     if (!upgradeReleaseTargets.length) {
       const option = document.createElement('option');
-      option.textContent = catalog.message || '当前 Server 构建不支持远程升级';
+      option.textContent = AgentState.upgradeReasonDisplay({reason_code:catalog.message_code,reason:catalog.message}) || AgentState.upgradeReasonDisplay({reason_code:'server_build_ineligible'});
       upgradeReleaseSelect.append(option);
       upgradeReleaseReason.textContent = option.textContent;
     }

@@ -86,7 +86,8 @@ func TestAgentRevokeUIUsesExplicitPreservingFlow(t *testing.T) {
 	javascript := string(jsBytes)
 	for _, required := range []string{
 		`id="remove-agent-dialog"`, `id="remove-agent-form"`, `id="remove-agent-name"`,
-		`撤销后不能恢复原身份`, `历史记录、计划和任务会保留`, `Agent 程序不会被卸载`,
+		`撤销后不能恢复原身份`, `历史记录、计划和任务会保留`,
+		`撤销只会让面板不再接收这台机器的数据`, `sudo 404-probe-install uninstall agent`,
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("dashboard missing revoke UI %q", required)

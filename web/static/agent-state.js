@@ -16,6 +16,22 @@
     }
     return 0;
   }
+  const upgradeReasons = Object.freeze({
+    rc_agent_required: '这台机器的旧版程序不能直接升级到候选测试版，升级按钮已停用。请先在机器上迁移到支持测试版升级的正式版，原有监控仍可使用。',
+    updater_unavailable: '这台机器的升级服务暂时连不上，升级按钮已停用。请在机器上检查升级服务（不用重装，原配置和历史都会保留）。',
+    rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先在机器上更新配套的升级服务，保留原配置和历史。',
+    legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上迁移到 v1.0.1 正式版并启动升级服务，保留原配置和历史。',
+    agent_unavailable: '这台机器当前离线、已暂停或已撤销，升级按钮已停用。请先恢复连接或监控；已撤销的机器需要重新添加。',
+    target_not_newer: '目标版本不比这台机器上的新（相同或更旧），升级按钮已停用。面板不能重复升级或降级。',
+    already_latest: '这台机器已与面板版本相同，无需升级。以后更新面板后可再检查。',
+    agent_newer_than_server: '这台机器的 Agent 比面板新，不能从面板降级；需要降级请在机器上重新安装。',
+    old_beta_migration_required: '这台机器使用较早的测试版，暂时不能从面板升级。请先在机器上迁移到正式版，保留原配置和历史。',
+    rc_server_agent_required: '面板正在使用候选测试版，这台机器的旧版程序暂时不能从面板升级。请先在机器上更新配套程序，原有监控仍可使用。',
+    server_build_ineligible: '当前面板版本不能发起远程升级，升级按钮已停用。请先将面板更新为官方发布的可升级版本。',
+  });
+  function upgradeReasonDisplay(target) {
+    return Object.hasOwn(upgradeReasons,target?.reason_code) ? upgradeReasons[target.reason_code] : target?.reason || '';
+  }
   const resource = key => ({
     name: 'name', revoked: 'lifecycle', disabled_at: 'lifecycle', created_at: 'lifecycle',
     country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country',
@@ -218,7 +234,7 @@
     }, close() { closed = true; for (const id of jobs.keys()) cancel(id); },
     size: () => jobs.size};
   }
-  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions};
+  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AgentState = api;
 })(globalThis);

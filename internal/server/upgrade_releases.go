@@ -27,6 +27,7 @@ type upgradeTarget struct {
 	Channel          string                   `json:"channel"`
 	Supported        bool                     `json:"supported"`
 	Reason           string                   `json:"reason,omitempty"`
+	ReasonCode       string                   `json:"reason_code,omitempty"`
 	RequiredProtocol int                      `json:"required_protocol"`
 	Commit           string                   `json:"-"`
 	Metadata         releasemetadata.Document `json:"-"`
@@ -224,26 +225,31 @@ func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeT
 	if buildinfo.IsRCVersion(target.Version) && !rcAwareAgent(record) {
 		target.Supported = false
 		target.Reason = "RC需要RC-aware Agent及Updater；旧Stable/Beta不能通过Web直接进入RC"
+		target.ReasonCode = "rc_agent_required"
 		return target
 	}
 	if record.State == nil || !record.State.AgentUpgradeCapable {
 		target.Supported = false
 		target.Reason = "本地 Updater 不可用；需要保留身份配置的原地迁移"
+		target.ReasonCode = "updater_unavailable"
 		return target
 	}
 	if buildinfo.IsRCVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2 {
 		target.Supported = false
 		target.Reason = "当前RC Agent未证明RC-aware Updater能力；不能使用旧v1.0.1桥接替代"
+		target.ReasonCode = "rc_updater_required"
 		return target
 	}
 	if target.RequiredProtocol == 2 && !record.State.AgentUpgradeV2 {
 		target.Supported = false
 		target.Reason = "需要先迁移至 v1.0.1 Stable 并启动新版 Updater"
+		target.ReasonCode = "legacy_migration_required"
 		return target
 	}
 	if !record.Online || record.Agent.DisabledAt != nil || record.Agent.Revoked {
 		target.Supported = false
 		target.Reason = "设备离线、暂停或已撤销"
+		target.ReasonCode = "agent_unavailable"
 		return target
 	}
 	comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version)
@@ -252,15 +258,19 @@ func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeT
 		switch {
 		case !ok:
 			target.Reason = "目标不是严格更新版本；重复升级与降级不可用"
+			target.ReasonCode = "target_not_newer"
 		case comparison == 0:
 			target.Reason = "已是最新版本"
+			target.ReasonCode = "already_latest"
 		default:
 			target.Reason = "Agent 版本高于 Server，不能回退；如需回退请重新安装"
+			target.ReasonCode = "agent_newer_than_server"
 		}
 	}
 	if !buildinfo.IsCanonicalVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2 {
 		target.Supported = false
 		target.Reason = "旧 Beta 需要保留身份配置的原地 Stable 迁移入口"
+		target.ReasonCode = "old_beta_migration_required"
 	}
 	return target
 }
@@ -278,6 +288,7 @@ func (a *App) compatibleAgentTarget(target upgradeTarget, record storage.AgentSn
 	if buildinfo.IsRCVersion(a.buildInfo.Version) && !rcAwareAgent(record) {
 		target.Supported = false
 		target.Reason = "当前RC Server仅对RC-aware Agent/Updater开放显式升级；旧Agent监控通信不受影响"
+		target.ReasonCode = "rc_server_agent_required"
 	}
 	return target
 }
@@ -294,15 +305,18 @@ func (a *App) handleWebUpgradeTargets(w http.ResponseWriter, r *http.Request) {
 	}
 	targets := []upgradeTarget{}
 	message := ""
+	messageCode := ""
 	if releasemetadata.IsCommit(a.buildInfo.Commit) && (a.buildInfo.UpgradeEligible() || a.buildInfo.ExplicitUpgradeEligible()) {
 		targets = append(targets, a.compatibleAgentTarget(a.serverUpgradeTarget(), record))
 	} else {
 		message = "当前 Server 构建不支持远程升级"
+		messageCode = "server_build_ineligible"
 	}
 	writeJSON(w, 200, struct {
-		Targets []upgradeTarget `json:"targets"`
-		Message string          `json:"message,omitempty"`
-	}{targets, message})
+		Targets     []upgradeTarget `json:"targets"`
+		Message     string          `json:"message,omitempty"`
+		MessageCode string          `json:"message_code,omitempty"`
+	}{targets, message, messageCode})
 }
 
 // New-protocol upgrades are authorized by this Server's own build identity.
