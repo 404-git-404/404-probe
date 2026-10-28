@@ -14,6 +14,8 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import stat
+from contextlib import contextmanager
 
 # Rebase complete managed roots, including OpenRC units/logs and OS/default
 # paths used by extracted functions. Kernel/process pseudo-files remain read-only.
@@ -21,6 +23,68 @@ PREFIXES = ("/etc", "/usr/local/bin", "/usr/local/sbin", "/var/lib", "/var/log",
 SKIP = 77
 SOURCE = PurePosixPath('/work/source')
 FIXTURE = PurePosixPath('/work/fixture')
+MULTIUSER_CAPABILITIES = ('CAP_CHOWN', 'CAP_FOWNER', 'CAP_SETUID', 'CAP_SETGID')
+MULTIUSER_CAP_MASK = sum(1 << bit for bit in (0, 3, 7, 6))
+
+
+def account_files(identity, metadata):
+    """Entire synthetic /etc; no file content is taken from the host's /etc."""
+    if not 1 <= identity < 1000:
+        raise ValueError('fixture identity must be a non-root system UID/GID')
+    return {
+        'passwd': f'root:x:0:0:Fixture root:/work/fixture:/bin/bash\n404-probe:x:{identity}:{identity}:Fixture service:/work/fixture/system/var/lib/404-probe:/usr/sbin/nologin\n',
+        'group': f'root:x:0:\n404-probe:x:{identity}:\n',
+        'shadow': 'root:!:1:0:99999:7:::\n404-probe:!:1:0:99999:7:::\n',
+        'nsswitch.conf': 'passwd: files\ngroup: files\nshadow: files\nhosts: files\n',
+        'login.defs': 'UID_MIN 1000\nGID_MIN 1000\n',
+        'pam.d/runuser': 'auth required pam_rootok.so\naccount required pam_permit.so\nsession required pam_permit.so\n',
+        'fixture-root-only': 'synthetic protected control file\n',
+        'installer-fixture-profile.json': json.dumps(metadata, indent=2) + '\n',
+    }
+
+
+@contextmanager
+def synthetic_accounts(root):
+    if os.geteuid() != 0:
+        raise PermissionError('multi-user fixture requires a root setup process')
+    checks = []
+    identity = None
+    for candidate in range(973, 999):
+        row = {'identity': candidate}
+        for database in ('passwd', 'group'):
+            result = subprocess.run(['/usr/bin/getent', database, str(candidate)], capture_output=True)
+            row[database] = {'exit': result.returncode, 'absent': result.returncode == 2 and not result.stdout}
+        checks.append(row)
+        if all(row[name]['absent'] for name in ('passwd', 'group')):
+            identity = candidate
+            break
+    if identity is None:
+        raise ValueError('no verified unused fixture UID/GID')
+    metadata = {'profile': 'multiuser', 'identity': identity, 'cap_eff': MULTIUSER_CAP_MASK,
+                'host_pid': os.getpid(), 'host_pid_namespace': os.readlink('/proc/self/ns/pid'),
+                'host_net_namespace': os.readlink('/proc/self/ns/net'), 'host_lookup': checks}
+    # Outside the writable fixture bind: /etc has no writable alias in the guest.
+    with tempfile.TemporaryDirectory(prefix=root.name + '-accounts-', dir=root.parent) as temporary:
+        control = Path(temporary)
+        directory = control / 'etc'
+        directory.mkdir()
+        audits = control / 'audits'
+        audits.mkdir(mode=0o700)
+        files = account_files(identity, metadata)
+        for name, content in files.items():
+            target = directory / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding='utf-8', newline='\n')
+            target.chmod(0o600 if name in ('shadow', 'fixture-root-only') else 0o644)
+        directory.chmod(0o755)
+        payload = json.dumps({'metadata': metadata, 'files': files}, indent=2) + '\n'
+        fixture_write(root, root / 'multiuser-accounts.json', payload)
+        try:
+            yield {'directory': directory, 'audit_directory': audits, 'identity': identity, 'metadata': metadata}
+        finally:
+            for audit in audits.glob('*.json'):
+                fixture_write(root, root / audit.name, audit.read_text())
+            fixture_write(root, root / 'multiuser-accounts.json', payload)
 
 
 def redirect(source, root):
@@ -52,11 +116,47 @@ def checked_path(root, value):
     return path
 
 
-def sandbox(root, command, trace=None):
+def fixture_file(root, path, write=False):
+    """Parent-side I/O must not follow links planted in the writable guest root."""
+    checked_path(root, path)
+    flags = (os.O_WRONLY | os.O_CREAT) if write else os.O_RDONLY
+    flags |= getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    fd = os.open(path, flags, 0o666)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError('fixture control file must be regular with one link')
+        if hasattr(os, 'geteuid') and info.st_uid != os.geteuid():
+            raise ValueError('fixture control file owner changed')
+        if write:
+            os.ftruncate(fd, 0)
+        return os.fdopen(fd, 'w' if write else 'r', encoding='utf-8', errors='replace', newline='\n')
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def fixture_write(root, path, content):
+    with fixture_file(root, path, write=True) as file:
+        file.write(content)
+
+
+def sandbox(root, command, trace=None, profile='default', accounts=None):
     empty = root / "empty-system"
     empty.mkdir(exist_ok=True)
-    args = ["bwrap", "--die-with-parent", "--unshare-all", "--new-session",
-            "--cap-drop", "ALL", "--tmpfs", "/", "--ro-bind", "/usr", "/usr"]
+    args = ['bwrap', '--die-with-parent']
+    if profile == 'default':
+        args += ['--unshare-all']
+    elif profile == 'multiuser' and accounts:
+        args += ['--userns', '@INSTALLER_FIXTURE_USERNS@', '--unshare-ipc', '--unshare-pid',
+                 '--unshare-net', '--unshare-uts', '--unshare-cgroup-try']
+    else:
+        raise ValueError('unknown or unprepared fixture profile')
+    args += ['--new-session', '--cap-drop', 'ALL']
+    if profile == 'multiuser':
+        for capability in MULTIUSER_CAPABILITIES:
+            args += ['--cap-add', capability]
+    args += ['--tmpfs', '/', '--ro-bind', '/usr', '/usr']
     # Build mountpoints on a fresh root, never under a masked host directory.
     # Preserve merged-/usr links without exposing a second alias of the host root.
     for name in ('bin', 'sbin', 'lib', 'lib64'):
@@ -69,7 +169,8 @@ def sandbox(root, command, trace=None):
     # Hide real installed project files from reads as well as writes. These
     # mounts are read-only, including when a test uses an absolute executable.
     for path in ("/etc", "/run", "/var/lib", "/var/log", "/usr/local", "/root", "/home"):
-        args += ["--ro-bind", str(empty), path]
+        origin = accounts['directory'] if path == '/etc' and profile == 'multiuser' else empty
+        args += ["--ro-bind", str(origin), path]
     repo = Path(__file__).resolve().parent.parent
     args += ["--dir", "/work", "--ro-bind", str(repo), str(SOURCE),
              "--bind", str(root), str(FIXTURE),
@@ -78,7 +179,12 @@ def sandbox(root, command, trace=None):
     if trace:
         args += ["strace", "-f", "-qq", "-s", "16384", "-e", "trace=%file,%process",
                  "-o", translate(str(trace), root, repo)]
-    return args + command
+    args += command
+    if profile == 'multiuser':
+        namespace_audit = accounts['audit_directory'] / ((trace.stem if trace else 'namespace') + '-userns.json')
+        args = [sys.executable, str(repo / 'scripts/installer-fixture-userns.py'),
+                '--identity', str(accounts['identity']), '--audit-file', str(namespace_audit), '--'] + args
+    return args
 
 
 def translate(value, root, repo):
@@ -101,7 +207,7 @@ def audit_workload(audit):
     or PID file. All other accesses, including failed reads/stats, still fail.
     """
     records, children, proofs, pending = [], {}, set(), set()
-    signature = '", "-c", ' + json.dumps(CANARY)
+    signatures = ['", "-c", ' + json.dumps(script) for script in (CANARY, MULTIUSER_CANARY)]
     for line in audit.splitlines() if isinstance(audit, str) else audit:
         line = line.rstrip('\n')
         match = re.match(r'^(\d+)\s+(.*)', line)
@@ -109,7 +215,7 @@ def audit_workload(audit):
         paths = project_access(body)
         if paths:
             records.append((pid, paths))
-        if re.match(r'execve\("/(?:usr/)?bin/bash",', body) and signature in body:
+        if re.match(r'execve\("/(?:usr/)?bin/bash",', body) and any(signature in body for signature in signatures):
             if body.endswith('= 0'):
                 proofs.add(pid)
             elif '<unfinished ...>' in body:
@@ -168,12 +274,76 @@ if /bin/touch "$root/parent/fixture-escape" 2>/dev/null; then exit 85; fi
 /bin/rm "$root/parent"
 '''
 
+MULTIUSER_CANARY = CANARY.replace(
+    "grep -Eq '^CapEff:[[:space:]]+0+$' /proc/self/status",
+    "grep -Eq '^CapEff:[[:space:]]+0*c9$' /proc/self/status") + r'''
+for path in /etc/404-probe /run/404-probe /var/lib/404-probe /var/lib/404-probe-updater /var/log/404-probe / /etc/fixture-root-only /work/source/install.sh; do
+  if /bin/chown 404-probe:404-probe "$path" 2>/dev/null; then exit 90; fi
+  if /bin/chmod 0777 "$path" 2>/dev/null; then exit 91; fi
+done
+if printf unsafe >/etc/fixture-root-only 2>/dev/null; then exit 92; fi
+mkdir "$root/mount-probe"
+if /bin/mount -t tmpfs tmpfs "$root/mount-probe" 2>/dev/null; then exit 93; fi
+if /bin/mount -o remount,rw / 2>/dev/null; then exit 94; fi
+if /bin/umount /etc 2>/dev/null; then exit 95; fi
+rmdir "$root/mount-probe"
+python3 - "$root" <<'PY'
+import ctypes, json, os, socket, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+metadata = json.loads(Path('/etc/installer-fixture-profile.json').read_text())
+identity = metadata['identity']
+status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines())
+assert all(int(status[name], 16) == 201 for name in ('CapEff', 'CapPrm', 'CapBnd'))
+assert os.readlink('/proc/self/ns/pid') != metadata['host_pid_namespace']
+assert os.readlink('/proc/self/ns/net') != metadata['host_net_namespace']
+assert not Path('/proc/' + str(metadata['host_pid'])).exists()
+assert {name for _, name in socket.if_nameindex()} <= {'lo'}
+routes = Path('/proc/net/route').read_text().splitlines()[1:]
+assert all(line.split()[0] == 'lo' for line in routes)
+libc = ctypes.CDLL(None, use_errno=True)
+assert libc.unshare(0x10000000) == -1, 'new user namespace unexpectedly succeeded'
+directory = root / 'service-canary'
+directory.mkdir()
+os.chown(directory, identity, identity)
+# The root caller no longer owns it: this chmod exercises CAP_FOWNER.
+directory.chmod(0o700)
+PY
+/usr/sbin/runuser -u 404-probe -- python3 - "$root" <<'PY'
+import ctypes, json, os, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+metadata = json.loads(Path('/etc/installer-fixture-profile.json').read_text())
+assert os.getuid() == metadata['identity'] and os.getgid() == metadata['identity']
+assert set(os.getgroups()) <= {metadata['identity']}
+status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines())
+assert int(status['CapEff'], 16) == 0
+file = root / 'service-canary/owned'
+file.write_text('service-owned data')
+assert file.read_text() == 'service-owned data'
+for path in ('/etc/404-probe', '/run/404-probe', '/var/lib/404-probe', '/var/lib/404-probe-updater', '/var/log/404-probe', '/etc/fixture-root-only'):
+    for mode in ('r', 'w'):
+        try:
+            opened = open(path, mode)
+        except OSError:
+            pass
+        else:
+            opened.close()
+            raise AssertionError('service escaped fixture: ' + path + ' ' + mode)
+libc = ctypes.CDLL(None, use_errno=True)
+assert libc.unshare(0x10000000) == -1, 'service regained a user namespace'
+PY
+/bin/chown 0:0 "$root/service-canary"
+/bin/rm -rf "$root/service-canary"
+'''
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root")
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--script")
+    parser.add_argument('--profile', choices=('default', 'multiuser'), default='default')
     parser.add_argument("command", nargs=argparse.REMAINDER)
     opts = parser.parse_args()
     tools = ('bash',) if in_place_candidate() else ('bwrap', 'strace', 'bash')
@@ -200,7 +370,27 @@ def proof_environment(env):
     return clean
 
 
+def selected_profile(opts, repo):
+    # Only an explicit launcher choice or this exact registered harness selects
+    # multi-user execution. Environment variables never select capabilities.
+    if opts.script and Path(opts.script).resolve() == repo / 'scripts/test-selector-order-existing.sh':
+        return 'multiuser'
+    return getattr(opts, 'profile', 'default')
+
+
 def run(opts, root):
+    profile = selected_profile(opts, Path(__file__).resolve().parent.parent)
+    if profile == 'multiuser' and not in_place_candidate():
+        try:
+            with synthetic_accounts(root) as accounts:
+                return run_verified(opts, root, profile, accounts)
+        except (OSError, ValueError) as error:
+            print('SKIP multi-user fixture preparation: ' + str(error))
+            return SKIP
+    return run_verified(opts, root, profile)
+
+
+def run_verified(opts, root, profile='default', accounts=None):
     repo = Path(__file__).resolve().parent.parent
     in_place = in_place_candidate()
     inside_root = root if in_place else FIXTURE
@@ -209,14 +399,15 @@ def run(opts, root):
                INSTALLER_FIXTURE_ACTIVE=str(inside_root))
     # A successful canary is mandatory for every invocation, never an env bypass.
     canary_trace = root / 'canary.trace'
+    canary = MULTIUSER_CANARY if profile == 'multiuser' else CANARY
     if in_place:
         if not any(root.is_relative_to(path) for path in (Path(str(FIXTURE)), Path('/tmp'))):
             print('SKIP installer execution: in-place fixture is outside the private write roots')
             return SKIP
-        proof_command = ['bash', '-c', CANARY]
+        proof_command = ['bash', '-c', canary]
     else:
         (root / 'tmp').mkdir(exist_ok=True)
-        proof_command = sandbox(root, ['bash', '-c', CANARY], canary_trace)
+        proof_command = sandbox(root, ['bash', '-c', canary], canary_trace, profile, accounts)
     proof = subprocess.run(proof_command, env=proof_environment(env),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proof.returncode:
@@ -225,14 +416,15 @@ def run(opts, root):
         return SKIP
     (root / 'tmp').mkdir(exist_ok=True)
     if in_place:
-        (root / 'in-place-proof.json').write_text(json.dumps({'mode': 'in-place', 'verified': True}) + '\n', encoding='utf-8')
+        fixture_write(root, root / 'in-place-proof.json', json.dumps({'mode': 'in-place', 'profile': profile, 'verified': True}) + '\n')
     else:
-        attempts = sorted(set(project_access(canary_trace.read_text(encoding='utf-8'))))
+        with fixture_file(root, canary_trace) as file:
+            attempts = sorted(set(project_access(file.read())))
         expected = ['/run/404-probe', '/etc/404-probe', '/var/lib/404-probe',
                     '/var/lib/404-probe-updater', '/var/log/404-probe']
-        audit = {'exit': proof.returncode, 'original_project_access': attempts,
+        audit = {'exit': proof.returncode, 'profile': profile, 'cap_eff': MULTIUSER_CAP_MASK if profile == 'multiuser' else 0, 'original_project_access': attempts,
                  'expected_attempts_seen': all(path in attempts for path in expected)}
-        (root / 'canary-audit.json').write_text(json.dumps(audit, indent=2) + '\n', encoding='utf-8')
+        fixture_write(root, root / 'canary-audit.json', json.dumps(audit, indent=2) + '\n')
         if not audit['expected_attempts_seen']:
             print('FAIL installer canary: strace did not observe every original project path')
             return 86
@@ -240,7 +432,7 @@ def run(opts, root):
         print('PASS installer ' + ('in-place' if in_place else 'namespace') + ' canary: fixture delete; absolute, redirect, symlink and parent escape denied')
         return 0
     installer = root / "installer-fixture.sh"
-    installer.write_text(redirect((repo / "install.sh").read_text(encoding="utf-8"), inside_root), encoding="utf-8", newline="\n")
+    fixture_write(root, installer, redirect((repo / "install.sh").read_text(encoding="utf-8"), inside_root))
     env["INSTALLER_FIXTURE_INSTALLER"] = str(inside_root / installer.name)
     env["BASH_ENV"] = str(SOURCE / "scripts/installer-fixture-commands.sh")
     command = list(opts.command) if in_place else [translate(value, root, repo) for value in opts.command]
@@ -260,26 +452,28 @@ def run(opts, root):
         # keeping their custom layout while catching any new literal prefix.
         child = root / "fixture-test.sh"
         body = "\n".join(lines) + "\n"
-        child.write_text(redirect(body if in_place else translate(body, root, repo), inside_root), encoding="utf-8", newline="\n")
+        fixture_write(root, child, redirect(body if in_place else translate(body, root, repo), inside_root))
         command = ["bash", str(inside_root / child.name)] + command
     elif not in_place:
         # Generated Go harnesses embed their host fixture/source paths. Rewrite
         # only private shell fixtures, never files in the source checkout.
         for script in root.rglob('*.sh'):
             checked_path(root, script)
-            script.write_text(translate(script.read_text(encoding='utf-8'), root, repo), encoding='utf-8', newline='\n')
+            with fixture_file(root, script) as file:
+                text = file.read()
+            fixture_write(root, script, translate(text, root, repo))
     trace = root / "filesystem.trace"
     # Inside an already proven namespace the outer process owns the only trace.
-    result = subprocess.run(command if in_place else sandbox(root, command, trace),
+    result = subprocess.run(command if in_place else sandbox(root, command, trace, profile, accounts),
                             env=env, cwd=root if in_place else None)
     if in_place:
         return result.returncode
     # Even harmless stat/read attempts against the original project paths fail
     # the test. The namespace already prevents access to their real host objects.
-    with trace.open(encoding='utf-8', errors='replace') as audit:
+    with fixture_file(root, trace) as audit:
         checked = audit_workload(audit)
     escaped = checked['original_project_access']
-    (root / "filesystem-audit.json").write_text(json.dumps(dict(checked, canary='passed', mode='new-namespace', exit=result.returncode), indent=2) + "\n", encoding="utf-8")
+    fixture_write(root, root / 'filesystem-audit.json', json.dumps(dict(checked, canary='passed', profile=profile, mode='new-namespace', exit=result.returncode), indent=2) + '\n')
     if escaped:
         print("FAIL installer attempted original project paths: " + repr(sorted(set(escaped))), file=sys.stderr)
         return 86

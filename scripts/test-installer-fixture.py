@@ -11,6 +11,8 @@ import sys
 import json
 import os
 import io
+from types import SimpleNamespace
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("fixture", Path(__file__).with_name("installer-fixture.py"))
 fixture = importlib.util.module_from_spec(spec)
@@ -18,6 +20,95 @@ spec.loader.exec_module(fixture)
 
 
 class FixtureBoundaryTests(unittest.TestCase):
+    def test_multiuser_profile_preserves_namespaces_and_exact_four_capabilities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            accounts = {'directory': root / 'synthetic-etc', 'audit_directory': root / 'private-audits', 'identity': 973}
+            command = fixture.sandbox(root, ['true'], profile='multiuser', accounts=accounts)
+            caps = [command[index + 1] for index, value in enumerate(command) if value == '--cap-add']
+            self.assertEqual(set(caps), {'CAP_CHOWN', 'CAP_FOWNER', 'CAP_SETUID', 'CAP_SETGID'})
+            self.assertEqual(len(caps), 4)
+            self.assertEqual(fixture.MULTIUSER_CAP_MASK, 0xc9)
+            for flag in ('--userns', '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try'):
+                self.assertIn(flag, command)
+            index = command.index('/etc')
+            self.assertEqual(command[index - 2:index], ['--ro-bind', str(accounts['directory'])])
+            default = fixture.sandbox(root, ['true'])
+            self.assertIn('--unshare-all', default)
+            self.assertNotIn('--cap-add', default)
+
+    def test_synthetic_accounts_are_only_generated_root_and_unused_fixture_identity(self):
+        files = fixture.account_files(973, {'identity': 973})
+        passwd = [line.split(':') for line in files['passwd'].splitlines()]
+        groups = [line.split(':') for line in files['group'].splitlines()]
+        self.assertEqual([(row[0], row[2], row[3]) for row in passwd], [('root', '0', '0'), ('404-probe', '973', '973')])
+        self.assertEqual([(row[0], row[2]) for row in groups], [('root', '0'), ('404-probe', '973')])
+        self.assertTrue(all(row[4].startswith('Fixture ') for row in passwd))
+        self.assertTrue(all(row[5].startswith('/work/fixture') for row in passwd))
+        self.assertIn('passwd: files', files['nsswitch.conf'])
+        self.assertEqual(len(files['shadow'].splitlines()), 2)
+        self.assertTrue(all(line.split(':')[1] == '!' for line in files['shadow'].splitlines()))
+        for identity in (0, 1000, -1):
+            with self.assertRaises(ValueError):
+                fixture.account_files(identity, {})
+
+    def test_parent_control_io_rejects_hardlinks_before_truncating(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            root = parent / 'fixture'
+            root.mkdir()
+            outside = parent / 'outside-control'
+            outside.write_text('unchanged')
+            target = root / 'audit.json'
+            try:
+                os.link(outside, target)
+            except OSError as error:
+                self.skipTest('host cannot create fixture hardlinks: ' + str(error))
+            with self.assertRaises(ValueError):
+                fixture.fixture_write(root, target, 'must not write')
+            with self.assertRaises(ValueError):
+                fixture.fixture_file(root, target)
+            self.assertEqual(outside.read_text(), 'unchanged')
+
+    def test_parent_control_io_rejects_symlink_escape(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            root = parent / 'fixture'
+            root.mkdir()
+            outside = parent / 'outside-control'
+            outside.write_text('unchanged')
+            target = root / 'audit.json'
+            try:
+                target.symlink_to(outside)
+            except OSError as error:
+                self.skipTest('host cannot create fixture symlinks: ' + str(error))
+            with self.assertRaises(ValueError):
+                fixture.fixture_write(root, target, 'must not write')
+            with self.assertRaises(ValueError):
+                fixture.fixture_file(root, target)
+            self.assertEqual(outside.read_text(), 'unchanged')
+
+    def test_forged_multiuser_environment_does_not_select_capabilities(self):
+        repo = Path(__file__).resolve().parent.parent
+        opts = SimpleNamespace(script=None, profile='default')
+        with patch.dict(os.environ, INSTALLER_FIXTURE_PROFILE='multiuser', INSTALLER_FIXTURE_MULTIUSER='1'):
+            self.assertEqual(fixture.selected_profile(opts, repo), 'default')
+            opts.script = str(repo / 'scripts/test-selector-order-existing.sh')
+            self.assertEqual(fixture.selected_profile(opts, repo), 'multiuser')
+            opts.script = '/tmp/test-selector-order-existing.sh'
+            self.assertEqual(fixture.selected_profile(opts, repo), 'default')
+
+    @unittest.skipUnless(sys.platform == 'linux' and all(shutil.which(tool) for tool in ('bwrap', 'strace', 'bash')), 'requires actual Linux bwrap and strace')
+    def test_linux_forged_multiuser_markers_leave_default_cap_eff_zero(self):
+        repo = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory(prefix='forged-profile-', dir=repo.parent) as directory:
+            root = Path(directory)
+            env = dict(os.environ, INSTALLER_FIXTURE_PROFILE='multiuser', INSTALLER_FIXTURE_MULTIUSER='1')
+            result = subprocess.run([sys.executable, '-B', str(repo / 'scripts/installer-fixture.py'), '--root', str(root), '--', 'bash', '-c', 'grep "^CapEff:" /proc/self/status > /work/fixture/default-cap-eff'], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(int((root / 'default-cap-eff').read_text().split(':')[1], 16), 0)
+            self.assertEqual(json.loads((root / 'canary-audit.json').read_text())['cap_eff'], 0)
+
     def test_outer_audit_exempts_only_exact_canary_process_and_children(self):
         proof = '10 execve("/usr/bin/bash", ["bash", "-c", ' + json.dumps(fixture.CANARY) + '], 0x0) = 0\n'
         proof += '10 clone(child_stack=NULL, flags=SIGCHLD) = 11\n'
@@ -182,6 +273,26 @@ bash /work/fixture/shell-harness.sh
             source = (scripts.parent / "cmd/server" / ("installer_" + name + "_test.go")).read_text(encoding="utf-8")
             self.assertNotIn("exec.Command(bash,", source)
             self.assertIn("installerFixtureCommand(t, bash,", source)
+
+
+@unittest.skipUnless(sys.platform == 'linux' and Path('/etc/installer-fixture-profile.json').is_file(), 'requires actual multi-user outer fixture')
+class FixtureMultiuserInsideTests(unittest.TestCase):
+    def test_live_multiuser_cap_eff_accounts_and_complete_in_place_proof(self):
+        status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines())
+        self.assertEqual(int(status['CapEff'], 16), 0xc9)
+        metadata = json.loads(Path('/etc/installer-fixture-profile.json').read_text())
+        self.assertTrue(all(metadata['host_lookup'][-1][name]['absent'] for name in ('passwd', 'group')))
+        for name in ('uid_map', 'gid_map'):
+            mapping = {tuple(map(int, line.split())) for line in Path('/proc/self', name).read_text().splitlines()}
+            self.assertEqual(mapping, {(0, 0, 1), (metadata['identity'], metadata['identity'], 1)})
+        self.assertEqual(Path('/proc/self/setgroups').read_text().strip(), 'allow')
+        expected = fixture.account_files(metadata['identity'], metadata)
+        for name, content in expected.items():
+            self.assertEqual((Path('/etc') / name).read_text(), content)
+        root = Path(os.environ['INSTALLER_FIXTURE_ROOT'])
+        result = fixture.run(SimpleNamespace(probe=True, script=None, command=[], profile='multiuser'), root)
+        self.assertEqual(result, 0)
+        self.assertTrue(json.loads((root / 'in-place-proof.json').read_text())['verified'])
 
 
 if __name__ == "__main__":
