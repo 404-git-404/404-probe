@@ -11,6 +11,7 @@ import sys
 import json
 import os
 import io
+from contextlib import contextmanager, redirect_stderr
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -20,6 +21,61 @@ spec.loader.exec_module(fixture)
 
 
 class FixtureBoundaryTests(unittest.TestCase):
+    def test_multiuser_only_preparation_errors_skip(self):
+        @contextmanager
+        def prepared(root):
+            yield {}
+
+        @contextmanager
+        def broken_teardown(root):
+            yield {}
+            raise ValueError('audit rejected')
+
+        opts = SimpleNamespace(script=None, profile='multiuser')
+        with patch.object(fixture, 'in_place_candidate', return_value=False), patch.object(fixture, 'bootstrap_boundary', return_value=True):
+            with patch.object(fixture, 'synthetic_accounts', side_effect=PermissionError('setup')):
+                with redirect_stderr(io.StringIO()), patch.dict(os.environ, INSTALLER_FIXTURE_REQUIRED='0'):
+                    self.assertEqual(fixture.run(opts, Path('/fixture')), 77)
+            with patch.object(fixture, 'synthetic_accounts', prepared):
+                with patch.object(fixture, 'run_verified', side_effect=ValueError('body audit')):
+                    with self.assertRaisesRegex(ValueError, 'body audit'):
+                        fixture.run(opts, Path('/fixture'))
+                with patch.object(fixture, 'run_verified', return_value=42):
+                    self.assertEqual(fixture.run(opts, Path('/fixture')), 42)
+            with patch.object(fixture, 'synthetic_accounts', broken_teardown):
+                with patch.object(fixture, 'run_verified', return_value=0):
+                    with self.assertRaisesRegex(ValueError, 'audit rejected'):
+                        fixture.run(opts, Path('/fixture'))
+
+    def test_required_skip_fails_and_goes_to_stderr(self):
+        for required, expected in [('0', 77), ('1', 1)]:
+            output = io.StringIO()
+            with patch.dict(os.environ, INSTALLER_FIXTURE_REQUIRED=required), redirect_stderr(output):
+                self.assertEqual(fixture.skipped('test tools unavailable'), expected)
+            self.assertEqual(output.getvalue(), 'INSTALLER-FIXTURE-SKIPPED: test tools unavailable\n')
+
+    def test_device_fd_mutations_are_audited_and_trace_strings_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command = fixture.sandbox(Path(directory), ['true'], trace=Path(directory) / 'trace')
+            self.assertIn('-yy', command)
+            self.assertIn('trace=%file,%process,fchmod,fchown', command)
+            self.assertEqual(command[command.index('-s') + 1], '1024')
+        for syscall in ('chmod', 'chown', 'lchown', 'fchmodat', 'fchmodat2', 'fchownat', 'utimensat'):
+            self.assertEqual(fixture.audit_workload(f'20 {syscall}(AT_FDCWD, "/dev/null", 0) = -1 EPERM')['device_metadata_access'], ['/dev/null'])
+        for syscall in ('fchmod', 'fchown'):
+            self.assertEqual(fixture.audit_workload(f'20 {syscall}(3</dev/zero>, 0) = -1 EPERM')['device_metadata_access'], ['/dev/zero'])
+        self.assertEqual(fixture.audit_workload('20 openat(AT_FDCWD, "/dev/null", O_WRONLY) = 3')['device_metadata_access'], [])
+
+    def test_failed_bootstrap_never_creates_host_files(self):
+        opts = SimpleNamespace(script=None, profile='multiuser')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(fixture, 'in_place_candidate', return_value=False), patch.object(fixture, 'bootstrap_boundary', return_value=False), redirect_stderr(io.StringIO()):
+                self.assertIn(fixture.run(opts, root), (1, 77))
+            self.assertEqual(list(root.iterdir()), [])
+            command = fixture.sandbox(None, ['true'])
+            self.assertNotIn('--bind', command)
+
     def test_multiuser_profile_preserves_namespaces_and_exact_four_capabilities(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -31,7 +87,7 @@ class FixtureBoundaryTests(unittest.TestCase):
             self.assertEqual(fixture.MULTIUSER_CAP_MASK, 0xc9)
             for flag in ('--userns', '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try'):
                 self.assertIn(flag, command)
-            index = command.index('/etc')
+            index = command.index('/etc', command.index(str(accounts['directory'])) + 1)
             self.assertEqual(command[index - 2:index], ['--ro-bind', str(accounts['directory'])])
             default = fixture.sandbox(root, ['true'])
             self.assertIn('--unshare-all', default)
@@ -157,14 +213,18 @@ bash /work/fixture/shell-harness.sh
             marker = root / 'must-not-execute'
             env = dict(os.environ, INSTALLER_FIXTURE_ACTIVE=str(root), INSTALLER_FIXTURE_ROOT=str(root))
             command = [sys.executable, '-B', str(repo / 'scripts/installer-fixture.py'), '--root', str(root), '--', 'bash', '-c', 'touch ' + str(marker)]
+            before = sorted(str(p.relative_to(root)) for p in root.rglob('*'))
             result = subprocess.run(command, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
             self.assertFalse(marker.exists())
+            self.assertEqual(sorted(str(p.relative_to(root)) for p in root.rglob('*')), before)
             script = root / 'fake-shell.sh'
             script.write_text('source "' + str(repo / 'scripts/installer-fixture-entry.sh') + '"\ntouch "' + str(marker) + '"\n', encoding='utf-8')
+            before = sorted(str(p.relative_to(root)) for p in root.rglob('*'))
             result = subprocess.run(['bash', str(script)], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
             self.assertFalse(marker.exists())
+            self.assertEqual(sorted(str(p.relative_to(root)) for p in root.rglob('*')), before)
             self.assertFalse((root / 'canary.trace').exists())
 
     @unittest.skipUnless(sys.platform == 'linux' and all(shutil.which(tool) for tool in ('bwrap', 'strace', 'bash')), 'requires actual Linux bwrap and strace')
@@ -187,10 +247,12 @@ bash /work/fixture/shell-harness.sh
             self.assertEqual(command[command.index('--tmpfs') + 1], '/')
             self.assertIn('/work/source', command)
             self.assertIn('/work/fixture', command)
-            self.assertEqual(command[command.index('--remount-ro') + 1], '/')
+            self.assertEqual(command[len(command) - 5:len(command) - 3], ['--remount-ro', '/'])
             for path in ('/etc', '/run', '/var/lib', '/var/log', '/usr/local', '/root', '/home'):
                 index = command.index(path)
-                self.assertEqual(command[index - 2:index], ['--ro-bind', str(root / 'empty-system')])
+                self.assertEqual(command[index - 1], '--tmpfs')
+                self.assertEqual(command[index + 1:index + 3], ['--remount-ro', path])
+            self.assertEqual(list(root.iterdir()), [])
 
     def test_translate_private_paths_once_with_nested_fixture(self):
         repo = PurePosixPath('/var/lib/job/source')
@@ -267,7 +329,7 @@ bash /work/fixture/shell-harness.sh
 
     def test_every_audited_harness_uses_common_entry(self):
         scripts = Path(__file__).resolve().parent
-        for name in ("install-sandbox", "install-oneclick", "install-oneclick-token", "install-password", "install-banner", "server-upgrade-transaction", "selector-order-existing", "migration-preflight", "migration-service-lifecycle", "release-rc"):
+        for name in ("install-sandbox", "install-oneclick", "install-oneclick-token", "install-password", "server-upgrade-transaction", "selector-order-existing", "migration-preflight", "migration-service-lifecycle"):
             self.assertIn("installer-fixture-entry.sh", (scripts / ("test-" + name + ".sh")).read_text(encoding="utf-8"))
         for name in ("uninstall_behavior", "security_rollback", "server_recovery", "download_behavior", "beta_channel"):
             source = (scripts.parent / "cmd/server" / ("installer_" + name + "_test.go")).read_text(encoding="utf-8")

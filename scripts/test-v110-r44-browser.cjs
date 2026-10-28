@@ -1,13 +1,14 @@
 // Actual traffic DOM/CSS, deterministic local data, no network or installed service.
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),cp=require('node:child_process');
-const {chromium}=require(process.env.M02_PLAYWRIGHT||path.join(os.homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
-const executablePath=process.env.M02_CHROMIUM||path.join(os.homedir(),'AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe');
+const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
+let chromium;try{({chromium}=require(process.env.M02_PLAYWRIGHT||'playwright'));}catch(_){/* optional, like other browser harnesses */}
+const executablePath=process.env.M02_CHROMIUM||chromium?.executablePath();
 const root=path.join(__dirname,'../web/static'),out=process.env.V110_R44_SCREENS;
 const before=name=>cp.execFileSync('git',['show','v1.0.9:web/static/'+name],{cwd:root,encoding:'utf8'});
 const read=name=>fs.readFileSync(path.join(root,name),'utf8');
-test('R44 actual 1440/390 layout: full plot, peak/hover, independent scale, missing-minute gaps',async()=>{
- assert(out,'Set V110_R44_SCREENS');fs.mkdirSync(out,{recursive:true});
+const browserOptions={skip:!out?'Set V110_R44_SCREENS':!chromium||!fs.existsSync(executablePath)?'Playwright/Chromium not available':false};
+test('R44 actual 1440/390 layout: full plot, peak/hover, independent scale, missing-minute gaps',browserOptions,async()=>{
+ fs.mkdirSync(out,{recursive:true});
  const browser=await chromium.launch({headless:true,executablePath}),results=[];
  try{
   for(const width of [1440,390]){

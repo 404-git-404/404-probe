@@ -14,10 +14,7 @@
       "schema": 35,
       "previous_version": "v1.0.6",
       "added_tables": [],
-      "removed_tables": [
-        "tcp_mini_high",
-        "tcp_mini_state"
-      ]
+      "removed_tables": ["tcp_mini_high", "tcp_mini_state"]
     },
     "v1.0.8": {
       "commit": "5bd4623c558f4fd7ee3d3149e6829c5a3e246d14",

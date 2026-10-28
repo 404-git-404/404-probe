@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,16 +11,26 @@ import (
 	"testing"
 )
 
+func installerFixtureSkip(t *testing.T, reason string) {
+	t.Helper()
+	message := "INSTALLER-FIXTURE-SKIPPED: " + reason
+	fmt.Fprintln(os.Stderr, message)
+	if os.Getenv("INSTALLER_FIXTURE_REQUIRED") == "1" {
+		t.Fatal(message)
+	}
+	t.Skip(message)
+}
+
 // All executable installer harnesses use the same fail-closed Linux boundary.
 // PATH mocks alone cannot contain /bin/rm, redirects, or replaced parents.
 func installerFixtureCommand(t *testing.T, bash string, args ...string) *exec.Cmd {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("installer execution requires verified Linux bubblewrap + strace isolation; PATH mocks are insufficient")
+		installerFixtureSkip(t, "installer execution requires verified Linux bubblewrap + strace isolation; PATH mocks are insufficient")
 	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
-		t.Skip("installer isolation requires Python3")
+		installerFixtureSkip(t, "installer isolation requires Python3")
 	}
 	_, file, _, _ := runtime.Caller(0)
 	runner := filepath.Join(filepath.Dir(file), "..", "..", "scripts", "installer-fixture.py")
@@ -27,7 +38,7 @@ func installerFixtureCommand(t *testing.T, bash string, args ...string) *exec.Cm
 	probe := exec.Command(python, runner, "--root", root, "--probe")
 	output, err := probe.CombinedOutput()
 	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 77 {
-		t.Skip(strings.TrimSpace(string(output)))
+		installerFixtureSkip(t, strings.TrimSpace(string(output)))
 	}
 	if err != nil {
 		t.Fatalf("installer isolation proof: %v\n%s", err, output)
@@ -39,7 +50,7 @@ func installerFixtureCommand(t *testing.T, bash string, args ...string) *exec.Cm
 // Central one-pass mapping handles both uninstall copies, their helper heredoc,
 // all roles, runtime, candidate/previous, helper, state and lock prefixes.
 func installerFixtureSource(source, root string) string {
-	paths := regexp.MustCompile(`/etc|/usr/local/bin|/usr/local/sbin|/var/lib|/var/log|/run`)
+	paths := regexp.MustCompile(`/etc|/usr/local/bin|/usr/local/sbin|/var/lib|/var/log|/run|/root`)
 	defaultValue := regexp.MustCompile(`(?:\$\{[A-Za-z_][A-Za-z0-9_]*:?|[\s=])-$`)
 	var result strings.Builder
 	last := 0

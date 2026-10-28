@@ -102,6 +102,9 @@ fi
 			if err != nil {
 				t.Fatalf("installer boundary: %v\n%s", err, output)
 			}
+			if row.to == "v1.0.9" && !strings.Contains(string(output), "refusing to downgrade Server") {
+				t.Fatalf("downgrade rejected for wrong reason: %s", output)
+			}
 		})
 	}
 }

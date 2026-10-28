@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Defense in depth. Kernel mounts remain the boundary if a function is replaced,
 # `command rm` bypasses this wrapper, or a shell redirect writes a file.
+# No mutation wrapper accepts /dev/*. Shell redirection to /dev/null remains
+# available; the fd-aware outer trace and device snapshots guard bypasses.
 # Debian's awk alias resolves through the deliberately hidden /etc/alternatives.
 # Use the same installed implementation without exposing that host directory.
 if ! command -v awk >/dev/null 2>&1 && [[ -x /usr/bin/mawk ]]; then
@@ -12,7 +14,6 @@ fixture_path() {
   [[ "${path}" == /* ]] || path="${PWD}/${path}"
   [[ "/${path}/" != */../* ]] || { printf 'fixture rejects parent traversal\n' >&2; return 88; }
   case "${path}" in
-    /dev/null) return 0 ;;
     "${INSTALLER_FIXTURE_ROOT}/"*|/tmp/*) ;;
     *) printf 'fixture rejects path outside root: %s\n' "${path}" >&2; return 88 ;;
   esac

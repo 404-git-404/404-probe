@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Load the original functions without executing the root/system installer entry point.
-[[ "$(tail -n 1 "${INSTALLER_FIXTURE_INSTALLER}")" == 'main "$@"' ]]
-source <(sed '$d' "${INSTALLER_FIXTURE_INSTALLER}")
-temporary="$(mktemp -d)"
-trap 'rm -rf -- "${temporary}"' EXIT
+# Pure function extraction only; no main, file writes, or fixture required.
+eval "$(awk '/^readonly DEFAULT_VERSION=/{print} /^(die|release_version|canonical_version|target_version|print_install_banner)\(\) \{/{copy=1} copy{print} copy && /^\}/{copy=0}' "${root}/install.sh")"
 
 check_banner() {
   local expected="$1" actual
@@ -25,10 +21,9 @@ PROBE_404_VERSION=v1.0.1-beta.1 check_banner $'Install 404-probe v1.0.1-beta.1 (
 printf 'PASS beta.1 banner\n'
 PROBE_404_VERSION=v1.0.1-beta.12 check_banner $'Install 404-probe v1.0.1-beta.12 (Pre-release)\n\n  1) Server\n  2) Agent'
 printf 'PASS complete beta ordinal banner\n'
-if (PROBE_404_VERSION=v1.0.1-rc.0 print_install_banner >"${temporary}/output" 2>"${temporary}/error"); then
+if error="$(PROBE_404_VERSION=v1.0.1-rc.0 print_install_banner 2>&1)"; then
   printf 'unvalidated target was displayed\n' >&2
   exit 1
 fi
-[[ ! -s "${temporary}/output" ]]
-grep -Fq 'target version must be stable or explicit beta.N' "${temporary}/error"
+[[ "${error}" == '404-probe installer: target version must be stable or explicit beta.N/rc.N' ]]
 printf 'PASS invalid target rejected before banner\n'
