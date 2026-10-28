@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Pure boundary regressions, safe without root or an installed namespace tool."""
+"""Boundary regressions; the Linux startup case also exercises actual bwrap."""
 import importlib.util
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tempfile
 import unittest
 import re
+import shutil
+import subprocess
+import sys
+import json
 
 spec = importlib.util.spec_from_file_location("fixture", Path(__file__).with_name("installer-fixture.py"))
 fixture = importlib.util.module_from_spec(spec)
@@ -12,6 +16,44 @@ spec.loader.exec_module(fixture)
 
 
 class FixtureBoundaryTests(unittest.TestCase):
+    def test_mount_targets_are_independent_of_hidden_host_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command = fixture.sandbox(root, ['true'])
+            self.assertIn('--tmpfs', command)
+            self.assertEqual(command[command.index('--tmpfs') + 1], '/')
+            self.assertIn('/work/source', command)
+            self.assertIn('/work/fixture', command)
+            self.assertEqual(command[command.index('--remount-ro') + 1], '/')
+            for path in ('/etc', '/run', '/var/lib', '/var/log', '/usr/local', '/root', '/home'):
+                index = command.index(path)
+                self.assertEqual(command[index - 2:index], ['--ro-bind', str(root / 'empty-system')])
+
+    def test_translate_private_paths_once_with_nested_fixture(self):
+        repo = PurePosixPath('/var/lib/job/source')
+        root = repo / '.tools/fixture'
+        source = str(root / 'test.sh') + ' ' + str(repo / 'install.sh')
+        expected = '/work/fixture/test.sh /work/source/install.sh'
+        self.assertEqual(fixture.translate(source, root, repo), expected)
+        self.assertEqual(fixture.translate(expected, root, repo), expected)
+        self.assertEqual(fixture.translate(str(root) + '-other/test.sh', root, repo), '/work/source/.tools/fixture-other/test.sh')
+
+    @unittest.skipUnless(sys.platform == 'linux' and all(shutil.which(tool) for tool in ('bwrap', 'strace', 'bash')), 'requires actual Linux bwrap and strace')
+    def test_linux_bwrap_starts_with_source_and_fixture_under_var_lib(self):
+        repo = Path(__file__).resolve().parent.parent
+        if not repo.is_relative_to('/var/lib'):
+            self.skipTest('run the regression from an isolated checkout below /var/lib')
+        with tempfile.TemporaryDirectory(prefix='mount-regression-', dir=repo.parent) as directory:
+            root = Path(directory)
+            result = subprocess.run([sys.executable, '-B', str(repo / 'scripts/installer-fixture.py'), '--root', str(root), '--probe'], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            audit = json.loads((root / 'canary-audit.json').read_text())
+            self.assertTrue(audit['expected_attempts_seen'])
+            self.assertEqual(audit['exit'], 0)
+            self.assertFalse((root / 'canary').exists())
+            self.assertFalse((root / 'escape').exists())
+            self.assertFalse((root / 'parent').exists())
+
     def test_shell_parameter_operators_and_quotes_are_idempotent(self):
         for prefix in fixture.PREFIXES:
             for operator in (":-", "-", ":=", "=", ":+", "+", ":?", "?"):
