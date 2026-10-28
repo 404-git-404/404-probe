@@ -18,3 +18,11 @@ test('R33 slider descriptions distinguish a full day and a cross-midnight partia
  assert.notEqual(partial,'21:08 – 09:08');
  assert.equal(L.rangeText(end-3600000,end),'08:08 – 09:08');
 });
+
+test('R44 traffic layout has a full-width plot and preserves the network-quality ruler',()=>{
+ const fs=require('node:fs'),path=require('node:path'),css=fs.readFileSync(path.join(__dirname,'../web/static/card-v7.css'),'utf8');
+ assert.doesNotMatch(css,/\.tc7-axis/);assert.doesNotMatch(css.match(/\.c7 \.tc7\{([^}]*)/)[1],/grid-template-columns/);
+ assert.match(css,/\.tc7\{display:flex/);assert.match(css,/\.tc7-plot\{position:relative;flex:1/);
+ assert.match(css,/\.tc7-overlay\{[^}]*justify-content:space-between/);
+ assert.match(fs.readFileSync(path.join(__dirname,'../web/static/latency-mini.js'),'utf8'),/GRID=\[100,300,1000\]/,'network quality keeps its separate fixed ruler');
+});

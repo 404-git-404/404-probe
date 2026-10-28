@@ -60,3 +60,17 @@ test('nothing is read while the other face is shown',async()=>{
  c.api.setActive(ID,false);c.api.tick();for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
  assert.equal(c.requests.length,before);
 });
+
+test('R44 has no ruler, retains peak and hover, and autoscales each card across gaps',async()=>{
+ const end=Math.floor(NOW/M)*M;
+ const c=await mount(history([{timestamp:end-3*M,rx_rate:100,tx_rate:25},{timestamp:end-M,rx_rate:5800,tx_rate:3300}]));
+ assert.equal(c.node.all().some(n=>n.className.startsWith('tc7-axis')),false);
+ assert.equal(c.peak().textContent,'峰值 5.80 KB/s');
+ const box=c.node.all().find(n=>n.className==='tc7-spark');
+ box.onpointermove({clientX:300*((end-M-(NOW-86400000))/86400000)});
+ assert.match(box.title,/下行 5.80 KB\/s · 上行 3.30 KB\/s/);
+ const small=T.paths([{timestamp:0,rx_rate:10,tx_rate:5}],0,M),large=T.paths([{timestamp:0,rx_rate:10000,tx_rate:5000}],0,M);
+ assert.equal(small.rx,large.rx,'a card scales to its own peak');
+ assert.equal((c.paths()[2].attributes.d.match(/M/g)||[]).length,2,'missing minute remains a gap');
+ c.api.close();
+});

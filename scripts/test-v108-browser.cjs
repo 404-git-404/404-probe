@@ -61,12 +61,12 @@ async function open(s='normal',width=1000){scenario=s;const page=await browser.n
  await page.addStyleTag({content:'.agent-grid{grid-template-columns:400px;justify-content:center}'});
  return {page,errors};}
 async function shot(page,name,selector='.agent-card'){if(!process.env.R33_SCREEN_DIR)return;fs.mkdirSync(process.env.R33_SCREEN_DIR,{recursive:true});const opts={path:path.join(process.env.R33_SCREEN_DIR,name+'.png')};if(selector==='body')await page.screenshot(opts);else await page.locator(selector).screenshot(opts);}
-test('R33 actual dashboard: A/B heights, filled day plot and exact network alignment; screenshots',browserOptions,async()=>{
+test('R33 actual dashboard: A/B heights, filled day plot and full-width traffic plot; screenshots',browserOptions,async()=>{
  const {page,errors}=await open();try{
   await shot(page,'A-normal');await page.click('.c7-flip');
   await page.waitForFunction(()=>document.querySelector('.tc7-spark svg path'));
-  const facts=await page.evaluate(()=>{const box=s=>{const r=document.querySelector(s).getBoundingClientRect();return {x:r.x,width:r.width,height:r.height};};const n=box('.lm-plot');return {heights:['machine','traffic','network'].map(m=>box(`[data-module=${m}]`).height),traffic:box('.tc7-plot'),network:{x:n.x+32,width:n.width-32},fill:document.querySelectorAll('.tc7-rx-fill,.tc7-tx-fill').length,marks:document.querySelectorAll('.lm7-marks,.rs-mark').length};});
-  assert.deepEqual(facts.heights,[100,120,164]);assert.equal(facts.traffic.x,facts.network.x);assert.equal(facts.traffic.width,facts.network.width);assert.equal(facts.fill,2);assert.equal(facts.marks,0);
+  const facts=await page.evaluate(()=>{const box=s=>{const r=document.querySelector(s).getBoundingClientRect();return {x:r.x,width:r.width,height:r.height};};const n=box('.lm-plot');return {heights:['machine','traffic','network'].map(m=>box(`[data-module=${m}]`).height),traffic:box('.tc7-plot'),trafficFrame:box('.tc7'),trafficAxes:document.querySelectorAll('.tc7-axis').length,network:{x:n.x+32,width:n.width-32},fill:document.querySelectorAll('.tc7-rx-fill,.tc7-tx-fill').length,marks:document.querySelectorAll('.lm7-marks,.rs-mark').length};});
+  assert.deepEqual(facts.heights,[100,120,164]);assert.equal(facts.traffic.x,facts.trafficFrame.x);assert.equal(facts.traffic.width,facts.trafficFrame.width);assert.equal(facts.trafficAxes,0);assert.equal(facts.fill,2);assert.equal(facts.marks,0);
   assert.ok(requests.some(u=>u.includes('resources/history?hours=24')));assert.ok(!requests.some(u=>u.includes('/v5/marks')));
   await shot(page,'B-normal');
   await page.click('[data-focus-key=lm-icmp]');await page.waitForFunction(()=>[...document.querySelectorAll('.lm-loss')].every(n=>n.textContent.includes('丢包 16.7%')));
@@ -151,4 +151,17 @@ test('R09 overview/management preserve the fixed frame and state labels',browser
   await page.locator('#details-tab-resources').click();await page.waitForSelector('.resource-wide');const stats=await page.locator('.resource-wide .details-note').first().innerText();assert.doesNotMatch(stats,/\/s\/s/);assert.doesNotMatch(stats,/按每分钟平均值/);assert.match(await page.locator('.details-history-status').getAttribute('title'),/按每分钟平均值/);
   await page.keyboard.press('Escape');assert.equal(await page.locator('#device-details').evaluate(n=>n.open),false);assert.deepEqual(errors,[]);
  }finally{await page.close();}
+});
+
+
+test('R44 production homepage at desktop/390 keeps the full-width traffic face readable',browserOptions,async()=>{
+ for(const width of [1440,390]){
+  const {page,errors}=await open('normal',width);try{
+   await page.evaluate(()=>{for(const style of document.querySelectorAll('style'))if(style.textContent.includes('.agent-grid{grid-template-columns:400px'))style.remove();});
+   await page.click('.c7-flip');await page.waitForFunction(()=>document.querySelector('.tc7-rx'));
+   const facts=await page.evaluate(()=>{const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return {left:r.left,right:r.right,width:r.width};};return {frame:rect('.tc7'),plot:rect('.tc7-plot'),label:rect('.tc7-label'),peak:rect('.tc7-peak'),axes:document.querySelectorAll('.tc7-axis').length,overflow:document.documentElement.scrollWidth>innerWidth};});
+   assert.equal(facts.axes,0);assert.ok(Math.abs(facts.frame.width-facts.plot.width)<1);assert.ok(facts.label.right<=facts.peak.left+1);assert.equal(facts.overflow,false);assert.deepEqual(errors,[]);
+   if(process.env.R33_SCREEN_DIR){await page.evaluate(()=>document.fonts.ready);await page.screenshot({path:path.join(process.env.R33_SCREEN_DIR,'homepage-after-'+width+'.png'),fullPage:true});}
+  }finally{await page.close();}
+ }
 });

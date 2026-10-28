@@ -36,10 +36,9 @@
       c.svg.replaceChildren();
       const text=lifecycle?'设备暂停/撤销':!v?c.error||(c.loading?'正在读取…':'等待数据'):!v.points.length?'近 24 小时没有分钟数据':'';
       c.status.textContent=text;c.status.hidden=!text;c.svg.parentNode.hidden=!!text;
-      if(!v||lifecycle||!v.points.length){c.axis.textContent='—';c.peak.textContent='峰值 —';c.peak.title='峰值（分钟均值）';return;}
+      if(!v||lifecycle||!v.points.length){c.peak.textContent='峰值 —';c.peak.title='峰值（分钟均值）';return;}
       const {peak,rx,tx,rxFill,txFill}=paths(v.points,v.to-HOUR,v.to);
       for(const [d,cls] of [[rxFill,'tc7-rx-fill'],[txFill,'tc7-tx-fill'],[rx,'tc7-rx'],[tx,'tc7-tx']]){const p=doc.createElementNS(NS,'path');p.setAttribute('d',d);p.setAttribute('class',cls);p.setAttribute('vector-effect','non-scaling-stroke');c.svg.append(p);}
-      c.axis.textContent=bytes(peak).replace('/s','');
       c.peak.textContent=`峰值 ${bytes(peak)}`;c.peak.title=`近 24 小时分钟均值的峰值 ${bytes(peak)}（不是瞬时峰值）${c.error?'；读取失败，显示上次结果':''}`;
       c.svg.parentNode.title='近 24 小时 · 每点为一分钟算术均值；缺测断线，不补零';
     }
@@ -66,10 +65,19 @@
     function mount(agent) {
       let c=cards.get(agent.agent_id);
       if(!c) {
-        const node=el('div','tc7'),label=el('span','tc7-label','近 24h —'),box=el('span','tc7-spark'),svg=doc.createElementNS(NS,'svg'),status=el('small','tc7-status'),peak=el('span','tc7-peak','峰值 —'),ruler=el('span','tc7-axis'),axis=el('span','tc7-axis-peak','—'),zero=el('span','tc7-axis-zero','0'),plot=el('div','tc7-plot'),overlay=el('div','tc7-overlay');
+        const node=el('div','tc7'),label=el('span','tc7-label','近 24h'),box=el('span','tc7-spark'),svg=doc.createElementNS(NS,'svg'),status=el('small','tc7-status'),peak=el('span','tc7-peak','峰值 —'),plot=el('div','tc7-plot'),overlay=el('div','tc7-overlay');
         svg.setAttribute('viewBox',`0 0 ${W} ${HEIGHT}`);svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');box.append(svg);
-        status.setAttribute('role','status');node.dataset.trafficAgent=agent.agent_id;ruler.append(axis,zero);overlay.append(label,peak);plot.append(box,status,overlay);node.append(ruler,plot);
-        c={id:agent.agent_id,agent,node,svg,status,peak,axis,owner:{},active:false,visible:false,serial:0,loading:false,dead:false,data:null,updated:0,error:''};
+        status.setAttribute('role','status');node.dataset.trafficAgent=agent.agent_id;overlay.append(label,peak);plot.append(box,status,overlay);node.append(plot);
+        c={id:agent.agent_id,agent,node,svg,status,peak,owner:{},active:false,visible:false,serial:0,loading:false,dead:false,data:null,updated:0,error:''};
+        // Native hover text keeps the actual minute values; missing minutes
+        // have no sample and are never converted to zero.
+        box.onpointermove=event=>{
+          if(!c.data?.points.length)return;
+          const rect=box.getBoundingClientRect(),fraction=Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width));
+          const at=c.data.to-HOUR+fraction*HOUR;
+          let point=c.data.points[0];for(const candidate of c.data.points)if(Math.abs(candidate.timestamp-at)<Math.abs(point.timestamp-at))point=candidate;
+          box.title=Math.abs(point.timestamp-at)<=MINUTE?`${new Date(point.timestamp).toLocaleString()} · 下行 ${bytes(point.rx_rate)} · 上行 ${bytes(point.tx_rate)}`:'此时没有分钟数据';
+        };
         cards.set(c.id,c);observer?.observe(node);
       }
       c.agent=agent;
