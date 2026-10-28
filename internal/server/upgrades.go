@@ -108,6 +108,11 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusConflict, "agent_revoked", "revoked Agent cannot be upgraded")
 		return
 	}
+	record = a.withUpdaterHealth(record)
+	if record.State != nil && record.State.AgentUpdaterHealth.ReasonCode() != "" {
+		writeJobError(w, http.StatusConflict, record.State.AgentUpdaterHealth.ReasonCode(), "Agent updater health check failed; preserve configuration and inspect the local updater")
+		return
+	}
 	if record.Agent.DisabledAt != nil {
 		writeJobError(w, http.StatusConflict, "agent_paused", "resume the Agent before upgrading")
 		return

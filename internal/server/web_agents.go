@@ -19,16 +19,17 @@ const (
 )
 
 type webAgentSummaryView struct {
-	AgentID        string `json:"agent_id"`
-	Name           string `json:"name"`
-	Revoked        bool   `json:"revoked"`
-	DisabledAt     *int64 `json:"disabled_at"`
-	CreatedAt      int64  `json:"created_at"`
-	Online         bool   `json:"online"`
-	LastSeen       *int64 `json:"last_seen"`
-	Version        string `json:"version"`
-	UpgradeCapable bool   `json:"upgrade_capable"`
-	UpgradeV2      bool   `json:"upgrade_v2"`
+	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health,omitempty"`
+	AgentID        string                  `json:"agent_id"`
+	Name           string                  `json:"name"`
+	Revoked        bool                    `json:"revoked"`
+	DisabledAt     *int64                  `json:"disabled_at"`
+	CreatedAt      int64                   `json:"created_at"`
+	Online         bool                    `json:"online"`
+	LastSeen       *int64                  `json:"last_seen"`
+	Version        string                  `json:"version"`
+	UpgradeCapable bool                    `json:"upgrade_capable"`
+	UpgradeV2      bool                    `json:"upgrade_v2"`
 }
 
 type webAgentDetailView struct {
@@ -161,11 +162,15 @@ type webAgentHistoryPointView struct {
 }
 
 type webAgentEventView struct {
-	AgentID  string             `json:"agent_id"`
-	Name     string             `json:"name"`
-	Online   bool               `json:"online"`
-	LastSeen int64              `json:"last_seen"`
-	State    *webAgentStateView `json:"state"`
+	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health,omitempty"`
+	UpgradeCapable bool                    `json:"upgrade_capable"`
+	UpgradeV2      bool                    `json:"upgrade_v2"`
+	Version        string                  `json:"version"`
+	AgentID        string                  `json:"agent_id"`
+	Name           string                  `json:"name"`
+	Online         bool                    `json:"online"`
+	LastSeen       int64                   `json:"last_seen"`
+	State          *webAgentStateView      `json:"state"`
 }
 
 func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
@@ -201,6 +206,7 @@ func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]webAgentSummaryView, 0, len(records))
 	for _, record := range records {
+		record = a.withUpdaterHealth(record)
 		items = append(items, newWebAgentSummaryView(record))
 	}
 	nextCursor, err := encodeControlCursor(webAgentCursorResource, filters, next)
@@ -240,6 +246,7 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	if err != nil {
 		return webAgentDetailView{}, err
 	}
+	record = a.withUpdaterHealth(record)
 	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
 	management, err := a.store.GetAgentManagementCapabilities(ctx, agentID)
 	if err != nil {
@@ -475,6 +482,10 @@ func newWebAgentSummaryView(record storage.AgentSnapshot) webAgentSummaryView {
 		view.Version = record.State.AgentVersion
 		view.UpgradeCapable = record.State.AgentUpgradeCapable
 		view.UpgradeV2 = record.State.AgentUpgradeV2
+		view.UpdaterHealth = record.State.AgentUpdaterHealth
+		if view.UpdaterHealth.ReasonCode() != "" {
+			view.UpgradeCapable = false
+		}
 	}
 	return view
 }
@@ -523,6 +534,7 @@ func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *w
 
 func newWebAgentEventView(state storage.State) webAgentEventView {
 	return webAgentEventView{
+		UpdaterHealth: state.AgentUpdaterHealth, UpgradeCapable: state.AgentUpgradeCapable && state.AgentUpdaterHealth.ReasonCode() == "", UpgradeV2: state.AgentUpgradeV2, Version: state.AgentVersion,
 		AgentID: state.AgentID, Name: state.Name, Online: true, LastSeen: state.LastSeen,
 		State: newWebAgentStateView(state, false),
 	}

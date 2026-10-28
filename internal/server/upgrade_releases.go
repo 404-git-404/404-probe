@@ -222,6 +222,12 @@ func (a *App) verifyLegacyRelease(ctx context.Context, target upgradeTarget, arc
 	return nil
 }
 func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeTarget {
+	if record.State != nil && record.State.AgentUpdaterHealth.ReasonCode() != "" {
+		target.Supported = false
+		target.ReasonCode = record.State.AgentUpdaterHealth.ReasonCode()
+		target.Reason = "Agent updater health: " + record.State.AgentUpdaterHealth.Status
+		return target
+	}
 	if buildinfo.IsRCVersion(target.Version) && !rcAwareAgent(record) {
 		target.Supported = false
 		target.Reason = "RC需要RC-aware Agent及Updater；旧Stable/Beta不能通过Web直接进入RC"
@@ -284,8 +290,9 @@ func rcAwareAgent(record storage.AgentSnapshot) bool {
 }
 
 func (a *App) compatibleAgentTarget(target upgradeTarget, record storage.AgentSnapshot) upgradeTarget {
+	record = a.withUpdaterHealth(record)
 	target = targetForAgent(target, record)
-	if buildinfo.IsRCVersion(a.buildInfo.Version) && !rcAwareAgent(record) {
+	if buildinfo.IsRCVersion(a.buildInfo.Version) && !rcAwareAgent(record) && (record.State == nil || record.State.AgentUpdaterHealth.ReasonCode() == "") {
 		target.Supported = false
 		target.Reason = "当前RC Server仅对RC-aware Agent/Updater开放显式升级；旧Agent监控通信不受影响"
 		target.ReasonCode = "rc_server_agent_required"

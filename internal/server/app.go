@@ -293,6 +293,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	response.Capabilities.NetworkQualityStaged = r.Header.Get(protocol.QualitySemanticsHeader) == protocol.QualityStagedSemantics || report.NetworkQualityV2 != nil && report.NetworkQualityV2.Semantics == protocol.QualityStagedSemantics
 	response.Capabilities.NetworkQualityUserTargets = report.QualityTargetsHeader
 	response.Capabilities.AgentUpgradeV2 = true
+	response.Capabilities.UpdaterHealthReport = true
 	writeJSON(w, http.StatusOK, a.qualityReportResponse(r, response, authenticatedID, report))
 }
 

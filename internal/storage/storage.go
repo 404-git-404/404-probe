@@ -102,6 +102,8 @@ type State struct {
 	NetworkCountersVersion uint32                             `json:"-"`
 	NetworkCounters        []protocol.NetworkInterfaceCounter `json:"-"`
 	ContinuityPartial      bool                               `json:"-"`
+	// Live observation only; deliberately not persisted or added to schema 35.
+	AgentUpdaterHealth *protocol.UpdaterHealth `json:"agent_updater_health,omitempty"`
 }
 
 type HistoryPoint struct {
@@ -1305,7 +1307,7 @@ func calculateState(name string, old State, exists bool, r protocol.Report, rece
 	}
 	return State{
 		AgentID: r.AgentID, Name: name, Epoch: r.Epoch, SessionID: r.SessionID, Sequence: r.Sequence, BootID: r.BootID,
-		Hostname: r.Hostname, OS: r.OS, Arch: r.Arch, AgentVersion: agentVersion, AgentUpgradeCapable: r.AgentUpgradeCapable, AgentUpgradeV2: r.AgentUpgradeV2, Uptime: r.Uptime, CPUPercent: r.CPUPercent, CPUStealPercent: r.CPUStealPercent, CPUCores: r.CPUCores,
+		Hostname: r.Hostname, OS: r.OS, Arch: r.Arch, AgentVersion: agentVersion, AgentUpgradeCapable: r.AgentUpgradeCapable, AgentUpgradeV2: r.AgentUpgradeV2, AgentUpdaterHealth: r.AgentUpdaterHealth, Uptime: r.Uptime, CPUPercent: r.CPUPercent, CPUStealPercent: r.CPUStealPercent, CPUCores: r.CPUCores,
 		Load1: r.Load1, Load5: r.Load5, Load15: r.Load15, RAMUsed: r.RAMUsed, RAMTotal: r.RAMTotal, RAMPercent: r.RAMPercent,
 		SwapUsed: r.SwapUsed, SwapTotal: r.SwapTotal, SwapPercent: r.SwapPercent, DiskUsed: r.DiskUsed, DiskTotal: r.DiskTotal, DiskPercent: r.DiskPercent,
 		DiskReadRate: r.DiskReadRate, DiskWriteRate: r.DiskWriteRate, DiskBusyPercent: r.DiskBusyPercent, CountryCode: r.CountryCode,

@@ -24,6 +24,7 @@ import (
 	"404-probe/internal/geoip"
 	"404-probe/internal/platformsupport"
 	"404-probe/internal/protocol"
+	"404-probe/internal/updater"
 )
 
 type Config struct {
@@ -112,6 +113,7 @@ type Runner struct {
 	sessionID                    string
 	executor                     Executor
 	reportAgentVersion           bool
+	reportUpdaterHealth          bool
 	reportLinuxMetrics           bool
 	reportCountryCode            bool
 	reportManagementCapabilities bool
@@ -430,7 +432,11 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	if r.reportAgentVersion {
 		measurement.AgentVersion = r.config.AgentVersion
-		measurement.AgentUpgradeCapable = r.updaterAvailable()
+		health := r.updaterHealth(ctx)
+		measurement.AgentUpgradeCapable = health.Status == "healthy"
+		if r.reportUpdaterHealth {
+			measurement.AgentUpdaterHealth = &health
+		}
 		measurement.AgentUpgradeV2 = r.upgradeV2ServerSupported.Load() && r.upgradeV2UpdaterSupported.Load()
 	}
 	measurement.Epoch = r.epoch
@@ -486,6 +492,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		r.reportAgentVersion = true
 	}
 	r.upgradeV2ServerSupported.Store(response.Capabilities.AgentUpgradeV2)
+	r.reportUpdaterHealth = response.Capabilities.UpdaterHealthReport
 	if response.Capabilities.LinuxMetricsReport {
 		r.reportLinuxMetrics = true
 	}
@@ -535,11 +542,14 @@ func (r *Runner) clashIntegrationEnabled() bool {
 }
 
 func (r *Runner) updaterAvailable() bool {
+	return r.updaterHealth(context.Background()).Status == "healthy"
+}
+
+func (r *Runner) updaterHealth(ctx context.Context) protocol.UpdaterHealth {
 	if r.deferredUnsupported || r.config.UpdaterSocket == "" {
-		return false
+		return protocol.UpdaterHealth{Status: "unsupported", Reason: "system_unsupported"}
 	}
-	info, err := os.Stat(r.config.UpdaterSocket)
-	return err == nil && info.Mode()&os.ModeSocket != 0
+	return updater.InspectHealth(ctx, r.config.UpdaterSocket, uint32(os.Getgid()))
 }
 
 func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.ReportResponse, error) {
