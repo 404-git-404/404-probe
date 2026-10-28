@@ -68,7 +68,7 @@ esac
 		{name: "beta downgrade ordering", action: "compare", left: "v1.0.1-beta.2", right: "v1.0.1-beta.1", want: "1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(bash, shellTestPath(path), tc.action, tc.left, tc.right)
+			cmd := installerFixtureCommand(t, bash, shellTestPath(path), tc.action, tc.left, tc.right)
 			cmd.Env = append(os.Environ(), "PROBE_404_VERSION="+tc.pinned, "FIXTURE_LATEST="+tc.latest)
 			got, err := cmd.CombinedOutput()
 			if tc.failure {
@@ -91,7 +91,7 @@ esac
 	if err := os.WriteFile(oldPath, []byte(oldHarness), 0600); err != nil {
 		t.Fatal(err)
 	}
-	oldCommand := exec.Command(bash, shellTestPath(oldPath), "bootstrap")
+	oldCommand := installerFixtureCommand(t, bash, shellTestPath(oldPath), "bootstrap")
 	oldCommand.Env = append(os.Environ(), "PROBE_404_VERSION=v1.0.1-beta.1", "FIXTURE_LATEST=v1.0.0")
 	oldOutput, oldErr := oldCommand.CombinedOutput()
 	if oldErr == nil || !strings.Contains(string(oldOutput), "explicit target version must use canonical") {

@@ -96,7 +96,7 @@ if download_release_asset v1.2.3 asset "${task_root}/asset"; then exit 1; fi
 	if err := os.WriteFile(harnessPath, []byte(harness), 0700); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(bash, shellTestPath(harnessPath))
+	command := installerFixtureCommand(t, bash, shellTestPath(harnessPath))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("download harness failed: %v\n%s", err, output)
 	}

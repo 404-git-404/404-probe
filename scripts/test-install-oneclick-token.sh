@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 # Tests `404-probe-install oneclick-token` (test machines only) with a stub for the Server's CLI.
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[[ "$(tail -n 1 "${root}/install.sh")" == 'main "$@"' ]]
+[[ "$(tail -n 1 "${INSTALLER_FIXTURE_INSTALLER}")" == 'main "$@"' ]]
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 mkdir -p "${temporary}/bin" "${temporary}/units" "${temporary}/home" "${temporary}/db"
@@ -10,7 +11,7 @@ mkdir -p "${temporary}/bin" "${temporary}/units" "${temporary}/home" "${temporar
 printf '#!/bin/sh\nexit 0\n' >"${temporary}/bin/404-probe-server"; chmod 755 "${temporary}/bin/404-probe-server"
 
 # The installer with the Server's fixed paths moved under a temporary directory.
-sed '$d' "${root}/install.sh" \
+sed '$d' "${INSTALLER_FIXTURE_INSTALLER}" \
   | sed -e "s#/usr/local/bin/404-probe-server#${temporary}/bin/404-probe-server#g" \
         -e "s#^readonly SERVER_DATABASE=.*#readonly SERVER_DATABASE=\"${temporary}/db/404-probe.db\"#" \
         -e "s#/etc/systemd/system#${temporary}/units#g" >"${temporary}/installer.sh"
@@ -91,8 +92,8 @@ attempt oneclick_token garbled --output "${temporary}/home/garbled.token"
 printf 'PASS an unexpected Server answer writes nothing\n'
 
 # 6. Both entry points have the command and the usage mentions it.
-grep -q 'oneclick-token) shift; oneclick_token' "${root}/install.sh"
-grep -q 'oneclick-token)$' "${root}/install.sh"
-grep -Fq 'oneclick-token <name> [--output' "${root}/install.sh"
-[[ "$(grep -c '^oneclick_token() {' "${root}/install.sh")" == 2 ]]
+grep -q 'oneclick-token) shift; oneclick_token' "${INSTALLER_FIXTURE_INSTALLER}"
+grep -q 'oneclick-token)$' "${INSTALLER_FIXTURE_INSTALLER}"
+grep -Fq 'oneclick-token <name> [--output' "${INSTALLER_FIXTURE_INSTALLER}"
+[[ "$(grep -c '^oneclick_token() {' "${INSTALLER_FIXTURE_INSTALLER}")" == 2 ]]
 printf 'PASS the command is available from the installed helper and from install.sh\n'

@@ -190,7 +190,7 @@ printf 'PASS: four state combinations, failed recovery pending, retry, full side
 	if err := os.WriteFile(path, []byte(harness), 0600); err != nil {
 		t.Fatal(err)
 	}
-	output, err := exec.Command(bash, shellTestPath(path)).CombinedOutput()
+	output, err := installerFixtureCommand(t, bash, shellTestPath(path)).CombinedOutput()
 	if err != nil {
 		t.Fatalf("recovery harness: %v\n%s", err, output)
 	}

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 # Tests the installer's systemd sandbox adaptation with a stub for the transient-unit trials. Nothing is installed.
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[[ "$(tail -n 1 "${root}/install.sh")" == 'main "$@"' ]]
+[[ "$(tail -n 1 "${INSTALLER_FIXTURE_INSTALLER}")" == 'main "$@"' ]]
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 mkdir -p "${temporary}/units" "${temporary}/security/export" "${temporary}/updater" "${temporary}/etc"
 
 # The installer with its fixed system paths moved under a temporary directory.
-sed '$d' "${root}/install.sh" \
+sed '$d' "${INSTALLER_FIXTURE_INSTALLER}" \
   | sed -e "s#/etc/systemd/system#${temporary}/units#g" \
         -e "s#/var/lib/404-probe-security#${temporary}/security#g" \
         -e "s#/var/lib/404-probe-updater#${temporary}/updater#g" \
@@ -271,7 +272,7 @@ for fn in setup_security_existing; do
 ' "${fn}" >&2; exit 1; }
 done
 # The installed helper's own setup_security (a separate copy of the logic inside install.sh) does too.
-helper_body="$(sed -n '/^setup_security() {$/,/^}$/p' "${root}/install.sh")"
+helper_body="$(sed -n '/^setup_security() {$/,/^}$/p' "${INSTALLER_FIXTURE_INSTALLER}")"
 [[ -n "${helper_body}" && "${helper_body}" == *'rm -f -- "${SECURITY_EXPORT_DIRECTORY}/collector-unavailable"'* ]]
 printf 'PASS recovery paths clear the collector-unavailable marker
 '

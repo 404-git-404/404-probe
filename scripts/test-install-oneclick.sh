@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 # Tests the installer's non-interactive (one-click) Agent mode with stub commands; nothing is installed.
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[[ "$(tail -n 1 "${root}/install.sh")" == 'main "$@"' ]]
-source <(sed '$d' "${root}/install.sh")
+[[ "$(tail -n 1 "${INSTALLER_FIXTURE_INSTALLER}")" == 'main "$@"' ]]
+source <(sed '$d' "${INSTALLER_FIXTURE_INSTALLER}")
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 export STUB_DIR="${temporary}"

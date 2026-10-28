@@ -151,7 +151,7 @@ setup_security_existing
 	}
 	for _, stage := range []string{"permission", "chown"} {
 		t.Run(stage, func(t *testing.T) {
-			command := exec.Command(bash, shellTestPath(harnessPath))
+			command := installerFixtureCommand(t, bash, shellTestPath(harnessPath))
 			command.Env = append(os.Environ(), "FAIL_STAGE="+stage)
 			output, commandErr := command.CombinedOutput()
 			if commandErr == nil {

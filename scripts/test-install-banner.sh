@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Load the original functions without executing the root/system installer entry point.
-[[ "$(tail -n 1 "${root}/install.sh")" == 'main "$@"' ]]
-source <(sed '$d' "${root}/install.sh")
+[[ "$(tail -n 1 "${INSTALLER_FIXTURE_INSTALLER}")" == 'main "$@"' ]]
+source <(sed '$d' "${INSTALLER_FIXTURE_INSTALLER}")
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 

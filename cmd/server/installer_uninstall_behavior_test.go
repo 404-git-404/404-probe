@@ -10,6 +10,12 @@ import (
 )
 
 func TestInstallerAgentUninstallExecutionIsCompleteIdempotentAndPreservesSharedHelper(t *testing.T) {
+	for _, early := range []bool{false, true} {
+		t.Run(map[bool]string{false: "installer", true: "generated-helper"}[early], func(t *testing.T) { runInstallerAgentUninstallFixture(t, early) })
+	}
+}
+
+func runInstallerAgentUninstallFixture(t *testing.T, early bool) {
 	bash := "bash"
 	if runtime.GOOS == "windows" {
 		bash = `C:\Program Files\Git\bin\bash.exe`
@@ -32,16 +38,22 @@ func TestInstallerAgentUninstallExecutionIsCompleteIdempotentAndPreservesSharedH
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	start := strings.LastIndex(script, "confirm_uninstall() {")
-	end := strings.Index(script[start:], "\njson_string_field() {")
+	endMarker := "\njson_string_field() {"
+	if early {
+		start = strings.Index(script, "confirm_uninstall() {")
+		endMarker = "\nsetup_security() {"
+	}
+	end := strings.Index(script[start:], endMarker)
 	if start < 0 || end < 0 {
 		t.Fatal("could not extract uninstall implementation")
 	}
-	functionSource := script[start : start+end]
+	functionSource := strings.Replace(script[start:start+end], "uninstall() {", "uninstall_role() {", 1)
 	rootNative := t.TempDir()
 	root := shellTestPath(rootNative)
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.bootstrap"`, `"${TEST_AGENT_BOOTSTRAP}"`)
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.candidate"`, `"${TEST_AGENT_CANDIDATE}"`)
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.previous"`, `"${TEST_AGENT_PREVIOUS}"`)
+	functionSource = installerFixtureSource(functionSource, root)
 	functionPath := filepath.Join(rootNative, "uninstall-function.sh")
 	if err := os.WriteFile(functionPath, []byte(functionSource), 0600); err != nil {
 		t.Fatal(err)
@@ -83,6 +95,7 @@ touch "${SERVER_UNIT}" "${AGENT_UNIT}" "${SERVER_BINARY}" "${AGENT_BINARY}" "${I
 printf active >"${task_root}/agent.state"
 require_root_linux_systemd() { :; }
 validate_service_user() { :; }
+validate_removable_service_user() { :; }
 server_residue_exists() { [[ -e "${SERVER_UNIT}" || -e "${SERVER_BINARY}" ]]; }
 remove_service_account_for_uninstall() { printf account-cleanup >>"${task_root}/unexpected"; return 1; }
 die() { printf '%s\n' "$*" >&2; return 1; }
@@ -105,19 +118,21 @@ systemctl() {
     *) return 0 ;;
   esac
 }
+mkdir -p "${task_root}/system/run/404-probe"
+touch "${task_root}/system/run/404-probe/private-socket-sentinel"
 source '` + shellTestPath(functionPath) + `'
 uninstall_role agent --confirm-delete-data
 uninstall_role agent --confirm-delete-data
 [[ -e "${SERVER_UNIT}" && -e "${SERVER_BINARY}" && -e "${INSTALL_HELPER}" ]]
 [[ ! -e "${AGENT_UNIT}" && ! -e "${AGENT_BINARY}" && ! -e "${TEST_AGENT_BOOTSTRAP}" && ! -e "${TEST_AGENT_CANDIDATE}" && ! -e "${TEST_AGENT_PREVIOUS}" ]]
 [[ ! -e "${AGENT_UPDATER_STATE}" && ! -e "${SECURITY_STATE_DIRECTORY}" && ! -e "${AGENT_REMOVAL_FINALIZER_UNIT}" ]]
-[[ ! -e "${task_root}/unexpected" ]]
+[[ ! -e "${task_root}/unexpected" && ! -e "${task_root}/system/run/404-probe" ]]
 `
 	harnessPath := filepath.Join(rootNative, "uninstall.sh")
 	if err := os.WriteFile(harnessPath, []byte(harness), 0700); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(bash, shellTestPath(harnessPath))
+	command := installerFixtureCommand(t, bash, shellTestPath(harnessPath))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("uninstall harness failed: %v\n%s", err, output)
 	}

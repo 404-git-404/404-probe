@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 
 set -Eeuo pipefail
 
@@ -24,7 +25,7 @@ source <(sed -e '$d' \
   -e "s|readonly SERVER_UNIT=\"/etc/systemd/system/404-probe-server.service\"|readonly SERVER_UNIT=\"${server_unit}\"|" \
   -e "s|readonly SERVER_UPGRADE_DIRECTORY=\"/var/lib/404-probe-upgrade\"|readonly SERVER_UPGRADE_DIRECTORY=\"${upgrade_directory}\"|" \
   -e "s|readonly SERVER_UPGRADE_LOCK_DIRECTORY=\"/run/404-probe-upgrade\"|readonly SERVER_UPGRADE_LOCK_DIRECTORY=\"${lock_directory}\"|" \
-  "${root}/install.sh")
+  "${INSTALLER_FIXTURE_INSTALLER}")
 
 systemctl_log="${temporary}/systemctl.log"
 SYNC_FAIL=0
@@ -268,9 +269,9 @@ verify_server_stable_readiness() { return "${READINESS_FAIL}"; }
 rm -f -- "${SERVER_BINARY}" "${SERVER_UNIT}" "${server_unit}"
 
 # Both paths use the one function.
-[[ "$(grep -c 'verify_server_stable_readiness' "${root}/install.sh")" -ge 3 ]] || { printf 'stable readiness is not shared\n' >&2; exit 1; }
-! grep -q 'verify_restored_server_readiness' "${root}/install.sh" || { printf 'old readiness function name still used\n' >&2; exit 1; }
-candidate_block="$(sed -n '/write_server_upgrade_state candidate-started/,/systemctl enable 404-probe-server.service >\/dev\/null || die "could not restore enabled state"/p' "${root}/install.sh")"
+[[ "$(grep -c 'verify_server_stable_readiness' "${INSTALLER_FIXTURE_INSTALLER}")" -ge 3 ]] || { printf 'stable readiness is not shared\n' >&2; exit 1; }
+! grep -q 'verify_restored_server_readiness' "${INSTALLER_FIXTURE_INSTALLER}" || { printf 'old readiness function name still used\n' >&2; exit 1; }
+candidate_block="$(sed -n '/write_server_upgrade_state candidate-started/,/systemctl enable 404-probe-server.service >\/dev\/null || die "could not restore enabled state"/p' "${INSTALLER_FIXTURE_INSTALLER}")"
 grep -q 'verify_server_stable_readiness || die' <<<"${candidate_block}" || { printf 'normal upgrade does not run the stability check after candidate-started\n' >&2; exit 1; }
 ! grep -q 'readlink -f "/proc/${pid}/exe"' <<<"${candidate_block}" || { printf 'normal upgrade still has the one-shot PID check\n' >&2; exit 1; }
 
@@ -460,9 +461,9 @@ export FIXTURE_DIRECTORY="${fixture_directory}"
 export CURL_LOG="${temporary}/curl.log"
 export BOOTSTRAP_RESULT="${temporary}/bootstrap.result"
 : >"${CURL_LOG}"
-PATH="${fake_bin}:${PATH}" bash "${root}/install.sh" --help >/dev/null
+PATH="${fake_bin}:${PATH}" bash "${INSTALLER_FIXTURE_INSTALLER}" --help >/dev/null
 [[ ! -s "${CURL_LOG}" ]] || { printf 'help unexpectedly required network access\n' >&2; exit 1; }
-PATH="${fake_bin}:${PATH}" PROBE_404_VERSION=v1.2.3 bash "${root}/install.sh" sentinel
+PATH="${fake_bin}:${PATH}" PROBE_404_VERSION=v1.2.3 bash "${INSTALLER_FIXTURE_INSTALLER}" sentinel
 [[ "$(<"${BOOTSTRAP_RESULT}")" == 'v1.2.3|sentinel' ]] || { printf 'explicit version was not forwarded to tagged installer\n' >&2; exit 1; }
 grep -Fxq 'https://github.com/404-git-404/404-probe/releases/download/v1.2.3/install.sh' "${CURL_LOG}" \
   || { printf 'explicit version did not fetch its tagged installer\n' >&2; exit 1; }

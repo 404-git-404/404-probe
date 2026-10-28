@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 # Local orchestration only: no systemd, network, account or installed Agent changes.
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source <(sed '$d' "${root}/install.sh")
+source <(sed '$d' "${INSTALLER_FIXTURE_INSTALLER}")
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 export PROBE_404_VERSION=v1.0.1

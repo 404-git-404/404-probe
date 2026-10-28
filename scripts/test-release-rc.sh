@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 # Evaluate only the actual pure version functions, never the installer main.
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-eval "$(awk '/^(release_version|canonical_version|compare_versions|compare_release_numbers)\(\) \{/{copy=1} copy{print} copy && /^\}/{copy=0}' "${root}/install.sh")"
+eval "$(awk '/^(release_version|canonical_version|compare_versions|compare_release_numbers)\(\) \{/{copy=1} copy{print} copy && /^\}/{copy=0}' "${INSTALLER_FIXTURE_INSTALLER}")"
 chain=(v1.0.2 v1.0.3-beta.1 v1.0.3-beta.18446744073709551615 v1.0.3-rc.1 v1.0.3-rc.2 v1.0.3-rc.10 v1.0.3)
 for ((i=0;i<${#chain[@]};i++)); do
   release_version "${chain[i]}"

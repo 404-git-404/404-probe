@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/installer-fixture-entry.sh"
 # Isolated command observations only; no real systemd or installed Agent writes.
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source <(sed '$d' "${root}/install.sh")
+source <(sed '$d' "${INSTALLER_FIXTURE_INSTALLER}")
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 sleep() { :; }
@@ -30,7 +31,7 @@ fi
 # installer exit code. The durable journal and marker are deliberately untouched.
 printf 'marker\n' >"${temporary}/marker"
 printf 'journal\n' >"${temporary}/journal"
-trap_line="$(grep '^  trap '\''status=\$?; if (( status != 0 && repair_updater == 0 ))' "${root}/install.sh")"
+trap_line="$(grep '^  trap '\''status=\$?; if (( status != 0 && repair_updater == 0 ))' "${INSTALLER_FIXTURE_INSTALLER}")"
 [[ -n "${trap_line}" ]]
 set +e
 (
