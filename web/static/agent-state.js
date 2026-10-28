@@ -22,7 +22,7 @@
     updater_socket_missing: '这台机器的升级服务连接文件丢失，升级按钮已停用。服务会在安全时尝试恢复；若未恢复，先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
     updater_directory_missing: '这台机器的升级服务运行目录丢失，升级按钮已停用。请先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater，让系统重建运行目录；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
     updater_unreachable: '这台机器的升级服务无法连接或没有正确应答，升级按钮已停用。先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
-    updater_identity_mismatch: '这台机器的升级服务目录或连接文件被替换，或属主、权限不符合要求，升级按钮已停用。请保留现场并按升级服务排查文档检查（docs/updater-troubleshooting.md）检查；不要删除占位文件、改权限或反复重启，原配置和历史应保留。',
+    updater_identity_mismatch: '这台机器的升级服务目录或连接文件被替换，或属主、权限不符合要求，升级按钮已停用。请保留现场并按升级服务排查文档检查（docs/updater-troubleshooting.md）；不要删除占位文件、改权限或反复重启，原配置和历史应保留。',
     updater_unsupported: '这台机器的系统不支持从面板升级，升级按钮已停用。监控仍可使用；需要更新时请按该系统的手动更新说明操作，保留原配置和历史。',
     rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先在机器上按对应候选版的说明更新配套升级服务，保留原配置和历史；固定 v1.0.1 install.sh upgrade-agent 仅供旧正式版迁移，不能替代候选版所需服务。',
     legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。',
