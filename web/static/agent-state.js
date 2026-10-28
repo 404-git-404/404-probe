@@ -18,7 +18,12 @@
   }
   const upgradeReasons = Object.freeze({
     rc_agent_required: '这台机器的旧版程序不能直接升级到候选测试版，升级按钮已停用。请先在机器上迁移到支持测试版升级的正式版，原有监控仍可使用。',
-    updater_unavailable: '这台机器的升级服务暂时连不上，升级按钮已停用。请在机器上检查升级服务（不用重装，原配置和历史都会保留）。',
+    updater_unavailable: '这台机器的升级服务未运行或连不上，升级按钮已停用。先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），不用重装，原配置和历史都会保留。',
+    updater_socket_missing: '这台机器的升级服务连接文件丢失，升级按钮已停用。服务会在安全时尝试恢复；若未恢复，先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
+    updater_directory_missing: '这台机器的升级服务运行目录丢失，升级按钮已停用。请先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater，让系统重建运行目录；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
+    updater_unreachable: '这台机器的升级服务无法连接或没有正确应答，升级按钮已停用。先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
+    updater_identity_mismatch: '这台机器的升级服务目录或连接文件被替换，或属主、权限不符合要求，升级按钮已停用。请保留现场并按升级服务排查文档检查（docs/updater-troubleshooting.md）检查；不要删除占位文件、改权限或反复重启，原配置和历史应保留。',
+    updater_unsupported: '这台机器的系统不支持从面板升级，升级按钮已停用。监控仍可使用；需要更新时请按该系统的手动更新说明操作，保留原配置和历史。',
     rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先在机器上按对应候选版的说明更新配套升级服务，保留原配置和历史；固定 v1.0.1 install.sh upgrade-agent 仅供旧正式版迁移，不能替代候选版所需服务。',
     legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。',
     agent_unavailable: '这台机器当前离线、已暂停或已撤销，升级按钮已停用。请先恢复连接或监控；已撤销的机器需要重新添加。',
@@ -32,13 +37,19 @@
   function upgradeReasonDisplay(target) {
     return Object.hasOwn(upgradeReasons,target?.reason_code) ? upgradeReasons[target.reason_code] : target?.reason || '';
   }
+  function updaterHealthReason(health) {
+    if (!health || health.status === 'healthy') return '';
+    if(health.status === 'missing') return health.reason === 'runtime_directory_missing' ? 'updater_directory_missing' : 'updater_socket_missing';
+    const codes={unreachable:'updater_unreachable',identity_mismatch:'updater_identity_mismatch',unsupported:'updater_unsupported'};
+    return Object.hasOwn(codes,health.status)?codes[health.status]:'updater_unavailable';
+  }
   function upgradeButtonHint(agent, server, busy = false) {
     if (busy || (agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status))) return '正在升级，请等待完成';
     let code = !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable'
-      : !server.upgrade_eligible ? 'server_build_ineligible'
+      : updaterHealthReason(agent.updater_health) || (!server.upgrade_eligible ? 'server_build_ineligible'
       : /-beta\./.test(agent.version || '') && !agent.upgrade_v2 ? 'old_beta_migration_required'
       : !agent.upgrade_capable && ['v0.9.3','v1.0.0'].includes(agent.version) ? 'legacy_migration_required'
-      : !agent.upgrade_capable ? 'updater_unavailable' : '';
+      : !agent.upgrade_capable ? 'updater_unavailable' : '');
     if (!code) {
       const order = compareStableVersions(agent.version, server.version);
       if (order === 0) code = 'already_latest';
@@ -249,7 +260,7 @@
     }, close() { closed = true; for (const id of jobs.keys()) cancel(id); },
     size: () => jobs.size};
   }
-  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay, upgradeButtonHint};
+  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay, upgradeButtonHint, updaterHealthReason};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AgentState = api;
 })(globalThis);

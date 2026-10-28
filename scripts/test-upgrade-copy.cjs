@@ -2,6 +2,15 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {upgradeReasonDisplay:display}=require('../web/static/agent-state.js');
 const codes=['rc_agent_required','updater_unavailable','rc_updater_required','legacy_migration_required','agent_unavailable','version_unrecognized','already_latest','agent_newer_than_server','old_beta_migration_required','rc_server_agent_required','server_build_ineligible'];
 const {upgradeButtonHint:hint}=require('../web/static/agent-state.js');
+test('health reasons explain missing, unreachable, replaced and unsupported endpoints with legacy and unknown fallbacks',()=>{
+ const {updaterHealthReason:code}=require('../web/static/agent-state.js');
+ for(const [health,want] of [[{status:'missing',reason:'socket_missing'},'updater_socket_missing'],[{status:'missing',reason:'runtime_directory_missing'},'updater_directory_missing'],[{status:'unreachable'},'updater_unreachable'],[{status:'identity_mismatch'},'updater_identity_mismatch'],[{status:'unsupported'},'updater_unsupported']]){
+  assert.equal(code(health),want);const text=display({reason_code:want});assert.match(text,/升级按钮已停用/);assert.equal(hint({online:true,upgrade_capable:false,updater_health:health},{upgrade_eligible:true}),text);
+  if(['missing','unreachable'].includes(health.status)){assert.match(text,/先确认没有进行中的升级、恢复或移除/);assert.match(text,/只执行一次 sudo systemctl restart 404-probe-agent-updater/);assert.match(text,/仍不可用就停下/);assert.doesNotMatch(text,/重新安装/);}
+ }
+ for(const status of ['future','toString','__proto__'])assert.equal(code({status}),'updater_unavailable');
+ assert.equal(code(null),'');assert.equal(code({status:'healthy'}),'');
+});
 test('button hints explain the actual disabled condition and the neutral enabled action',()=>{
  const agent={version:'v1.0.9',online:true,upgrade_capable:true},server={version:'v1.0.10',upgrade_eligible:true};
  assert.equal(hint(agent,server),'可从面板升级到与面板相同的版本');
