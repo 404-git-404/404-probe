@@ -380,14 +380,14 @@ class RegisteredReleaseTests(unittest.TestCase):
 
     def test_unknown_start_and_unregistered_target_schema(self):
         with self.assertRaisesRegex(ValueError,'unregistered'):
-            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.0.9')
-        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.0.9')
-        self.assertEqual(releases.expected_schema('v1.0.9',36),36)
+            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.0.10')
+        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.0.10')
+        self.assertEqual(releases.expected_schema('v1.0.10',36),36)
         self.assertEqual(releases.expected_schema('v1.0.8',35),35)
         with self.assertRaises(ValueError): releases.expected_schema('v1.0.8',36)
         for value in (0,-1,True):
-            with self.assertRaises(ValueError): releases.expected_schema('v1.0.9',value)
-        for value in ('v1.0.9-rc.1','1.0.8','v01.0.8'):
+            with self.assertRaises(ValueError): releases.expected_schema('v1.0.10',value)
+        for value in ('v1.0.10-rc.1','1.0.8','v01.0.8'):
             with self.assertRaises(ValueError): releases.version_tuple(value)
 
     def test_identity_all_three_sources_must_agree(self):
@@ -411,6 +411,22 @@ class RegisteredReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'checksum'): releases.assets(self.assets,'v1.0.8','amd64')
         refresh_manifest(self.assets)
         with self.assertRaisesRegex(ValueError,'metadata identity'): releases.assets(self.assets,'v1.0.8','amd64')
+
+    def test_v109_registration_and_numeric_9_10_chain(self):
+        row=releases.registered('v1.0.9')
+        self.assertEqual(row,dict(commit='42c5eeb798f679e49ea81f9480b7bcab46aac2df',schema=35,previous_version='v1.0.8',added_tables=[],removed_tables=[]))
+        document=releases.registry()
+        # Insert 10 first: registry validation must sort numerically, not by JSON order.
+        document['versions']={'v1.0.10':dict(commit='a'*40,schema=36,previous_version='v1.0.9',added_tables=['example'],removed_tables=[]),**document['versions']}
+        registry=self.root/'registry.json';registry.write_text(json.dumps(document),encoding='utf-8')
+        with mock.patch.object(releases,'REGISTRY',registry):
+            self.assertEqual(releases.registered('v1.0.10')['schema'],36)
+            releases.check_counts(dict(agents=71,schema_migrations=35),dict(agents=71,schema_migrations=36,example=0),'v1.0.9','v1.0.10')
+            with self.assertRaisesRegex(ValueError,'backward'):
+                releases.check_counts({}, {}, 'v1.0.10','v1.0.9')
+            with self.assertRaisesRegex(ValueError,'record count'):
+                releases.check_counts(dict(agents=71,schema_migrations=35),dict(agents=70,schema_migrations=36,example=0),'v1.0.9','v1.0.10')
+        self.assertEqual(releases.version_tuple('v1.0.9') < releases.version_tuple('v1.0.10'),True)
 
     def test_registered_table_changes_and_only_migration_count_may_change(self):
         before=dict(agents=71,schema_migrations=34,tcp_mini_high=7,tcp_mini_state=71)
@@ -447,8 +463,8 @@ class PreflightTests(unittest.TestCase):
     def setUp(self):
         import types
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
-        self.old=fake_assets(self.root/'old','v1.0.8');self.base=fake_assets(self.root/'base','v1.0.6')
-        self.new=fake_assets(self.root/'new','v1.0.9','c'*40)
+        self.old=fake_assets(self.root/'old','v1.0.9');self.base=fake_assets(self.root/'base','v1.0.6')
+        self.new=fake_assets(self.root/'new','v1.0.10','c'*40)
         self.work=self.root/'work';self.work.mkdir(mode=0o700)
         for name in ('evidence','results'):(self.work/name).mkdir(mode=0o700)
         paths=[self.root/p for p in ['var/lib/404-probe','etc/404-probe','usr/local/bin/404-probe-server',
@@ -462,12 +478,12 @@ class PreflightTests(unittest.TestCase):
         self.m=types.SimpleNamespace(PATHS=paths,CANDIDATES=[self.root/'candidate'],BINARY=paths[2],DB=paths[0]/'404-probe.db',SERVICE='example.service',
              systemctl=lambda *a:self.control_calls.append(a) or types.SimpleNamespace(returncode=0),
              preflight_filesystems=lambda *a:None,instrument=upgrade.instrument)
-        self.raw=dict(from_version='v1.0.8',to_version='v1.0.9',from_assets=str(self.old),to_assets=str(self.new),base_assets=str(self.base),work_dir=str(self.work),scale='tiny',expected_schema=35)
+        self.raw=dict(from_version='v1.0.9',to_version='v1.0.10',from_assets=str(self.old),to_assets=str(self.new),base_assets=str(self.base),work_dir=str(self.work),scale='tiny',expected_schema=35)
         self.config=self.root/'config.json';self.config.write_text(json.dumps(self.raw))
         self.doc=preflight.configuration(self.config)
         def output(args):
             if args[0]=='runuser':return json.dumps(dict(schema_version=35,integrity='ok')).encode()
-            if Path(args[0])==self.m.BINARY:return json.dumps(dict(version='v1.0.8',commit=releases.registered('v1.0.8')['commit'],dirty=False)).encode()
+            if Path(args[0])==self.m.BINARY:return json.dumps(dict(version='v1.0.9',commit=releases.registered('v1.0.9')['commit'],dirty=False)).encode()
             meta=json.loads(Path(args[0]).parent.joinpath('RELEASE-METADATA.json').read_text())
             return json.dumps(dict(version=meta['version'],commit=meta['commit'],dirty=False)).encode()
         self.addCleanup(mock.patch.stopall)
@@ -496,7 +512,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_operator_summary_is_automatic_and_rejects_incomplete_result(self):
         (self.work/'run-started').touch()
-        valid=dict(status='passed',restored=True,restore_errors=[],restore_warnings=[],from_version='v1.0.8',to_version='v1.0.9',post_upgrade_verification=dict(schema_version=35,integrity='ok'))
+        valid=dict(status='passed',restored=True,restore_errors=[],restore_warnings=[],from_version='v1.0.9',to_version='v1.0.10',post_upgrade_verification=dict(schema_version=35,integrity='ok'))
         (self.work/'results/result.json').write_text(json.dumps(valid));(self.work/'evidence/frozen-compare.json').write_text('{"equal":true}')
         with mock.patch.object(preflight.sys,'platform','linux'),mock.patch.object(preflight.os,'geteuid',return_value=0,create=True),mock.patch.object(preflight.sys.stdin,'isatty',return_value=True),mock.patch.object(preflight.sys.stdout,'isatty',return_value=True):
             self.assertEqual(preflight.operator_run(self.doc),0)
