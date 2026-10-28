@@ -71,6 +71,7 @@ type Engine struct {
 	mu            sync.Mutex
 	state         State
 	running       bool
+	removing      bool
 	health        chan struct{}
 	startStateOps rootFileOps
 }
@@ -154,7 +155,7 @@ func (e *Engine) Start(request Request) (State, error) {
 	if e.state.Status != "" && e.state.OperationID == request.OperationID && e.state.TargetVersion == request.TargetVersion && stateMatches(e.state, request) {
 		return e.state, nil
 	}
-	if e.running || isActiveLocalStatus(e.state.Status) {
+	if e.running || e.removing || isActiveLocalStatus(e.state.Status) {
 		if e.state.OperationID == request.OperationID && e.state.TargetVersion == request.TargetVersion && stateMatches(e.state, request) {
 			return e.state, nil
 		}
@@ -247,7 +248,13 @@ func (e *Engine) StartAgentRemoval(request Request) error {
 	if request.Action != ActionRemove || request.Validate() != nil || e.config.AgentRemoval == nil || !e.config.AgentRemoval.SupportsRemoteRemoval() {
 		return errors.New("Agent removal is not supported by the local updater")
 	}
-	return e.config.AgentRemoval.Start(context.Background(), request.OperationID, request.ReceiptToken)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	err := e.config.AgentRemoval.Start(context.Background(), request.OperationID, request.ReceiptToken)
+	if err == nil {
+		e.removing = true
+	}
+	return err
 }
 
 func (e *Engine) run(request Request) {

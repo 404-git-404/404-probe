@@ -130,28 +130,17 @@ func platformServeMode(ctx context.Context, migration bool) error {
 	if err := removalLauncher.Prepare(); err != nil {
 		slog.Warn("remote Agent removal capability is unavailable", "error", err)
 	}
-	engine.Recover()
-	if info, err := os.Lstat(DefaultSocket); err == nil {
-		if info.Mode()&os.ModeSocket == 0 {
-			return errors.New("updater socket path exists and is not a socket")
-		}
-		if err := os.Remove(DefaultSocket); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	listener, err := net.Listen("unix", DefaultSocket)
+	manager, err := newListenerManager(DefaultSocket, uint32(gid))
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
-	defer os.Remove(DefaultSocket)
-	if err := os.Chown(DefaultSocket, 0, gid); err != nil {
-		return err
-	}
-	if err := os.Chmod(DefaultSocket, 0660); err != nil {
-		return err
+	defer manager.close()
+	listener := manager.current()
+	engine.Recover()
+	healthCtx, stopHealth := context.WithCancel(ctx)
+	defer stopHealth()
+	if !migration {
+		go manager.monitor(healthCtx, engine)
 	}
 	if migration {
 		go func() {
@@ -192,11 +181,16 @@ func platformServeMode(ctx context.Context, migration bool) error {
 		case <-ctx.Done():
 		case <-committed:
 		}
-		_ = listener.Close()
+		stopHealth()
+		manager.close()
 	}()
 	for {
+		listener := manager.current()
 		connection, err := listener.Accept()
 		if err != nil {
+			if manager.current() != listener {
+				continue
+			}
 			if migration {
 				engine.mu.Lock()
 				state := engine.state
@@ -216,14 +210,16 @@ func platformServeMode(ctx context.Context, migration bool) error {
 			}
 			return err
 		}
-		go handleConnection(connection, engine, uint32(uid))
+		go handleConnection(connection, engine, uint32(uid), manager)
 	}
 }
 
-func handleConnection(connection net.Conn, engine *Engine, allowedUID uint32) {
+func handleConnection(connection net.Conn, engine *Engine, allowedUID uint32, managers ...*listenerManager) {
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
-	if peerUID(connection) != allowedUID {
+	credential, peerErr := socketPeer(connection)
+	self := peerErr == nil && credential.Uid == 0 && credential.Pid == int32(os.Getpid()) && len(managers) != 0
+	if peerErr != nil || credential.Uid != allowedUID && !self {
 		_ = json.NewEncoder(connection).Encode(Response{Error: "unauthorized updater client"})
 		return
 	}
@@ -237,8 +233,19 @@ func handleConnection(connection net.Conn, engine *Engine, allowedUID uint32) {
 		_ = json.NewEncoder(connection).Encode(Response{Error: "invalid updater request"})
 		return
 	}
+	if self && credential.Uid != allowedUID && request.Action != ActionHealth {
+		_ = json.NewEncoder(connection).Encode(Response{Error: "self probe is health-only"})
+		return
+	}
 	var state State
 	switch request.Action {
+	case ActionHealth:
+		var proof *HealthProof
+		if len(managers) != 0 {
+			proof = managers[0].proof(request.Nonce)
+		}
+		_ = json.NewEncoder(connection).Encode(Response{Accepted: proof != nil, Health: proof})
+		return
 	case ActionStart:
 		state, err = engine.Start(request)
 	case ActionStatus:

@@ -27,6 +27,7 @@ type Report struct {
 	AgentVersion         string                       `json:"agent_version,omitempty"`
 	AgentUpgradeCapable  bool                         `json:"agent_upgrade_capable,omitempty"`
 	AgentUpgradeV2       bool                         `json:"agent_upgrade_v2,omitempty"`
+	AgentUpdaterHealth   *UpdaterHealth               `json:"agent_updater_health,omitempty"`
 	Management           *AgentManagementCapabilities `json:"management_capabilities,omitempty"`
 	BootID               string                       `json:"boot_id"`
 	Uptime               uint64                       `json:"uptime"`
@@ -75,6 +76,9 @@ type AgentManagementCapabilities struct {
 }
 
 func (r Report) Validate() error {
+	if !r.AgentUpdaterHealth.Valid() {
+		return errors.New("invalid updater health")
+	}
 	if r.NetworkQualityV2 != nil {
 		if err := r.NetworkQualityV2.Validate(); err != nil {
 			return err
@@ -190,6 +194,7 @@ type ReportResponse struct {
 }
 
 type ReportCapabilities struct {
+	UpdaterHealthReport   bool `json:"updater_health_report,omitempty"`
 	PublicEgressReport    bool `json:"public_egress_report,omitempty"`
 	NetworkQualityStaged  bool `json:"network_quality_staged,omitempty"`
 	NetworkQualityV2      bool `json:"network_quality_v2,omitempty"`

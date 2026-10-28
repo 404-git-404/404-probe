@@ -28,9 +28,11 @@ const (
 	ActionCapabilities   Action = "capabilities"
 	ActionRCCapabilities Action = "capabilities_rc"
 	ActionRemove         Action = "remove"
+	ActionHealth         Action = "health"
 )
 
 type Request struct {
+	Nonce           string `json:"nonce,omitempty"`
 	ProtocolVersion int    `json:"protocol_version"`
 	Action          Action `json:"action"`
 	OperationID     string `json:"operation_id"`
@@ -45,7 +47,15 @@ func (r Request) Validate() error {
 	if r.ProtocolVersion != ProtocolVersion && r.ProtocolVersion != 2 || r.ProtocolVersion == 1 && r.ServerVersion != "" {
 		return errors.New("invalid updater request")
 	}
+	if r.Action != ActionHealth && r.Nonce != "" {
+		return errors.New("unexpected health nonce")
+	}
 	switch r.Action {
+	case ActionHealth:
+		if r.ProtocolVersion != 1 || !validOperationID(r.Nonce) || r.OperationID != "" || r.TargetVersion != "" || r.ReceiptToken != "" || r.Channel != "" || r.TargetCommit != "" || r.ServerVersion != "" {
+			return errors.New("invalid health probe")
+		}
+		return nil
 	case ActionCapabilities, ActionRCCapabilities:
 		if r.Action == ActionRCCapabilities && r.ProtocolVersion != 2 {
 			return errors.New("RC capabilities require protocol 2")
@@ -93,6 +103,7 @@ type State struct {
 }
 
 type Response struct {
+	Health       *HealthProof        `json:"health,omitempty"`
 	Accepted     bool                `json:"accepted"`
 	Error        string              `json:"error,omitempty"`
 	State        State               `json:"state"`
@@ -110,11 +121,12 @@ func (r Response) MarshalJSON() ([]byte, error) {
 		capabilities = &copy
 	}
 	return json.Marshal(struct {
+		Health       *HealthProof         `json:"health,omitempty"`
 		Accepted     bool                 `json:"accepted"`
 		Error        string               `json:"error,omitempty"`
 		State        State                `json:"state"`
 		Capabilities *UpdaterCapabilities `json:"capabilities,omitempty"`
-	}{r.Accepted, r.Error, r.State, capabilities})
+	}{r.Health, r.Accepted, r.Error, r.State, capabilities})
 }
 
 type UpdaterCapabilities struct {
