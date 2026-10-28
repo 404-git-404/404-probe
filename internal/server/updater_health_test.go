@@ -44,6 +44,12 @@ func TestUpdaterHealthWebGatesAndSessionFencing(t *testing.T) {
 		}
 	}
 	legacy := storage.AgentSnapshot{Online: true, State: &state}
+	encoded, _ := json.Marshal(newWebAgentEventView(state))
+	var legacyEvent map[string]any
+	_ = json.Unmarshal(encoded, &legacyEvent)
+	if value, present := legacyEvent["updater_health"]; !present || value != nil {
+		t.Fatal("legacy report must clear stale live health", string(encoded))
+	}
 	if target := targetForAgent(upgradeTarget{Version: "v1.0.10", Supported: true, RequiredProtocol: 2}, legacy); !target.Supported {
 		t.Fatal("legacy Agent behavior changed", target)
 	}

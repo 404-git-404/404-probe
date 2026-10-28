@@ -19,7 +19,7 @@ const (
 )
 
 type webAgentSummaryView struct {
-	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health,omitempty"`
+	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health"`
 	AgentID        string                  `json:"agent_id"`
 	Name           string                  `json:"name"`
 	Revoked        bool                    `json:"revoked"`
@@ -162,7 +162,7 @@ type webAgentHistoryPointView struct {
 }
 
 type webAgentEventView struct {
-	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health,omitempty"`
+	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health"`
 	UpgradeCapable bool                    `json:"upgrade_capable"`
 	UpgradeV2      bool                    `json:"upgrade_v2"`
 	Version        string                  `json:"version"`
