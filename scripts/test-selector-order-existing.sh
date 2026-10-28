@@ -42,7 +42,8 @@ printf '%s\n' \
   "EnvironmentFile=${config_directory}/agent.env" \
   "ExecStart=${agent} run --config ${config_directory}/agent.env" >"${unit}"
 chmod 0644 "${unit}"
-install -o root -g 404-probe -m 0640 /dev/null "${config_directory}/agent.env"
+printf '' >"${fixture}/empty-environment"
+install -o root -g 404-probe -m 0640 "${fixture}/empty-environment" "${config_directory}/agent.env"
 unit_before="$(sha256sum "${unit}" | awk '{print $1}')"
 environment_before="$(sha256sum "${config_directory}/agent.env" | awk '{print $1}')"
 ! grep -Fq PROBE_404_SELECTOR_ORDER "${config_directory}/agent.env"
