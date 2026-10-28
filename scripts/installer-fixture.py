@@ -76,7 +76,7 @@ def sandbox(root, command, trace=None):
              "--bind", str(root / "tmp"), "/tmp", "--remount-ro", "/",
              "--chdir", str(FIXTURE)]
     if trace:
-        args += ["strace", "-f", "-qq", "-s", "4096", "-e", "trace=%file",
+        args += ["strace", "-f", "-qq", "-s", "16384", "-e", "trace=%file,%process",
                  "-o", translate(str(trace), root, repo)]
     return args + command
 
@@ -92,6 +92,46 @@ def translate(value, root, repo):
 
 def project_access(audit):
     return re.findall(r'"(/(?:run|etc|var/(?:lib|log)|usr/local/(?:bin|sbin))/[^"\n]*404-probe[^"\n]*)"', audit)
+
+
+def audit_workload(audit):
+    """Only the exact, trusted canary and its children may probe original paths.
+
+    Process ancestry comes from outer strace, never a caller-controlled marker
+    or PID file. All other accesses, including failed reads/stats, still fail.
+    """
+    records, children, proofs, pending = [], {}, set(), set()
+    signature = '", "-c", ' + json.dumps(CANARY)
+    for line in audit.splitlines() if isinstance(audit, str) else audit:
+        line = line.rstrip('\n')
+        match = re.match(r'^(\d+)\s+(.*)', line)
+        pid, body = (int(match[1]), match[2]) if match else (None, line)
+        paths = project_access(body)
+        if paths:
+            records.append((pid, paths))
+        if re.match(r'execve\("/(?:usr/)?bin/bash",', body) and signature in body:
+            if body.endswith('= 0'):
+                proofs.add(pid)
+            elif '<unfinished ...>' in body:
+                pending.add(pid)
+        if pid in pending and body.startswith('<... execve resumed>') and body.endswith('= 0'):
+            proofs.add(pid)
+        if re.search(r'(?:clone3?|fork|vfork)(?:\(| resumed>)', body):
+            child = re.search(r'= (\d+)$', body)
+            if child:
+                children.setdefault(pid, set()).add(int(child[1]))
+    frontier = list(proofs)
+    while frontier:
+        for child in children.get(frontier.pop(), ()):
+            if child not in proofs:
+                proofs.add(child)
+                frontier.append(child)
+    expected, unexpected = [], []
+    for pid, paths in records:
+        (expected if pid in proofs else unexpected).extend(paths)
+    return {'original_project_access': unexpected,
+            'expected_canary_access': sorted(set(expected)),
+            'canary_processes': sorted(pid for pid in proofs if pid is not None)}
 
 
 CANARY = r'''
@@ -136,7 +176,8 @@ def main():
     parser.add_argument("--script")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     opts = parser.parse_args()
-    if sys.platform != "linux" or not all(shutil.which(x) for x in ("bwrap", "strace", "bash")):
+    tools = ('bash',) if in_place_candidate() else ('bwrap', 'strace', 'bash')
+    if sys.platform != "linux" or not all(shutil.which(x) for x in tools):
         print("SKIP installer execution: verified Linux bubblewrap + strace boundary unavailable")
         return SKIP
     if not opts.root:
@@ -145,44 +186,68 @@ def main():
     return run(opts, Path(opts.root).resolve(strict=True))
 
 
+def in_place_candidate():
+    # Hints only select the fail-closed proof path; they never authorize a body.
+    return (Path(__file__).resolve().parent.parent.as_posix() == str(SOURCE)
+            or bool(os.environ.get('INSTALLER_FIXTURE_ACTIVE'))
+            or bool(os.environ.get('INSTALLER_FIXTURE_ROOT')))
+
+
+def proof_environment(env):
+    clean = {key: value for key, value in env.items()
+             if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
+    clean['PATH'] = '/usr/bin:/bin'
+    return clean
+
+
 def run(opts, root):
-    (root / "tmp").mkdir(exist_ok=True)
     repo = Path(__file__).resolve().parent.parent
-    env = {key: translate(value, root, repo) for key, value in os.environ.items()}
-    env.update(INSTALLER_FIXTURE_ROOT=str(FIXTURE), TMPDIR=str(FIXTURE / 'tmp'))
+    in_place = in_place_candidate()
+    inside_root = root if in_place else FIXTURE
+    env = dict(os.environ) if in_place else {key: translate(value, root, repo) for key, value in os.environ.items()}
+    env.update(INSTALLER_FIXTURE_ROOT=str(inside_root), TMPDIR=str(inside_root / 'tmp'),
+               INSTALLER_FIXTURE_ACTIVE=str(inside_root))
     # A successful canary is mandatory for every invocation, never an env bypass.
     canary_trace = root / 'canary.trace'
-    proof_env = {key: value for key, value in env.items()
-                 if key not in ('BASH_ENV', 'ENV') and not key.startswith('BASH_FUNC_')}
-    proof_env['PATH'] = '/usr/bin:/bin'
-    proof = subprocess.run(sandbox(root, ["bash", "-c", CANARY], canary_trace), env=proof_env,
+    if in_place:
+        if not any(root.is_relative_to(path) for path in (Path(str(FIXTURE)), Path('/tmp'))):
+            print('SKIP installer execution: in-place fixture is outside the private write roots')
+            return SKIP
+        proof_command = ['bash', '-c', CANARY]
+    else:
+        (root / 'tmp').mkdir(exist_ok=True)
+        proof_command = sandbox(root, ['bash', '-c', CANARY], canary_trace)
+    proof = subprocess.run(proof_command, env=proof_environment(env),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proof.returncode:
-        print("SKIP installer execution: namespace canary could not prove the boundary")
+        print('SKIP installer execution: ' + ('in-place' if in_place else 'namespace') + ' canary could not prove the boundary')
         print(proof.stderr, end="")
         return SKIP
-    attempts = sorted(set(project_access(canary_trace.read_text(encoding='utf-8'))))
-    expected = ['/run/404-probe', '/etc/404-probe', '/var/lib/404-probe',
-                '/var/lib/404-probe-updater', '/var/log/404-probe']
-    audit = {'exit': proof.returncode, 'original_project_access': attempts,
-             'expected_attempts_seen': all(path in attempts for path in expected)}
-    (root / 'canary-audit.json').write_text(json.dumps(audit, indent=2) + '\n', encoding='utf-8')
-    if not audit['expected_attempts_seen']:
-        print('FAIL installer canary: strace did not observe every original project path')
-        return 86
+    (root / 'tmp').mkdir(exist_ok=True)
+    if in_place:
+        (root / 'in-place-proof.json').write_text(json.dumps({'mode': 'in-place', 'verified': True}) + '\n', encoding='utf-8')
+    else:
+        attempts = sorted(set(project_access(canary_trace.read_text(encoding='utf-8'))))
+        expected = ['/run/404-probe', '/etc/404-probe', '/var/lib/404-probe',
+                    '/var/lib/404-probe-updater', '/var/log/404-probe']
+        audit = {'exit': proof.returncode, 'original_project_access': attempts,
+                 'expected_attempts_seen': all(path in attempts for path in expected)}
+        (root / 'canary-audit.json').write_text(json.dumps(audit, indent=2) + '\n', encoding='utf-8')
+        if not audit['expected_attempts_seen']:
+            print('FAIL installer canary: strace did not observe every original project path')
+            return 86
     if opts.probe:
-        print("PASS installer namespace canary: fixture delete; absolute, redirect, symlink and parent escape denied")
+        print('PASS installer ' + ('in-place' if in_place else 'namespace') + ' canary: fixture delete; absolute, redirect, symlink and parent escape denied')
         return 0
     installer = root / "installer-fixture.sh"
-    installer.write_text(redirect((repo / "install.sh").read_text(encoding="utf-8"), FIXTURE), encoding="utf-8", newline="\n")
-    env["INSTALLER_FIXTURE_INSTALLER"] = str(FIXTURE / installer.name)
+    installer.write_text(redirect((repo / "install.sh").read_text(encoding="utf-8"), inside_root), encoding="utf-8", newline="\n")
+    env["INSTALLER_FIXTURE_INSTALLER"] = str(inside_root / installer.name)
     env["BASH_ENV"] = str(SOURCE / "scripts/installer-fixture-commands.sh")
-    command = [translate(value, root, repo) for value in opts.command]
+    command = list(opts.command) if in_place else [translate(value, root, repo) for value in opts.command]
     if command[:1] == ["--"]:
         command = command[1:]
     if opts.script:
-        # The child entry verifies namespace mounts before accepting this flag.
-        env["INSTALLER_FIXTURE_ACTIVE"] = str(FIXTURE)
+        # This entry is removed only after the complete kernel-boundary proof.
         source = Path(opts.script).read_text(encoding="utf-8")
         lines = []
         for line in source.splitlines():
@@ -194,21 +259,27 @@ def run(opts, root):
         # Rebase assertions and the existing per-test sed mappings together,
         # keeping their custom layout while catching any new literal prefix.
         child = root / "fixture-test.sh"
-        child.write_text(redirect(translate("\n".join(lines) + "\n", root, repo), FIXTURE), encoding="utf-8", newline="\n")
-        command = ["bash", str(FIXTURE / child.name)] + command
-    else:
+        body = "\n".join(lines) + "\n"
+        child.write_text(redirect(body if in_place else translate(body, root, repo), inside_root), encoding="utf-8", newline="\n")
+        command = ["bash", str(inside_root / child.name)] + command
+    elif not in_place:
         # Generated Go harnesses embed their host fixture/source paths. Rewrite
         # only private shell fixtures, never files in the source checkout.
         for script in root.rglob('*.sh'):
             checked_path(root, script)
             script.write_text(translate(script.read_text(encoding='utf-8'), root, repo), encoding='utf-8', newline='\n')
     trace = root / "filesystem.trace"
-    result = subprocess.run(sandbox(root, command, trace), env=env)
-    audit = trace.read_text(encoding="utf-8", errors="replace")
+    # Inside an already proven namespace the outer process owns the only trace.
+    result = subprocess.run(command if in_place else sandbox(root, command, trace),
+                            env=env, cwd=root if in_place else None)
+    if in_place:
+        return result.returncode
     # Even harmless stat/read attempts against the original project paths fail
     # the test. The namespace already prevents access to their real host objects.
-    escaped = project_access(audit)
-    (root / "filesystem-audit.json").write_text(json.dumps({"canary": "passed", "original_project_access": escaped, "exit": result.returncode}, indent=2) + "\n", encoding="utf-8")
+    with trace.open(encoding='utf-8', errors='replace') as audit:
+        checked = audit_workload(audit)
+    escaped = checked['original_project_access']
+    (root / "filesystem-audit.json").write_text(json.dumps(dict(checked, canary='passed', mode='new-namespace', exit=result.returncode), indent=2) + "\n", encoding="utf-8")
     if escaped:
         print("FAIL installer attempted original project paths: " + repr(sorted(set(escaped))), file=sys.stderr)
         return 86

@@ -40,21 +40,9 @@ func TestSetupSecurityFailureRestoresStoppedAgentAndActiveTimer(t *testing.T) {
 	}
 	functionSource := script[start : start+end+3]
 
-	testParent := filepath.Join(filepath.Dir(filename), "..", "..", ".tools")
-	createdParent := false
-	if err := os.Mkdir(testParent, 0700); err == nil {
-		createdParent = true
-	} else if !os.IsExist(err) {
-		t.Fatal(err)
-	}
-	if createdParent {
-		t.Cleanup(func() { _ = os.Remove(testParent) })
-	}
-	rootNative, err := os.MkdirTemp(testParent, "installer-rollback-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(rootNative) })
+	// Source is deliberately read-only inside the outer sandbox. All fixture
+	// writes must use the private test temporary root, including this harness.
+	rootNative := t.TempDir()
 	root := shellTestPath(rootNative)
 	functionPath := filepath.Join(rootNative, "setup-function.sh")
 	// Keep the extracted production function separate so the harness cannot

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Defense in depth. Kernel mounts remain the boundary if a function is replaced,
 # `command rm` bypasses this wrapper, or a shell redirect writes a file.
+# Debian's awk alias resolves through the deliberately hidden /etc/alternatives.
+# Use the same installed implementation without exposing that host directory.
+if ! command -v awk >/dev/null 2>&1 && [[ -x /usr/bin/mawk ]]; then
+  awk() { /usr/bin/mawk "$@"; }
+  export -f awk
+fi
 fixture_path() {
   local path="$1" parent
   [[ "${path}" == /* ]] || path="${PWD}/${path}"

@@ -40,7 +40,9 @@ sha256sum "$SERVER_BINARY" "$SERVER_DATABASE" "$CONFIG_DIRECTORY/server.env" "$I
 require_root_linux_systemd(){ :; }
 reject_openrc_deferred(){ :; }
 validate_service_user(){ :; }
-read(){ answer=y; }
+# Only answer the confirmation prompt; version parsing and backup loops need
+# Bash's real read builtin and must not be intercepted by this fixture.
+read(){ if [[ "$#" == 2 && "$1" == -r && "$2" == answer ]]; then answer=y; else builtin read "$@"; fi; }
 note(){ printf '%s\n' "$*" >>"$task_root/notes"; }
 die(){ printf '%s\n' "$*" >&2; exit 1; }
 stat(){

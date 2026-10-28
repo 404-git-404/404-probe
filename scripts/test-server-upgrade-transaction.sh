@@ -231,7 +231,9 @@ curl() { printf '%s' "$(<"${stable_directory}/http")"; }
 eval "${real_stable_readiness}"
 start_stable_server() {
   rm -f -- "${SERVER_BINARY}"
-  cp -- "$(command -v sleep)" "${SERVER_BINARY}"
+  # Read the installed tool without treating its read-only source as a mutation
+  # operand; the executable copy and all writes stay in the private fixture.
+  cat -- "$(command -v sleep)" >"${SERVER_BINARY}"
   chmod 0755 "${SERVER_BINARY}"
   "${SERVER_BINARY}" 120 &
   stable_pid=$!
@@ -262,7 +264,7 @@ expect_stable 'candidate that never becomes active is rejected' 1 0 4 "printf 'i
 expect_stable 'candidate that dies after two seconds is rejected' 1 2 4 "sleep 2; printf 'inactive\n' >${sd}/state; kill \${stable_pid}"
 expect_stable 'candidate that is restarted (PID change) is rejected' 1 2 4 "sleep 2; ${SERVER_BINARY} 120 & printf '%s\n' \$! >${sd}/pid; wait"
 expect_stable 'candidate whose HTTP stops answering 401 is rejected' 1 2 4 "sleep 2; printf '500' >${sd}/http"
-expect_stable 'candidate whose executable was swapped is rejected' 1 2 4 "sleep 2; cp -- /bin/true ${SERVER_BINARY}.swap; mv -f -- ${SERVER_BINARY}.swap ${SERVER_BINARY}"
+expect_stable 'candidate whose executable was swapped is rejected' 1 2 4 "sleep 2; cat /bin/true >${SERVER_BINARY}.swap; chmod 0755 ${SERVER_BINARY}.swap; mv -f -- ${SERVER_BINARY}.swap ${SERVER_BINARY}"
 unset -f systemctl journalctl curl
 eval "${real_systemctl}"
 verify_server_stable_readiness() { return "${READINESS_FAIL}"; }
@@ -461,9 +463,14 @@ export FIXTURE_DIRECTORY="${fixture_directory}"
 export CURL_LOG="${temporary}/curl.log"
 export BOOTSTRAP_RESULT="${temporary}/bootstrap.result"
 : >"${CURL_LOG}"
-PATH="${fake_bin}:${PATH}" bash "${INSTALLER_FIXTURE_INSTALLER}" --help >/dev/null
+# This block verifies tagged bootstrap/version/checksum forwarding, not the
+# host OS/init gate. Keep that unrelated gate stubbed in this private copy.
+bootstrap_installer="${temporary}/bootstrap-installer.sh"
+sed '$d' "${INSTALLER_FIXTURE_INSTALLER}" >"${bootstrap_installer}"
+printf '\nrequire_root_linux_systemd() { :; }\nmain "$@"\n' >>"${bootstrap_installer}"
+PATH="${fake_bin}:${PATH}" bash "${bootstrap_installer}" --help >/dev/null
 [[ ! -s "${CURL_LOG}" ]] || { printf 'help unexpectedly required network access\n' >&2; exit 1; }
-PATH="${fake_bin}:${PATH}" PROBE_404_VERSION=v1.2.3 bash "${INSTALLER_FIXTURE_INSTALLER}" sentinel
+PATH="${fake_bin}:${PATH}" PROBE_404_VERSION=v1.2.3 bash "${bootstrap_installer}" sentinel
 [[ "$(<"${BOOTSTRAP_RESULT}")" == 'v1.2.3|sentinel' ]] || { printf 'explicit version was not forwarded to tagged installer\n' >&2; exit 1; }
 grep -Fxq 'https://github.com/404-git-404/404-probe/releases/download/v1.2.3/install.sh' "${CURL_LOG}" \
   || { printf 'explicit version did not fetch its tagged installer\n' >&2; exit 1; }

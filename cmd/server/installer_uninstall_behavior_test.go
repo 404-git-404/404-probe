@@ -47,7 +47,7 @@ func runInstallerAgentUninstallFixture(t *testing.T, early bool) {
 	if start < 0 || end < 0 {
 		t.Fatal("could not extract uninstall implementation")
 	}
-	functionSource := strings.Replace(script[start:start+end], "uninstall() {", "uninstall_role() {", 1)
+	functionSource := strings.Replace(script[start:start+end], "\nuninstall() {", "\nuninstall_role() {", 1)
 	rootNative := t.TempDir()
 	root := shellTestPath(rootNative)
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.bootstrap"`, `"${TEST_AGENT_BOOTSTRAP}"`)
