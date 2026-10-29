@@ -183,14 +183,14 @@ func (request webAgentPlanRequest) plan(agentID string) (storage.AgentPlan, *uin
 		if _, err := time.Parse("2006-01-02", request.CycleAnchor); err != nil {
 			return storage.AgentPlan{}, nil, errors.New("billing cycle start must be a calendar date")
 		}
-		if _, err := time.LoadLocation(request.Timezone); err != nil {
+		if _, err := time.LoadLocation(request.Timezone); err != nil || request.Timezone == "Local" {
 			return storage.AgentPlan{}, nil, errors.New("billing timezone must be an IANA timezone")
 		}
 	} else if request.CycleKind != "" || request.CycleCount != 0 || request.CycleAnchor != "" || request.CalibrationValue != "" || request.CalibrationUnit != "" {
 		return storage.AgentPlan{}, nil, errors.New("billing cycle and calibration require a traffic direction")
 	}
 	if request.Timezone != "" {
-		if _, err := time.LoadLocation(request.Timezone); err != nil {
+		if _, err := time.LoadLocation(request.Timezone); err != nil || request.Timezone == "Local" {
 			return storage.AgentPlan{}, nil, errors.New("plan timezone must be an IANA timezone")
 		}
 	} else if request.TrafficMode != "" {

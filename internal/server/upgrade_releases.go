@@ -221,7 +221,60 @@ func (a *App) verifyLegacyRelease(ctx context.Context, target upgradeTarget, arc
 	}
 	return nil
 }
-func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeTarget {
+func targetForAgent(target upgradeTarget, record storage.AgentSnapshot, busy ...bool) upgradeTarget {
+	// Preserve every existing support decision; only select the displayed reason.
+	gated := targetForAgentGate(target, record)
+	code := ""
+	comparison, comparable := 0, false
+	if record.State != nil {
+		comparison, comparable = buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version)
+	}
+	switch {
+	case len(busy) > 0 && busy[0]:
+		code = "upgrade_in_progress"
+	case !record.Online || record.Agent.DisabledAt != nil || record.Agent.Revoked:
+		code = "agent_unavailable"
+	case !comparable:
+		code = "version_unrecognized"
+	case comparison == 0:
+		code = "already_latest"
+	case comparison > 0:
+		code = "agent_newer_than_server"
+	case record.State.AgentUpdaterHealth.ReasonCode() != "":
+		code = record.State.AgentUpdaterHealth.ReasonCode()
+	case !record.State.AgentUpgradeCapable:
+		code = "updater_unavailable"
+	case buildinfo.IsRCVersion(target.Version) && !rcAwareAgent(record):
+		code = "rc_agent_required"
+	case buildinfo.IsRCVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2:
+		code = "rc_updater_required"
+	case !buildinfo.IsCanonicalVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2:
+		code = "old_beta_migration_required"
+	case target.RequiredProtocol == 2 && !record.State.AgentUpgradeV2:
+		code = "legacy_migration_required"
+	default:
+		code = gated.ReasonCode
+	}
+	reasons := map[string]string{
+		"upgrade_in_progress":         "正在升级，请等待完成",
+		"agent_unavailable":           "设备离线、暂停或已撤销",
+		"version_unrecognized":        "目标不是严格更新版本；重复升级与降级不可用",
+		"already_latest":              "已是最新版本",
+		"agent_newer_than_server":     "Agent 版本高于 Server，不能回退；如需回退请重新安装",
+		"updater_unavailable":         "本地 Updater 不可用；需要保留身份配置的原地迁移",
+		"rc_agent_required":           "RC需要RC-aware Agent及Updater；旧Stable/Beta不能通过Web直接进入RC",
+		"rc_updater_required":         "当前RC Agent未证明RC-aware Updater能力；不能使用旧v1.0.1桥接替代",
+		"legacy_migration_required":   "需要先迁移至 v1.0.1 Stable 并启动新版 Updater",
+		"old_beta_migration_required": "旧 Beta 需要保留身份配置的原地 Stable 迁移入口",
+	}
+	if code != gated.ReasonCode {
+		gated.ReasonCode = code
+		gated.Reason = reasons[code]
+	}
+	return gated
+}
+
+func targetForAgentGate(target upgradeTarget, record storage.AgentSnapshot) upgradeTarget {
 	if record.State != nil {
 		comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version)
 		if ok && comparison >= 0 {

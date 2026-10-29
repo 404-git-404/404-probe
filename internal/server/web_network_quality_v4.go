@@ -151,6 +151,7 @@ func (a *App) handleQualityV4Config(w http.ResponseWriter, r *http.Request) {
 		qualityHTTPError(w, err)
 		return
 	}
+	a.publishDashboardChange(r.PathValue("agent_id"), "quality", false)
 	writeJSON(w, 200, config)
 }
 
@@ -181,6 +182,7 @@ func (a *App) handleQualityV4Enabled(w http.ResponseWriter, r *http.Request) {
 		qualityHTTPError(w, err)
 		return
 	}
+	a.publishDashboardChange(r.PathValue("agent_id"), "quality", false)
 	writeJSON(w, 200, config)
 }
 

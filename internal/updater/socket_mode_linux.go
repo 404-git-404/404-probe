@@ -19,6 +19,12 @@ func chmodSocketAtNoFollow(dirfd int, name string, mode uint32, flags int) error
 	if !errors.Is(err, unix.EOPNOTSUPP) && !errors.Is(err, unix.ENOSYS) {
 		return err
 	}
+	return chmodSocketProcFallback(dirfd, name, mode)
+}
+
+// This compatibility path depends on /proc; unavailable or non-proc mounts
+// fail closed. Kept separate so newer kernels exercise it in acceptance tests.
+func chmodSocketProcFallback(dirfd int, name string, mode uint32) error {
 	// O_PATH pins the inode without connecting to the socket. NOFOLLOW opens a
 	// planted symlink itself, which the type check below rejects. Linux cannot
 	// fchmod an O_PATH fd, so use its kernel-owned procfs fd link, never name.

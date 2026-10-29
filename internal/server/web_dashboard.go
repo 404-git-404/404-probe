@@ -116,6 +116,10 @@ func renewalSummary(plan *storage.AgentPlan, now time.Time) dashboardRenewal {
 		out.Field = ""
 		return out
 	}
+	if out.Timezone == "Local" {
+		out.Type = "invalid"
+		return out
+	}
 	d, err := time.Parse("2006-01-02", out.Date)
 	if err != nil || d.Year() < 1 || d.Year() > 9999 {
 		out.Type = "invalid"
@@ -159,10 +163,11 @@ func (a *App) invalidateDashboardNetwork(id string) {
 	a.dashboardMu.Lock()
 	defer a.dashboardMu.Unlock()
 	if a.dashboardNetwork == nil {
-		return
+		a.dashboardNetwork = map[string]dashboardNetworkEntry{}
 	}
 	entry := a.dashboardNetwork[id]
-	entry.Generation++
+	a.dashboardGeneration++
+	entry.Generation = a.dashboardGeneration
 	entry.Expires = time.Time{}
 	a.dashboardNetwork[id] = entry
 }
@@ -174,6 +179,7 @@ func (a *App) cachedDashboardNetwork(r *http.Request, id string, now time.Time) 
 		return entry.Value
 	}
 	generation := entry.Generation
+	cacheGeneration := a.dashboardGeneration
 	a.dashboardMu.Unlock()
 	out := dashboardNetwork{CheckedAt: now.UnixMilli(), ExpiresAt: now.Add(5 * time.Second).UnixMilli()}
 	gate, err := a.store.QualityAlertGate(r.Context(), id)
@@ -195,9 +201,9 @@ func (a *App) cachedDashboardNetwork(r *http.Request, id string, now time.Time) 
 	}
 	if len(a.dashboardNetwork) > 2048 {
 		a.dashboardNetwork = map[string]dashboardNetworkEntry{}
-		generation = 0
+		a.dashboardGeneration++
 	}
-	if a.dashboardNetwork[id].Generation != generation {
+	if a.dashboardGeneration != cacheGeneration || a.dashboardNetwork[id].Generation != generation {
 		return dashboardNetwork{CheckedAt: now.UnixMilli()}
 	}
 	a.dashboardNetwork[id] = dashboardNetworkEntry{Value: out, Expires: now.Add(5 * time.Second), Generation: generation}
@@ -305,4 +311,12 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, out)
+}
+
+// Metadata changes are published only after the storage mutation commits. They
+// carry no runtime sample, and therefore cannot bypass report sequence fencing.
+func (a *App) publishDashboardChange(id, kind string, revoked bool) {
+	a.invalidateDashboardNetwork(id)
+	payload, _ := json.Marshal(map[string]any{"event": "dashboard", "agent_id": id, "kind": kind, "revoked": revoked})
+	a.hub.publish(payload)
 }

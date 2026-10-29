@@ -19,7 +19,7 @@ func (h *hub) subscribe() (chan []byte, bool) {
 	if len(h.clients) >= h.limit {
 		return nil, false
 	}
-	ch := make(chan []byte, 256)
+	ch := make(chan []byte, 1024)
 	h.clients[ch] = struct{}{}
 	return ch, true
 }

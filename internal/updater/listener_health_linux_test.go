@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"golang.org/x/sys/unix"
 	"net"
 	"os"
 	"os/exec"
@@ -349,6 +350,18 @@ func TestUpdaterHealthRepairBackoffAndTransactionMutualExclusion(t *testing.T) {
 	e.mu.Unlock()
 	wg.Wait()
 	if _, _, err := pathIdentity(m.path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdaterHealthForcedProcFallback(t *testing.T) {
+	m, _, _ := healthFixture(t)
+	dir, err := unix.Open(filepath.Dir(m.path), unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(dir)
+	if err = chmodSocketProcFallback(dir, filepath.Base(m.path), 0660); err != nil {
 		t.Fatal(err)
 	}
 }

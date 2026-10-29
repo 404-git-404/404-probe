@@ -35,3 +35,21 @@ func TestUpdaterHealthCacheCoalescesAndExpires(t *testing.T) {
 		t.Fatal("expired cache was not refreshed", calls)
 	}
 }
+
+func TestUpdaterHealthCanceledConnectFailureNotCached(t *testing.T) {
+	calls := 0
+	r := &Runner{config: Config{UpdaterSocket: "test"}, updaterHealthProbe: func(ctx context.Context) protocol.UpdaterHealth {
+		calls++
+		return protocol.UpdaterHealth{Status: "unreachable", Reason: "connect_failed"}
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.updaterHealth(ctx)
+	if !r.updaterHealthExpires.IsZero() {
+		t.Fatal("canceled failure cached")
+	}
+	r.updaterHealth(context.Background())
+	if calls != 2 || r.updaterHealthExpires.IsZero() {
+		t.Fatal(calls)
+	}
+}

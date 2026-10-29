@@ -16,9 +16,9 @@ test('health reasons explain missing, unreachable, replaced and unsupported endp
  assert.equal(code(null),'');assert.equal(code({status:'healthy'}),'');
 });
 test('button hints explain the actual disabled condition and the neutral enabled action',()=>{
- const agent={version:'v1.0.9',online:true,upgrade_capable:true},server={version:'v1.0.10',upgrade_eligible:true};
+ const agent={version:'v1.0.9',online:true,upgrade_capable:true,upgrade_v2:true},server={version:'v1.0.10',upgrade_eligible:true};
  assert.equal(hint(agent,server),'可从面板升级到与面板相同的版本');
- for(const [patch,code] of [[{version:'v1.0.10'},'already_latest'],[{version:'v1.0.11'},'agent_newer_than_server'],[{version:'unknown'},'version_unrecognized'],[{online:false},'agent_unavailable'],[{upgrade_capable:false},'updater_unavailable'],[{version:'v1.0.0',upgrade_capable:false},'legacy_migration_required'],[{version:'v1.0.3-beta.1'},'old_beta_migration_required']])assert.equal(hint({...agent,...patch},server),display({reason_code:code}));
+ for(const [patch,code] of [[{version:'v1.0.10'},'already_latest'],[{version:'v1.0.11'},'agent_newer_than_server'],[{version:'unknown'},'version_unrecognized'],[{online:false},'agent_unavailable'],[{upgrade_capable:false},'updater_unavailable'],[{version:'v1.0.0',upgrade_capable:false},'updater_unavailable'],[{version:'v1.0.3-beta.1',upgrade_v2:false},'old_beta_migration_required']])assert.equal(hint({...agent,...patch},server),display({reason_code:code}));
  assert.equal(hint(agent,{...server,upgrade_eligible:false}),display({reason_code:'server_build_ineligible'}));
  for(const status of ['requested','claimed','installing','health_check'])assert.equal(hint({...agent,upgrade:{status}},server),'正在升级，请等待完成');
  assert.equal(hint(agent,server,true),'正在升级，请等待完成');

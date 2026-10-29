@@ -7,7 +7,9 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"404-probe/internal/storage"
 )
@@ -93,6 +95,15 @@ func readOrganizationJSON(w http.ResponseWriter, r *http.Request, target any) er
 	return decodeStrictJSON(body, target)
 }
 
+func unicodeFoldRune(r rune) rune {
+	for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+		if next < r {
+			return unicodeFoldRune(next)
+		}
+	}
+	return r
+}
+
 func uniqueOrganizationJSON(d *json.Decoder, depth int) error {
 	if depth > 8 {
 		return storage.ErrOrganizationInvalid
@@ -111,6 +122,9 @@ func uniqueOrganizationJSON(d *json.Decoder, depth int) error {
 					return err
 				}
 				name, ok := key.(string)
+				// Match encoding/json's case-insensitive struct field matching,
+				// including Unicode simple-fold equivalences (e.g. Kelvin sign).
+				name = strings.Map(func(r rune) rune { return unicodeFoldRune(r) }, name)
 				if !ok || seen[name] {
 					return storage.ErrOrganizationInvalid
 				}
@@ -229,7 +243,22 @@ func (a *App) handleOrganizationMutation(w http.ResponseWriter, r *http.Request,
 		var input struct {
 			ExpectedRevision int64 `json:"expected_revision"`
 		}
-		err = readOrganizationJSON(w, r, &input)
+		if values, present := r.Header["If-Match"]; present {
+			if len(values) != 1 {
+				err = storage.ErrOrganizationInvalid
+			} else {
+				value := values[0]
+				if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+					value = value[1 : len(value)-1]
+				}
+				input.ExpectedRevision, err = strconv.ParseInt(value, 10, 64)
+				if err == nil && (input.ExpectedRevision <= 0 || strconv.FormatInt(input.ExpectedRevision, 10) != value) {
+					err = storage.ErrOrganizationInvalid
+				}
+			}
+		} else {
+			err = readOrganizationJSON(w, r, &input)
+		}
 		c.ExpectedRevision = input.ExpectedRevision
 	}
 	if err != nil {

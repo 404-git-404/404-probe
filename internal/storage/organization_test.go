@@ -320,3 +320,18 @@ func TestOrganizationRatesLimitsAndForeignKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestOrganizationInvisibleNamesAndEmoji(t *testing.T) {
+	for _, r := range []rune{'\x00', '\u200b', '\u202e', '\u2028', '\u2029', '\u2066'} {
+		for _, group := range []bool{false, true} {
+			if _, _, err := normalizeOrganizationName("a"+string(r)+"b", group); err == nil {
+				t.Fatalf("accepted %U", r)
+			}
+		}
+	}
+	for _, name := range []string{"👩‍💻", "✈︎", "✈️"} {
+		if _, _, err := normalizeOrganizationName(name, false); err != nil {
+			t.Fatal(name, err)
+		}
+	}
+}

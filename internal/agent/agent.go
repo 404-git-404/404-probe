@@ -564,7 +564,11 @@ func (r *Runner) updaterHealth(ctx context.Context) protocol.UpdaterHealth {
 			return updater.InspectHealth(ctx, r.config.UpdaterSocket, uint32(os.Getgid()))
 		}
 	}
-	r.updaterHealthCached = probe(ctx)
+	health := probe(ctx)
+	if ctx.Err() != nil && health.Reason == "connect_failed" {
+		return health
+	}
+	r.updaterHealthCached = health
 	// Ten seconds bounds stale UI observations and amortizes a hung peer's one
 	// second timeout across reports and capability queries. Updater still gates
 	// every actual operation; this cache never grants authorization.

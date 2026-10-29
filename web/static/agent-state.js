@@ -56,16 +56,30 @@
     const codes={unreachable:'updater_unreachable',identity_mismatch:'updater_identity_mismatch',unsupported:'updater_unsupported'};
     return Object.hasOwn(codes,health.status)?codes[health.status]:'updater_unavailable';
   }
+  function compareReleaseVersions(a, b) {
+    const parse = value => {
+      if (typeof value !== 'string' || value.length > 64) return null;
+      const m = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(beta|rc)\.([1-9][0-9]*))?$/.exec(value);
+      if (!m) return null;
+      const values = [m[1],m[2],m[3],m[4] === 'beta' ? '0' : m[4] === 'rc' ? '1' : '2',m[5] || '0'];
+      return values.some(n=>BigInt(n)>18446744073709551615n) ? null : values.map(BigInt);
+    };
+    const l=parse(a),r=parse(b); if(!l||!r)return null;
+    for(let i=0;i<l.length;i++)if(l[i]!==r[i])return l[i]<r[i]?-1:1;
+    return 0;
+  }
   function upgradeButtonHint(agent, server, busy = false) {
     if (busy || (agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status))) return '正在升级，请等待完成';
-    const order = compareStableVersions(agent.version, server.version);
-    let code = order === 0 ? 'already_latest' : order === 1 ? 'agent_newer_than_server'
-      : !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable'
-      : (order === -1 ? updaterHealthReason(agent.updater_health) : '') || (!server.upgrade_eligible ? 'server_build_ineligible'
-      : /-beta\./.test(agent.version || '') && !agent.upgrade_v2 ? 'old_beta_migration_required'
-      : !agent.upgrade_capable && ['v0.9.3','v1.0.0'].includes(agent.version) ? 'legacy_migration_required'
-      : !agent.upgrade_capable ? 'updater_unavailable' : '');
-    if (!code && order === null && !agent.upgrade_v2) code = 'version_unrecognized';
+    const order = compareReleaseVersions(agent.version, server.version);
+    const rcAware = agent.upgrade_v2 && compareReleaseVersions(agent.version, 'v1.0.3-rc.1') !== null && compareReleaseVersions(agent.version, 'v1.0.3-rc.1') >= 0;
+    const code = !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable'
+      : order === null ? 'version_unrecognized' : order === 0 ? 'already_latest' : order === 1 ? 'agent_newer_than_server'
+      : updaterHealthReason(agent.updater_health) || (!agent.upgrade_capable ? 'updater_unavailable'
+      : /-rc\./.test(server.version) && !rcAware ? 'rc_agent_required'
+      : /-rc\./.test(agent.version) && !agent.upgrade_v2 ? 'rc_updater_required'
+      : /-beta\./.test(agent.version) && !agent.upgrade_v2 ? 'old_beta_migration_required'
+      : (server.required_protocol ?? 2) === 2 && !agent.upgrade_v2 ? 'legacy_migration_required'
+      : !server.upgrade_eligible ? 'server_build_ineligible' : '');
     return upgradeReasonDisplay({reason_code: code}) || '可从面板升级到与面板相同的版本';
   }
   const resource = key => ({

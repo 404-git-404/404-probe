@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"math/big"
 	"net/http"
 	"sort"
@@ -157,8 +158,8 @@ func (a *App) handleExpenseEstimate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Scope    string    `json:"scope"`
-		AgentIDs *[]string `json:"agent_ids"`
+		Scope    string          `json:"scope"`
+		AgentIDs json.RawMessage `json:"agent_ids"`
 	}
 	if err := readOrganizationJSON(w, r, &in); err != nil {
 		writeJobError(w, 400, "invalid_request", "invalid expense input")
@@ -172,12 +173,13 @@ func (a *App) handleExpenseEstimate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "filtered":
-		if in.AgentIDs == nil || len(*in.AgentIDs) > 200 {
+		var ids []string
+		if len(in.AgentIDs) == 0 || string(in.AgentIDs) == "null" || json.Unmarshal(in.AgentIDs, &ids) != nil || len(ids) > 200 {
 			writeJobError(w, 400, "invalid_request", "filtered scope requires at most 200 ids")
 			return
 		}
 		selected = map[string]bool{}
-		for _, id := range *in.AgentIDs {
+		for _, id := range ids {
 			if !validWebAgentID(id) || selected[id] {
 				writeJobError(w, 400, "invalid_request", "invalid expense ids")
 				return

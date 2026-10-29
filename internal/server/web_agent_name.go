@@ -55,6 +55,7 @@ func (a *App) handlePutWebAgentName(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not rename agent")
 		return
 	}
+	a.publishDashboardChange(agentID, "name", false)
 	writeJSON(w, http.StatusOK, agent)
 }
 

@@ -93,7 +93,7 @@ func normalizeOrganizationName(name string, group bool) (string, string, error) 
 		return "", "", fmt.Errorf("%w: name length", ErrOrganizationInvalid)
 	}
 	for _, r := range name {
-		if unicode.IsControl(r) {
+		if (unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)) && r != '\u200d' {
 			return "", "", fmt.Errorf("%w: control character", ErrOrganizationInvalid)
 		}
 	}
@@ -321,6 +321,8 @@ func (s *Store) ChangeOrganization(ctx context.Context, c OrganizationChange, no
 		return out, err
 	}
 	defer tx.Rollback()
+	// At the JS exact-integer upper bound writes fail closed with conflict;
+	// reaching it would require centuries of sustained organization writes.
 	r, err := tx.ExecContext(ctx, `UPDATE organization_meta SET revision=revision+1 WHERE id=1 AND revision=? AND revision<9007199254740991`, c.ExpectedRevision)
 	if err != nil {
 		return out, err

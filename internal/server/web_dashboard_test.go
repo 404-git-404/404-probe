@@ -159,10 +159,10 @@ func TestDashboardMaskMatchesVisibleFormsAndVersionIsStable(t *testing.T) {
 func TestDashboardHubNeverSilentlyDropsCriticalChanges(t *testing.T) {
 	h := newHub(2)
 	ch, _ := h.subscribe()
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 600; i++ {
 		h.publish([]byte(`{"event":"organization","revision":2}`))
 	}
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 600; i++ {
 		message, open := <-ch
 		if !open {
 			t.Fatal("normal burst disconnected")
@@ -175,7 +175,7 @@ func TestDashboardHubNeverSilentlyDropsCriticalChanges(t *testing.T) {
 	if queued != 0 {
 		t.Fatal("queue memory accounting", queued)
 	}
-	for i := 0; i < 257; i++ {
+	for i := 0; i < 1025; i++ {
 		h.publish([]byte(`{"agent_id":"x"}`))
 	}
 	for range ch {

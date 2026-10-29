@@ -74,6 +74,7 @@ func (a *App) handleRevokeWebAgent(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not revoke Agent")
 		return
 	}
+	a.publishDashboardChange(agentID, "revoke", true)
 	writeJSON(w, http.StatusOK, webAgentRevokeView{Agent: newWebAgentSummaryView(record)})
 }
 

@@ -48,6 +48,7 @@ type App struct {
 	qualityDNSSlots               chan struct{}
 	dashboardMu                   sync.Mutex
 	dashboardNetwork              map[string]dashboardNetworkEntry
+	dashboardGeneration           uint64
 }
 
 const (
@@ -610,6 +611,23 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		sessionExpiry = sessionTimer.C
 		defer sessionTimer.Stop()
 	}
+
+	var originChecked time.Time
+	originAllowed := func() bool {
+		if session == nil {
+			return true
+		}
+		now := a.now()
+		if !originChecked.IsZero() && now.Before(originChecked.Add(3*time.Second)) {
+			return true
+		}
+		if !a.webAuth.sessionOriginAllowed(r.Context(), session) {
+			a.webAuth.revokeSession(session)
+			return false
+		}
+		originChecked = now
+		return true
+	}
 	for {
 		select {
 		case <-a.shutdown.Done():
@@ -633,24 +651,22 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			} // slow clients reconnect and resynchronize; no silent gaps
 			a.hub.consumed(ch, len(message))
-			if session != nil && !a.webAuth.sessionOriginAllowed(r.Context(), session) {
-				a.webAuth.revokeSession(session)
+			if !originAllowed() {
 				return
 			}
 			event := "agent"
 			var kind struct {
 				Event string `json:"event"`
 			}
-			if json.Unmarshal(message, &kind) == nil && kind.Event == "organization" {
-				event = "organization"
+			if json.Unmarshal(message, &kind) == nil && (kind.Event == "organization" || kind.Event == "dashboard") {
+				event = kind.Event
 			}
 			frame := fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event, message)
 			if err := writeSSEFrame(w, controller, frame, a.now(), sseFrameWriteTimeout); err != nil {
 				return
 			}
 		case <-keepalive.C:
-			if session != nil && !a.webAuth.sessionOriginAllowed(r.Context(), session) {
-				a.webAuth.revokeSession(session)
+			if !originAllowed() {
 				return
 			}
 			if err := writeSSEFrame(w, controller, []byte(": keepalive\n\n"), a.now(), sseFrameWriteTimeout); err != nil {

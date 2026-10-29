@@ -67,6 +67,7 @@ func (a *App) handleSetWebAgentDisabled(w http.ResponseWriter, r *http.Request, 
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not change Agent state")
 		return
 	}
+	a.publishDashboardChange(agentID, action, false)
 	writeJSON(w, http.StatusOK, webAgentRevokeView{Agent: newWebAgentSummaryView(record)})
 }
 
