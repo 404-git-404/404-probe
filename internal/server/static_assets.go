@@ -13,6 +13,7 @@ import (
 
 // These are the reviewed production references, not a request-populated cache.
 var fingerprintAssetNames = []string{
+	"dashboard-data.js", "dashboard-model.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "dashboard.css", "dashboard-dialogs.css",
 	"agent-state.js", "app.js", "card-metrics.js", "device-details.js", "history.js",
 	"jobs.js", "management.js", "network-quality-core.js", "network-quality.js",
 	"overview.js", "plan-editor.js", "plan-renewal.js", "plan-units.js",
@@ -26,7 +27,7 @@ var fingerprintAssetNames = []string{
 
 var staticPageNames = []string{"index.html", "history.html", "jobs.html", "schedules.html"}
 var staticPageReferences = map[string][]string{
-	"index.html":     {"style.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "card-layout.css", "card-v7.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "agent-state.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "range-slider.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "latency-mini.js", "card-metrics.js", "card.js", "resource-history.js", "device-details.js", "plan-editor.js", "plan-renewal.js", "overview.js", "plan-units.js", "youtube-status.js", "public-egress-check.js", "agent-enrollment.js", "app.js", "session.js"},
+	"index.html":     {"style.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "card-layout.css", "card-v7.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "dashboard.css", "dashboard-dialogs.css", "agent-state.js", "dashboard-data.js", "dashboard-model.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "range-slider.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "latency-mini.js", "card-metrics.js", "card.js", "resource-history.js", "device-details.js", "plan-editor.js", "plan-renewal.js", "overview.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "plan-units.js", "youtube-status.js", "public-egress-check.js", "agent-enrollment.js", "app.js", "session.js"},
 	"history.html":   {"style.css", "agent-state.js", "management.js", "selector.js", "youtube-status.js", "public-egress-check.js", "history.js", "session.js"},
 	"jobs.html":      {"style.css", "jobs.js", "session.js"},
 	"schedules.html": {"style.css", "schedules.js", "session.js"},
