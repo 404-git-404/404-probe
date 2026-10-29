@@ -574,7 +574,10 @@ function openPlanDialog(agent, trigger = null, mode='plan') {
   for (const [key, selector] of Object.entries(planFields)) {
     const input = document.querySelector(selector);
     const fallback = key === 'cycle_count' ? '1' : key === 'timezone' ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : '';
-    if(input.tagName==='SELECT'&&plan[key]&&!Array.from(input.options).some(o=>o.value===String(plan[key]))){const o=document.createElement('option');o.value=o.textContent=String(plan[key]);input.append(o);}
+    if(input.tagName==='SELECT'){
+      for(const old of Array.from(input.options))if(old.dataset.planStored==='true')old.remove();
+      if(plan[key]&&!Array.from(input.options).some(o=>o.value===String(plan[key]))){const o=document.createElement('option');o.value=String(plan[key]);o.textContent=o.value+(key.endsWith('_price_period')?'（未知周期，保留原值）':'');o.dataset.planStored='true';input.append(o);}
+    }
     input.value = key.startsWith('calibration_') ? (key === 'calibration_unit' ? 'GB' : '') : (plan[key] ?? fallback);
   }
   document.querySelector('#plan-currency-custom').hidden=true;document.querySelector('#plan-currency-custom').required=false;
