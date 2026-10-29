@@ -1,12 +1,14 @@
 package server
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,24 +53,32 @@ type dashboardNetworkEntry struct {
 }
 type dashboardSummary struct {
 	webAgentSummaryView
-	Lifecycle            string                 `json:"lifecycle"`
-	Hostname             string                 `json:"hostname"`
-	CountryCode          string                 `json:"country_code"`
-	CountrySource        string                 `json:"country_source"`
-	GroupID              *string                `json:"group_id"`
-	TagIDs               []string               `json:"tag_ids"`
-	OrganizationRevision int64                  `json:"organization_revision"`
-	Resources            dashboardResources     `json:"resources"`
-	State                *webAgentStateView     `json:"state"`
-	Plan                 *storage.AgentPlan     `json:"plan"`
-	Traffic              dashboardTraffic       `json:"traffic"`
-	Renewal              dashboardRenewal       `json:"renewal"`
-	Network              dashboardNetwork       `json:"network"`
-	GoogleStatus         webGoogleStatusView    `json:"google_status"`
-	Outbounds            webOutboundsView       `json:"outbounds"`
-	AccumulatedTraffic   *storage.TrafficTotals `json:"accumulated_traffic"`
-	MaskedIPs            []string               `json:"masked_ips"`
-	SearchFields         []string               `json:"search_fields"`
+	Lifecycle            string                           `json:"lifecycle"`
+	Hostname             string                           `json:"hostname"`
+	CountryCode          string                           `json:"country_code"`
+	CountrySource        string                           `json:"country_source"`
+	GroupID              *string                          `json:"group_id"`
+	TagIDs               []string                         `json:"tag_ids"`
+	OrganizationRevision int64                            `json:"organization_revision"`
+	Resources            dashboardResources               `json:"resources"`
+	State                *webAgentStateView               `json:"state"`
+	Plan                 *storage.AgentPlan               `json:"plan"`
+	Traffic              dashboardTraffic                 `json:"traffic"`
+	Renewal              dashboardRenewal                 `json:"renewal"`
+	Network              dashboardNetwork                 `json:"network"`
+	GoogleStatus         webGoogleStatusView              `json:"google_status"`
+	Outbounds            webOutboundsView                 `json:"outbounds"`
+	AccumulatedTraffic   *storage.TrafficTotals           `json:"accumulated_traffic"`
+	MaskedIPs            []string                         `json:"masked_ips"`
+	MaskedEgress         map[string]dashboardMaskedEgress `json:"masked_egress"`
+	SearchFields         []string                         `json:"search_fields"`
+}
+
+type dashboardMaskedEgress struct {
+	IP         string `json:"ip"`
+	Status     string `json:"status"`
+	CheckedAt  int64  `json:"checked_at"`
+	ValidUntil int64  `json:"valid_until"`
 }
 type dashboardResponse struct {
 	Partial       bool                   `json:"partial"`
@@ -292,8 +302,10 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			copy.PublicEgress = storage.EgressState{}
 			v.State = newWebAgentStateView(copy, false, now)
 			v.State.Stale = stale
+			v.MaskedEgress = map[string]dashboardMaskedEgress{}
 			for _, o := range []protocol.EgressObservation{state.PublicEgress.IPv4, state.PublicEgress.IPv6} {
-				if mask := maskDashboardIP(o.IP); mask != "" {
+				if mask := maskDashboardIP(o.IP); mask != "" && o.Status == "available" && o.CheckedAt > 0 && o.ValidUntil > now.UnixMilli() && !stale {
+					v.MaskedEgress[o.Family] = dashboardMaskedEgress{IP: mask, Status: o.Status, CheckedAt: o.CheckedAt, ValidUntil: o.ValidUntil}
 					v.MaskedIPs = append(v.MaskedIPs, mask)
 					v.SearchFields = append(v.SearchFields, mask)
 				}
@@ -331,7 +343,33 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, 404, "not_found", "one or more dashboard devices are unavailable")
 		return
 	}
+	w.Header().Add("Vary", "Accept-Encoding")
+	if acceptsDashboardGzip(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		writer, _ := gzip.NewWriterLevel(w, gzip.BestSpeed)
+		defer writer.Close()
+		_ = json.NewEncoder(writer).Encode(out)
+		return
+	}
 	writeJSON(w, 200, out)
+}
+
+func acceptsDashboardGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(strings.TrimSpace(part), ";")
+		if !strings.EqualFold(strings.TrimSpace(fields[0]), "gzip") {
+			continue
+		}
+		for _, parameter := range fields[1:] {
+			if strings.HasPrefix(strings.TrimSpace(parameter), "q=") {
+				q, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(parameter), "q=")), 64)
+				return err == nil && q > 0 && q <= 1
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // Metadata changes are published only after the storage mutation commits. They

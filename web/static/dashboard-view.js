@@ -23,6 +23,10 @@
    host.addEventListener('toggle',()=>{if(host.open)for(const other of Object.values(options))if(other.host!==host)other.host.open=false;});
    if(key==='groups'||key==='tags')list.after(button(key==='groups'?'管理分组…':'管理标签…',e=>onManage(key==='groups'?'groups':'tags',host.querySelector('summary')),'dashboard-manage'));
   }
+  const closeDropdowns=()=>{let trigger=null;for(const {host}of Object.values(options))if(host.open){host.open=false;trigger=host.querySelector('summary');}trigger?.focus({preventScroll:true});};
+  const outside=e=>{if(!Object.values(options).some(({host})=>host.contains(e.target)))closeDropdowns();};
+  const escape=e=>{if(e.key==='Escape'&&Object.values(options).some(({host})=>host.open)){e.preventDefault();e.stopPropagation();closeDropdowns();}};
+  doc.addEventListener('click',outside);doc.addEventListener('keydown',escape,true);
   const quickButtons={};for(const key of ['offline','network','resources','traffic','renewal']){
    const b=button('',()=>toggle('quick',key,!p.quick.includes(key)),'dashboard-quick-item');b.dataset.quick=key;quickButtons[key]=b;quick.append(b);
   }
@@ -56,7 +60,7 @@
   function update(agents,c,server,ready){
    catalog=c;if(ready)preferences.validate(catalog);model=M.select(agents,catalog,p,server);
    home.hidden=model.simple;get('dashboard-expand').hidden=!model.simple;
-   const all=[...agents.values()].filter(a=>!a.revoked),count=(key,id)=>all.filter(a=>key==='tags'?(a.tag_ids||[]).includes(id):key==='groups'?(a.group_id||'__ungrouped')===id:key==='countries'?(a.country_code||'unknown')===id:M.lifecycle(a)===id).length;
+   const all=[...agents.values()].filter(a=>!a.revoked),count=(key,id)=>all.filter(a=>key==='tags'?(a.tag_ids||[]).includes(id):key==='groups'?(catalog.groups.some(g=>g.id===a.group_id)?a.group_id:'__ungrouped')===id:key==='countries'?(a.country_code||'unknown')===id:M.lifecycle(a)===id).length;
    optionRows('groups',[...catalog.groups.map(g=>[g.id,g.name,count('groups',g.id)]),['__ungrouped','未分组',count('groups','__ungrouped')]]);
    optionRows('tags',catalog.tags.map(t=>[t.id,t.name,count('tags',t.id)]));
    optionRows('countries',[...new Set(all.map(a=>a.country_code||'unknown'))].sort().map(id=>[id,country(id),count('countries',id)]));
@@ -72,7 +76,7 @@
    return model;
   }
   return {preferences,update,apply,clear,collapse(id){toggle('collapsed',id,!p.collapsed.includes(id));},
-   close(){observer?.disconnect();root.removeEventListener('scroll',onScroll);if(scrollFrame)root.cancelAnimationFrame(scrollFrame);shell.close();},snapshot:()=>({state:{...p},stuck,simple:model?.simple})};
+   close(){observer?.disconnect();doc.removeEventListener('click',outside);doc.removeEventListener('keydown',escape,true);root.removeEventListener('scroll',onScroll);if(scrollFrame)root.cancelAnimationFrame(scrollFrame);shell.close();},snapshot:()=>({state:{...p},stuck,simple:model?.simple})};
  }
  root.DashboardView={create};
 })(globalThis);

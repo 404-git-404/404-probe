@@ -3,7 +3,7 @@
  const exclusion={once:'一次性买断',missing_price:'未设置价格',invalid_price:'价格无法识别',missing_currency:'未设置币种',invalid_currency:'币种无法识别',missing_period:'未设置付款周期',invalid_period:'付款周期无法识别',missing_rate:'缺汇率'};
  const number=value=>{const [integer,fraction]=String(value??'—').split('.');return integer.replace(/\B(?=(\d{3})+(?!\d))/g,',')+(fraction!==undefined?'.'+fraction:'');};
  const decimal=value=>{const m=/^([0-9]+)(?:\.([0-9]+))?$/.exec(String(value??''));if(!m)return '—';const f=(m[2]||'').padEnd(3,'0'),c=BigInt(m[1])*100n+BigInt(f.slice(0,2))+(f[2]>='5'?1n:0n);return (c/100n)+'.'+String(c%100n).padStart(2,'0');};
- const symbol={USD:'$',CNY:'¥',EUR:'€',HKD:'HK$',JPY:'¥',GBP:'£'};
+ const symbol={USD:'$',EUR:'€',GBP:'£'};
  function create({api,visibleIDs,refresh,document:doc=root.document}){
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
   const button=(text,fn,cls='')=>{const n=el('button',cls,text);n.type='button';n.addEventListener('click',fn);return n;};
@@ -11,7 +11,7 @@
   const shell=root.DialogShell.attach(dialog,{title:'支出估算',subtitle:'按套餐价格折算成 USD，只是估算'}),body=el('div','shell-content'),error=el('p','dashboard-dialog-error');error.setAttribute('role','alert');error.hidden=true;
   const scopes=el('div','expense-scopes'),all=button('全部设备',()=>setScope('all')),filtered=button('当前筛选',()=>setScope('filtered')),included=el('span','dashboard-dialog-note');all.dataset.expenseScope='all';filtered.dataset.expenseScope='filtered';scopes.append(all,filtered,included);
   const totals=el('div','expense-totals'),monthly=el('strong'),yearly=el('strong');monthly.id='expense-monthly';yearly.id='expense-yearly';for(const [label,value]of [['每月',monthly],['每年',yearly]]){const tile=el('section');tile.append(el('small','',label),value);totals.append(tile);}
-  const table=el('table','expense-table'),deviceDetails=el('details','expense-devices'),deviceSummary=el('summary','','按设备查看 ▸'),deviceRows=el('div'),excluded=el('p','dashboard-dialog-info');deviceDetails.append(deviceSummary,deviceRows);excluded.id='expense-excluded';
+  const table=el('table','expense-table'),deviceDetails=el('details','expense-devices'),deviceSummary=el('summary','','按设备查看'),deviceRows=el('div'),excluded=el('p','dashboard-dialog-info');deviceDetails.append(deviceSummary,deviceRows);excluded.id='expense-excluded';
   const rates=el('section','expense-rates'),ratesTitle=el('h3','','汇率（手动填写，1 USD = ）'),rateRows=el('div','expense-rate-grid'),addRow=el('div','expense-add-currency'),currency=el('input'),add=button('添加币种',addCurrency),rateNote=el('p','dashboard-dialog-note','只用于估算，不联网获取。缺汇率的币种不计入合计；美元固定为 1。');currency.id='expense-new-currency';currency.placeholder='例如 EUR';currency.setAttribute('aria-label','新增币种');currency.maxLength=3;addRow.append(currency,add);rates.append(ratesTitle,rateRows,addRow,rateNote);
   body.append(error,scopes,totals,table,el('p','dashboard-dialog-note','月付、季付、半年付、年付统一折成每月。'),deviceDetails,excluded,rates);dialog.append(body);const actions=el('div','shell-actions'),save=button('保存汇率',saveRates,'primary-action');actions.append(button('关闭',shell.close),save);dialog.append(actions);
   const updatedFormatter=new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'});
@@ -29,7 +29,7 @@
    deviceRows.replaceChildren(...(estimate.devices||[]).map(d=>{const row=el('div','expense-device-row');row.append(el('span','',d.name),el('span','',d.exclusion?exclusion[d.exclusion]||'未计入':d.monthly_usd==null?'缺汇率':'$'+number(decimal(d.monthly_usd))+' / 月'));if(d.estimated_from_purchase)row.append(el('small','dashboard-dialog-note','按首次价格估算'));return row;}));
    const notes=[`一次性买断 ${estimate.once_count||0} 台`,`未设置价格 ${estimate.missing_price_count||0} 台${estimate.missing_price_devices?.length?'（'+estimate.missing_price_devices.map(d=>d.name).join('、')+'）':''}`];
    if(estimate.missing_rates?.length)notes.push('缺汇率：'+estimate.missing_rates.map(c=>c.currency+' '+c.device_count+' 台').join('、'));
-   const other=(estimate.excluded||[]).filter(d=>!['once','missing_price','missing_rate'].includes(d.reason||d.exclusion));if(other.length)notes.push(other.map(d=>(d.name?d.name+'：':'')+(exclusion[d.reason||d.exclusion]||'套餐资料不完整')).join('；'));
+   const other=(estimate.excluded||[]).filter(d=>!['once','missing_price','missing_rate'].includes(d.reason||d.exclusion));if(other.length)notes.push(other.map(d=>(d.name?d.name+'：':'')+(exclusion[d.reason||d.exclusion]||'套餐资料不完整，请在设备详情里补充')).join('；'));
    excluded.textContent='未计入：'+notes.join(' · ');
   }
   function addRate(code,value='',saved=false){if(code==='USD'||inputs.has(code))return;const label=el('label','expense-rate'),text=el('span','',code),input=el('input'),remove=button('删除',()=>removeRate(code));input.type='text';input.inputMode='decimal';input.value=value;input.id='expense-rate-'+code;input.setAttribute('aria-label','1 USD 兑换 '+code);label.append(text,input,remove);rateRows.append(label);inputs.set(code,{input,label,saved});}

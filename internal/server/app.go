@@ -613,6 +613,8 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		defer sessionTimer.Stop()
 	}
 
+	// Domain-policy tightening may take up to three seconds to close this SSE.
+	// Session revocation and expiry still use their immediate channels below.
 	var originChecked time.Time
 	originAllowed := func() bool {
 		if session == nil {

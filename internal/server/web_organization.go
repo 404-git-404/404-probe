@@ -15,6 +15,7 @@ import (
 )
 
 func (a *App) organizationRoutes(mux *http.ServeMux) {
+	mux.Handle("GET /api/v1/web/organization/catalog", a.requireWebSession(http.HandlerFunc(a.handleOrganizationCatalog), true))
 	for _, resource := range []string{"groups", "tags", "exchange-rates"} {
 		mux.Handle("GET /api/v1/web/"+resource, a.requireWebSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleOrganizationList(w, r, resource) }), true))
 	}
@@ -27,6 +28,21 @@ func (a *App) organizationRoutes(mux *http.ServeMux) {
 		mux.Handle(route.method+" /api/v1/web/"+route.path, a.requireWebMutation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { a.handleOrganizationMutation(w, r, route.kind) })))
 	}
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/organization", a.requireWebSession(http.HandlerFunc(a.handleAgentOrganization), true))
+}
+
+// Directory-only snapshot: one catalog revision, no dashboard state or network
+// computation. Counts and plan currency codes support the existing dialogs.
+func (a *App) handleOrganizationCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.URL.EscapedPath() != "/api/v1/web/organization/catalog" || r.URL.RawQuery != "" {
+		writeJobError(w, 400, "invalid_request", "invalid catalog path")
+		return
+	}
+	c, items, err := a.store.OrganizationDirectory(r.Context())
+	if err != nil {
+		a.organizationError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"revision": c.Revision, "groups": c.Groups, "tags": c.Tags, "exchange_rates": c.Rates, "items": items})
 }
 
 func (a *App) handleOrganizationList(w http.ResponseWriter, r *http.Request, resource string) {

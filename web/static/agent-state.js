@@ -89,7 +89,7 @@
     plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', public_egress_check: 'egress',
     security: 'security', management: 'management', traffic: 'traffic', removal: 'removal',
     group_id:'organization', tag_ids:'organization', organization_revision:'organization',
-    renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', dashboard_loaded:'summary', network:'summary',
+    renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', masked_egress:'summary', dashboard_loaded:'summary', network:'summary',
   })[key] || 'runtime';
   const fullEvent = value => ['created_at', 'revoked', 'management', 'outbounds', 'google_status', 'security', 'plan']
     .some(key => Object.hasOwn(value, key));
@@ -288,7 +288,7 @@
     }, close() { closed = true; for (const id of jobs.keys()) cancel(id); },
     size: () => jobs.size};
   }
-  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay, upgradeButtonHint, updaterHealthReason, updaterTroubleshootingURL, appendUpgradeReason};
+  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareReleaseVersions, compareStableVersions, upgradeReasonDisplay, upgradeButtonHint, updaterHealthReason, updaterTroubleshootingURL, appendUpgradeReason};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AgentState = api;
 })(globalThis);

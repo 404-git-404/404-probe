@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -20,6 +23,7 @@ func TestFrontendReviewStrictJSON(t *testing.T) {
 	defer a.Shutdown()
 	for _, path := range []string{"/api/v1/web/groups", "/api/v1/web/expenses/estimate"} {
 		for _, body := range []string{
+			`{"scope":"all","\u0073cope":"filtered"}`, `{"scope":"all","ſcope":"filtered"}`,
 			`{"name":"a","Name":"b","expected_revision":1}`, `{"expected_revision":1,"EXPECTED_REVISION":2}`,
 			`{"scope":"all","SCOPE":"filtered"}`, `{"name":"` + strings.Repeat("a", 64<<10) + `"}`,
 			`{"a":` + strings.Repeat("[", 9) + `0` + strings.Repeat("]", 9) + `}`,
@@ -41,6 +45,19 @@ func TestFrontendReviewStrictJSON(t *testing.T) {
 			t.Fatal(w.Code)
 		}
 	}
+	for _, body := range []string{`{"key":1,"Key":2}`, `{"scope":1,"ſcope":2}`, `{"name":1,"\u006eame":2}`} {
+		if err := uniqueOrganizationJSON(json.NewDecoder(strings.NewReader(body)), 0); err == nil {
+			t.Fatal("duplicate simple-fold key accepted", body)
+		}
+	}
+	// Valid short fields plus whitespace isolate the byte limit from name limits.
+	valid := `{"scope":"all"}`
+	if w := organizationHTTP(t, a, "POST", "/api/v1/web/expenses/estimate", valid+strings.Repeat(" ", (64<<10)-len(valid)), true, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := organizationHTTP(t, a, "POST", "/api/v1/web/expenses/estimate", valid+strings.Repeat(" ", (64<<10)+1-len(valid)), true, true); w.Code != 400 {
+		t.Fatal("oversize body accepted", w.Code)
+	}
 	if w := organizationHTTP(t, a, "POST", "/api/v1/web/expenses/estimate", `{"scope":"all","agent_ids":null}`, true, true); w.Code != 400 {
 		t.Fatal(w.Code)
 	}
@@ -48,6 +65,50 @@ func TestFrontendReviewStrictJSON(t *testing.T) {
 	for _, body := range []string{strings.Repeat("x", (64<<10)+1), `[[[[[[[[[[0]]]]]]]]]]`} {
 		if w := organizationHTTP(t, a, "GET", "/api/v1/web/dashboard", body, true, false); w.Code != 200 {
 			t.Fatal(w.Code)
+		}
+	}
+}
+
+func TestDashboardReviewDirectoryAndGzip(t *testing.T) {
+	a, s, id, _ := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	group := organizationHTTPChange(t, a, "POST", "/api/v1/web/groups", map[string]any{"expected_revision": 1, "name": "Directory"})
+	organizationHTTPChange(t, a, "PUT", webAgentPathPrefix+id+"/organization", map[string]any{"expected_revision": group.Revision, "group_id": group.ID, "tag_ids": []string{}, "new_tags": []string{"Tag"}})
+	if _, err := s.PutAgentPlan(t.Context(), storage.AgentPlan{AgentID: id, Currency: "EUR", RenewalPrice: "12", RenewalPricePeriod: "monthly"}, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	w := organizationHTTP(t, a, "GET", "/api/v1/web/organization/catalog", "", true, false)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"currency":"EUR"`) || strings.Contains(w.Body.String(), `"state"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, encoding := range []string{"gzip", "gzip;q=0", "br, gzip;q=0.5"} {
+		r := httptest.NewRequest("GET", "/api/v1/web/dashboard", nil)
+		r.Host = "probe.test"
+		addTestWebSession(t, a, r)
+		r.Header.Set("Accept-Encoding", encoding)
+		w := httptest.NewRecorder()
+		a.Handler().ServeHTTP(w, r)
+		body := w.Body.Bytes()
+		if encoding != "gzip;q=0" {
+			if w.Header().Get("Content-Encoding") != "gzip" {
+				t.Fatal(w.Header())
+			}
+			reader, err := gzip.NewReader(bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err = io.ReadAll(reader)
+			reader.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else if w.Header().Get("Content-Encoding") != "" {
+			t.Fatal("ignored gzip q=0")
+		}
+		var data dashboardResponse
+		if w.Code != 200 || json.Unmarshal(body, &data) != nil || len(data.Items) != 1 {
+			t.Fatal(w.Code, string(body))
 		}
 	}
 }

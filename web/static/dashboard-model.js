@@ -19,14 +19,15 @@
   const traffic=t.quota_state==='current'&&typeof p?.quota_bytes==='number'&&p.quota_bytes>0&&typeof p?.usage_bytes==='number'&&p.usage_bytes/p.quota_bytes>=.8;
   const network=networkKnown&&n.active===true;
   const order=State.compareStableVersions(a.version,server?.version);
-  return {offline:lifecycle(a)==='offline',network,resources:resource,traffic,renewal:a.renewal?.type==='due_soon',health:network||resource||traffic,upgrade:order===-1,versionUnknown:order===null,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
+  const nonformal=order===null&&/^v\d+\.\d+\.\d+-(?:beta|rc)\.[1-9]\d*$/.test(a.version||'')&&State.compareReleaseVersions(a.version,a.version)===0;
+  return {offline:lifecycle(a)==='offline',network,resources:resource,traffic,renewal:a.renewal?.type==='due_soon',health:network||resource||traffic,upgrade:order===-1,versionNonformal:nonformal,versionUnknown:order===null&&!nonformal,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
  }
  function aggregate(agents,server,now=Date.now()){
-  const s={registered:0,online:0,offline:0,paused:0,unknown:0,health:0,insufficient:0,upgrade:0,versionUnknown:0,renewal:0,overdue:0,renewalInvalid:0,nearest:null,quick:Object.fromEntries(Object.keys(QUICK).map(k=>[k,0]))};
+  const s={registered:0,online:0,offline:0,paused:0,unknown:0,health:0,insufficient:0,upgrade:0,versionUnknown:0,versionNonformal:0,renewal:0,overdue:0,renewalInvalid:0,nearest:null,quick:Object.fromEntries(Object.keys(QUICK).map(k=>[k,0]))};
   for(const a of agents.values()){
    if(a.revoked)continue;s.registered++;s[lifecycle(a)]++;
    const f=flags(a,server,now);for(const k of Object.keys(QUICK))if(f[k])s.quick[k]++;
-   for(const k of ['health','insufficient','upgrade','versionUnknown','renewal'])if(f[k])s[k]++;
+   for(const k of ['health','insufficient','upgrade','versionUnknown','versionNonformal','renewal'])if(f[k])s[k]++;
    if(a.renewal?.type==='overdue')s.overdue++;if(a.renewal?.type==='invalid')s.renewalInvalid++;
    const days=a.renewal?.days;if(Number.isInteger(days)&&days>=0&&(!s.nearest||days<s.nearest.renewal.days||(days===s.nearest.renewal.days&&a.agent_id<s.nearest.agent_id)))s.nearest=a;
   }return s;
@@ -44,7 +45,8 @@
  const collator=new Intl.Collator('zh-CN');
  const byName=(a,b)=>collator.compare(a.name||'',b.name||'')||a.agent_id.localeCompare(b.agent_id);
  function select(agents,catalog,p,server,now=Date.now()){
-  const list=[...agents.values()].filter(a=>matches(a,p,server,now)),groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
+  const groupIDs=new Set(catalog.groups.map(g=>g.id));
+  const list=[...agents.values()].map(a=>a.group_id&&!groupIDs.has(a.group_id)?{...a,group_id:null}:a).filter(a=>matches(a,p,server,now)),groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
   if(p.sort==='renewal')list.sort((a,b)=>(a.renewal?.days??Infinity)-(b.renewal?.days??Infinity)||byName(a,b));else list.sort(byName);
   const sections=p.sort==='group'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
   return {list,sections,summary:aggregate(agents,server,now),simple:agents.size<=3&&!catalog.groups.length&&!catalog.tags.length&&!active(p)&&!p.expanded};

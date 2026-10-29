@@ -7,21 +7,27 @@
   shell.addEventListener('toggle',()=>{p.overviewClosed=!shell.open;get('action').textContent=shell.open?'收起 ▴':'展开 ▾';save();});
   for(const [id,key]of [['upgrade','upgrade'],['health','health'],['renewal','renewal']])get(id).addEventListener('click',()=>onfilter(key));
   get('expense').addEventListener('click',e=>onexpense(e.currentTarget));
-  get('period').value=p.expensePeriod;let last=null;
-  get('period').addEventListener('change',()=>{p.expensePeriod=get('period').value;save();money();});
-  function money(){get('money').textContent=last?'$'+(p.expensePeriod==='yearly'?last.yearly_usd:last.monthly_usd)+' / '+(p.expensePeriod==='yearly'?'年':'月'):'—';}
+  let last=null;
+  const periods=[...(get('period').querySelectorAll?.('button')||[])];
+  for(const b of periods)b.addEventListener('click',()=>{p.expensePeriod=b.dataset.period;save();money();});
+  for(const b of doc.querySelectorAll?.('[data-overview-info]')||[]){const note=doc.getElementById(b.getAttribute('aria-controls'));const show=value=>{note.hidden=!value;b.setAttribute('aria-expanded',String(value));};b.addEventListener('focus',()=>show(true));b.addEventListener('click',()=>show(true));b.addEventListener('blur',()=>show(false));b.addEventListener('keydown',e=>{if(e.key==='Escape')show(false);});}
+  function money(){get('money').textContent=last&&last.included_count!==0?'$'+(p.expensePeriod==='yearly'?last.yearly_usd:last.monthly_usd)+' / '+(p.expensePeriod==='yearly'?'年':'月'):'—';get('money-note').textContent=last?.included_count===0?`未设置价格 ${last.missing_price_count||0} 台`:last?.missing_rates?.length?'有币种缺汇率':'';for(const b of periods)b.setAttribute('aria-pressed',String(b.dataset.period===p.expensePeriod));}
+  money();
   function update(agents,ready,{summary=null,catalog={},server={},simple=false}={}){
    shell.classList.toggle('overview-simple',simple);get('scope').textContent=ready?'全部 '+summary.registered+' 台':'正在读取';
    doc.getElementById('dashboard-expand').hidden=!simple;
    if(!ready){for(const id of ['online','health','renewal'])get(id).textContent='等待读取';get('health-note').textContent='资料读取完成后显示健康汇总';return;}
    const s=summary||M.aggregate(agents,server);shell.classList.toggle('has-attention',!!(s.health||s.insufficient));get('online').textContent=`${s.online} / ${s.registered}`;
    get('offline').textContent=`离线 ${s.offline} · 暂停 ${s.paused}`;get('upgrade').textContent=`待升级 ${s.upgrade} 台`;get('upgrade').disabled=!s.upgrade;get('upgrade').hidden=simple&&!s.upgrade;
-   get('versions').textContent=[s.versionUnknown?`版本无法识别 ${s.versionUnknown} 台`:'',s.unknown?`状态未知 ${s.unknown} 台`:''].filter(Boolean).join(' · ');
-   get('health').textContent=s.health?`${s.health} 台需要关注`:s.insufficient?'暂无已知异常':s.registered?'✓ 全部正常':'尚无设备';
+   get('few-offline').textContent=`离线 ${s.offline}`;
+   get('versions').textContent=[s.versionNonformal?`非正式版本 ${s.versionNonformal} 台，未计入待升级`:'',s.versionUnknown?`版本无法识别 ${s.versionUnknown} 台`:'',s.unknown?`状态未知 ${s.unknown} 台`:''].filter(Boolean).join(' · ');
+   get('health').textContent=s.health?`⚠ ${s.health} 台需要关注`:s.insufficient?'暂无已知异常':s.registered?'✓ 全部正常':'尚无设备';
    get('health').classList.toggle('attention',s.health>0);get('health').disabled=!s.health;
    get('health-note').textContent=`网络异常 ${s.quick.network} · 资源吃紧 ${s.quick.resources} · 流量将满 ${s.quick.traffic}`;
-   get('unknown').textContent=s.insufficient?`资料不足 ${s.insufficient} 台` : '';
-   get('renewal').textContent=`${s.renewal} 台 7 天内续费`;get('renewal').disabled=!s.renewal;get('overdue').textContent=`已到期 ${s.overdue}`;
+   get('unknown').textContent=s.insufficient?(s.health?`${s.insufficient} 台暂无最新数据（离线或尚未检测）`:`其余 ${s.insufficient} 台暂无最新数据（离线或尚未检测）`) : '';
+   get('renewal').replaceChildren?.();
+   if(doc.createElement){const count=doc.createElement('strong'),label=doc.createElement('span');count.textContent=s.renewal+' 台';label.textContent='7 天内续费';get('renewal').append(count,label);}else get('renewal').textContent=`${s.renewal} 台 7 天内续费`;
+   get('renewal').classList.toggle('attention',s.renewal>0);get('renewal').disabled=!s.renewal;get('overdue').textContent=`已到期 ${s.overdue}`;
    get('nearest').textContent=s.nearest?`最近：${s.nearest.name} · ${s.nearest.renewal.date}（${s.nearest.renewal.days===0?'今天':s.nearest.renewal.days+' 天后'}）`:s.renewalInvalid?'续费日期或时区需要检查':'尚未设置待续费日期';
    last=catalog.expenses||null;money();get('action').textContent=shell.open?'收起 ▴':'展开 ▾';
   }

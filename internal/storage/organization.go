@@ -140,6 +140,54 @@ func (s *Store) OrganizationCatalog(ctx context.Context) (OrganizationCatalog, e
 	}
 	return c, tx.Commit()
 }
+
+type OrganizationDirectoryItem struct {
+	AgentOrganization
+	Plan *struct {
+		Currency string `json:"currency"`
+	} `json:"plan,omitempty"`
+}
+
+func (s *Store) OrganizationDirectory(ctx context.Context) (OrganizationCatalog, []OrganizationDirectoryItem, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return OrganizationCatalog{}, nil, err
+	}
+	defer tx.Rollback()
+	c, err := organizationCatalogTx(ctx, tx)
+	if err != nil {
+		return c, nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT a.id,COALESCE(p.currency,'') FROM agents a LEFT JOIN agent_plans p ON p.agent_id=a.id WHERE a.revoked=0 ORDER BY a.id`)
+	if err != nil {
+		return c, nil, err
+	}
+	items := []OrganizationDirectoryItem{}
+	for rows.Next() {
+		var id, currency string
+		if err = rows.Scan(&id, &currency); err != nil {
+			rows.Close()
+			return c, nil, err
+		}
+		assignment, ok := c.Assignments[id]
+		if !ok {
+			assignment = AgentOrganization{AgentID: id, TagIDs: []string{}, Revision: c.Revision}
+		}
+		item := OrganizationDirectoryItem{AgentOrganization: assignment}
+		if currency != "" {
+			item.Plan = &struct {
+				Currency string `json:"currency"`
+			}{currency}
+		}
+		items = append(items, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return c, nil, err
+	}
+	return c, items, tx.Commit()
+}
 func organizationCatalogTx(ctx context.Context, tx *sql.Tx) (OrganizationCatalog, error) {
 	c := OrganizationCatalog{Groups: []AgentGroup{}, Tags: []AgentTag{}, Rates: []ExchangeRate{}, Assignments: map[string]AgentOrganization{}}
 	if err := tx.QueryRowContext(ctx, `SELECT revision FROM organization_meta WHERE id=1`).Scan(&c.Revision); err != nil {

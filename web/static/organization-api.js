@@ -11,7 +11,7 @@
    if(!response.ok){const code=value.error?.code,messages={revision_conflict:'资料已被其他页面修改，已重新读取。请检查后再保存。',name_conflict:'这个名称已经存在，请选择已有项目或换一个名称。',agent_revoked:'这台设备已撤销，无法修改归属。',limit_reached:'项目数量已达到上限。',usd_read_only:'美元汇率固定为 1，不能修改。',not_found:'项目已删除，请重新读取。'};throw Object.assign(Error(messages[code]||(response.status===409?'资料有冲突，已重新读取。请检查后再保存。':'填写内容不正确或暂时无法保存，请检查后重试。')),{status:response.status,code});}
    return value;
   }
-  const catalog=()=>read('/api/v1/web/dashboard');
+  const catalog=()=>read('/api/v1/web/organization/catalog');
   return {request,catalog};
  }
  root.OrganizationAPI={create};

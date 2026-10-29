@@ -1115,7 +1115,7 @@ function setCardText(node, value) {
 }
 
 const renderedCardKeys=new Map();
-function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1140,7 +1140,7 @@ function renderDashboard(dirty=null) {
     if(!gv){const node=document.createElement('section'),header=document.createElement('button'),body=document.createElement('div');node.className='dashboard-group';header.type='button';header.className='dashboard-group-header';header.addEventListener('click',()=>dashboardUI.collapse(group.id));body.className='dashboard-card-grid';node.append(header,body);gv={node,header,body};groupViews.set(group.id,gv);}
     const collapsed=prefs.collapsed.includes(group.id),counts={online:0,offline:0,paused:0,unknown:0};for(const a of group.items)counts[DashboardModel.lifecycle(a)]++;
     const status=counts.online===group.items.length?'全部在线':Object.entries(counts).filter(([,n])=>n).map(([key,n])=>DashboardModel.STATUS[key]+' '+n).join(' · ');
-    setCardText(gv.header,`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台 · ${status}`);gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=prefs.sort!=='group'||model.simple;gv.body.hidden=collapsed;
+    const title=`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台`,headerKey=title+status;if(gv.header.dataset.key!==headerKey){gv.header.dataset.key=headerKey;const name=document.createElement('span'),note=document.createElement('small');name.textContent=title;note.textContent=status;note.className=counts.online===group.items.length?'all-online':'';gv.header.replaceChildren(name,note);}gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=prefs.sort!=='group'||model.simple;gv.body.hidden=collapsed;
     if(layout!==lastLayout){if(gv.node!==groupPosition){if(gv.node.parentNode===container&&container.moveBefore)container.moveBefore(gv.node,groupPosition);else container.insertBefore(gv.node,groupPosition);}groupPosition=gv.node.nextElementSibling;}
     if(collapsed)continue;
     let position=gv.body.firstElementChild;
@@ -1208,17 +1208,13 @@ function createPublicEgress(agentID) {
     const lifecycle=Boolean(!agent.online||agent.disabled_at||agent.revoked||agent.state?.stale);
     const shown=[],families=[];
     for(const {family,item,tip} of items) {
-      const observation=p?.[family],status=observation?.status||'unknown';
+      const raw=p?.[family],masked=agent.masked_egress?.[family],observation=raw?.checked_at?raw:masked,status=observation?.status||'unknown';
       const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
       const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
-      if(!available||stale){
-        const mask=(agent.masked_ips||[]).find(value=>family==='ipv4'?value.includes('*'):!value.includes('*'));
-        if(mask&&!lifecycle){const full=`${family==='ipv4'?'IPv4':'IPv6'} · ${mask} · 遮挡显示`;setCardText(tip,full);item.setAttribute('aria-label',full);item.dataset.status='available';item.dataset.stale='false';shown.push(item,tip);families.push(family);}
-        continue;
-      }
+      if(!available||stale)continue;
       const at=new Date(observation.checked_at).toLocaleString();
-      const history=observation.last_success;
-      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${PublicEgressCheck.maskIP(observation.ip)} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+PublicEgressCheck.maskIP(history.ip)+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出站观测`;
+      const mask=observation===masked?masked.ip:PublicEgressCheck.maskIP(observation.ip);
+      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${mask} · ${at}；Agent 实际网络路径的出站观测`;
       setCardText(tip,full);item.setAttribute('aria-label',full);
       item.dataset.status=status;item.dataset.stale='false';
       shown.push(item,tip);families.push(family);
