@@ -24,6 +24,9 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 		t.Skip("opt-in interface measurement")
 	}
 	for _, n := range []int{50, 100, 200} {
+		if only := os.Getenv("V110_PERF_COUNT"); only != "" && only != fmt.Sprint(n) {
+			continue
+		}
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "performance.db")
 			s, err := storage.Open(t.Context(), path)
@@ -56,7 +59,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 				if w := postWithHeaders(t, a, token, "/api/v1/report", report, userHeaders); w.Code != 200 {
 					t.Fatal(w.Body.String())
 				}
-				configureUserTargets(t, s, id, now, [3]string{"8.8.8.8", "1.1.1.1", "9.9.9.9"}, 443)
+				configureUserTargets(t, s, id, now.Add(-2*time.Hour), [3]string{"8.8.8.8", "1.1.1.1", "9.9.9.9"}, 443)
 				if _, err := s.PutAgentPlan(t.Context(), storage.AgentPlan{AgentID: id, Currency: "USD", RenewalPrice: "12", RenewalPricePeriod: "quarterly", RenewalDate: "2026-11-01", Timezone: "UTC", TrafficMode: "sum", CycleKind: "monthly", CycleCount: 1, CycleAnchor: "2026-10-01", QuotaValue: "100", QuotaUnit: "GB"}, nil, now); err != nil {
 					t.Fatal(err)
 				}
@@ -85,6 +88,24 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 			if err := tx.Commit(); err != nil {
 				t.Fatal(err)
 			}
+			cfgs := seedDashboardSoak(t, a, s, ids, tokens, now)
+			for i, id := range ids {
+				if i%7 == 0 {
+					if _, err := db.Exec(`UPDATE agent_plans SET quota_bytes=100,usage_bytes=85 WHERE agent_id=?`, id); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if i%17 == 0 {
+					if _, err := db.Exec(`UPDATE agent_plans SET quota_bytes=0 WHERE agent_id=?`, id); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if i%13 == 0 {
+					if _, err := db.Exec(`UPDATE agent_plans SET cycle_end=? WHERE agent_id=?`, now.Add(-time.Hour).UnixMilli(), id); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 			server := httptest.NewServer(a.Handler())
 			defer server.Close()
 			client := server.Client()
@@ -110,11 +131,19 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 					t.Fatal(err, len(decoded.Items))
 				}
 			}
+			alerts := 0
 			for _, item := range decoded.Items {
+				if item.Network.Active != nil && *item.Network.Active {
+					alerts++
+				}
 				if !item.Network.Monitored || !item.Network.Known {
 					t.Fatal("valid network targets absent", item.AgentID, item.Network)
 				}
 			}
+			if alerts == 0 {
+				t.Fatal("fixture has no actual red quality alerts")
+			}
+			t.Logf("V110_QUALITY red_devices=%d missing_devices=%d lanes=3 window_minutes=90", alerts, (n+4)/5)
 			warm := append([]float64(nil), samples[1:]...)
 			sort.Float64s(warm)
 			var rows int
@@ -124,6 +153,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 			result := map[string]any{"devices": n, "cold_ms": samples[0], "warm_median_ms": (warm[4] + warm[5]) / 2, "warm_p95_ms": warm[9], "response_bytes": size, "requests": 1, "minute_rows": rows, "ipv4_tcp_targets_per_device": 3, "samples_ms": samples}
 			encoded, _ := json.Marshal(result)
 			t.Log("V110_PERF " + string(encoded))
+			dashboardSoak(t, a, server, ids, tokens, cfgs)
 			dashboardBrowserPerformance(t, a, server, ids, tokens, now, n, rows)
 		})
 	}

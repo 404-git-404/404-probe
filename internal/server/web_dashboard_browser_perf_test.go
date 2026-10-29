@@ -58,11 +58,10 @@ func dashboardBrowserPerformance(t *testing.T, a *App, server *httptest.Server, 
 			t.Fatal(t.Context().Err())
 		case <-tick.C:
 			raw, err := os.ReadFile(filepath.Join(root, "command-"+prefix+".json"))
-			if os.IsNotExist(err) {
-				continue
-			}
 			if err != nil {
-				t.Fatal(err)
+				// Windows may briefly lock the command during atomic replacement.
+				// The existing deadline still bounds permanent read failures.
+				continue
 			}
 			var cmd struct {
 				Command  string  `json:"command"`
