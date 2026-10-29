@@ -631,7 +631,14 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 				a.webAuth.revokeSession(session)
 				return
 			}
-			frame := fmt.Appendf(nil, "event: agent\ndata: %s\n\n", message)
+			event := "agent"
+			var kind struct {
+				Event string `json:"event"`
+			}
+			if json.Unmarshal(message, &kind) == nil && kind.Event == "organization" {
+				event = "organization"
+			}
+			frame := fmt.Appendf(nil, "event: %s\ndata: %s\n\n", event, message)
 			if err := writeSSEFrame(w, controller, frame, a.now(), sseFrameWriteTimeout); err != nil {
 				return
 			}
