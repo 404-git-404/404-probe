@@ -222,7 +222,27 @@ func (a *App) verifyLegacyRelease(ctx context.Context, target upgradeTarget, arc
 	return nil
 }
 func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeTarget {
-	if record.State != nil && record.State.AgentUpdaterHealth.ReasonCode() != "" {
+	if record.State != nil {
+		comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version)
+		if ok && comparison >= 0 {
+			target.Supported = false
+			switch {
+			case comparison == 0:
+				target.Reason = "已是最新版本"
+				target.ReasonCode = "already_latest"
+			default:
+				target.Reason = "Agent 版本高于 Server，不能回退；如需回退请重新安装"
+				target.ReasonCode = "agent_newer_than_server"
+			}
+			return target
+		}
+	}
+
+	comparison, comparable := 0, false
+	if record.State != nil {
+		comparison, comparable = buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version)
+	}
+	if comparable && comparison < 0 && record.State.AgentUpdaterHealth.ReasonCode() != "" {
 		target.Supported = false
 		target.ReasonCode = record.State.AgentUpdaterHealth.ReasonCode()
 		target.Reason = "Agent updater health: " + record.State.AgentUpdaterHealth.Status
@@ -258,20 +278,10 @@ func targetForAgent(target upgradeTarget, record storage.AgentSnapshot) upgradeT
 		target.ReasonCode = "agent_unavailable"
 		return target
 	}
-	comparison, ok := buildinfo.CompareReleaseVersions(record.State.AgentVersion, target.Version)
-	if !ok || comparison >= 0 {
+	if !comparable {
 		target.Supported = false
-		switch {
-		case !ok:
-			target.Reason = "目标不是严格更新版本；重复升级与降级不可用"
-			target.ReasonCode = "version_unrecognized"
-		case comparison == 0:
-			target.Reason = "已是最新版本"
-			target.ReasonCode = "already_latest"
-		default:
-			target.Reason = "Agent 版本高于 Server，不能回退；如需回退请重新安装"
-			target.ReasonCode = "agent_newer_than_server"
-		}
+		target.Reason = "目标不是严格更新版本；重复升级与降级不可用"
+		target.ReasonCode = "version_unrecognized"
 	}
 	if !buildinfo.IsCanonicalVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2 {
 		target.Supported = false

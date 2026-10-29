@@ -148,7 +148,7 @@ async function loadMutationSession() {
 function refreshUpgradeSelection() {
   const target = upgradeReleaseTargets[Number(upgradeReleaseSelect.value)];
   upgradeTargetVersion.textContent = target?.version || '—';
-  upgradeReleaseReason.textContent = AgentState.upgradeReasonDisplay(target);
+  AgentState.appendUpgradeReason(upgradeReleaseReason, target, serverBuild);
   upgradeBetaLabel.hidden = target?.channel !== 'beta';
   upgradeAgentConfirm.disabled = !target?.supported || (target.channel === 'beta' && !upgradeBetaConfirm.checked);
 }
@@ -1462,7 +1462,7 @@ function createAgentCard(initialAgent) {
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a)});
-    detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id));
+    detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
     const overviewPanel=summary.overview;
     return {card, detailPanel, egressPanel, overviewPanel, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
@@ -1523,7 +1523,7 @@ function createAgentCard(initialAgent) {
       editPlan.disabled = planActionBlocked(agent);
       renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
 
-      countryControls.update(agent);summary.update(agent,detailUpgradeTargets.get(agent.agent_id));
+      countryControls.update(agent);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
       showOffline();
     }};
 }

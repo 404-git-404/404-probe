@@ -32,7 +32,7 @@
   function format(v,binary){let n=Number(v),i=0;const units=binary?['B','KiB','MiB','GiB','TiB']:['B','KB','MB','GB','TB'],base=binary?1024:1000;while(n>=base&&i<4){n/=base;i++;}return Number(n.toFixed(i&&n<10?2:i&&n<100?1:0))+' '+units[i];}
   const countryName=(code)=>catalog.find(c=>c.code===code)?.zh||code||'未知';
   const set=(key,text)=>{if(values[key].textContent!==text)values[key].textContent=text;};
-  function update(a,target=null){current=a;const s=a.state||{},p=a.plan||{},old=!a.online||a.disabled_at||s.stale,valid=v=>!old&&v!=null;
+  function update(a,target=null,serverBuild=null){current=a;const s=a.state||{},p=a.plan||{},old=!a.online||a.disabled_at||s.stale,valid=v=>!old&&v!=null;
    const percent=v=>v==null?'—':Number(v).toFixed(Number(v)>=10?0:1)+'%';
    [s.cpu_percent,s.ram_percent,s.disk_percent].forEach((v,i)=>set('metric'+i,valid(v)?percent(v):'—'));
    set('sub0',old?'当前数据不可用':`负载 ${s.load1==null?'—':s.load1.toFixed(2)} · steal ${percent(s.cpu_steal_percent)}`);
@@ -54,6 +54,8 @@
    set('hostname',s.hostname||'—');set('config',`${s.cpu_cores?s.cpu_cores+' 核':'核心数未知'} · ${s.ram_total?format(s.ram_total,true):'—'} 内存 · ${s.disk_total?format(s.disk_total,true):'—'} 磁盘 · ${s.swap_total==null?'—':format(s.swap_total,true)} Swap`);
    actions.upgrade.disabled=actions.upgrade.disabled||!target?.supported;
    const upgrade=target?.supported?`可升级到 ${target.version}`:'';values.version.replaceChildren(el('span','',a.version||'—'));if(upgrade)values.version.append(el('span','details-upgrade-badge',upgrade));set('upgrade',(a.version||'—')+(target?' → '+target.version+(target.supported?'（与面板相同）':' · '+(root.AgentState?.upgradeReasonDisplay(target)||target.reason||'暂时不能升级，请刷新后查看原因')):' · '+(a.online?'正在读取可升级版本，请稍候':'机器离线，请先恢复连接再升级')));
+   const healthCode=root.AgentState?.updaterHealthReason(a.updater_health);
+   if(healthCode){const note=el('span','details-note');root.AgentState.appendUpgradeReason(note,{reason_code:healthCode},serverBuild);values.upgrade.append(note);}
    set('seen',a.last_seen?time(a.last_seen)+':'+String(new Date(a.last_seen).getSeconds()).padStart(2,'0'):'未知');values.config.title=values.config.textContent;values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('google',a.google_status?.checked_at?'上次 '+time(a.google_status.checked_at):'尚未检测');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
    [editButton,quota,renewal].forEach(n=>{n.disabled=!canWrite(a);});

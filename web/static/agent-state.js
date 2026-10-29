@@ -18,24 +18,37 @@
   }
   const upgradeReasons = Object.freeze({
     rc_agent_required: '这台机器的旧版程序不能直接升级到候选测试版，升级按钮已停用。请先在机器上迁移到支持测试版升级的正式版，原有监控仍可使用。',
-    updater_unavailable: '这台机器的升级服务未运行或连不上，升级按钮已停用。先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），不用重装，原配置和历史都会保留。',
-    updater_socket_missing: '这台机器的升级服务连接文件丢失，升级按钮已停用。服务会在安全时尝试恢复；若未恢复，先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
-    updater_directory_missing: '这台机器的升级服务运行目录丢失，升级按钮已停用。请先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater，让系统重建运行目录；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
-    updater_unreachable: '这台机器的升级服务无法连接或没有正确应答，升级按钮已停用。先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查（docs/updater-troubleshooting.md），保留原配置和历史。',
-    updater_identity_mismatch: '这台机器的升级服务目录或连接文件被替换，或属主、权限不符合要求，升级按钮已停用。请保留现场并按升级服务排查文档检查（docs/updater-troubleshooting.md）；不要删除占位文件、改权限或反复重启，原配置和历史应保留。',
-    updater_unsupported: '这台机器的系统不支持从面板升级，升级按钮已停用。监控仍可使用；需要更新时请按该系统的手动更新说明操作，保留原配置和历史。',
-    rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先在机器上按对应候选版的说明更新配套升级服务，保留原配置和历史；固定 v1.0.1 install.sh upgrade-agent 仅供旧正式版迁移，不能替代候选版所需服务。',
-    legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。',
+    updater_unavailable: '这台机器的升级服务暂时不可用，升级按钮已停用。请先确认没有进行中的升级、恢复或移除，再按升级服务排查文档检查；如果这是 Alpine/OpenRC 机器，则不支持从面板升级。不用重装，原配置和历史都会保留。',
+    updater_socket_missing: '这台机器的升级服务连接文件丢失，升级按钮已停用。新版升级服务在目录安全时会尝试恢复；若未恢复，先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查，保留原配置和历史。',
+    updater_directory_missing: '这台机器的升级服务运行目录丢失，升级按钮已停用。请先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater，让系统重建运行目录；仍不可用就停下并按升级服务排查文档检查，保留原配置和历史。',
+    updater_unreachable: '这台机器的升级服务无法连接或没有正确应答，升级按钮已停用。先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查，保留原配置和历史。',
+    updater_identity_mismatch: '这台机器的升级服务目录或连接文件被替换，或属主、权限不符合要求，升级按钮已停用。请保留现场并按升级服务排查文档检查；不要删除占位文件、改权限或反复重启，原配置和历史应保留。',
+    updater_unsupported: '这台机器的系统（如 Alpine/OpenRC）暂不支持从面板升级，升级按钮已停用，监控仍可使用。请保持现状，等待后续版本；不要为了启用按钮修改服务或重装。',
+    rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先按对应候选版的说明更新配套升级服务，保留原配置和历史。旧正式版迁移用的 v1.0.1 upgrade-agent 命令不能替代这一步。',
+    legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。（命令见 README 的升级说明）',
     agent_unavailable: '这台机器当前离线、已暂停或已撤销，升级按钮已停用。请先恢复连接或监控；已撤销的机器需要重新添加。',
     version_unrecognized: '面板无法识别这台机器当前的版本号，升级按钮已停用。请确认这台机器运行的是正式发布的程序（不用重装，原配置和历史会保留）。',
     already_latest: '这台机器已与面板版本相同，无需升级。以后更新面板后可再检查。',
     agent_newer_than_server: '这台机器的 Agent 比面板新，不能从面板降级；需要降级请在机器上重新安装。重装前请先确认是否需要保留配置和历史。',
-    old_beta_migration_required: '这台机器使用较早的测试版，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。',
+    old_beta_migration_required: '这台机器使用较早的测试版，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。（命令见 README 的升级说明）',
     rc_server_agent_required: '面板正在使用候选测试版，这台机器的旧版程序暂时不能从面板升级。请先在机器上更新配套程序，原有监控仍可使用。',
     server_build_ineligible: '当前面板版本不能发起远程升级，升级按钮已停用。请先将面板更新为官方发布的可升级版本。',
   });
   function upgradeReasonDisplay(target) {
     return Object.hasOwn(upgradeReasons,target?.reason_code) ? upgradeReasons[target.reason_code] : target?.reason || '';
+  }
+  function updaterTroubleshootingURL(server) {
+    const tag = compareStableVersions(server?.version, server?.version) === 0 && !server?.dirty ? server.version : 'main';
+    return `https://github.com/404-git-404/404-probe/blob/${tag}/docs/updater-troubleshooting.md`;
+  }
+  function appendUpgradeReason(element, target, server) {
+    element.textContent = upgradeReasonDisplay(target);
+    if (!element.textContent.includes('升级服务排查文档')) return;
+    const [before, ...after] = element.textContent.split('升级服务排查文档');
+    const link = document.createElement('a');
+    link.textContent = '升级服务排查文档'; link.href = updaterTroubleshootingURL(server);
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    element.replaceChildren(document.createTextNode(before), link, document.createTextNode(after.join('升级服务排查文档')));
   }
   function updaterHealthReason(health) {
     if (!health || health.status === 'healthy') return '';
@@ -45,17 +58,14 @@
   }
   function upgradeButtonHint(agent, server, busy = false) {
     if (busy || (agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status))) return '正在升级，请等待完成';
-    let code = !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable'
-      : updaterHealthReason(agent.updater_health) || (!server.upgrade_eligible ? 'server_build_ineligible'
+    const order = compareStableVersions(agent.version, server.version);
+    let code = order === 0 ? 'already_latest' : order === 1 ? 'agent_newer_than_server'
+      : !agent.online || agent.disabled_at || agent.revoked ? 'agent_unavailable'
+      : (order === -1 ? updaterHealthReason(agent.updater_health) : '') || (!server.upgrade_eligible ? 'server_build_ineligible'
       : /-beta\./.test(agent.version || '') && !agent.upgrade_v2 ? 'old_beta_migration_required'
       : !agent.upgrade_capable && ['v0.9.3','v1.0.0'].includes(agent.version) ? 'legacy_migration_required'
       : !agent.upgrade_capable ? 'updater_unavailable' : '');
-    if (!code) {
-      const order = compareStableVersions(agent.version, server.version);
-      if (order === 0) code = 'already_latest';
-      else if (order === 1) code = 'agent_newer_than_server';
-      else if (order === null && !agent.upgrade_v2) code = 'version_unrecognized';
-    }
+    if (!code && order === null && !agent.upgrade_v2) code = 'version_unrecognized';
     return upgradeReasonDisplay({reason_code: code}) || '可从面板升级到与面板相同的版本';
   }
   const resource = key => ({
@@ -260,7 +270,7 @@
     }, close() { closed = true; for (const id of jobs.keys()) cancel(id); },
     size: () => jobs.size};
   }
-  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay, upgradeButtonHint, updaterHealthReason};
+  const api = {create, resource, fullEvent, reconcile, fetchJSON, compareStableVersions, upgradeReasonDisplay, upgradeButtonHint, updaterHealthReason, updaterTroubleshootingURL, appendUpgradeReason};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AgentState = api;
 })(globalThis);

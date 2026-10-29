@@ -687,3 +687,7 @@ wait "$PROBE_404_AGENT_PID" || true
 ## 致谢与数据来源
 
 - 部分代码参考了 Komari（<https://github.com/komari-monitor/komari> 和 <https://github.com/komari-monitor/komari-agent>，MIT 许可）。许可证文件已随代码保留：`internal/storage/network_quality_KOMARI_LICENSE.txt`、`internal/server/traffic-recent-LICENSE.txt`，OpenRC 部分的第三方声明见 `docs/os1b-openrc-third-party-notices-20261004.md`。
+
+## 升级服务排查
+
+升级按钮停用时，请按[升级服务排查文档](docs/updater-troubleshooting.md)检查，保留原配置和历史。
