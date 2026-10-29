@@ -8,7 +8,7 @@
   dialog.addEventListener('close',()=>home.append(panel));
   const search=get('dashboard-search'),searchHome=get('dashboard-search-slot'),stickyHome=get('dashboard-sticky-search-slot'),sticky=get('dashboard-sticky');
   const sort=get('dashboard-sort'),chips=get('dashboard-chips'),counts=get('dashboard-count'),quick=get('dashboard-quick'),options={};
-  let catalog={groups:[],tags:[]},model=null,signature='',stuck=false;
+  let catalog={groups:[],tags:[]},model=null,signature='',stuck=false,controlsKey='';
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
   const button=(text,action,cls='')=>{const b=el('button',cls,text);b.type='button';b.addEventListener('click',action);return b;};
   function change(){preferences.save();onchange();}
@@ -59,6 +59,8 @@
   }
   function update(agents,c,server,ready){
    catalog=c;if(ready)preferences.validate(catalog);model=M.select(agents,catalog,p,server);
+   const nextControls=JSON.stringify([ready,p,catalog.revision,model.summary.quick,model.summary.online,model.list.length,[...agents.values()].map(a=>[a.agent_id,a.group_id,a.tag_ids,a.country_code,M.lifecycle(a)])]);
+   if(nextControls===controlsKey)return model;controlsKey=nextControls;
    home.hidden=model.simple;get('dashboard-expand').hidden=!model.simple;
    const all=[...agents.values()].filter(a=>!a.revoked),count=(key,id)=>all.filter(a=>key==='tags'?(a.tag_ids||[]).includes(id):key==='groups'?(catalog.groups.some(g=>g.id===a.group_id)?a.group_id:'__ungrouped')===id:key==='countries'?(a.country_code||'unknown')===id:M.lifecycle(a)===id).length;
    optionRows('groups',[...catalog.groups.map(g=>[g.id,g.name,count('groups',g.id)]),['__ungrouped','未分组',count('groups','__ungrouped')]]);

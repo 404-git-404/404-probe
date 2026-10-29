@@ -1115,6 +1115,7 @@ function setCardText(node, value) {
 }
 
 const renderedCardKeys=new Map();
+const dormantCards=new Map();
 function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
@@ -1127,7 +1128,8 @@ function renderDashboard(dirty=null) {
   overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild,simple:model.simple});
   const allIds=[...agents.keys()],mounted=new Set();
   for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
-  for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);renderedCardKeys.delete(id);}
+  for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);dormantCards.set(id,view);}
+  for(const id of dormantCards.keys())if(!agents.has(id)){dormantCards.delete(id);renderedCardKeys.delete(id);}
   networkQuality.sync(allIds,mounted,agents);latencyCharts.sync([...mounted]);trafficCharts.sync([...mounted]);cardObservations.sync(allIds);selectorView.sync(allIds);cardFaces.sync(allIds);
   for(const [id,view]of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
   selectorView.refreshActive();
@@ -1144,8 +1146,9 @@ function renderDashboard(dirty=null) {
     if(layout!==lastLayout){if(gv.node!==groupPosition){if(gv.node.parentNode===container&&container.moveBefore)container.moveBefore(gv.node,groupPosition);else container.insertBefore(gv.node,groupPosition);}groupPosition=gv.node.nextElementSibling;}
     if(collapsed)continue;
     let position=gv.body.firstElementChild;
-    for(const agent of group.items){let view=agentCards.get(agent.agent_id);
-      if(!view||dirty===null||dirty.has(agent.agent_id)){const key=cardRenderKey(agent);
+    for(const agent of group.items){let view=agentCards.get(agent.agent_id);const remount=!view;
+      if(!view&&dormantCards.has(agent.agent_id)){view=dormantCards.get(agent.agent_id);dormantCards.delete(agent.agent_id);agentCards.set(agent.agent_id,view);}
+      if(remount||dirty===null||dirty.has(agent.agent_id)){const key=cardRenderKey(agent);
        if(!view){view=createAgentCard(agent);agentCards.set(agent.agent_id,view);}else if(renderedCardKeys.get(agent.agent_id)!==key)view.update(agent);
        renderedCardKeys.set(agent.agent_id,key);
       }

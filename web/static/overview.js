@@ -13,7 +13,9 @@
   for(const b of doc.querySelectorAll?.('[data-overview-info]')||[]){const note=doc.getElementById(b.getAttribute('aria-controls'));const show=value=>{note.hidden=!value;b.setAttribute('aria-expanded',String(value));};b.addEventListener('focus',()=>show(true));b.addEventListener('click',()=>show(true));b.addEventListener('blur',()=>show(false));b.addEventListener('keydown',e=>{if(e.key==='Escape')show(false);});}
   function money(){get('money').textContent=last&&last.included_count!==0?'$'+(p.expensePeriod==='yearly'?last.yearly_usd:last.monthly_usd)+' / '+(p.expensePeriod==='yearly'?'年':'月'):'—';get('money-note').textContent=last?.included_count===0?`未设置价格 ${last.missing_price_count||0} 台`:last?.missing_rates?.length?'有币种缺汇率':'';for(const b of periods)b.setAttribute('aria-pressed',String(b.dataset.period===p.expensePeriod));}
   money();
+  let painted='';
   function update(agents,ready,{summary=null,catalog={},server={},simple=false}={}){
+   const signature=JSON.stringify([ready,simple,summary&&{...summary,nearest:summary.nearest&&[summary.nearest.name,summary.nearest.renewal]},catalog.expenses]);if(signature===painted)return;painted=signature;
    shell.classList.toggle('overview-simple',simple);get('scope').textContent=ready?'全部 '+summary.registered+' 台':'正在读取';
    doc.getElementById('dashboard-expand').hidden=!simple;
    if(!ready){for(const id of ['online','health','renewal'])get(id).textContent='等待读取';get('health-note').textContent='资料读取完成后显示健康汇总';return;}
