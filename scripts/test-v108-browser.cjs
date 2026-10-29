@@ -165,3 +165,24 @@ test('R44 production homepage at desktop/390 keeps the full-width traffic face r
   }finally{await page.close();}
  }
 });
+
+
+test('updater diagnostics occur once with one version-bound link, including already-latest and legacy fallback',browserOptions,async()=>{
+ const {page,errors}=await open();try{
+  const rows=await page.evaluate(()=>{
+   return [
+    {health:{status:'identity_mismatch'},code:'updater_identity_mismatch',version:'v1.0.7'},
+    {health:{status:'identity_mismatch'},code:'already_latest',version:'v1.0.8'},
+    {health:null,code:'updater_unavailable',version:'v1.0.7'},
+   ].map(({health,code,version})=>{
+    const div=()=>document.createElement('div'),button=()=>document.createElement('button');
+    const summary=DetailSummary.create({actions:{upgrade:button(),reset:button(),resetFeedback:div(),google:button(),googleFeedback:div(),pause:button(),remove:button(),history:button()},egress:{addresses:div(),controls:div()},country:div(),canWrite:()=>false});
+    summary.update({agent_id:'a'.repeat(32),name:'fixture',online:true,version,state:{},updater_health:health},{version:'v1.0.8',supported:false,reason_code:code},{version:'v1.0.8'});
+    const row=summary.management.querySelector('.details-action-row');
+    return {code,text:row.textContent,links:[...row.querySelectorAll('a')].map(a=>a.href)};
+   });
+  });
+  for(const row of rows){assert.equal((row.text.match(/升级按钮已停用/g)||[]).length,1,row.text);assert.deepEqual(row.links,['https://github.com/404-git-404/404-probe/blob/v1.0.8/docs/updater-troubleshooting.md']);}
+  assert.match(rows[1].text,/无需升级/);assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
