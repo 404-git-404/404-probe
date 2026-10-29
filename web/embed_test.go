@@ -202,7 +202,7 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(htmlBytes)
-	if !strings.Contains(html, `id="agents" class="grid agent-grid"`) {
+	if !strings.Contains(html, `id="agents" class="dashboard-groups"`) || !strings.Contains(javascript, `body.className='dashboard-card-grid'`) {
 		t.Fatal("dashboard Agent collection is missing its responsive grid hook")
 	}
 	cardCSS, err := fs.ReadFile(static, "card-layout.css")
@@ -215,7 +215,7 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 		`card.dataset.agentId = agent.agent_id`, `status.dataset.agentState = stateName`,
 		`remove.dataset.agentId = agent.agent_id`,
 		`Card.machineFaces(document)`, `Card.trafficFaces(document`, `Card.createModule(`,
-		`cardObservations.observe(agent)`, `for (const agent of list)`,
+		`cardObservations.observe(agent)`, `for(const agent of group.items)`,
 		`agentNameControl(agent, state)`,
 		`googleStatusPanel(agent)`, `detailPanel.className = 'card-detail-panel'`,
 		`detailToggle.textContent = '详情'`, `editHint.textContent = agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎'`,
@@ -274,9 +274,9 @@ func TestDashboardContinuousListAndTelemetryStatusContracts(t *testing.T) {
 	licenseBytes, licenseErr := fs.ReadFile(static, "vendor/flag-icons/LICENSE")
 	app, html := string(appBytes), string(indexBytes)
 	for _, marker := range []string{
-		`for (const agent of list)`,
+		`for(const agent of group.items)`,
 		`utilizationTone(percent, 2, 10)`, `utilizationTone(percent, 60, 85)`,
-		`state.cpu_steal_percent`, `state.disk_read_rate`, `state.disk_write_rate`, `state.disk_busy_percent`,
+		`state.cpu_steal_percent`,
 		`countryMark(agent.country_code, agent.country_source)`, `country_code_override: '#plan-country-code'`,
 		`country-code/refresh`, `country_code_lookup_operation`, `升级 Agent 后可重新识别`,
 		`/vendor/flag-icons/4x3/${normalized.toLowerCase()}.svg`,
@@ -284,6 +284,19 @@ func TestDashboardContinuousListAndTelemetryStatusContracts(t *testing.T) {
 	} {
 		if !strings.Contains(app, marker) {
 			t.Errorf("dashboard missing continuous-list/telemetry contract %q", marker)
+		}
+	}
+	// Details are created on demand rather than duplicated in every closed card.
+	// Preserve all three telemetry behavior checks at their current renderers.
+	for _, name := range []string{"device-details.js", "card.js"} {
+		data, err := fs.ReadFile(static, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, field := range []string{"s.disk_read_rate", "s.disk_write_rate", "s.disk_busy_percent"} {
+			if !strings.Contains(string(data), field) {
+				t.Errorf("%s missing disk telemetry %s", name, field)
+			}
 		}
 	}
 	if flagErr != nil || len(flagBytes) == 0 || licenseErr != nil || !strings.Contains(string(licenseBytes), "MIT License") {

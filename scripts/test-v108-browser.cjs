@@ -6,6 +6,7 @@ let chromium;try{({chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli
 const chromiumPath=process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe';
 const available=Boolean(chromium&&fs.existsSync(chromiumPath)),browserOptions={skip:!available&&'Playwright/Chromium not available'};
 const root=path.join(__dirname,'../web/static'),ID='a'.repeat(32),M=60000,DAY=86400000;
+const dashboardFixture = a => ({items:[{...a,accumulated_traffic:a.traffic,traffic:{known:true,stale:false,quota_state:'current'},resources:{known:!!a.state,stale:false,cpu_percent:a.state?.cpu_percent,ram_percent:a.state?.ram_percent,disk_percent:a.state?.disk_percent,collected_at:a.state?.collected_at,max_age_ms:600000},network:{known:true,active:false,monitored:true},renewal:{type:'upcoming',days:40},search_fields:[a.name,a.state?.hostname||''],group_id:null,tag_ids:[]}],revision:1,groups:[],tags:[],exchange_rates:[{currency:'USD',units_per_usd:'1'}],expenses:{monthly_usd:'0.00',yearly_usd:'0.00'},server_now:Date.now()});
 let browser,server,base,scenario='normal',posts=[],requests=[];
 const now=()=>Date.now();
 function config(){const v=load(scenario==='real'?'v4-saved-off':'v4-running');if(scenario==='real')return v;v.slots.forEach((s,i)=>{s.kind='builtin';s.region=['上海','广州','北京'][i];s.isp=C.slots[i];s.slot_enabled=true;s.ipv4_tcp=true;s.ipv4_icmp=true;});v.lanes.forEach((l,i)=>{if(l.family==='ipv4'){l.status=scenario==='special'&&l.slot==='unicom'&&l.protocol==='tcp'?'inactive':'active';l.target_id||=(i+1).toString(16).padStart(32,'0');l.slot_revision='2';}});return v;}
@@ -40,6 +41,7 @@ before(async()=>{
   if(req.method==='POST'){let b='';req.on('data',c=>b+=c);req.on('end',()=>{posts.push({path:u.pathname,body:JSON.parse(b)});json({error:{code:'switch_failed',message:'local synthetic rejection'}},409);});return;}
   if(u.pathname.endsWith('/session'))return json({csrf_token:'synthetic-local'});
   if(u.pathname.endsWith('/version'))return json({version:'v1.0.8',upgrade_eligible:true});
+  if(u.pathname==='/api/v1/web/dashboard')return json(dashboardFixture(agent()));
   if(u.pathname==='/api/v1/web/agents')return json({items:[agent()]});
   if(u.pathname.endsWith('/jobs'))return json({items:[]});
   if(u.pathname.endsWith('/v4/config'))return json(config());
@@ -58,7 +60,7 @@ async function open(s='normal',width=1000){scenario=s;const page=await browser.n
  page.on('pageerror',e=>errors.push(e.message));await page.route('**/*',route=>route.request().url().startsWith(base)?route.continue():route.abort());
  await page.goto(base);await page.waitForSelector('.nq7-row');if(s!=='real')await page.waitForFunction(()=>document.querySelector('.c7-rate')?.textContent.includes('369'));await page.waitForTimeout(200);
  // Two design-width cards fit on the page; screenshot a single 400px production card.
- await page.addStyleTag({content:'.agent-grid{grid-template-columns:400px;justify-content:center}'});
+ await page.addStyleTag({content:'.agent-grid,.dashboard-card-grid{grid-template-columns:400px;justify-content:center}'});
  return {page,errors};}
 async function shot(page,name,selector='.agent-card'){if(!process.env.R33_SCREEN_DIR)return;fs.mkdirSync(process.env.R33_SCREEN_DIR,{recursive:true});const opts={path:path.join(process.env.R33_SCREEN_DIR,name+'.png')};if(selector==='body')await page.screenshot(opts);else await page.locator(selector).screenshot(opts);}
 test('R33 actual dashboard: A/B heights, filled day plot and full-width traffic plot; screenshots',browserOptions,async()=>{
@@ -157,7 +159,7 @@ test('R09 overview/management preserve the fixed frame and state labels',browser
 test('R44 production homepage at desktop/390 keeps the full-width traffic face readable',browserOptions,async()=>{
  for(const width of [1440,390]){
   const {page,errors}=await open('normal',width);try{
-   await page.evaluate(()=>{for(const style of document.querySelectorAll('style'))if(style.textContent.includes('.agent-grid{grid-template-columns:400px'))style.remove();});
+   await page.evaluate(()=>{for(const style of document.querySelectorAll('style'))if(style.textContent.includes('.agent-grid,.dashboard-card-grid{grid-template-columns:400px'))style.remove();});
    await page.click('.c7-flip');await page.waitForFunction(()=>document.querySelector('.tc7-rx'));
    const facts=await page.evaluate(()=>{const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return {left:r.left,right:r.right,width:r.width};};return {frame:rect('.tc7'),plot:rect('.tc7-plot'),label:rect('.tc7-label'),peak:rect('.tc7-peak'),axes:document.querySelectorAll('.tc7-axis').length,overflow:document.documentElement.scrollWidth>innerWidth};});
    assert.equal(facts.axes,0);assert.ok(Math.abs(facts.frame.width-facts.plot.width)<1);assert.ok(facts.label.right<=facts.peak.left+1);assert.equal(facts.overflow,false);assert.deepEqual(errors,[]);

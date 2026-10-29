@@ -7,6 +7,7 @@ const {load,v5Card}=require('./lib/r07-harness.cjs');
 const exe=process.env.V109_SERVER,out=process.env.V109_SCREENS;
 assert(exe&&out,'Set V109_SERVER and V109_SCREENS');fs.mkdirSync(out,{recursive:true});
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'v109-ui-')),db=path.join(tmp,'isolated.sqlite'),hash=path.join(tmp,'password.hash'),password=crypto.randomBytes(24).toString('hex'),ID='a'.repeat(32),DAY=86400000,M=60000;
+const dashboardFixture = a => ({items:[{...a,accumulated_traffic:a.traffic,traffic:{known:true,stale:false,quota_state:'current'},resources:{known:!!a.state,stale:false,cpu_percent:a.state?.cpu_percent,ram_percent:a.state?.ram_percent,disk_percent:a.state?.disk_percent,collected_at:a.state?.collected_at,max_age_ms:600000},network:{known:true,active:false,monitored:true},renewal:{type:'upcoming',days:40},search_fields:[a.name,a.state?.hostname||''],group_id:null,tag_ids:[]}],revision:1,groups:[],tags:[],exchange_rates:[{currency:'USD',units_per_usd:'1'}],expenses:{monthly_usd:'0.00',yearly_usd:'0.00'},server_now:Date.now()});
 let server,browser,mode='success',gate,job=null,jobNumber=0,posts=[],errors=[],keyboard=[];
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const reference=process.env.V109_REFERENCE==='1',sampleTime=reference?Date.parse('2026-10-25T14:54:00Z'):Date.now(),region='US',name=reference?'DediRock-LAX-1':'DediRock-LAX-1 · 多出站组与超长设备名称验证 · 生产式合成样本';
@@ -34,6 +35,7 @@ async function run(){
   if(!pathname.startsWith('/api/')||pathname.endsWith('/session')||pathname.endsWith('/events'))return route.continue();
   if(method!=='GET')posts.push({path:pathname,method,body});
   if(pathname.endsWith('/version'))return json({version:'v1.0.8',upgrade_eligible:true,one_click_install:true});
+  if(pathname==='/api/v1/web/dashboard')return json(dashboardFixture(current));
   if(pathname==='/api/v1/web/agents')return json({items:[current]});
   if(pathname.endsWith('/upgrade-targets'))return json({targets:[{version:'v1.0.8',channel:'stable',supported:true}]});
   if(pathname.endsWith('/upgrade'))return method==='GET'?json(null):json({status:'requested',target_version:'v1.0.8'});
@@ -62,7 +64,7 @@ async function run(){
  await page.getByRole('button',{name:'7 天',exact:true}).click();await page.waitForFunction(()=>deviceDetails.snapshot().points>9000);await shot('details-resources-seven-days');
  await tabs('security');await shot('details-security');await page.getByRole('button',{name:'显示全部已记录来源（100 个）'}).click();assert.equal(await page.locator('.details-security-row:visible').count(),101);
  await tabs('management');await shot('details-management');
- const setState=async patch=>{current={...current,...patch};await page.evaluate(a=>{agents.set(a.agent_id,a);render();},current);};
+ const setState=async patch=>{current={...current,...patch};await page.evaluate(a=>new Promise(resolve=>{agents.set(a.agent_id,a);render();requestAnimationFrame(()=>requestAnimationFrame(resolve));}),current);};
  for(const [state,patch]of [['online',{online:true,disabled_at:null}],['offline',{online:false}],['paused',{online:true,disabled_at:sampleTime}],['revoked',{online:false,disabled_at:null,revoked:true}]]){await setState(patch);await shot('header-'+state,'.details-header');}
  await setState({online:true,disabled_at:null,revoked:false});
  const modalCheck=async(label,open,selector)=>{console.log('checking '+label);await open();if(label==='revoke'){const input=page.locator('#remove-agent-input'),yes=page.locator('#remove-agent-confirm');assert.equal(await yes.isDisabled(),true);await input.fill('wrong');assert.equal(await yes.isDisabled(),true);await input.fill(' '+current.name+' ');assert.equal(await yes.isEnabled(),true);}const d=page.locator(selector);const expectedWidth=['upgrade','revoke','pause','reset','country'].includes(label)?420:560;assert.equal((await d.boundingBox()).width,expectedWidth,label+' width');assert.equal(await page.evaluate(()=>document.body.style.overflow),'hidden',label+' scroll lock');await d.waitFor({state:'visible'});await shot('dialog-'+label,selector);
@@ -91,7 +93,7 @@ async function run(){
  mode='waiting';await choose.selectOption('LAX-默认线路');await submit.click();await page.getByText('已完成，等待设备确认',{exact:true}).waitFor();await shot('outbound-waiting','#selector-popover');current.outbounds.selectors[0].current='LAX-默认线路';await setState({outbounds:current.outbounds});assert.equal(await page.getByText('已完成，等待设备确认',{exact:true}).count(),0);assert.equal(jobNumber,3);
  await page.keyboard.press('Escape');await modalCheck('outbound',()=>page.locator('.selector-trigger').click(),'#selector-popover');
  const rows=page.locator('.nq7-row');assert.equal(await rows.first().evaluate(n=>n.tagName),'DIV');await rows.first().click();assert.equal(await page.locator('#device-details').evaluate(n=>n.open),false);
- await openDetails();await tabs('management');await page.locator('#details-pane-management .upgrade-agent').click();await page.evaluate(id=>{agents.delete(id);render();},ID);assert.equal(await page.evaluate(()=>document.body.style.overflow),'hidden');await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.body.style.overflow),'');assert.equal(await page.locator('#add-agent').evaluate(n=>n===document.activeElement),true,'removed origin falls back to visible button');
+ await openDetails();await tabs('management');await page.locator('#details-pane-management .upgrade-agent').click();await page.evaluate(id=>new Promise(resolve=>{const token=agentState.beginDelete(id);agentState.finishDelete(token,true);render();requestAnimationFrame(()=>requestAnimationFrame(resolve));}),ID);assert.equal(await page.evaluate(()=>document.body.style.overflow),'hidden');await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.body.style.overflow),'');assert.equal(await page.locator('#add-agent').evaluate(n=>n===document.activeElement),true,'removed origin falls back to visible button');
  assert.deepEqual(errors,[]);if(fs.existsSync(path.join(out,'failure.txt')))fs.unlinkSync(path.join(out,'failure.txt'));fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({boundary:'Real loopback Server + isolated SQLite for auth/assets; browser routes supply synthetic data and mutation receipts',keyboard,posts:posts.map(p=>({path:p.path,method:p.method})),jobNumber,errors},null,2));console.log('R09/R38 browser acceptance passed; '+keyboard.length+' dialog keyboard checks');
 }
 const watchdog=setTimeout(()=>{console.error('acceptance exceeded 150s');process.exit(2);},process.env.V109_TASK_TWO==='1'?300000:150000);

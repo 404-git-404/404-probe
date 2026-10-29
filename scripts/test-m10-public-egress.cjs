@@ -65,6 +65,7 @@ class Element {
   constructor(tag = 'div') {this.tagName = tag.toUpperCase(); this.children = []; this.dataset = {}; this.attributes = {}; this.style = {}; this.ownText = ''; this.classList = {add() {}, remove() {}, toggle() {}};}
   set textContent(value) {this.ownText = String(value); this.children = [];}
   get textContent() {return this.ownText + this.children.map(child => child.textContent).join('');}
+  after(...children) {if(this.parent)this.parent.append(...children);}
   append(...children) {this.children.push(...children);}
   replaceChildren(...children) {this.ownText = ''; this.children = children;}
   setAttribute(key, value) {this.attributes[key] = value;}
@@ -73,12 +74,12 @@ class Element {
 function loadApp() {
   const nodes = new Map(), node = key => {if (!nodes.has(key)) nodes.set(key, new Element()); return nodes.get(key);};
   const sandbox = {AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
-    document: {querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
+    document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
     location: {search: '', assign() {}}, setInterval() {}, setTimeout, queueMicrotask, addEventListener() {},
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
   sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
-  for (const file of ['management.js', 'selector.js', 'range-slider.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'card.js', 'resource-history.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js', 'plan-units.js', 'youtube-status.js', 'public-egress-check.js', 'agent-enrollment.js', 'latency-mini.js', 'app.js'])
+  for (const file of ['dashboard-model.js','dashboard-data.js','management.js', 'selector.js', 'range-slider.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'card.js', 'resource-history.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js','dashboard-view.js','organization-name.js','organization-api.js','organization-dialogs.js','expense-dialog.js', 'plan-units.js', 'youtube-status.js', 'public-egress-check.js', 'agent-enrollment.js', 'latency-mini.js', 'app.js'])
     vm.runInContext((file==='app.js'?"globalThis.DialogShell={attach:()=>({heading(){}}),confirm:async()=>true};\n":'')+fs.readFileSync(path.join(__dirname, '../web/static', file), 'utf8'), sandbox);
   const render = input => {sandbox.input = input; return vm.runInContext('(()=>{const e=createPublicEgress("a");e.update(input);return e.element;})()', sandbox);};
   render.live = () => {const e = vm.runInContext('createPublicEgress("a")', sandbox); return input => {sandbox.live = e; sandbox.input = input; vm.runInContext('live.update(input)', sandbox); return e.element;};};
@@ -259,7 +260,7 @@ test('M10 panel: both pages build the one shared panel, which posts to the two e
   assert.ok(html.includes('id="public-egress-mount"') && html.includes('src="/public-egress-check.js"'));
   assert.ok(index.includes('src="/public-egress-check.js"') && index.indexOf('public-egress-check.js') < index.indexOf('/app.js'));
   assert.ok(history.includes('PublicEgressCheck.createPanel') && app.includes('PublicEgressCheck.createPanel'));
-  assert.ok(app.includes('detailPanel.append(detailActions, egressPanel.node'), 'the panel sits in the device-details management tab');
+  assert.ok(app.includes('const splitEgress=egressPanel.split()') && app.includes('egress:splitEgress') && app.includes('detailPanel.replaceChildren(summary.management)') && read('device-details.js').includes("row(checks,'公网 IP 检测','egress',egress.controls)"), 'the shared controls sit in the lazily created device-details management tab');
   assert.ok(app.includes('conceal: () =>') && read('device-details.js').includes('conceal();leave()'));
   assert.ok(shared.includes("'/public-egress'") && shared.includes("'/public-egress/check'") && /'X-CSRF-Token':\s*csrf\(\)/.test(shared));
   assert.ok(shared.includes('JSON.stringify({enabled:wanted})'));

@@ -60,6 +60,7 @@ class Element {
   contains(node){return this===node||(this.children||[]).some(child=>child.contains?.(node));}
   addEventListener(type, handler) { const all=this.listeners.get(type)||[]; all.push(handler); this.listeners.set(type,all); }
   removeEventListener(type, handler) {this.listeners.set(type,(this.listeners.get(type)||[]).filter(fn=>fn!==handler));}
+  after(...children) {this.parent?.append(...children);}
   remove() {this.removed=true;}
   async emit(type) { for(const f of this.listeners.get(type)||[]) await f({preventDefault(){}}); }
   reset() {} focus() {} setCustomValidity(value) {this.validityMessage=value;} reportValidity() {}
@@ -75,7 +76,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
     // at call time rather than capture the original DOM renderer during startup.
     reconcile:(store,read,changed,failed)=>State.reconcile(store,read,()=>vm.runInContext(file==='app.js'?'render()':'renderCurrentAgent()',sandbox),failed)},AbortController,TextEncoder,Node:{TEXT_NODE:3},console,URLSearchParams,Intl,Date,Map,Set,Number,Object,JSON,
     location:{search:'?id='+A,assign:p=>redirects.push(p),reload:()=>redirects.push('reload')},navigator:{clipboard:{writeText:async()=>{}}},
-    document:{querySelector:getNode,querySelectorAll:()=>[],activeElement:null,createElement:()=>new Element(),addEventListener(){},removeEventListener(){}},
+    document:{body:new Element(),getElementById:id=>getNode("#"+id),querySelector:getNode,querySelectorAll:()=>[],activeElement:null,createElement:()=>new Element(),addEventListener(){},removeEventListener(){}},
     setInterval:()=>0,clearInterval(){},setTimeout,clearTimeout,queueMicrotask,addEventListener(type,f){windowListeners.set(type,f);},confirm:()=>true,
     crypto:{randomUUID:()=> 'c'.repeat(32),getRandomValues:a=>require('node:crypto').webcrypto.getRandomValues(a)},fetch:(url,options={})=>{
       const d=deferred(), record={url,options,...d}; requests.push(record);
@@ -83,6 +84,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
       return d.promise;
     },EventSource:class {constructor(){this.listeners=new Map();sources.push(this);}close(){this.closed=true;}addEventListener(type,f){this.listeners.set(type,f);}}};
   sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/dashboard-model.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/management.js'),'utf8'),sandbox,{filename:'management.js'});
   sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/selector.js'),'utf8'),sandbox,{filename:'selector.js'});
@@ -99,7 +101,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/public-egress-check.js'),'utf8'),sandbox,{filename:'public-egress-check.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/agent-enrollment.js'),'utf8'),sandbox,{filename:'agent-enrollment.js'});
   // Upgrade tests load the current page dependencies; retain the old suite's baseline sandbox.
-  if(upgradeModules) for(const module of ['range-slider.js','latency-mini.js','card.js','youtube-status.js'])
+  if(upgradeModules) for(const module of ['range-slider.js','latency-mini.js','card.js','youtube-status.js','dashboard-data.js','dashboard-view.js','organization-name.js','organization-api.js','organization-dialogs.js','expense-dialog.js'])
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',module),'utf8'),sandbox,{filename:module});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',file),'utf8'),sandbox,{filename:file});
   if(file === 'app.js') vm.runInContext("agentState.endRefresh(agentState.beginRefresh()); var actualDashboardRender=render; render = () => {}; mutationCSRFToken = 'test-token';",sandbox);
@@ -836,12 +838,12 @@ test('P5b1c actual year 9999 undo bypasses forward preview; equal-value external
 
 test('v110 initial and SSE render share the formal 9/10 comparator',()=>{
  const app=dashboard('app.js',1000,true);seed(app.state,{...dto(),version:'v1.0.9'});
- app.eval("document.createElementNS=(_ns,tag)=>document.createElement(tag);var v110nodes=[];var v110create=document.createElement;document.createElement=(...args)=>{const n=v110create(...args);n.prepend=(...children)=>{for(const child of children)child.parent=n;n.children.unshift(...children)};n.style.setProperty=(key,value)=>{n.style[key]=value};const append=n.append.bind(n);n.append=(...children)=>{for(const child of children)child.parent=n;append(...children)};v110nodes.push(n);return n};serverBuild={version:'v1.0.10',upgrade_eligible:true};detailUpgradeTargets.set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',{version:'v1.0.10',supported:true}); actualDashboardRender()");
+ app.eval("document.createElementNS=(_ns,tag)=>document.createElement(tag);var v110nodes=[];var v110create=document.createElement;document.createElement=(...args)=>{const n=v110create(...args);n.prepend=(...children)=>{for(const child of children)child.parent=n;n.children.unshift(...children)};n.style.setProperty=(key,value)=>{n.style[key]=value};const append=n.append.bind(n);n.append=(...children)=>{for(const child of children)child.parent=n;append(...children)};v110nodes.push(n);return n};serverBuild={version:'v1.0.10',upgrade_eligible:true};detailUpgradeTargets.set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',{version:'v1.0.10',supported:true}); detailsFor('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')");
  const button=app.eval("v110nodes.find(n=>n.className==='upgrade-agent')");
  assert.equal(button.disabled,false,JSON.stringify(app.eval("({agent:agents.values().next().value,serverBuild,mutationCSRFToken,busy:agentState.busy(agents.keys().next().value,'upgrade'),blocked:agentState.blocked(agents.keys().next().value)})")));
- app.event({agent_id:A,version:'v1.0.10'});app.eval('actualDashboardRender()');
+ app.event({agent_id:A,version:'v1.0.10'});app.eval("detailsFor('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')");
  assert.equal(button.disabled,true);
- app.event({agent_id:A,version:'v1.0.9'});app.eval('actualDashboardRender()');
+ app.event({agent_id:A,version:'v1.0.9'});app.eval("detailsFor('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')");
  assert.equal(button.disabled,false);
  assert.equal(app.eval("AgentState.compareStableVersions('unknown','v1.0.10')"),null);
 });

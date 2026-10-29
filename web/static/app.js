@@ -1669,7 +1669,7 @@ events.onerror = () => {
 };
 events.addEventListener('agent', event => {
  let update;try{update=JSON.parse(event.data);}catch{return;}
- const id=update.agent_id;if(revokedAgentIDs.has(id))return;
+ const id=update.agent_id;if (revokedAgentIDs.has(update.agent_id)) return;
  if(agentState.fullEvent(update))agentState.invalidate(id,[...new Set(Object.keys(update).map(AgentState.resource))]);
  else if(agentState.event(update))render(new Set([id]));
  dashboardData.notify(id);
