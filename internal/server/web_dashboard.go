@@ -75,10 +75,12 @@ type dashboardSummary struct {
 }
 
 type dashboardMaskedEgress struct {
-	IP         string `json:"ip"`
-	Status     string `json:"status"`
-	CheckedAt  int64  `json:"checked_at"`
-	ValidUntil int64  `json:"valid_until"`
+	IP          string                  `json:"ip"`
+	Status      string                  `json:"status"`
+	CheckedAt   int64                   `json:"checked_at"`
+	ValidUntil  int64                   `json:"valid_until"`
+	Reason      string                  `json:"reason"`
+	LastSuccess *protocol.EgressSuccess `json:"last_success,omitempty"`
 }
 type dashboardResponse struct {
 	Partial       bool                   `json:"partial"`
@@ -305,7 +307,15 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			v.MaskedEgress = map[string]dashboardMaskedEgress{}
 			for _, o := range []protocol.EgressObservation{state.PublicEgress.IPv4, state.PublicEgress.IPv6} {
 				if mask := maskDashboardIP(o.IP); mask != "" && o.Status == "available" && o.CheckedAt > 0 && o.ValidUntil > now.UnixMilli() && !stale {
-					v.MaskedEgress[o.Family] = dashboardMaskedEgress{IP: mask, Status: o.Status, CheckedAt: o.CheckedAt, ValidUntil: o.ValidUntil}
+					entry := dashboardMaskedEgress{IP: mask, Status: o.Status, CheckedAt: o.CheckedAt, ValidUntil: o.ValidUntil, Reason: o.Reason}
+					if o.LastSuccess != nil {
+						last := *o.LastSuccess
+						last.IP = maskDashboardIP(last.IP)
+						if last.IP != "" {
+							entry.LastSuccess = &last
+						}
+					}
+					v.MaskedEgress[o.Family] = entry
 					v.MaskedIPs = append(v.MaskedIPs, mask)
 					v.SearchFields = append(v.SearchFields, mask)
 				}

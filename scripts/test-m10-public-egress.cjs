@@ -75,7 +75,7 @@ function loadApp() {
   const nodes = new Map(), node = key => {if (!nodes.has(key)) nodes.set(key, new Element()); return nodes.get(key);};
   const sandbox = {AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
     document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
-    location: {search: '', assign() {}}, setInterval() {}, setTimeout, queueMicrotask, addEventListener() {},
+    location: {search: '', assign() {}}, setInterval() {}, setTimeout, clearTimeout, queueMicrotask, addEventListener() {},
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
   sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
@@ -99,6 +99,16 @@ test('M10 UI: fresh available families are shown', () => {
   assert.match(el.children[0].attributes['aria-label'], /2001:db8:…/);
   assert.doesNotMatch(el.children[0].attributes['aria-label'], /2001:db8::1/, 'aria-label shows the half-hidden address only');
   assert.doesNotMatch(el.children[1].textContent, /2001:db8::1/, 'tooltip shows the half-hidden address only');
+});
+
+test('M10 UI: batch masked observations retain SSE tooltip and expired masks cannot imply availability',()=>{
+ const observation=fresh('ipv4','8.8.8.8',{last_success:{ip:'1.1.1.1',checked_at:now-5000}});
+ const live=render(card({ipv4:observation}));
+ const masked={...observation,ip:'8.8.*.*',last_success:{...observation.last_success,ip:'1.1.*.*'}};
+ const batch=render(card({}, {masked_egress:{ipv4:masked},masked_ips:['8.8.*.*']}));
+ assert.equal(batch.children[0].attributes['aria-label'],live.children[0].attributes['aria-label']);
+ masked.valid_until=now-1;assert.equal(render(card({}, {masked_egress:{ipv4:masked},masked_ips:['8.8.*.*']})).children.length,0);
+ assert.equal(render(card({}, {masked_ips:['8.8.*.*']})).children.length,0);
 });
 
 test('M10 UI: unavailable, unknown, stale or empty-IP families are hidden and the container is empty', () => {
