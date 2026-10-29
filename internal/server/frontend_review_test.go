@@ -124,3 +124,32 @@ func TestFrontendReviewLocalTimezoneInvalid(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+func TestFrontendReviewQualityWritesInvalidateAndPublish(t *testing.T) {
+	a, s, id, _ := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	ch, _ := a.hub.subscribe()
+	defer a.hub.unsubscribe(ch)
+	for _, row := range []struct{ path, body string }{
+		{v4Path(id, "config"), v4Body("0", 30000, "8.8.8.8")},
+		{v4Path(id, "enabled"), `{"expected_revision":"1","enabled":true}`},
+	} {
+		a.dashboardNetwork = map[string]dashboardNetworkEntry{id: {Expires: time.Now().Add(time.Hour)}}
+		w := qualityWebRequest(t, a, "PUT", row.path, row.body)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		if !a.dashboardNetwork[id].Expires.IsZero() {
+			t.Fatal("quality write retained cached result")
+		}
+		select {
+		case msg := <-ch:
+			if !strings.Contains(string(msg), `"event":"dashboard"`) {
+				t.Fatal(string(msg))
+			}
+		default:
+			t.Fatal("missing quality event")
+		}
+	}
+}
