@@ -18,3 +18,5 @@ body{background:#EEE7DD;color:#2A2622}body>header h1{white-space:nowrap}.header-
 
 .overview-simple.has-attention .overview-group:nth-child(2){display:block}.overview-simple.has-attention #overview-unknown{display:block}
 @media(max-width:700px){.overview-simple .overview-groups{flex-direction:column;align-items:stretch}.overview-simple .overview-group:last-child{width:100%;flex:0 1 auto}.overview-simple .overview-renewal{max-width:100%}.overview-simple .overview-stat{white-space:normal}}
+
+.dashboard-group-header[hidden],.dashboard-card-grid[hidden]{display:none}

@@ -2,7 +2,7 @@
  'use strict';
  const exclusion={once:'一次性买断',missing_price:'未设置价格',invalid_price:'价格无法识别',missing_currency:'未设置币种',invalid_currency:'币种无法识别',missing_period:'未设置付款周期',invalid_period:'付款周期无法识别',missing_rate:'缺汇率'};
  const number=value=>{const [integer,fraction]=String(value??'—').split('.');return integer.replace(/\B(?=(\d{3})+(?!\d))/g,',')+(fraction!==undefined?'.'+fraction:'');};
- const decimal=value=>String(value??'—').replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
+ const decimal=value=>{const m=/^([0-9]+)(?:\.([0-9]+))?$/.exec(String(value??''));if(!m)return '—';const f=(m[2]||'').padEnd(3,'0'),c=BigInt(m[1])*100n+BigInt(f.slice(0,2))+(f[2]>='5'?1n:0n);return (c/100n)+'.'+String(c%100n).padStart(2,'0');};
  const symbol={USD:'$',CNY:'¥',EUR:'€',HKD:'HK$',JPY:'¥',GBP:'£'};
  function create({api,visibleIDs,refresh,document:doc=root.document}){
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};

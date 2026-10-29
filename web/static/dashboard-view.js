@@ -40,6 +40,11 @@
   }
   const observer=root.IntersectionObserver?new root.IntersectionObserver(entries=>stick(!entries[0].isIntersecting&&entries[0].boundingClientRect.top<0)):null;
   observer?.observe(get('dashboard-anchor'));
+  // A jump can move a below-viewport anchor above the viewport without ever
+  // intersecting it, leaving IntersectionObserver's boolean unchanged.
+  let scrollFrame=0;
+  const onScroll=()=>{if(!scrollFrame)scrollFrame=root.requestAnimationFrame(()=>{scrollFrame=0;stick(get('dashboard-anchor').getBoundingClientRect().bottom<=0);});};
+  root.addEventListener('scroll',onScroll,{passive:true});
   const countryNames=typeof Intl.DisplayNames==='function'?new Intl.DisplayNames(['zh-CN'],{type:'region'}):null;
   const country=code=>code==='unknown'?'未知':(()=>{try{return countryNames?.of(code)||code;}catch{return code;}})();
   function optionRows(key,rows){
@@ -67,7 +72,7 @@
    return model;
   }
   return {preferences,update,apply,clear,collapse(id){toggle('collapsed',id,!p.collapsed.includes(id));},
-   close(){observer?.disconnect();shell.close();},snapshot:()=>({state:{...p},stuck,simple:model?.simple})};
+   close(){observer?.disconnect();root.removeEventListener('scroll',onScroll);if(scrollFrame)root.cancelAnimationFrame(scrollFrame);shell.close();},snapshot:()=>({state:{...p},stuck,simple:model?.simple})};
  }
  root.DashboardView={create};
 })(globalThis);
