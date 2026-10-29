@@ -428,6 +428,35 @@ class RegisteredReleaseTests(unittest.TestCase):
                 releases.check_counts(dict(agents=71,schema_migrations=35),dict(agents=70,schema_migrations=36,example=0),'v1.0.9','v1.0.10')
         self.assertEqual(releases.version_tuple('v1.0.9') < releases.version_tuple('v1.0.10'),True)
 
+    def test_schema36_fixture_and_exact_registration_chain_without_publishing(self):
+        added=['organization_meta','groups','tags','agent_organization','agent_tags','expense_exchange_rates']
+        document=releases.registry()
+        self.assertNotIn('v1.0.10',document['versions'])
+        document['versions']['v1.0.10']=dict(commit='a'*40,schema=36,previous_version='v1.0.9',added_tables=added,removed_tables=[])
+        registry=self.root/'schema36-registry.json';registry.write_text(json.dumps(document),encoding='utf-8')
+        with sqlite3.connect(':memory:') as conn:
+            conn.executescript('CREATE TABLE agents(id TEXT PRIMARY KEY);CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);')
+            conn.executemany('INSERT INTO agents VALUES(?)',[(str(i),) for i in range(71)])
+            conn.executemany('INSERT INTO schema_migrations VALUES(?)',[(i,) for i in range(1,36)])
+            def counts():
+                names=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+                return {name:conn.execute('SELECT count(*) FROM "'+name+'"').fetchone()[0] for name in names}
+            before=counts()
+            for name in added:conn.execute('CREATE TABLE "'+name+'"(fixture INTEGER)')
+            conn.execute('INSERT INTO organization_meta VALUES(1)');conn.execute('INSERT INTO expense_exchange_rates VALUES(1)');conn.execute('INSERT INTO schema_migrations VALUES(36)')
+            after=counts()
+            with mock.patch.object(releases,'REGISTRY',registry):
+                self.assertEqual(releases.registered('v1.0.10')['schema'],36)
+                releases.check_counts(before,after,'v1.0.9','v1.0.10')
+                for missing in added:
+                    bad=dict(after);del bad[missing]
+                    with self.assertRaises(ValueError):releases.check_counts(before,bad,'v1.0.9','v1.0.10')
+                with self.assertRaises(ValueError):releases.check_counts(before,dict(after,schema_migrations=35),'v1.0.9','v1.0.10')
+        document['versions']['v1.0.10']['previous_version']='v1.0.8';registry.write_text(json.dumps(document),encoding='utf-8')
+        with mock.patch.object(releases,'REGISTRY',registry):
+            with self.assertRaises(ValueError):releases.registry()
+        self.assertNotIn('v1.0.10',releases.registry()['versions'])
+
     def test_registered_table_changes_and_only_migration_count_may_change(self):
         before=dict(agents=71,schema_migrations=34,tcp_mini_high=7,tcp_mini_state=71)
         after=dict(agents=71,schema_migrations=35)

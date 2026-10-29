@@ -19,7 +19,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 35
+const currentSchemaVersion = 36
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
@@ -878,6 +878,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	if version < 35 && !migration34Skip {
 		if err := migrateV107Tx(ctx, tx); err != nil {
 			return fmt.Errorf("migration 35: %w", err)
+		}
+	}
+	if version < 36 && !migration34Skip {
+		if err := migrateOrganization36Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 36: %w", err)
 		}
 	}
 	return tx.Commit()
