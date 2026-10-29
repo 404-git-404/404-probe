@@ -4,7 +4,9 @@ set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Pure functions only: no files are written, so Windows/no-bwrap runs retain
 # this coverage. Never source the complete installer or execute its entry point.
-eval "$(awk '/^(release_version|canonical_version|compare_versions|compare_release_numbers)\(\) \{/{copy= !seen[$1]++} copy{print} copy && /^\}/{copy=0}' "${root}/install.sh")"
+source "${root}/scripts/installer-pure-functions.sh"
+pure="$(installer_pure_functions "${root}/install.sh" release_version canonical_version compare_versions compare_release_numbers)"
+eval "$pure"
 chain=(v1.0.2 v1.0.3-beta.1 v1.0.3-beta.18446744073709551615 v1.0.3-rc.1 v1.0.3-rc.2 v1.0.3-rc.10 v1.0.3 v1.0.9 v1.0.10)
 for ((i=0;i<${#chain[@]};i++)); do
   release_version "${chain[i]}"

@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Pure function extraction only; no main, file writes, or fixture required.
-eval "$(awk '/^readonly DEFAULT_VERSION=/{print} /^(die|release_version|canonical_version|target_version|print_install_banner)\(\) \{/{copy= !seen[$1]++} copy{print} copy && /^\}/{copy=0}' "${root}/install.sh")"
+source "${root}/scripts/installer-pure-functions.sh"
+pure="$(installer_pure_functions "${root}/install.sh" die release_version canonical_version target_version print_install_banner)"
+eval "$pure"
 
 check_banner() {
   local expected="$1" actual

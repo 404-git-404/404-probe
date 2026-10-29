@@ -388,6 +388,13 @@ def main():
     parser.add_argument('--profile', choices=('default', 'multiuser'), default='default')
     parser.add_argument("command", nargs=argparse.REMAINDER)
     opts = parser.parse_args()
+    repo = Path(__file__).resolve().parent.parent
+    if not all((repo / name).is_file() for name in ('install.sh', 'scripts/installer-fixture-commands.sh', 'scripts/installer-fixture-entry.sh')):
+        return skipped('source tree is incomplete (install.sh and fixture support scripts required)')
+    if opts.root:
+        reason = validate_root(Path(opts.root), selected_profile(opts, repo), in_place_candidate())
+        if reason:
+            return skipped(reason)
     tools = ('bash',) if in_place_candidate() else ('bwrap', 'strace', 'bash')
     if sys.platform != "linux" or not all(shutil.which(x) for x in tools):
         return skipped('verified Linux bubblewrap + strace boundary unavailable')
@@ -405,8 +412,36 @@ def main():
     if not parent.is_dir() or parent.is_symlink():
         return skipped('provide an existing private INSTALLER_FIXTURE_BASE or --root')
     with tempfile.TemporaryDirectory(prefix='installer-fixture-', dir=parent) as temporary:
+        if selected_profile(opts, repo) == 'multiuser':
+            Path(temporary).chmod(0o755)
         print('Installer fixture location: ' + temporary, file=sys.stderr)
         return run(opts, Path(temporary), bootstrap_proven=True)
+
+
+def validate_root(root, profile, in_place, uid=None):
+    """Read-only preflight; no bootstrap or host write may precede this check."""
+    try:
+        info = root.lstat()
+        resolved = root.resolve(strict=True)
+        if not stat.S_ISDIR(info.st_mode) or root.is_symlink() or resolved != root.absolute():
+            return '--root must be an existing ordinary directory without symlink ancestors'
+        if info.st_uid != (os.geteuid() if uid is None else uid):
+            return '--root must be owned by the current user'
+        system = ('/', '/var', '/var/lib', '/var/log', '/run', '/etc', '/usr', '/usr/local', '/usr/local/bin', '/usr/local/sbin', '/root', '/home', '/tmp', '/dev', '/proc', '/sys')
+        if resolved.as_posix() in system or any(resolved.is_relative_to(Path(p)) for p in ('/etc', '/dev', '/proc', '/sys')):
+            return '--root cannot be a system directory'
+        if any(resolved.is_relative_to(Path(p)) for p in ('/run/404-probe', '/etc/404-probe', '/var/lib/404-probe', '/var/lib/404-probe-updater', '/var/log/404-probe')):
+            return '--root cannot be an installed project directory'
+        mode = stat.S_IMODE(info.st_mode)
+        if mode & 0o022 or (profile == 'multiuser' and mode != 0o755):
+            return '--root requires private write permissions and multiuser requires 0755 traversal'
+        if not in_place:
+            prefixes = ('installer-fixture-', 'canary', 'filesystem', 'multiuser-', 'fixture-test.sh', 'in-place-proof.json')
+            if any(p.name not in ('tmp', 'system') and not p.name.startswith(prefixes) for p in resolved.iterdir()):
+                return '--root must be empty or contain only installer-fixture entry files'
+    except (OSError, ValueError) as error:
+        return '--root preflight failed: ' + str(error).splitlines()[0]
+    return ''
 
 
 def bootstrap_boundary():

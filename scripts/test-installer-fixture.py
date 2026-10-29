@@ -21,6 +21,22 @@ spec.loader.exec_module(fixture)
 
 
 class FixtureBoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux ownership/mode preflight')
+    def test_root_preflight_rejects_system_foreign_nonempty_and_inaccessible(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assertEqual(fixture.validate_root(root, 'default', False), '')
+            self.assertIn('0755', fixture.validate_root(root, 'multiuser', False))
+            root.chmod(0o755)
+            self.assertEqual(fixture.validate_root(root, 'multiuser', False), '')
+            self.assertIn('owned', fixture.validate_root(root, 'default', False, uid=root.stat().st_uid+1))
+            (root/'unrelated').write_text('preserved')
+            self.assertIn('empty', fixture.validate_root(root, 'default', False))
+            self.assertEqual((root/'unrelated').read_text(), 'preserved')
+            self.assertEqual(fixture.validate_root(root, 'default', True), '')
+        for system in ('/', '/var/lib', '/run', '/etc'):
+            self.assertIn('system', fixture.validate_root(Path(system), 'default', False, uid=Path(system).stat().st_uid))
+
     def test_multiuser_only_preparation_errors_skip(self):
         @contextmanager
         def prepared(root):
