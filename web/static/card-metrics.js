@@ -31,7 +31,7 @@
     if (/^[A-Z]{3}$/.test(currency) && Number.isFinite(Number(value))) {
       try { amount = `${currency} ${new Intl.NumberFormat('en-US',{style:'currency',currency,currencyDisplay:'narrowSymbol'}).format(Number(value))}`; } catch (_) { /* preserve actual currency/value */ }
     }
-    return `${amount}${({monthly:'/月',yearly:'/年',once:' 一次性'})[period] || ''}`;
+    return `${amount}${({monthly:'/月',quarterly:'/季',semiannual:'/半年',yearly:'/年',once:' 一次性'})[period] || ''}`;
   }
   const tone = (value, warning=70, critical=90) => percent(value) == null ? 'unknown' : value >= critical ? 'critical' : value >= warning ? 'warning' : 'healthy';
   // Two bounded observations per live agent, no timer, request, persisted history or boot-identity claim.

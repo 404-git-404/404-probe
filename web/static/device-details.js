@@ -40,7 +40,7 @@
    set('sub0',old?'当前数据不可用':`负载 ${s.load1==null?'—':s.load1.toFixed(2)} · steal ${percent(s.cpu_steal_percent)}`);
    set('sub1',old?'当前数据不可用':`${s.ram_used==null?'—':format(s.ram_used,true)} / ${s.ram_total?format(s.ram_total,true):'—'}`);set('sub2',old?'当前数据不可用':`${s.disk_used==null?'—':format(s.disk_used,true).replace(/ [A-Za-z]+$/,'')} / ${s.disk_total?format(s.disk_total,true):'—'}`);
    [s.rx_rate,s.tx_rate].forEach((v,i)=>{set('metric'+(i+3),valid(v)?format(v,false)+'/s':'—');set('sub'+(i+3),old?'当前数据不可用':'实时速率');});
-   set('price',p.renewal_price?`${p.currency||''} ${p.currency==='USD'?'$':''}${p.renewal_price} / ${{monthly:'月',yearly:'年',once:'一次性'}[p.renewal_price_period]||'未设周期'}`:'未设置');
+   set('price',p.renewal_price?`${p.currency||''} ${p.currency==='USD'?'$':''}${p.renewal_price} / ${{monthly:'月',quarterly:'季',semiannual:'半年',yearly:'年',once:'一次性'}[p.renewal_price_period]||'未设周期'}`:'未设置');
    set('bandwidth',p.bandwidth_value?`${p.bandwidth_value} ${p.bandwidth_unit}`:'未设置');
    let relative='';if(p.renewal_date){try{const today=new Intl.DateTimeFormat('en-CA',{timeZone:p.timezone||'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const days=Math.round((Date.parse(p.renewal_date)-Date.parse(today))/86400000);if(Number.isFinite(days))relative=days===0?'今天':days>0?`${days} 天后`:`已过 ${-days} 天`;}catch{}}
    values.renewal.replaceChildren(el('strong','',p.renewal_date||'未设置'),el('span','details-note',relative));set('expiry',p.expiry_date||'未设置');

@@ -762,7 +762,7 @@ function cpuStealRow(state, stale) {
 }
 
 function pricePeriod(value) {
-  return ({once: '一次性', monthly: '/ 月', yearly: '/ 年'})[value] || '';
+  return ({once: '一次性', monthly: '/ 月', quarterly: '/ 季', semiannual: '/ 半年', yearly: '/ 年'})[value] || '';
 }
 
 function calendarDaysRemaining(date, timezone = 'UTC') {
@@ -1445,7 +1445,7 @@ const detailViews=new Map();
 function detailsFor(id){
  if(!agents.has(id))return null;
  if(!detailViews.has(id))detailViews.set(id,createAgentDetails(agents.get(id)));
- return detailViews.get(id);
+ const view=detailViews.get(id);view.update(agents.get(id));return view;
 }
 function createAgentDetails(initial){
  let agent=initial;

@@ -5,7 +5,7 @@
  const date=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v);
  const fields=['renewal_date','expiry_date'];
  const labels={renewal_date:'下次续费',expiry_date:'到期日期'};
- const reasons={plan_missing:'尚未设置套餐。',date_missing:'未设置选中的日期。',period_missing:'未设置价格续费周期。',one_time:'一次性套餐没有月付或年付续费周期。'};
+ const reasons={plan_missing:'尚未设置套餐。',date_missing:'未设置选中的日期。',period_missing:'未设置价格续费周期。',one_time:'一次性套餐没有可顺延的续费周期。'};
  const configFields=['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','timezone','bandwidth_value','bandwidth_unit','currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','country_code_override'];
  const facts=p=>p?JSON.stringify(configFields.map(k=>p[k]??'')):'null';
  function requestID(crypto=root.crypto){
@@ -15,7 +15,7 @@
  function validPreview(p){
   if(!p||typeof p.eligible!=='boolean')throw Error('预览响应无法验证。');
   if(!p.eligible){if(!Object.hasOwn(reasons,p.reason)||p.edit_plan!==true)throw Error('预览响应无法验证。');return p;}
-  if(!fields.includes(p.field)||!date(p.from_date)||!date(p.to_date)||!hex(p.expected_revision)||!['monthly','yearly'].includes(p.period)||typeof p.timezone!=='string'||!p.timezone||!['purchase_date','current_date'].includes(p.anchor_source)||typeof p.new_overdue!=='boolean'||typeof p.due_today!=='boolean'||p.new_overdue&&p.due_today||p.unchanged_field!==fields.find(f=>f!==p.field)||p.unchanged_date!=null&&p.unchanged_date!==''&&!date(p.unchanged_date))throw Error('预览响应无法验证。');
+  if(!fields.includes(p.field)||!date(p.from_date)||!date(p.to_date)||!hex(p.expected_revision)||!['monthly','quarterly','semiannual','yearly'].includes(p.period)||typeof p.timezone!=='string'||!p.timezone||!['purchase_date','current_date'].includes(p.anchor_source)||typeof p.new_overdue!=='boolean'||typeof p.due_today!=='boolean'||p.new_overdue&&p.due_today||p.unchanged_field!==fields.find(f=>f!==p.field)||p.unchanged_date!=null&&p.unchanged_date!==''&&!date(p.unchanged_date))throw Error('预览响应无法验证。');
   return p;
  }
  function validResult(r,id,kind,q){
@@ -49,11 +49,11 @@
     get('detail').textContent=`撤销本次登记 · ${labels[r.latest.field]}恢复原日期 · 时区 ${agents.get(id)?.plan?.timezone||'UTC'}。${labels[other]} ${agents.get(id)?.plan?.[other]||'未设置'} 保持不变。`;
     get('warning').textContent='';get('anchor').textContent='';
    }else if(preview?.eligible){field.value=preview.field;get('from').textContent=preview.from_date;get('to').textContent=preview.to_date;
-    get('detail').textContent=`${labels[preview.field]} · ${preview.period==='monthly'?'每月顺延一期':'每年顺延一期'} · 时区 ${preview.timezone}。${labels[preview.unchanged_field]} ${preview.unchanged_date||'未设置'} 保持不变。`;
+    get('detail').textContent=`${labels[preview.field]} · ${({monthly:'每月顺延一期',quarterly:'每季顺延一期',semiannual:'每半年顺延一期',yearly:'每年顺延一期'})[preview.period]} · 时区 ${preview.timezone}。${labels[preview.unchanged_field]} ${preview.unchanged_date||'未设置'} 保持不变。`;
     get('warning').textContent=preview.new_overdue?'新日期仍已过期；确认只从原日期顺延一期，不自动补齐。':preview.due_today?'新日期今天到期；仍从原日期顺延一期。':'';
     get('anchor').textContent=preview.anchor_source==='current_date'?'以原当前日期为锚点；没有可兼容的购买日，不猜测未知历史月末。':'沿原购买日锚定，月末或闰日按服务端夹取。';
    }else{get('detail').textContent=preview?(reasons[preview.reason]+' 请编辑套餐后再登记。'):'';get('warning').textContent='';get('anchor').textContent='';}
-   if(preview?.eligible&&!undoAsk){get('detail').title=get('detail').textContent+' '+get('anchor').textContent;get('detail').textContent=labels[preview.field]+'日顺延'+(preview.period==='yearly'?'一年':'一期')+'：';}get('anchor').hidden=true;
+   if(preview?.eligible&&!undoAsk){get('detail').title=get('detail').textContent+' '+get('anchor').textContent;get('detail').textContent=labels[preview.field]+'日顺延'+({monthly:'一个月',quarterly:'三个月',semiannual:'六个月',yearly:'一年'})[preview.period]+'：';}get('anchor').hidden=true;
    confirm.textContent=undoAsk?'确认撤销此次登记':'确认已续费';
    confirm.disabled=busy||loading||!!r.unknown||!canWrite(id)||(undoAsk?!undoAvailable(r):!preview?.eligible);
    get('undo-note').hidden=!undoAsk;place();
