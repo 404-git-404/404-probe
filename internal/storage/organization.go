@@ -84,6 +84,11 @@ func normalizeOrganizationName(name string, group bool) (string, string, error) 
 	if !utf8.ValidString(name) {
 		return "", "", ErrOrganizationInvalid
 	}
+	for _, r := range name {
+		if (unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)) && r != '\u200d' {
+			return "", "", fmt.Errorf("%w: control character", ErrOrganizationInvalid)
+		}
+	}
 	name = norm.NFC.String(strings.TrimSpace(name))
 	limit := 20
 	if group {
@@ -91,11 +96,6 @@ func normalizeOrganizationName(name string, group bool) (string, string, error) 
 	}
 	if name == "" || utf8.RuneCountInString(name) > limit {
 		return "", "", fmt.Errorf("%w: name length", ErrOrganizationInvalid)
-	}
-	for _, r := range name {
-		if (unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)) && r != '\u200d' {
-			return "", "", fmt.Errorf("%w: control character", ErrOrganizationInvalid)
-		}
 	}
 	key := norm.NFC.String(cases.Fold().String(name))
 	if group && key == "未分组" {
