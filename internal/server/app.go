@@ -49,6 +49,7 @@ type App struct {
 	dashboardMu                   sync.Mutex
 	dashboardNetwork              map[string]dashboardNetworkEntry
 	dashboardGeneration           uint64
+	dashboardResets               uint64
 }
 
 const (

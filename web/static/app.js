@@ -1117,9 +1117,11 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
+let renderAll=false;
+const renderDirty=new Set();
 const groupViews=new Map();
-function render(){if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;renderDashboard();});}
-function renderDashboard() {
+function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
+function renderDashboard(dirty=null) {
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs=dashboardUI.preferences.value;
   document.body.classList.toggle('dashboard-simple',model.simple);
   overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild,simple:model.simple});
@@ -1142,9 +1144,11 @@ function renderDashboard() {
     if(layout!==lastLayout){if(gv.node!==groupPosition){if(gv.node.parentNode===container&&container.moveBefore)container.moveBefore(gv.node,groupPosition);else container.insertBefore(gv.node,groupPosition);}groupPosition=gv.node.nextElementSibling;}
     if(collapsed)continue;
     let position=gv.body.firstElementChild;
-    for(const agent of group.items){let view=agentCards.get(agent.agent_id);const key=cardRenderKey(agent);
-      if(!view){view=createAgentCard(agent);agentCards.set(agent.agent_id,view);}else if(renderedCardKeys.get(agent.agent_id)!==key)view.update(agent);
-      renderedCardKeys.set(agent.agent_id,key);
+    for(const agent of group.items){let view=agentCards.get(agent.agent_id);
+      if(!view||dirty===null||dirty.has(agent.agent_id)){const key=cardRenderKey(agent);
+       if(!view){view=createAgentCard(agent);agentCards.set(agent.agent_id,view);}else if(renderedCardKeys.get(agent.agent_id)!==key)view.update(agent);
+       renderedCardKeys.set(agent.agent_id,key);
+      }
       if(layout!==lastLayout&&view.card!==position){if(view.card.parentNode===gv.body&&gv.body.moveBefore)gv.body.moveBefore(view.card,position);else gv.body.insertBefore(view.card,position);}position=view.card.nextElementSibling;
     }
   }
@@ -1635,7 +1639,7 @@ function hydrateActiveDetail(id){
  const task=Promise.allSettled([readAgentDetail(id,controller.signal),readAgentUpgrade(id,null,controller.signal)]).finally(()=>detailJobs.delete(id));
  detailJobs.set(id,{controller,task});return task;
 }
-const dashboardData=DashboardData.create({state:agentState,read:readJSON,onchange:ids=>{overviewReady=true;render(ids);},onerror:()=>{stream.textContent='部分资料读取失败';stream.classList.remove('live');}});
+const dashboardData=DashboardData.create({state:agentState,read:readJSON,onchange:ids=>{overviewReady=true;render(ids);},onsuccess:()=>{if(events.readyState===EventSource.OPEN){stream.textContent='实时连接';stream.classList.add('live');}},onerror:()=>{stream.textContent='部分资料读取失败';stream.classList.remove('live');}});
 const reconciliation={
  notify(id){dashboardData.notify(id);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===id)hydrateActiveDetail(id);},
  retry(){dashboardData.retry();},cancel(id){detailJobs.get(id)?.controller.abort();detailJobs.delete(id);},
@@ -1650,7 +1654,8 @@ expenseDialog=ExpenseDialog.create({api:organizationAPI,visibleIDs:()=>Dashboard
 loadMutationSession();
 refresh();
 let suspended = false;
-setInterval(() => { if (suspended) return; reconciliation.retry(); if (!agentState.refreshing()) refresh(); }, 15000);
+setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); if (!agentState.refreshing()) refresh(); }, 15000);
+document.addEventListener('visibilitychange',()=>{if(!suspended&&!document.hidden)dashboardData.reload();});
 addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
@@ -1661,7 +1666,7 @@ events.onopen = () => {
   if (suspended) return;
   stream.textContent = '实时连接';
   stream.classList.add('live');
-  if(streamOpened)refresh();streamOpened=true;
+  if(streamOpened||!agentState.refreshing())refresh();streamOpened=true;
 };
 events.onerror = () => {
   stream.textContent = '正在重连';
@@ -1672,7 +1677,8 @@ events.addEventListener('agent', event => {
  const id=update.agent_id;if (revokedAgentIDs.has(update.agent_id)) return;
  if(agentState.fullEvent(update))agentState.invalidate(id,[...new Set(Object.keys(update).map(AgentState.resource))]);
  else if(agentState.event(update))render(new Set([id]));
- dashboardData.notify(id);
+ if(agentState.fullEvent(update)||!agents.has(id)||Object.keys(update).some(key=>!['agent_id','state','online','last_seen','summary_version'].includes(key)))dashboardData.notify(id);
+ else dashboardData.telemetry(id);
  if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===id&&agentState.fullEvent(update))hydrateActiveDetail(id);
 });
 events.addEventListener('dashboard',event=>{try{const value=JSON.parse(event.data);dashboardData.metadata(value);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===value.agent_id&&!value.revoked)hydrateActiveDetail(value.agent_id);}catch{}});

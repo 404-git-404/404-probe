@@ -182,7 +182,7 @@ func (a *App) cachedDashboardNetwork(r *http.Request, id string, now time.Time) 
 		return entry.Value
 	}
 	generation := entry.Generation
-	cacheGeneration := a.dashboardGeneration
+	cacheReset := a.dashboardResets
 	a.dashboardMu.Unlock()
 	out := dashboardNetwork{CheckedAt: now.UnixMilli(), ExpiresAt: now.Add(5 * time.Second).UnixMilli()}
 	gate, err := a.store.QualityAlertGate(r.Context(), id)
@@ -204,9 +204,11 @@ func (a *App) cachedDashboardNetwork(r *http.Request, id string, now time.Time) 
 	}
 	if len(a.dashboardNetwork) > 2048 {
 		a.dashboardNetwork = map[string]dashboardNetworkEntry{}
-		a.dashboardGeneration++
+		a.dashboardResets++
 	}
-	if a.dashboardGeneration != cacheGeneration || a.dashboardNetwork[id].Generation != generation {
+	// Unrelated device invalidations must not invalidate this computation. A map
+	// reset has its own epoch so an old computation cannot repopulate a new map.
+	if a.dashboardResets != cacheReset || a.dashboardNetwork[id].Generation != generation {
 		return dashboardNetwork{CheckedAt: now.UnixMilli()}
 	}
 	a.dashboardNetwork[id] = dashboardNetworkEntry{Value: out, Expires: now.Add(5 * time.Second), Generation: generation}

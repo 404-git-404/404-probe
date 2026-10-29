@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,13 +88,13 @@ func TestFrontendReviewMetadataEventsAndCache(t *testing.T) {
 	if a.dashboardNetwork == nil || a.dashboardNetwork[id].Generation == 0 {
 		t.Fatal("first invalidation lost")
 	}
-	generation := a.dashboardGeneration
+	reset := a.dashboardResets
 	for i := 0; i < 2050; i++ {
 		a.dashboardNetwork[fmt.Sprint(i)] = dashboardNetworkEntry{}
 	}
 	a.cachedDashboardNetwork(httptest.NewRequest("GET", "/", nil), id, time.Now())
-	if a.dashboardGeneration <= generation {
-		t.Fatal("cache reset reused generation")
+	if a.dashboardResets <= reset {
+		t.Fatal("cache reset reused reset epoch")
 	}
 	ch, _ := a.hub.subscribe()
 	defer a.hub.unsubscribe(ch)
@@ -111,6 +113,46 @@ func TestFrontendReviewMetadataEventsAndCache(t *testing.T) {
 		default:
 			t.Fatal("missing committed event", action)
 		}
+	}
+}
+
+func TestDashboardNetworkUnrelatedInvalidationRemainsKnown(t *testing.T) {
+	a, s, _, _ := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	var readers sync.WaitGroup
+	var unknown atomic.Int64
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				a.invalidateDashboardNetwork("unrelated")
+			}
+		}
+	}()
+	for worker := 0; worker < 8; worker++ {
+		readers.Go(func() {
+			for i := 0; i < 200; i++ {
+				id := fmt.Sprintf("reader-%d-%d", worker, i)
+				v := a.cachedDashboardNetwork(httptest.NewRequest("GET", "/", nil), id, time.Now())
+				if !v.Known {
+					unknown.Add(1)
+				}
+			}
+		})
+	}
+	readers.Wait()
+	close(done)
+	<-stopped
+	if n := unknown.Load(); n != 0 {
+		t.Fatalf("unrelated invalidation made %d of 1600 reads unknown", n)
 	}
 }
 
