@@ -1,0 +1,4 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),N=require('../web/static/organization-name.js');
+test('NFC and full case folding match the server examples',()=>{for(const [a,b]of [['GIA','gia'],['Straße','STRASSE'],['ς','σ'],['ſ','S'],['Cafe\u0301','Café']])assert.equal(N.fold(N.normalize(a)),N.fold(N.normalize(b)));assert.notEqual(N.fold('ı'),N.fold('i'));});
+test('invisible controls are rejected before normalization; emoji joiners remain usable',()=>{for(const s of ['\u0000x','x\u0085','\u200bx','x\u2028','x\u2029','x\ufeff'])assert.equal(N.valid(s,20),false,s);for(const s of ['标签','👩‍💻','❤️','☕️'])assert.equal(N.valid(s,20),true,s);});
+test('limits count Unicode code points, including long emoji names',()=>{assert(N.valid('😀'.repeat(20),20));assert(!N.valid('😀'.repeat(21),20));assert(N.valid('组'.repeat(40),40));assert(!N.valid('组'.repeat(41),40));assert(!N.valid('  ',20));});

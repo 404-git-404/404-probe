@@ -39,6 +39,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 			now := time.Now()
 			a.now = func() time.Time { return now }
 			ids := []string{}
+			tokens := map[string]string{}
 			for i := 0; i < n; i++ {
 				id := fmt.Sprintf("%032x", i+1)
 				ids = append(ids, id)
@@ -46,6 +47,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				tokens[id] = token
 				if err := s.AddAgent(t.Context(), id, fmt.Sprintf("synthetic-%03d", i), hash, now); err != nil {
 					t.Fatal(err)
 				}
@@ -122,6 +124,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 			result := map[string]any{"devices": n, "cold_ms": samples[0], "warm_median_ms": (warm[4] + warm[5]) / 2, "warm_p95_ms": warm[9], "response_bytes": size, "requests": 1, "minute_rows": rows, "ipv4_tcp_targets_per_device": 3, "samples_ms": samples}
 			encoded, _ := json.Marshal(result)
 			t.Log("V110_PERF " + string(encoded))
+			dashboardBrowserPerformance(t, a, server, ids, tokens, now, n, rows)
 		})
 	}
 }

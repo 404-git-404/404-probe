@@ -63,7 +63,7 @@ func TestUpdaterHealthLiveObserver(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		if r.Method != http.MethodGet && r.URL.Path != "/login" {
+		if r.Method != http.MethodGet && r.URL.Path != "/login" && !(r.Method == http.MethodPost && r.URL.Path == "/api/v1/web/expenses/estimate") {
 			http.Error(w, "observation only", http.StatusMethodNotAllowed)
 			return
 		}
