@@ -89,7 +89,7 @@
     plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', public_egress_check: 'egress',
     security: 'security', management: 'management', traffic: 'traffic', removal: 'removal',
     group_id:'organization', tag_ids:'organization', organization_revision:'organization',
-    renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', masked_egress:'summary', dashboard_loaded:'summary', network:'summary',
+    renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', masked_egress:'summary', dashboard_loaded:'summary', dashboard_received_at:'summary', network:'summary',
   })[key] || 'runtime';
   const fullEvent = value => ['created_at', 'revoked', 'management', 'outbounds', 'google_status', 'security', 'plan']
     .some(key => Object.hasOwn(value, key));

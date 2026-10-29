@@ -13,6 +13,12 @@ test('P5c >=90 resource threshold requires known fresh finite measurements',()=>
 test('P5c missing, expired and null network observations remain unknown; never become healthy',()=>{
  const s=aggregate([agent({network:{known:false,active:null}}),agent({network:{known:true,active:null}}),agent({network:{known:true,active:false,monitored:true,expires_at:now-1}})]);assert.equal(s.health,0);assert.equal(s.insufficient,3);
 });
+
+test('P5c a known summary survives the server cache TTL during its throttled refresh window',()=>{
+ const a=agent({dashboard_received_at:now,network:{known:true,active:true,monitored:true,expires_at:now+5000}});
+ assert.equal(M.flags(a,server,now+10000).network,true);assert.equal(M.flags(a,server,now+11001).network,false);
+ assert.equal(M.flags({...a,network:{known:false,active:null}},server,now+1000).network,false);
+});
 test('P5c traffic >=80% requires current positive quota; partial observations retain the same threshold',()=>{
  const rows=[79,80,100].map(usage=>agent({plan:{quota_bytes:100,usage_bytes:usage,usage_status:'partial'}}));rows.push(agent({plan:{quota_bytes:0,usage_bytes:99}}),agent({plan:{quota_bytes:100,usage_bytes:99},dashboard_traffic:{quota_state:'expired'}}));assert.equal(aggregate(rows).quick.traffic,2);
 });

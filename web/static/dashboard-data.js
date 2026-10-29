@@ -3,7 +3,7 @@
  'use strict';
  const GROUPS=['runtime','name','lifecycle','country','plan','organization','summary','google','outbounds','traffic'];
  function normalize(row){
-  const result={...row,dashboard_traffic:row.traffic,traffic:row.accumulated_traffic,dashboard_loaded:true};
+  const result={...row,dashboard_traffic:row.traffic,traffic:row.accumulated_traffic,dashboard_loaded:true,dashboard_received_at:Date.now()};
   delete result.accumulated_traffic;
   return result;
  }

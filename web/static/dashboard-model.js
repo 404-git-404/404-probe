@@ -14,7 +14,10 @@
  function flags(a,server,now=Date.now()){
   const r=a.resources,t=a.dashboard_traffic||{},p=a.plan,n=a.network;
   const fresh=!!r?.known&&!r.stale&&(!r.max_age_ms||!r.collected_at||now-r.collected_at<=r.max_age_ms);
-  const networkKnown=!!n?.known&&typeof n.active==='boolean'&&(!n.monitored||!n.expires_at||now<=n.expires_at);
+  // The five-second expires_at is the Server computation-cache TTL. A client
+  // snapshot stays usable over its ten-second refresh plus one batch interval.
+  const networkFresh=a.dashboard_received_at?now-a.dashboard_received_at<=11000:!n?.expires_at||now<=n.expires_at;
+  const networkKnown=!!n?.known&&typeof n.active==='boolean'&&(!n.monitored||networkFresh);
   const resource=fresh&&[r.cpu_percent,r.ram_percent,r.disk_percent].some(v=>typeof v==='number'&&Number.isFinite(v)&&v>=90);
   const traffic=t.quota_state==='current'&&typeof p?.quota_bytes==='number'&&p.quota_bytes>0&&typeof p?.usage_bytes==='number'&&p.usage_bytes/p.quota_bytes>=.8;
   const network=networkKnown&&n.active===true;
