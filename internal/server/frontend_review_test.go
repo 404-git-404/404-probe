@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"404-probe/internal/buildinfo"
 	"404-probe/internal/storage"
 )
 
@@ -151,5 +152,31 @@ func TestFrontendReviewQualityWritesInvalidateAndPublish(t *testing.T) {
 		default:
 			t.Fatal("missing quality event")
 		}
+	}
+}
+
+func TestFrontendReviewActiveUpgradeDisplayKeepsSupportDecision(t *testing.T) {
+	a, s, id := newWebAuthenticationTestApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	a.buildInfo = buildinfo.Info{Version: "v1.0.10", Commit: strings.Repeat("b", 40)}
+	makeUpgradeableAgent(t, a, s, id)
+	read := func() upgradeTarget {
+		w := webAgentResponse(t, a, "GET", webAgentPathPrefix+id+"/upgrade-targets")
+		var v struct {
+			Targets []upgradeTarget `json:"targets"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || len(v.Targets) != 1 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		return v.Targets[0]
+	}
+	before := read()
+	if _, err := s.CreateUpgrade(t.Context(), storage.UpgradeOperation{OperationID: strings.Repeat("a", 32), AgentID: id, FromVersion: "v1.0.9", TargetVersion: "v1.0.10", CreatedAt: a.now().UnixMilli()}); err != nil {
+		t.Fatal(err)
+	}
+	after := read()
+	if after.ReasonCode != "upgrade_in_progress" || after.Supported != before.Supported {
+		t.Fatal(before, after)
 	}
 }

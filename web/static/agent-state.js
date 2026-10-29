@@ -17,6 +17,7 @@
     return 0;
   }
   const upgradeReasons = Object.freeze({
+    upgrade_in_progress: '正在升级，请等待完成',
     rc_agent_required: '这台机器的旧版程序不能直接升级到候选测试版，升级按钮已停用。请先在机器上迁移到支持测试版升级的正式版，原有监控仍可使用。',
     updater_unavailable: '这台机器的升级服务暂时不可用，升级按钮已停用。请先确认没有进行中的升级、恢复或移除，再按升级服务排查文档检查；如果这是 Alpine/OpenRC 机器，则不支持从面板升级。不用重装，原配置和历史都会保留。',
     updater_socket_missing: '这台机器的升级服务连接文件丢失，升级按钮已停用。新版升级服务在目录安全时会尝试恢复；若未恢复，先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查，保留原配置和历史。',

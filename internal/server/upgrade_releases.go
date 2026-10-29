@@ -377,7 +377,18 @@ func (a *App) handleWebUpgradeTargets(w http.ResponseWriter, r *http.Request) {
 	message := ""
 	messageCode := ""
 	if releasemetadata.IsCommit(a.buildInfo.Commit) && (a.buildInfo.UpgradeEligible() || a.buildInfo.ExplicitUpgradeEligible()) {
-		targets = append(targets, a.compatibleAgentTarget(a.serverUpgradeTarget(), record))
+		target := a.compatibleAgentTarget(a.serverUpgradeTarget(), record)
+		active, err := a.store.GetActiveUpgrade(r.Context(), id)
+		if err != nil {
+			writeJobError(w, 500, "internal_error", "could not inspect upgrade progress")
+			return
+		}
+		if active != nil {
+			// Display priority only; the existing support result and POST gates
+			// remain unchanged (the active-operation constraint still gates POST).
+			target.ReasonCode, target.Reason = "upgrade_in_progress", "正在升级，请等待完成"
+		}
+		targets = append(targets, target)
 	} else {
 		message = "当前 Server 构建不支持远程升级"
 		messageCode = "server_build_ineligible"
