@@ -111,6 +111,9 @@ func planDate(value string) (time.Time, error) {
 	}
 	return t, nil
 }
+func paymentPeriodMonths(period string) int {
+	return map[string]int{"monthly": 1, "quarterly": 3, "semiannual": 6, "yearly": 12}[period]
+}
 func planRenewalAnchor(p AgentPlan, date string) string {
 	d, err := planDate(date)
 	if err != nil {
@@ -121,7 +124,7 @@ func planRenewalAnchor(p AgentPlan, date string) string {
 		return date
 	}
 	months := (d.Year()-a.Year())*12 + int(d.Month()-a.Month())
-	if (p.RenewalPricePeriod == "monthly" || (p.RenewalPricePeriod == "yearly" && months%12 == 0)) && anchoredMonth(a, months).Equal(d) {
+	if step := paymentPeriodMonths(p.RenewalPricePeriod); step > 0 && months%step == 0 && anchoredMonth(a, months).Equal(d) {
 		return p.PurchaseDate
 	}
 	return date
@@ -161,10 +164,8 @@ func renewalPreview(p *AgentPlan, c planRenewalConfig, field string, now time.Ti
 		out.Reason = "one_time"
 		return out, nil
 	}
-	step := 1
-	if p.RenewalPricePeriod == "yearly" {
-		step = 12
-	} else if p.RenewalPricePeriod != "monthly" {
+	step := paymentPeriodMonths(p.RenewalPricePeriod)
+	if step == 0 {
 		return out, renewalError("invalid_period")
 	}
 	d, err := planDate(out.FromDate)

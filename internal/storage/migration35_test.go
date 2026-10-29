@@ -291,7 +291,7 @@ func TestMigration35SchemaIsComplete(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.db")
 	s, id, _ := testStore(t, path)
 	defer s.Close()
-	if version, err := s.SchemaVersion(context.Background()); err != nil || version != 35 {
+	if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema %d %v", version, err)
 	}
 	plans := m35Columns(t, s.db, "agent_plans")
@@ -368,7 +368,7 @@ func TestMigration35From34KeepsEverythingElseAndDropsTCPMini(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	after := m35Fingerprint(t, s.db, "agent_plans", "quality_config", "schema_migrations")
+	after := m35Fingerprint(t, s.db, append(organizationTables, "agent_plans", "quality_config", "schema_migrations")...)
 	for table, want := range before {
 		if after[table] != want {
 			t.Errorf("%s changed by migration 35", table)
@@ -384,7 +384,7 @@ func TestMigration35From34KeepsEverythingElseAndDropsTCPMini(t *testing.T) {
 			t.Fatalf("%s survived", table)
 		}
 	}
-	if version, err := s.SchemaVersion(context.Background()); err != nil || version != 35 {
+	if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema %d %v", version, err)
 	}
 }
@@ -481,7 +481,7 @@ func TestMigration35FailureAtEveryStageLeavesSchema34Untouched(t *testing.T) {
 				t.Fatalf("retry: %v", err)
 			}
 			defer s.Close()
-			if version, err := s.SchemaVersion(context.Background()); err != nil || version != 35 {
+			if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
 				t.Fatalf("retry schema %d %v", version, err)
 			}
 		})
@@ -506,7 +506,7 @@ func TestMigration35OldDatabaseWalksTheWholeChain(t *testing.T) {
 		t.Fatalf("chain: %v", err)
 	}
 	defer s.Close()
-	if version, err := s.SchemaVersion(context.Background()); err != nil || version != 35 {
+	if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema %d %v", version, err)
 	}
 	if m35TableExists(t, s.db, "tcp_mini_state") || m35TableExists(t, s.db, "tcp_mini_high") {

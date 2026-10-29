@@ -68,6 +68,9 @@ type dashboardSummary struct {
 	SearchFields         []string           `json:"search_fields"`
 }
 type dashboardResponse struct {
+	Partial       bool                   `json:"partial"`
+	Total         int                    `json:"total"`
+	Expenses      expenseTotals          `json:"expenses"`
 	ServerNow     int64                  `json:"server_now"`
 	Revision      int64                  `json:"revision"`
 	Groups        []storage.AgentGroup   `json:"groups"`
@@ -233,7 +236,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		a.organizationError(w, err)
 		return
 	}
-	out := dashboardResponse{ServerNow: now.UnixMilli(), Revision: data.Catalog.Revision, Groups: data.Catalog.Groups, Tags: data.Catalog.Tags, ExchangeRates: data.Catalog.Rates, Items: []dashboardSummary{}}
+	out := dashboardResponse{Partial: selected != nil, Total: len(data.Records), Expenses: estimateExpenses(data, nil).expenseTotals, ServerNow: now.UnixMilli(), Revision: data.Catalog.Revision, Groups: data.Catalog.Groups, Tags: data.Catalog.Tags, ExchangeRates: data.Catalog.Rates, Items: []dashboardSummary{}}
 	for _, raw := range data.Records {
 		id := raw.Snapshot.Agent.ID
 		if selected != nil && !selected[id] {

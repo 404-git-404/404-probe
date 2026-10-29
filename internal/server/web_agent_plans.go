@@ -232,8 +232,8 @@ func (request webAgentPlanRequest) plan(agentID string) (storage.AgentPlan, *uin
 		return storage.AgentPlan{}, nil, errors.New("each price requires its original price period")
 	}
 	for _, period := range []string{request.PurchasePricePeriod, request.RenewalPricePeriod} {
-		if period != "" && period != "once" && period != "monthly" && period != "yearly" {
-			return storage.AgentPlan{}, nil, errors.New("price period must be one-time, monthly, or yearly")
+		if period != "" && period != "once" && period != "monthly" && period != "quarterly" && period != "semiannual" && period != "yearly" {
+			return storage.AgentPlan{}, nil, errors.New("price period must be one-time, monthly, quarterly, semiannual, or yearly")
 		}
 	}
 	for _, date := range []string{request.PurchaseDate, request.RenewalDate, request.ExpiryDate} {

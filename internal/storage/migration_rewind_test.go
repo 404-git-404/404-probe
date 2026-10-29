@@ -59,6 +59,15 @@ func migrateV107Forward(t *testing.T, db *sql.DB) {
 // rewindV107Version lets migration 35 run again: its version row goes and the TCP Mini tables return.
 func rewindV107Version(t *testing.T, db *sql.DB) {
 	t.Helper()
+	// Schema36 is additive, but its version and FK tables must also be rewound.
+	for _, table := range organizationTables {
+		if _, err := db.Exec(`DROP TABLE IF EXISTS ` + table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=36`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=35`); err != nil {
 		t.Fatal(err)
 	}
