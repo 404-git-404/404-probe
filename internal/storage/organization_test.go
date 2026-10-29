@@ -24,6 +24,20 @@ func organizationStore(t *testing.T) *Store {
 	return s
 }
 
+func TestMigration36TextPrimaryKeysRejectNull(t *testing.T) {
+	s := organizationStore(t)
+	for _, statement := range []string{
+		`INSERT INTO groups(id,name,name_key,sort_order,revision) VALUES(NULL,'x','x',0,1)`,
+		`INSERT INTO tags(id,name,name_key,revision) VALUES(NULL,'x','x',1)`,
+		`INSERT INTO agent_organization(agent_id,revision) VALUES(NULL,1)`,
+		`INSERT INTO expense_exchange_rates(currency,units_per_usd,updated_at,revision) VALUES(NULL,'1',0,1)`,
+	} {
+		if _, err := s.db.Exec(statement); err == nil {
+			t.Fatal("SQLite rowid text primary key accepted NULL", statement)
+		}
+	}
+}
+
 func TestOrganizationSortHardLimitsAndSQLFailureRollback(t *testing.T) {
 	s := organizationStore(t)
 	id := strings.Repeat("a", 32)
