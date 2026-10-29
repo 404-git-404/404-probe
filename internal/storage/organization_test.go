@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -21,6 +22,72 @@ func organizationStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+func TestOrganizationSortHardLimitsAndSQLFailureRollback(t *testing.T) {
+	s := organizationStore(t)
+	id := strings.Repeat("a", 32)
+	organizationAgent(t, s, id)
+	a := organizationWrite(t, s, OrganizationChange{Kind: "create_group", Name: "A"})
+	b := organizationWrite(t, s, OrganizationChange{Kind: "create_group", Name: "B"})
+	organizationWrite(t, s, OrganizationChange{Kind: "sort_groups", Order: []string{b.ID, a.ID}})
+	c := organizationRead(t, s)
+	if c.Groups[0].ID != b.ID || c.Groups[1].SortOrder != 1 {
+		t.Fatal(c.Groups)
+	}
+	if _, err := s.ChangeOrganization(t.Context(), OrganizationChange{ExpectedRevision: c.Revision, Kind: "sort_groups", Order: []string{a.ID, a.ID}}, time.Now()); err == nil {
+		t.Fatal("nonpermutation accepted")
+	}
+	ids := []string{}
+	for i := 0; i < 200; i++ {
+		tag := fmt.Sprintf("%032x", i+1)
+		ids = append(ids, tag)
+		if _, err := s.db.Exec(`INSERT INTO tags(id,name,name_key,revision) VALUES(?,?,?,1)`, tag, fmt.Sprintf("tag-%03d", i), fmt.Sprintf("tag-%03d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c = organizationRead(t, s)
+	if _, err := s.ChangeOrganization(t.Context(), OrganizationChange{ExpectedRevision: c.Revision, Kind: "create_tag", Name: "over limit"}, time.Now()); !errors.Is(err, ErrOrganizationLimit) {
+		t.Fatal(err)
+	}
+	if _, err := s.ChangeOrganization(t.Context(), OrganizationChange{ExpectedRevision: c.Revision, Kind: "assign", AgentID: id, TagIDs: ids[:21]}, time.Now()); !errors.Is(err, ErrOrganizationInvalid) {
+		t.Fatal(err)
+	}
+	organizationWrite(t, s, OrganizationChange{Kind: "assign", AgentID: id, GroupID: &a.ID, TagIDs: ids[:20]})
+	before := organizationRead(t, s)
+	if _, err := s.db.Exec(`CREATE TRIGGER organization_injected_failure BEFORE INSERT ON agent_tags BEGIN SELECT RAISE(ABORT,'injected organization failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ChangeOrganization(t.Context(), OrganizationChange{ExpectedRevision: before.Revision, Kind: "assign", AgentID: id, NewGroup: "rollback", TagIDs: ids[:2]}, time.Now()); err == nil {
+		t.Fatal("injected SQL failure absent")
+	}
+	if !reflect.DeepEqual(before, organizationRead(t, s)) {
+		t.Fatal("SQL failure lost old links or left new group")
+	}
+	if _, err := s.db.Exec(`DELETE FROM agents WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	after := organizationRead(t, s)
+	if _, ok := after.Assignments[id]; ok {
+		t.Fatal("agent deletion did not cascade")
+	}
+}
+
+func TestDashboardStorageKeepsExpiredCycleAndNullPrices(t *testing.T) {
+	s := organizationStore(t)
+	id := strings.Repeat("a", 32)
+	organizationAgent(t, s, id)
+	if _, err := s.db.Exec(`INSERT INTO agent_plans(agent_id,traffic_mode,cycle_kind,cycle_count,cycle_anchor,timezone,usage_bytes,quota_bytes,cycle_start,cycle_end,purchase_price,renewal_price,updated_at) VALUES(?,'sum','monthly',1,'2020-01-01','UTC',80,100,1,2,NULL,'0',1)`, id); err != nil {
+		t.Fatal(err)
+	}
+	data, err := s.ReadDashboardData(t.Context(), time.Now(), time.Minute, false)
+	if err != nil || len(data.Records) != 1 {
+		t.Fatal(data, err)
+	}
+	p := data.Records[0].Plan
+	if p == nil || p.UsageBytes != 80 || p.CycleEnd == nil || *p.CycleEnd != 2 || p.PurchasePrice != "" || p.RenewalPrice != "0" {
+		t.Fatal("read projected expired data to zero", p)
+	}
 }
 func organizationAgent(t *testing.T, s *Store, id string) {
 	t.Helper()

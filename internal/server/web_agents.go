@@ -19,6 +19,7 @@ const (
 )
 
 type webAgentSummaryView struct {
+	SummaryVersion string                  `json:"summary_version"`
 	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health"`
 	AgentID        string                  `json:"agent_id"`
 	Name           string                  `json:"name"`
@@ -162,6 +163,7 @@ type webAgentHistoryPointView struct {
 }
 
 type webAgentEventView struct {
+	SummaryVersion string                  `json:"summary_version"`
 	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health"`
 	UpgradeCapable bool                    `json:"upgrade_capable"`
 	UpgradeV2      bool                    `json:"upgrade_v2"`
@@ -368,6 +370,7 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 }
 
 func (a *App) publishAgentDetail(ctx context.Context, agentID string) error {
+	a.invalidateDashboardNetwork(agentID)
 	view, err := a.webAgentDetail(ctx, agentID)
 	if err != nil {
 		return err
@@ -473,7 +476,8 @@ func validWebAgentID(value string) bool { return validLowerHexID(value, 32) }
 
 func newWebAgentSummaryView(record storage.AgentSnapshot) webAgentSummaryView {
 	view := webAgentSummaryView{
-		AgentID: record.Agent.ID, Name: record.Agent.Name, Revoked: record.Agent.Revoked,
+		SummaryVersion: dashboardVersion(record.Agent, record.State),
+		AgentID:        record.Agent.ID, Name: record.Agent.Name, Revoked: record.Agent.Revoked,
 		DisabledAt: record.Agent.DisabledAt, CreatedAt: record.Agent.CreatedAt, Online: record.Online, Version: "unknown",
 	}
 	if record.State != nil {
@@ -534,7 +538,8 @@ func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *w
 
 func newWebAgentEventView(state storage.State) webAgentEventView {
 	return webAgentEventView{
-		UpdaterHealth: state.AgentUpdaterHealth, UpgradeCapable: state.AgentUpgradeCapable && state.AgentUpdaterHealth.ReasonCode() == "", UpgradeV2: state.AgentUpgradeV2, Version: state.AgentVersion,
+		SummaryVersion: dashboardVersion(storage.Agent{ID: state.AgentID, Name: state.Name}, &state),
+		UpdaterHealth:  state.AgentUpdaterHealth, UpgradeCapable: state.AgentUpgradeCapable && state.AgentUpdaterHealth.ReasonCode() == "", UpgradeV2: state.AgentUpgradeV2, Version: state.AgentVersion,
 		AgentID: state.AgentID, Name: state.Name, Online: true, LastSeen: state.LastSeen,
 		State: newWebAgentStateView(state, false),
 	}

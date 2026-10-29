@@ -134,6 +134,7 @@ func webLoopbackHost(host string) bool {
 
 func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	a.organizationRoutes(mux)
+	mux.Handle("GET /api/v1/web/dashboard", a.requireWebSession(http.HandlerFunc(a.handleDashboard), true))
 	mux.Handle("GET /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLoginPage)))
 	mux.Handle("POST /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLogin)))
 	mux.Handle("GET /favicon.ico", a.requireWebTarget(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

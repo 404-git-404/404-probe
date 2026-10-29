@@ -46,6 +46,8 @@ type App struct {
 	staticAssets                  *staticAssets
 	qualityLookup                 qualityLookupFunc
 	qualityDNSSlots               chan struct{}
+	dashboardMu                   sync.Mutex
+	dashboardNetwork              map[string]dashboardNetworkEntry
 }
 
 const (
@@ -626,7 +628,11 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 			sessionTimer.Reset(delay)
 		case <-sessionDone(session):
 			return
-		case message := <-ch:
+		case message, open := <-ch:
+			if !open {
+				return
+			} // slow clients reconnect and resynchronize; no silent gaps
+			a.hub.consumed(ch, len(message))
 			if session != nil && !a.webAuth.sessionOriginAllowed(r.Context(), session) {
 				a.webAuth.revokeSession(session)
 				return
