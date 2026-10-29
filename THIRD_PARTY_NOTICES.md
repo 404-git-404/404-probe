@@ -92,7 +92,7 @@ CSS 为 `df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04`，
 purego 和 numcpus 模块内未找到独立 NOTICE 文件；保留 Apache 原文及源文件作者说明。
 
 
-v1.0.10 增量核对（2026-10-29）：新增直接依赖 x/text v0.27.0，读取本机与 go.sum 对应的离线模块缓存；不混用工具链 vendor 的 v0.32.0。`currency/tables.go` 标明 CLDR 32，`unicode/norm` 与 `cases` 包含 Unicode 生成数据。Go 源码的 BSD-3-Clause 与数据许可分别保留：CLDR/Unicode 数据受 Unicode 数据文件和软件许可约束，版权与许可声明随本文件附录 G4 分发；G4 已保留 Unicode 官方许可全文。模块没有独立 CLDR LICENSE，历史数据授权链沿用 Q7 的待核实记录，不以当前许可年份推断 CLDR 32 的发布日期。本项目没有修改上游模块或生成数据。
+v1.0.10 增量核对（2026-10-29）：新增直接依赖 x/text v0.27.0，读取本机与 go.sum 对应的离线模块缓存；不混用工具链 vendor 的 v0.32.0。`currency/tables.go` 标明 CLDR 32，`unicode/norm` 与 `cases` 包含 Unicode 生成数据。Go 源码的 BSD-3-Clause 与数据许可分别保留：CLDR/Unicode 数据受 Unicode 数据文件和软件许可约束，版权与许可声明随本文件附录 G4 分发；G4 已保留 Unicode 官方许可全文。模块没有独立 CLDR LICENSE，历史数据授权链沿用 Q7 的待核实记录，不以当前许可年份推断 CLDR 32 的发布日期。本项目没有修改上游模块或生成数据。前端 `web/static/organization-name.js` 的 Unicode full-fold 例外表由 `scripts/gen-organization-name.go` 从同一模块版本生成，用于与 Server 一致地复用已有标签名；该生成数据也随 Server/Web 分发，沿用本节及附录 G4 的数据许可声明。
 
 ### 3.1 包内嵌套代码和数据
 

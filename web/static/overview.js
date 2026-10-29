@@ -14,7 +14,7 @@
    shell.classList.toggle('overview-simple',simple);get('scope').textContent=ready?'全部 '+summary.registered+' 台':'正在读取';
    doc.getElementById('dashboard-expand').hidden=!simple;
    if(!ready){for(const id of ['online','health','renewal'])get(id).textContent='等待读取';get('health-note').textContent='资料读取完成后显示健康汇总';return;}
-   const s=summary||M.aggregate(agents,server);get('online').textContent=`${s.online} / ${s.registered}`;
+   const s=summary||M.aggregate(agents,server);shell.classList.toggle('has-attention',!!(s.health||s.insufficient));get('online').textContent=`${s.online} / ${s.registered}`;
    get('offline').textContent=`离线 ${s.offline} · 暂停 ${s.paused}`;get('upgrade').textContent=`待升级 ${s.upgrade} 台`;get('upgrade').disabled=!s.upgrade;get('upgrade').hidden=simple&&!s.upgrade;
    get('versions').textContent=[s.versionUnknown?`版本无法识别 ${s.versionUnknown} 台`:'',s.unknown?`状态未知 ${s.unknown} 台`:''].filter(Boolean).join(' · ');
    get('health').textContent=s.health?`${s.health} 台需要关注`:s.insufficient?'暂无已知异常':s.registered?'✓ 全部正常':'尚无设备';

@@ -17,7 +17,7 @@
   function schedule(){if(closed||scheduled)return;scheduled=true;frame(()=>{scheduled=false;flush();});}
   async function refresh(){
    if(closed)return;if(full)return full;
-   if(partial){wantFull=true;return partial;}
+   if(partial){wantFull=true;await partial;wantFull=false;return refresh();}
    const context=state.beginRefresh();
    full=(async()=>{
     try{
@@ -61,7 +61,7 @@
    if(value.revoked&&state.agents.has(id)){const token=state.beginDelete(id);state.finishDelete(token,true);dirty.delete(id);onchange(new Set([id]),{full:false});wantFull=true;schedule();return;}
    if(id){state.invalidate(id,value.kind==='name'?['name','summary']:['lifecycle','summary']);notify(id);}
   }
-  return {refresh,notify,metadata,organization(){for(const id of state.agents.keys())state.invalidate(id,['organization','summary']);wantFull=true;schedule();},retry(){schedule();},
+  return {refresh,async reload(){if(full)await full;if(partial)await partial;wantFull=false;return refresh();},notify,metadata,organization(){for(const id of state.agents.keys())state.invalidate(id,['organization','summary']);wantFull=true;schedule();},retry(){schedule();},
    catalog:()=>catalog,ready:()=>ready,close(){closed=true;dirty.clear();state.beginRefresh().controller.abort();},
    snapshot:()=>({ready,pending:[...dirty],full:!!full,partial:!!partial})};
  }

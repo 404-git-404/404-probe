@@ -1,7 +1,7 @@
 /* Persistent overview/management nodes. Server fields retain their original meanings. */
 (function(root){
  'use strict';
- function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite}){
+ function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>''}){
   const el=(t,c='',text)=>{const n=doc.createElement(t);n.className=c;if(text!=null)n.textContent=text;return n;};
   const overview=el('div','details-overview'),management=el('div','details-management'),metrics=el('div','details-metrics'),grid=el('div','details-grid'),groups=el('div','details-grid');
   overview.append(metrics,grid);management.append(groups);
@@ -20,6 +20,7 @@
   const agentGroup=section('Agent',groups),checks=section('检测与统计',groups),danger=section('危险操作',management);danger.n.classList.add('details-danger');
   function row(box,title,key,control){const n=el('div','details-action-row'),left=el('div');left.append(el('strong','',title));value(key,left).className='details-note';n.append(left);if(control)n.append(control);box.n.append(n);return n;}
   row(agentGroup,'升级','upgrade',actions.upgrade);row(agentGroup,'系统信息','sample');
+  const organizationButton=button('分组和标签…',n=>organization(current,n),'detail-organization');row(agentGroup,'分组和标签','organization',organizationButton);
   const region=el('div','details-region'),select=el('select');select.setAttribute('aria-label','出口地区手动覆盖');select.dataset.focusKey='detail-country';
   const catalog=root.Management.countries();select.append(Object.assign(el('option','','使用自动识别'),{value:''}));for(const c of catalog)select.append(Object.assign(el('option','',c.zh+' '+c.code),{value:c.code}));
   select.addEventListener('change',()=>saveCountry(current,select.value));region.append(select,country);row(agentGroup,'出口地区','countryManage',region);
@@ -33,6 +34,7 @@
   const countryName=(code)=>catalog.find(c=>c.code===code)?.zh||code||'未知';
   const set=(key,text)=>{if(values[key].textContent!==text)values[key].textContent=text;};
   function update(a,target=null,serverBuild=null){current=a;const s=a.state||{},p=a.plan||{},old=!a.online||a.disabled_at||s.stale,valid=v=>!old&&v!=null;
+   set('organization',organizationText(a));organizationButton.disabled=!canWrite(a);
    const percent=v=>v==null?'—':Number(v).toFixed(Number(v)>=10?0:1)+'%';
    [s.cpu_percent,s.ram_percent,s.disk_percent].forEach((v,i)=>set('metric'+i,valid(v)?percent(v):'—'));
    set('sub0',old?'当前数据不可用':`负载 ${s.load1==null?'—':s.load1.toFixed(2)} · steal ${percent(s.cpu_steal_percent)}`);

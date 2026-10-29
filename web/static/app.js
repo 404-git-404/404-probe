@@ -1514,7 +1514,7 @@ function createAgentDetails(initial){
 
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
-      edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a)});
+      edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
     detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
 
  return {management:detailPanel,overview:summary.overview,egressPanel,update(next){
@@ -1639,12 +1639,16 @@ const reconciliation={
  close(){for(const id of detailJobs.keys())this.cancel(id);dashboardData.close();}
 };
 function refresh(){return dashboardData.refresh();}
+const organizationAPI=OrganizationAPI.create({csrf:()=>mutationCSRFToken,read:readJSON});
+organizationDialogs=OrganizationDialogs.create({api:organizationAPI,read:readJSON,agents,state:agentState,refresh:()=>dashboardData.reload()});
+expenseDialog=ExpenseDialog.create({api:organizationAPI,visibleIDs:()=>DashboardModel.select(agents,dashboardData.catalog(),dashboardUI.preferences.value,serverBuild).list.map(a=>a.agent_id),refresh:()=>dashboardData.reload()});
+
 
 loadMutationSession();
 refresh();
 let suspended = false;
 setInterval(() => { if (suspended) return; reconciliation.retry(); if (!agentState.refreshing()) refresh(); }, 15000);
-addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
+addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 
