@@ -115,6 +115,14 @@ func TestUpdaterHealthLegacyAndInvalidProofResponses(t *testing.T) {
 						var request Request
 						_ = json.NewDecoder(c).Decode(&request)
 						response := Response{}
+						if kind == "legacy" && request.Action == ActionHealth {
+							response.Error = "invalid updater request"
+						}
+						// A new Updater may refuse proof but still offer capabilities.
+						// Never let that turn a refused proof into healthy.
+						if kind == "rejected" && request.Action == ActionCapabilities {
+							response.Accepted = true
+						}
 						if kind == "legacy" && request.Action == ActionCapabilities {
 							response.Accepted = true
 						}
@@ -131,7 +139,7 @@ func TestUpdaterHealthLegacyAndInvalidProofResponses(t *testing.T) {
 					}(c)
 				}
 			}()
-			want := map[string]string{"legacy": "healthy", "rejected": "unreachable", "bad_nonce": "identity_mismatch", "wrong_inode": "identity_mismatch"}[kind]
+			want := map[string]string{"legacy": "healthy", "rejected": "identity_mismatch", "bad_nonce": "identity_mismatch", "wrong_inode": "identity_mismatch"}[kind]
 			if got := InspectHealth(context.Background(), m.path, m.gid); got.Status != want {
 				t.Fatal(kind, got, want)
 			}

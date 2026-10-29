@@ -104,6 +104,10 @@ func (c Config) Validate() error {
 }
 
 type Runner struct {
+	updaterHealthMu              sync.Mutex
+	updaterHealthCached          protocol.UpdaterHealth
+	updaterHealthExpires         time.Time
+	updaterHealthProbe           func(context.Context) protocol.UpdaterHealth
 	deferredUnsupported          bool
 	config                       Config
 	client                       *http.Client
@@ -549,7 +553,23 @@ func (r *Runner) updaterHealth(ctx context.Context) protocol.UpdaterHealth {
 	if r.deferredUnsupported || r.config.UpdaterSocket == "" {
 		return protocol.UpdaterHealth{Status: "unsupported", Reason: "system_unsupported"}
 	}
-	return updater.InspectHealth(ctx, r.config.UpdaterSocket, uint32(os.Getgid()))
+	r.updaterHealthMu.Lock()
+	defer r.updaterHealthMu.Unlock()
+	if time.Now().Before(r.updaterHealthExpires) {
+		return r.updaterHealthCached
+	}
+	probe := r.updaterHealthProbe
+	if probe == nil {
+		probe = func(ctx context.Context) protocol.UpdaterHealth {
+			return updater.InspectHealth(ctx, r.config.UpdaterSocket, uint32(os.Getgid()))
+		}
+	}
+	r.updaterHealthCached = probe(ctx)
+	// Ten seconds bounds stale UI observations and amortizes a hung peer's one
+	// second timeout across reports and capability queries. Updater still gates
+	// every actual operation; this cache never grants authorization.
+	r.updaterHealthExpires = time.Now().Add(10 * time.Second)
+	return r.updaterHealthCached
 }
 
 func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.ReportResponse, error) {

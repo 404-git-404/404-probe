@@ -33,14 +33,18 @@ type listenerManager struct {
 	attempts      int
 	nextAttempt   time.Time
 	listen        func(string, *net.UnixAddr) (*net.UnixListener, error)
+	chown         func(int, string, int, int, int) error
+	chmod         func(int, string, uint32, int) error
+	statAt        func(int, string, *unix.Stat_t, int) error
 }
 
 func newListenerManager(path string, gid uint32) (*listenerManager, error) {
 	directory, info, err := pathIdentity(filepath.Dir(path))
-	if err != nil || !safeAgentRuntimeDirectory(&info, gid) || info.Nlink < 2 {
+	if err != nil || !safeAgentRuntimeDirectory(&info, gid) || info.Nlink == 0 {
 		return nil, errors.New("unsafe updater runtime directory")
 	}
-	m := &listenerManager{path: path, gid: gid, directory: directory, listen: net.ListenUnix}
+	m := &listenerManager{path: path, gid: gid, directory: directory, listen: net.ListenUnix,
+		chown: unix.Fchownat, chmod: chmodSocketAtNoFollow, statAt: unix.Fstatat}
 	fd, err := unix.Open(filepath.Dir(path), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
@@ -60,7 +64,26 @@ func newListenerManager(path string, gid uint32) (*listenerManager, error) {
 
 func (m *listenerManager) directorySafe() bool {
 	id, s, err := pathIdentity(filepath.Dir(m.path))
-	return err == nil && id.sameNode(m.directory) && safeAgentRuntimeDirectory(&s, m.gid) && s.Nlink >= 2
+	// btrfs/overlayfs can report one link; only zero denotes a dead directory.
+	return err == nil && id.sameNode(m.directory) && safeAgentRuntimeDirectory(&s, m.gid) && s.Nlink != 0
+}
+
+func (m *listenerManager) socketAt() (socketIdentity, unix.Stat_t, error) {
+	return m.socketAtUsing(m.statAt)
+}
+
+func (m *listenerManager) socketAtUsing(statAt func(int, string, *unix.Stat_t, int) error) (socketIdentity, unix.Stat_t, error) {
+	var s unix.Stat_t
+	err := statAt(int(m.directoryFile.Fd()), filepath.Base(m.path), &s, unix.AT_SYMLINK_NOFOLLOW)
+	return socketIdentity{uint64(s.Dev), s.Ino, s.Ctim.Sec*1e9 + s.Ctim.Nsec}, s, err
+}
+
+// Unpublished sockets do not yet have the published ownership and mode.
+// Require the exact identity through the held fd; directory changes preserve it.
+func (m *listenerManager) removeUnpublished(id socketIdentity) {
+	if current, s, err := m.socketAt(); err == nil && current == id && s.Mode&unix.S_IFMT == unix.S_IFSOCK && m.directorySafe() {
+		_ = unix.Unlinkat(int(m.directoryFile.Fd()), filepath.Base(m.path), 0)
+	}
 }
 
 func (m *listenerManager) bind() error {
@@ -68,6 +91,8 @@ func (m *listenerManager) bind() error {
 		return errors.New("runtime directory changed; refusing repair")
 	}
 	if _, _, err := pathIdentity(m.path); !errors.Is(err, os.ErrNotExist) {
+		// Startup deliberately fails closed on leftover sockets too. systemd's
+		// RuntimeDirectory lifecycle, rather than this process, owns cleanup.
 		return errors.New("socket path is occupied; preserved")
 	}
 	l, err := m.listen("unix", &net.UnixAddr{Name: m.path, Net: "unix"})
@@ -75,26 +100,38 @@ func (m *listenerManager) bind() error {
 		return err
 	}
 	l.SetUnlinkOnClose(false)
-	id, s, err := pathIdentity(m.path)
+	id, s, err := m.socketAtUsing(unix.Fstatat)
 	if err != nil || s.Mode&unix.S_IFMT != unix.S_IFSOCK || s.Uid != 0 {
 		_ = l.Close()
 		return errors.New("new socket identity is unsafe")
 	}
-	cleanup := func() { _ = l.Close(); m.removeOwned(id) }
+	cleanup := func() { _ = l.Close(); m.removeUnpublished(id) }
 	if !m.directorySafe() {
 		cleanup()
 		return errors.New("runtime directory changed during bind")
 	}
-	if err = os.Chown(m.path, 0, int(m.gid)); err != nil {
+	if err = m.chown(int(m.directoryFile.Fd()), filepath.Base(m.path), 0, int(m.gid), unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		cleanup()
 		return err
 	}
-	if err = os.Chmod(m.path, 0660); err != nil {
+	// Our successful metadata writes advance ctime; refresh only the same node.
+	if current, _, statErr := m.socketAtUsing(unix.Fstatat); statErr != nil || !current.sameNode(id) {
+		cleanup()
+		return errors.New("new socket changed after chown")
+	} else {
+		id = current
+	}
+	if err = m.chmod(int(m.directoryFile.Fd()), filepath.Base(m.path), 0660, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		cleanup()
 		return err
 	}
-	current, s, err := pathIdentity(m.path)
-	if err != nil || !current.sameNode(id) || s.Uid != 0 || s.Gid != m.gid || s.Mode&07777 != 0660 {
+	current, _, statErr := m.socketAtUsing(unix.Fstatat)
+	if statErr == nil && current.sameNode(id) {
+		id = current
+	}
+	current, s, err = m.socketAt()
+	same := current.sameNode(id)
+	if err != nil || !same || s.Uid != 0 || s.Gid != m.gid || s.Mode&07777 != 0660 || !m.directorySafe() {
 		cleanup()
 		return errors.New("new socket changed during bind")
 	}
@@ -108,8 +145,8 @@ func (m *listenerManager) bind() error {
 }
 
 func (m *listenerManager) removeOwned(id socketIdentity) {
-	if current, info, err := pathIdentity(m.path); err == nil && current == id && info.Mode&unix.S_IFMT == unix.S_IFSOCK && info.Uid == 0 && info.Gid == m.gid && info.Mode&07777 == 0660 && m.directorySafe() {
-		_ = os.Remove(m.path)
+	if current, info, err := m.socketAt(); err == nil && current == id && info.Mode&unix.S_IFMT == unix.S_IFSOCK && info.Uid == 0 && info.Gid == m.gid && info.Mode&07777 == 0660 && m.directorySafe() {
+		_ = unix.Unlinkat(int(m.directoryFile.Fd()), filepath.Base(m.path), 0)
 	}
 }
 
@@ -173,7 +210,7 @@ func (m *listenerManager) repair(e *Engine, now time.Time) error {
 	if _, _, err := pathIdentity(m.path); !errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if m.attempts >= socketRepairLimit || now.Before(m.nextAttempt) {
+	if !m.repairBudgetAvailable(now) {
 		return nil
 	}
 	m.attempts++
@@ -187,6 +224,10 @@ func (m *listenerManager) repair(e *Engine, now time.Time) error {
 	m.attempts = 0
 	m.nextAttempt = time.Time{}
 	return nil
+}
+
+func (m *listenerManager) repairBudgetAvailable(now time.Time) bool {
+	return m.attempts < socketRepairLimit && !now.Before(m.nextAttempt)
 }
 
 func (m *listenerManager) monitor(ctx context.Context, e *Engine) {

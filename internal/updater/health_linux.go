@@ -51,19 +51,9 @@ func inspectHealth(ctx context.Context, path string, gid uint32, selfPID int32) 
 	bad := func(status, reason string) protocol.UpdaterHealth {
 		return protocol.UpdaterHealth{Status: status, Reason: reason}
 	}
-	_, directory, err := pathIdentity(filepath.Dir(path))
-	if errors.Is(err, os.ErrNotExist) {
-		return bad("missing", "runtime_directory_missing")
-	}
-	if err != nil || !safeAgentRuntimeDirectory(&directory, gid) || directory.Nlink < 2 {
-		return bad("identity_mismatch", "directory_unsafe")
-	}
-	identity, info, err := pathIdentity(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return bad("missing", "socket_missing")
-	}
-	if err != nil || info.Mode&unix.S_IFMT != unix.S_IFSOCK || info.Uid != 0 || info.Gid != gid || info.Mode&07777 != 0660 {
-		return bad("identity_mismatch", "socket_unsafe")
+	identity, info, health := inspectHealthMetadata(path, gid, 0, pathIdentity)
+	if health.Status != "" {
+		return health
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -77,7 +67,7 @@ func inspectHealth(ctx context.Context, path string, gid uint32, selfPID int32) 
 		}
 		return bad("unreachable", "connect_failed")
 	}
-	if response.Health == nil && selfPID == 0 {
+	if response.Error != "" && selfPID == 0 {
 		// Old Updaters reject the new action. Only the existing capability action
 		// is retried, over another authenticated root connection.
 		response, err = authenticatedHealthCall(ctx, path, Request{ProtocolVersion: 1, Action: ActionCapabilities}, 0)
@@ -92,6 +82,28 @@ func inspectHealth(ctx context.Context, path string, gid uint32, selfPID int32) 
 		return bad("identity_mismatch", "socket_replaced")
 	}
 	return protocol.UpdaterHealth{Status: "healthy"}
+}
+
+// Metadata policy is independent of root and IPC; tests inject lstat and uid.
+func inspectHealthMetadata(path string, gid, uid uint32, lstat func(string) (socketIdentity, unix.Stat_t, error)) (socketIdentity, unix.Stat_t, protocol.UpdaterHealth) {
+	bad := func(status, reason string) (socketIdentity, unix.Stat_t, protocol.UpdaterHealth) {
+		return socketIdentity{}, unix.Stat_t{}, protocol.UpdaterHealth{Status: status, Reason: reason}
+	}
+	_, directory, err := lstat(filepath.Dir(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return bad("missing", "runtime_directory_missing")
+	}
+	if err != nil || !safeAgentRuntimeDirectoryForUID(&directory, gid, uid) || directory.Nlink == 0 {
+		return bad("identity_mismatch", "directory_unsafe")
+	}
+	id, info, err := lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return bad("missing", "socket_missing")
+	}
+	if err != nil || info.Mode&unix.S_IFMT != unix.S_IFSOCK || info.Uid != uid || info.Gid != gid || info.Mode&07777 != 0660 {
+		return bad("identity_mismatch", "socket_unsafe")
+	}
+	return id, info, protocol.UpdaterHealth{}
 }
 
 func authenticatedHealthCall(ctx context.Context, path string, request Request, pid int32) (Response, error) {

@@ -29,7 +29,11 @@ func prepareAgentRuntimeDirectory(parentPath, name string, agentGID uint32) erro
 }
 
 func safeAgentRuntimeDirectory(stat *unix.Stat_t, agentGID uint32) bool {
-	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Uid != 0 || stat.Mode&022 != 0 || stat.Mode&07000 != 0 {
+	return safeAgentRuntimeDirectoryForUID(stat, agentGID, 0)
+}
+
+func safeAgentRuntimeDirectoryForUID(stat *unix.Stat_t, agentGID, ownerUID uint32) bool {
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Uid != ownerUID || stat.Mode&022 != 0 || stat.Mode&07000 != 0 {
 		return false
 	}
 	// The unprivileged Agent needs search permission, not a writable directory.

@@ -249,10 +249,21 @@ func (e *Engine) StartAgentRemoval(request Request) error {
 		return errors.New("Agent removal is not supported by the local updater")
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	err := e.config.AgentRemoval.Start(context.Background(), request.OperationID, request.ReceiptToken)
-	if err == nil {
-		e.removing = true
+	if e.running || e.removing || isActiveLocalStatus(e.state.Status) {
+		e.mu.Unlock()
+		return errors.New("operation already active")
+	}
+	// Keep this latch after launch even if the worker later fails: inspect the
+	// removal state and restart Updater before accepting another operation.
+	e.removing = true
+	e.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	err := e.config.AgentRemoval.Start(ctx, request.OperationID, request.ReceiptToken)
+	if err != nil {
+		e.mu.Lock()
+		e.removing = false
+		e.mu.Unlock()
 	}
 	return err
 }

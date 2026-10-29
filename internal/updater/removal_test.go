@@ -117,6 +117,9 @@ func TestUpdaterRemovalRequestIsNarrowlyValidatedAndDelegated(t *testing.T) {
 		t.Fatal("unavailable remover accepted a destructive operation")
 	}
 	launcher.supported = true
+	// Model a new daemon after the successful removal launch; the live daemon
+	// intentionally keeps its removal latch until restart.
+	engine.removing = false
 	launcher.err = errors.New("worker start failed")
 	if err := engine.StartAgentRemoval(request); !errors.Is(err, launcher.err) {
 		t.Fatalf("worker start error=%v", err)

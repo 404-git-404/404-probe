@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"404-probe/internal/protocol"
@@ -39,8 +40,15 @@ func TestUpdaterHealthWebGatesAndSessionFencing(t *testing.T) {
 		}
 		newer = state
 		newer.SessionID = "other"
+		record.State = &newer
 		if a.withUpdaterHealth(record).State.AgentUpdaterHealth != nil {
 			t.Fatal("stale health attached to another session")
+		}
+		older := state
+		older.Sequence--
+		record.State = &older
+		if a.withUpdaterHealth(record).State.AgentUpdaterHealth != h {
+			t.Fatal("latest accepted health skipped for lagging DB")
 		}
 	}
 	legacy := storage.AgentSnapshot{Online: true, State: &state}
@@ -52,5 +60,27 @@ func TestUpdaterHealthWebGatesAndSessionFencing(t *testing.T) {
 	}
 	if target := targetForAgent(upgradeTarget{Version: "v1.0.10", Supported: true, RequiredProtocol: 2}, legacy); !target.Supported {
 		t.Fatal("legacy Agent behavior changed", target)
+	}
+}
+
+func TestUpdaterHealthUnknownAndLongReasonStillAcceptReport(t *testing.T) {
+	app, store, id, token := testApp(t)
+	defer store.Close()
+	defer app.Shutdown()
+	for i, status := range []string{"future", "unreachable", "healthy"} {
+		report := reportFor(id, uint64(i+1))
+		report.AgentUpdaterHealth = &protocol.UpdaterHealth{Status: status, Reason: strings.Repeat("x", 4096)}
+		if response := postReport(t, app, token, report); response.Code != 200 {
+			t.Fatal(response.Code, response.Body.String())
+		}
+		app.mu.RLock()
+		h := app.states[id].AgentUpdaterHealth
+		app.mu.RUnlock()
+		if h == nil || h.Reason != "" {
+			t.Fatal("untrusted reason survived", h)
+		}
+		if status == "future" && (h.Status != "unknown" || h.ReasonCode() != "updater_unavailable") {
+			t.Fatal(h)
+		}
 	}
 }

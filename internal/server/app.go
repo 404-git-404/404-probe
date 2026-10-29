@@ -240,6 +240,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid report: "+err.Error())
 		return
 	}
+	report.AgentUpdaterHealth.Normalize()
 	if err := report.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

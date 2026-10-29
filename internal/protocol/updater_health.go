@@ -12,10 +12,28 @@ func (h *UpdaterHealth) Valid() bool {
 		return true
 	}
 	switch h.Status {
-	case "healthy", "missing", "unreachable", "identity_mismatch", "unsupported":
+	case "healthy", "missing", "unreachable", "identity_mismatch", "unsupported", "unknown":
 		return len(h.Reason) <= 64
 	}
 	return false
+}
+
+// Normalize keeps future observations from rejecting an otherwise valid report.
+// Only established reason enums may cross the Server API/SSE boundary.
+func (h *UpdaterHealth) Normalize() {
+	if h == nil {
+		return
+	}
+	switch h.Status {
+	case "healthy", "missing", "unreachable", "identity_mismatch", "unsupported":
+	default:
+		h.Status = "unknown"
+	}
+	switch h.Reason {
+	case "", "runtime_directory_missing", "socket_missing", "directory_unsafe", "socket_unsafe", "socket_replaced", "authentication_failed", "connect_failed", "probe_failed", "system_unsupported":
+	default:
+		h.Reason = ""
+	}
 }
 
 func (h *UpdaterHealth) ReasonCode() string {
