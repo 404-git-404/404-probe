@@ -54,7 +54,9 @@ const cardFaces = Card.createFaceStore();
 const cardObservations = CardMetrics.createObserver();
 const agents = agentState.agents;
 let overviewReady = false;
-const overview = Overview.create({size:CardMetrics.size,deadline:planDeadline});
+let organizationDialogs=null,expenseDialog=null;
+const dashboardUI=DashboardView.create({onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
+const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(trigger)});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   identity: agent => countryMark(agent?.country_code,agent?.country_source),
   management: agent => detailsFor(agent.agent_id)?.management,
@@ -1110,34 +1112,42 @@ function setCardText(node, value) {
 }
 
 const renderedCardKeys=new Map();
-function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.tag_ids,mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
-function render() {
-  overview.update(agents,overviewReady);
-  const ids = [...agents.keys()];
-  networkQuality.sync(ids); latencyCharts.sync(ids); trafficCharts.sync(ids); cardObservations.sync(ids); selectorView.sync(ids); cardFaces.sync(ids);
-  for (const [id, view] of agentCards) {
-    if (!agents.has(id)) { view.card.remove(); agentCards.delete(id);renderedCardKeys.delete(id); }
-  }
-  for(const [id,view] of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
+function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+let renderFrame=0,lastLayout='';
+const groupViews=new Map();
+function render(){if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;renderDashboard();});}
+function renderDashboard() {
+  const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs=dashboardUI.preferences.value;
+  document.body.classList.toggle('dashboard-simple',model.simple);
+  overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild,simple:model.simple});
+  const allIds=[...agents.keys()],mounted=new Set();
+  for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
+  for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);renderedCardKeys.delete(id);}
+  networkQuality.sync(allIds,mounted,agents);latencyCharts.sync([...mounted]);trafficCharts.sync([...mounted]);cardObservations.sync(allIds);selectorView.sync(allIds);cardFaces.sync(allIds);
+  for(const [id,view]of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
   selectorView.refreshActive();
-  const list = [...agents.values()].sort((left, right) =>
-    (left.name || '').localeCompare(right.name || '') || left.agent_id.localeCompare(right.agent_id));
-  empty.classList.toggle('hidden', list.length > 0);
-  let position = container.firstElementChild;
-  for (const agent of list) {
-    let view = agentCards.get(agent.agent_id);
-    if (!view) { view = createAgentCard(agent); agentCards.set(agent.agent_id, view); }
-    else if(renderedCardKeys.get(agent.agent_id)!==cardRenderKey(agent))view.update(agent);
-    renderedCardKeys.set(agent.agent_id,cardRenderKey(agent));
-    if (view.card !== position) {
-      // moveBefore retains focus/selection on supported browsers; insertBefore is the fallback.
-      if (view.card.parentNode === container && container.moveBefore) container.moveBefore(view.card, position);
-      else container.insertBefore(view.card, position);
+  empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
+  const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([prefs.sort,model.simple,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
+  for(const [id,view]of groupViews)if(!liveGroups.has(id)){view.node.remove();groupViews.delete(id);}
+  let groupPosition=container.firstElementChild;
+  for(const group of model.sections){
+    let gv=groupViews.get(group.id);
+    if(!gv){const node=document.createElement('section'),header=document.createElement('button'),body=document.createElement('div');node.className='dashboard-group';header.type='button';header.className='dashboard-group-header';header.addEventListener('click',()=>dashboardUI.collapse(group.id));body.className='dashboard-card-grid';node.append(header,body);gv={node,header,body};groupViews.set(group.id,gv);}
+    const collapsed=prefs.collapsed.includes(group.id),counts={online:0,offline:0,paused:0,unknown:0};for(const a of group.items)counts[DashboardModel.lifecycle(a)]++;
+    const status=counts.online===group.items.length?'全部在线':Object.entries(counts).filter(([,n])=>n).map(([key,n])=>DashboardModel.STATUS[key]+' '+n).join(' · ');
+    setCardText(gv.header,`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台 · ${status}`);gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=prefs.sort!=='group'||model.simple;gv.body.hidden=collapsed;
+    if(layout!==lastLayout){if(gv.node!==groupPosition){if(gv.node.parentNode===container&&container.moveBefore)container.moveBefore(gv.node,groupPosition);else container.insertBefore(gv.node,groupPosition);}groupPosition=gv.node.nextElementSibling;}
+    if(collapsed)continue;
+    let position=gv.body.firstElementChild;
+    for(const agent of group.items){let view=agentCards.get(agent.agent_id);const key=cardRenderKey(agent);
+      if(!view){view=createAgentCard(agent);agentCards.set(agent.agent_id,view);}else if(renderedCardKeys.get(agent.agent_id)!==key)view.update(agent);
+      renderedCardKeys.set(agent.agent_id,key);
+      if(layout!==lastLayout&&view.card!==position){if(view.card.parentNode===gv.body&&gv.body.moveBefore)gv.body.moveBefore(view.card,position);else gv.body.insertBefore(view.card,position);}position=view.card.nextElementSibling;
     }
-    position = view.card.nextElementSibling;
-    if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===agent.agent_id){detailViews.get(agent.agent_id)?.update(agent);deviceDetails.update(agent);}
   }
-  deviceDetails.sync(); planEditor.sync(); planRenewal.sync();
+  lastLayout=layout;
+  const open=deviceDetails.snapshot();if(open.open&&agents.has(open.id)){detailViews.get(open.id)?.update(agents.get(open.id));deviceDetails.update(agents.get(open.id));}
+  deviceDetails.sync();planEditor.sync();planRenewal.sync();
   for(const id of new Set([...trafficResetRequests.keys(),...trafficResetFeedback.keys(),...trafficResetControllers.keys()]))if(!agents.has(id)){trafficResetControllers.get(id)?.abort();trafficResetControllers.delete(id);trafficResetRequests.delete(id);trafficResetFeedback.delete(id);}
 }
 
@@ -1194,7 +1204,11 @@ function createPublicEgress(agentID) {
       const observation=p?.[family],status=observation?.status||'unknown';
       const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
       const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
-      if(!available||stale)continue;
+      if(!available||stale){
+        const mask=(agent.masked_ips||[]).find(value=>family==='ipv4'?value.includes('*'):!value.includes('*'));
+        if(mask&&!lifecycle){const full=`${family==='ipv4'?'IPv4':'IPv6'} · ${mask} · 遮挡显示`;setCardText(tip,full);item.setAttribute('aria-label',full);item.dataset.status='available';item.dataset.stale='false';shown.push(item,tip);families.push(family);}
+        continue;
+      }
       const at=new Date(observation.checked_at).toLocaleString();
       const history=observation.last_success;
       const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${PublicEgressCheck.maskIP(observation.ip)} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+PublicEgressCheck.maskIP(history.ip)+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出站观测`;
@@ -1271,6 +1285,9 @@ function createAgentCard(initialAgent) {
     head.append(mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
+    const tags=document.createElement('div');tags.className='dashboard-card-tags';
+    const updateTags=()=>{const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);const signature=JSON.stringify(key);if(tags.dataset.signature===signature)return;tags.dataset.signature=signature;tags.replaceChildren(...key.map(([,name])=>{const n=document.createElement('span');n.textContent=name;n.title=name;return n;}));tags.hidden=!key.length;};
+    updateTags();card.append(tags);
 
     // ---- machine ----
     const machine = Card.machineFaces(document);
@@ -1378,6 +1395,7 @@ function createAgentCard(initialAgent) {
 
     return {card, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
+      updateTags();
       const state = agent.state || {}, hasState = Boolean(agent.state);
       const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;

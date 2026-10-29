@@ -223,7 +223,7 @@
       queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);queue.release(card.writeOwner);
       if(panel?.card===card)closePanel(true);if(history?.card===card)closeHistory();cards.delete(card.id);
     }
-    function sync(ids){const live=new Set(ids);for(const card of cards.values())if(!live.has(card.id))retire(card);}
+    function sync(ids,mounted=null,agents=null){const live=new Set(ids);for(const card of cards.values()){if(!live.has(card.id))retire(card);else{if(agents?.has(card.id))card.agent=agents.get(card.id);if(mounted&&!mounted.has(card.id))setVisible(card,false);}}}
 
     // ---- the settings dialog -------------------------------------------------------------------
     // Writes keep the Server's error code and per-input details, which the shared helper drops.
