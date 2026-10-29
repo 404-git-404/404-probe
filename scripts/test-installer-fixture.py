@@ -201,11 +201,11 @@ class FixtureBoundaryTests(unittest.TestCase):
         repo = Path(__file__).resolve().parent.parent
         with tempfile.TemporaryDirectory(prefix='single-layer-', dir=repo.parent) as directory:
             root = Path(directory)
-            (root / 'shell-harness.sh').write_text('source /work/source/scripts/installer-fixture-entry.sh\nprintf shell-body > /work/fixture/shell-body\n', encoding='utf-8')
+            (root / 'installer-fixture-shell-harness.sh').write_text('source /work/source/scripts/installer-fixture-entry.sh\nprintf shell-body > /work/fixture/shell-body\n', encoding='utf-8')
             body = '''set -Eeuo pipefail
 mkdir /work/fixture/child
 python3 -B /work/source/scripts/installer-fixture.py --root /work/fixture/child -- bash -c 'printf go-body > /work/fixture/child/go-body; chmod 755 /work/fixture/child/go-body; pwd > /work/fixture/child/pwd'
-bash /work/fixture/shell-harness.sh
+bash /work/fixture/installer-fixture-shell-harness.sh
 '''
             result = subprocess.run([sys.executable, '-B', str(repo / 'scripts/installer-fixture.py'), '--root', str(root), '--', 'bash', '-c', body], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
