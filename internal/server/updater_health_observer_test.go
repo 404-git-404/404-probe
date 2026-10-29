@@ -24,7 +24,7 @@ func TestUpdaterHealthLiveObserver(t *testing.T) {
 	if path == "" {
 		t.Skip("live acceptance observer not requested")
 	}
-	if os.Geteuid() == 0 || filepath.Dir(path) != "/var/lib/v110-cx-updater-20261028/observer" {
+	if os.Geteuid() == 0 || filepath.Dir(path) != "/var/lib/v110-cx-backend-20261029/observer" {
 		t.Fatal("observer requires non-root private fixture database")
 	}
 	store, err := storage.Open(context.Background(), path)
