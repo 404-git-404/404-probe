@@ -1671,9 +1671,10 @@ events.onerror = () => {
 events.addEventListener('agent', event => {
  let update;try{update=JSON.parse(event.data);}catch{return;}
  const id=update.agent_id;if (revokedAgentIDs.has(update.agent_id)) return;
+ const previous=agents.get(id),telemetry=!!previous&&!agentState.fullEvent(update)&&Object.keys(update).every(key=>['agent_id','state','last_seen','summary_version'].includes(key)||JSON.stringify(update[key])===JSON.stringify(previous[key]));
  if(agentState.fullEvent(update))agentState.invalidate(id,[...new Set(Object.keys(update).map(AgentState.resource))]);
  else if(agentState.event(update))render(new Set([id]));
- if(agentState.fullEvent(update)||!agents.has(id)||Object.keys(update).some(key=>!['agent_id','state','online','last_seen','summary_version'].includes(key)))dashboardData.notify(id);
+ if(!telemetry)dashboardData.notify(id);
  else dashboardData.telemetry(id);
  if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===id&&agentState.fullEvent(update))hydrateActiveDetail(id);
 });
