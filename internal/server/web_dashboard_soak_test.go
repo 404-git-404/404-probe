@@ -316,7 +316,10 @@ func dashboardSoak(t *testing.T, a *App, server *httptest.Server, ids []string, 
 				reports += n
 				enabled = true
 			}
-			write("ack-"+prefix+".json", map[string]any{"nonce": cmd.Nonce, "reports": reports, "base": server.URL, "seconds": time.Since(started).Seconds()})
+			a.hub.mu.Lock()
+			overflows := a.hub.overflowDisconnects
+			a.hub.mu.Unlock()
+			write("ack-"+prefix+".json", map[string]any{"nonce": cmd.Nonce, "reports": reports, "base": server.URL, "seconds": time.Since(started).Seconds(), "sse_overflow_disconnects": overflows})
 		}
 	}
 }
