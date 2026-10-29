@@ -57,7 +57,7 @@ CSS 为 `df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04`，
 ## 3. go.mod 直接和间接依赖
 
 以下每行的仓库登记位置均为 `go.mod`、`go.sum`；源码实际由 Go 模块缓存提供，
-不在仓库内。附录 M1–M21 保留实际版本模块中的 LICENSE 原文及 SHA256。
+不在仓库内。附录 M1–M22 保留实际版本模块中的 LICENSE 原文及 SHA256。
 所有行均为本项目未修改、已核实模块原文；“不在 Linux 发布包依赖中”不代表
 可以从 `go.mod` 删除，也不代表其他操作系统不会使用它。
 
@@ -67,6 +67,7 @@ CSS 为 `df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04`，
 | `golang.org/x/crypto v0.40.0` | 直接 | [crypto](https://go.googlesource.com/crypto/+/refs/tags/v0.40.0) | BSD-3-Clause | Server；Argon2、BLAKE2b | M2 |
 | `golang.org/x/net v0.42.0` | 直接 | [net](https://go.googlesource.com/net/+/refs/tags/v0.42.0) | Go 代码 BSD-3-Clause；PSL 数据另列 | Server、Agent；HTML、ICMP、IP、域名后缀 | M3 |
 | `golang.org/x/sys v0.44.0` | 直接 | [sys](https://go.googlesource.com/sys/+/refs/tags/v0.44.0) | BSD-3-Clause | Server、Agent；系统接口 | M4 |
+| `golang.org/x/text v0.27.0` | 直接 | [text](https://go.googlesource.com/text/+/refs/tags/v0.27.0) | Go 代码 BSD-3-Clause；CLDR/Unicode 数据见下 | Server；名称 NFC/case folding、ISO 货币校验 | M22 |
 | `golang.org/x/term v0.33.0` | 直接 | [term](https://go.googlesource.com/term/+/refs/tags/v0.33.0) | BSD-3-Clause | Server；终端密码输入 | M5 |
 | `modernc.org/sqlite v1.46.2` | 直接 | [sqlite](https://gitlab.com/cznic/sqlite/-/tree/v1.46.2) | Go 层 BSD-3-Clause；SQLite 公有领域声明另列 | Server；存储 | M6 |
 | `github.com/dustin/go-humanize v1.0.1` | 间接 | [go-humanize](https://github.com/dustin/go-humanize/tree/v1.0.1) | MIT | Server；SQLite 依赖 | M7 |
@@ -89,6 +90,9 @@ CSS 为 `df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04`，
 `LICENSE-MMAP-GO`、mathutil/mersenne 的 LICENSE。memory 的 `LICENSE-LOGO`
 仅为 logo 来源 URL，logo 不在本项目发布包中，不将它误当成代码许可证。
 purego 和 numcpus 模块内未找到独立 NOTICE 文件；保留 Apache 原文及源文件作者说明。
+
+
+v1.0.10 增量核对（2026-10-29）：新增直接依赖 x/text v0.27.0，读取本机与 go.sum 对应的离线模块缓存；不混用工具链 vendor 的 v0.32.0。`currency/tables.go` 标明 CLDR 32，`unicode/norm` 与 `cases` 包含 Unicode 生成数据。Go 源码的 BSD-3-Clause 与数据许可分别保留：CLDR/Unicode 数据受 Unicode 数据文件和软件许可约束，版权与许可声明随本文件附录 G4 分发；G4 已保留 Unicode 官方许可全文。模块没有独立 CLDR LICENSE，历史数据授权链沿用 Q7 的待核实记录，不以当前许可年份推断 CLDR 32 的发布日期。本项目没有修改上游模块或生成数据。
 
 ### 3.1 包内嵌套代码和数据
 
@@ -2034,6 +2038,70 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+
+### M22 — golang.org/x/text v0.27.0 / LICENSE
+
+原文 SHA256：`911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad`。
+
+```text
+Copyright 2009 The Go Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### M22 — golang.org/x/text v0.27.0 / PATENTS
+
+原文 SHA256：`96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc`。
+
+```text
+Additional IP Rights Grant (Patents)
+
+"This implementation" means the copyrightable works distributed by
+Google as part of the Go project.
+
+Google hereby grants to You a perpetual, worldwide, non-exclusive,
+no-charge, royalty-free, irrevocable (except as stated in this section)
+patent license to make, have made, use, offer to sell, sell, import,
+transfer and otherwise run, modify and propagate the contents of this
+implementation of Go, where such license applies only to those patent
+claims, both currently owned or controlled by Google and acquired in
+the future, licensable by Google that are necessarily infringed by this
+implementation of Go.  This grant does not include claims that would be
+infringed only as a consequence of further modification of this
+implementation.  If you or your agent or exclusive licensee institute or
+order or agree to the institution of patent litigation against any
+entity (including a cross-claim or counterclaim in a lawsuit) alleging
+that this implementation of Go or any code incorporated within this
+implementation of Go constitutes direct or contributory patent
+infringement, or inducement of patent infringement, then any patent
+rights granted to you under this License for this implementation of Go
+shall terminate as of the date such litigation is filed.
 ```
 
 ## 附录 N：模块内嵌套来源原文
@@ -6814,4 +6882,4 @@ gg-status 的 Git blob SHA1 为 `50c5afa7f6fae163e48040c4624e0638c6250840`；首
 - Linux amd64/arm64 的 `go list -deps` 检查使用 `CGO_ENABLED=0`，没有运行 Linux 二进制。
 - 首次下载与默认缓存访问曾受沙箱权限限制；经允许下载和切换可写构建缓存后完成。依赖下载补写的 go.sum 校验项已恢复到审计基准，未作为本任务改动。
 - 不需要测试 Server；未做部署、发布产物构建、真机验证或全套回归测试。本任务验收要求是 vet/build 和单文件来源审计。
-- 发布前复核（2026-10-22）：`go.mod`、`go.sum` 自首次审计后没有变化（21 个模块版本与第 3 节、附录 M1–M21 逐项一致）；`web/static/vendor` 自首次审计后没有变化（uPlot JS、CSS、LICENSE 的 SHA256 与上文一致）；用 Go 1.26.8、`CGO_ENABLED=0`、`GOOS=linux`、`GOARCH=amd64/arm64`、`go list -deps` 重新得到的 Server 模块集合（11 个）和 Agent 模块集合（5 个）与第 3 节“发布包依赖归属”一致，没有新增或消失的模块；仓库里已没有 zstatic 目录、gg-status 拷贝或对应代码。没有重新下载上游，附录原文和 E1 摘要保持首次审计的内容。
+- 发布前复核（2026-10-22）：`go.mod`、`go.sum` 自首次审计后没有变化（21 个模块版本与第 3 节、附录 M1–M22 逐项一致）；`web/static/vendor` 自首次审计后没有变化（uPlot JS、CSS、LICENSE 的 SHA256 与上文一致）；用 Go 1.26.8、`CGO_ENABLED=0`、`GOOS=linux`、`GOARCH=amd64/arm64`、`go list -deps` 重新得到的 Server 模块集合（11 个）和 Agent 模块集合（5 个）与第 3 节“发布包依赖归属”一致，没有新增或消失的模块；仓库里已没有 zstatic 目录、gg-status 拷贝或对应代码。没有重新下载上游，附录原文和 E1 摘要保持首次审计的内容。

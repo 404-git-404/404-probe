@@ -418,6 +418,11 @@ def main():
         return run(opts, Path(temporary), bootstrap_proven=True)
 
 
+def installed_project_root(root):
+    return any(root == parent + '/404-probe' or root.startswith(parent + '/404-probe')
+               for parent in ('/var/lib', '/var/log', '/run', '/etc'))
+
+
 def validate_root(root, profile, in_place, uid=None):
     """Read-only preflight; no bootstrap or host write may precede this check."""
     try:
@@ -430,7 +435,7 @@ def validate_root(root, profile, in_place, uid=None):
         system = ('/', '/var', '/var/lib', '/var/log', '/run', '/etc', '/usr', '/usr/local', '/usr/local/bin', '/usr/local/sbin', '/root', '/home', '/tmp', '/dev', '/proc', '/sys')
         if resolved.as_posix() in system or any(resolved.is_relative_to(Path(p)) for p in ('/etc', '/dev', '/proc', '/sys')):
             return '--root cannot be a system directory'
-        if any(resolved.is_relative_to(Path(p)) for p in ('/run/404-probe', '/etc/404-probe', '/var/lib/404-probe', '/var/lib/404-probe-updater', '/var/log/404-probe')):
+        if installed_project_root(resolved.as_posix()):
             return '--root cannot be an installed project directory'
         mode = stat.S_IMODE(info.st_mode)
         if mode & 0o022 or (profile == 'multiuser' and mode != 0o755):

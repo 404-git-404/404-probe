@@ -21,6 +21,12 @@ spec.loader.exec_module(fixture)
 
 
 class FixtureBoundaryTests(unittest.TestCase):
+    def test_all_installed_project_prefixes_rejected(self):
+        for parent in ('/var/lib', '/var/log', '/run', '/etc'):
+            for suffix in ('', '-security', '-upgrade', '-updater', '/child', '-security/child'):
+                self.assertTrue(fixture.installed_project_root(parent+'/404-probe'+suffix))
+        self.assertFalse(fixture.installed_project_root('/var/lib/private-fixture'))
+
     def test_unsupported_platform_explicit_root_skips_without_uid_calls(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()

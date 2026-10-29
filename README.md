@@ -22,6 +22,8 @@ Server 新装需输入公开 HTTPS 地址并设置 Web 管理员密码（默认�
 
 **现有 v1.0.7/v1.0.6/v1.0.5/v1.0.4/v1.0.3/v1.0.2/v1.0.1 Agent，或更早正式 Agent 且 Updater 正常：**先升级 Server，再登录 Web，打开设备管理中的升级操作。唯一目标与当前 Server 的版本及构建完全相同；只有更低版本的 Agent 可以升级，同版本显示“已是最新版本”，更高版本禁止回退，回退需重新安装。Server 为 RC/Beta 时仍需在当前单台 Agent 操作中显式确认，并保留原有能力门禁。仅在线、未暂停/撤销、具有所需 updater 能力的受支持 Agent 可执行；逐台核对健康版本上报，失败由 updater 恢复升级前安装。打开对话框不再连接 GitHub；实际升级仍需 Updater 下载并验证对应的正式发布资产。Web 路径只替换 Agent 二进制，不安装新的 root helper。
 
+### 升级说明
+
 **现有 v1.0.1-beta.1/beta.2 Agent，或缺失 Updater 的 v0.9.3/v1.0.0 Agent：**在 Debian 12/13 Agent 主机以 root 使用下面的固定 v1.0.1 本地迁移入口。需要预先安装 Python3 用于静态验证；缺少时安装器会在改变 Agent 文件或服务前拒绝，不自动安装系统包。入口保留 Agent ID、凭据、epoch、配置及业务状态，无需重新 enrollment；仅在实际健康版本上报被接受后完成，缺失 Updater 也只在成功后补装。
 
 ```bash

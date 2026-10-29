@@ -3,11 +3,14 @@ package notices_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -189,5 +192,34 @@ func TestBinaryLicensesAndExistingCLI(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestNoticeModuleRegistrationAndTextLicense(t *testing.T) {
+	data := string(noticeFile(t))
+	mod, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range regexp.MustCompile(`(?m)^\s+([^\s]+) (v[^\s]+)`).FindAllStringSubmatch(string(mod), -1) {
+		if !strings.Contains(data, "`"+row[1]+" "+row[2]+"`") {
+			t.Error("unregistered module", row[1], row[2])
+		}
+	}
+	start := strings.Index(data, "### M22 — golang.org/x/text v0.27.0 / LICENSE")
+	if start < 0 {
+		t.Fatal("missing text license")
+	}
+	section := data[start:]
+	bodyStart := strings.Index(section, "```text\n") + len("```text\n")
+	bodyEnd := strings.Index(section[bodyStart:], "```") + bodyStart
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(section[bodyStart:bodyEnd])))
+	if !strings.Contains(section[:bodyStart], hash) {
+		t.Fatal("text license hash mismatch", hash)
+	}
+	for _, text := range []string{"CLDR 32", "Unicode 数据", "### M22 — golang.org/x/text v0.27.0 / PATENTS"} {
+		if !strings.Contains(data, text) {
+			t.Error("missing text data notice", text)
+		}
 	}
 }
