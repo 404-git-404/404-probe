@@ -138,7 +138,7 @@
     function activate(key){if(!Object.hasOwn(panes,key))return;if(tab!==key){leave();body.scrollTop=0;}tab=key;
       for(const [name,pane]of Object.entries(panes)){pane.hidden=name!==tab;tabs[name].setAttribute('aria-selected',String(name===tab));tabs[name].tabIndex=name===tab?0:-1;}
       if(!dialog.open)return;
-      if(tab==='overview'){renderOverview();upgradeTargets(current);}else if(tab==='management'){renderManagement();upgradeTargets(current);}else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
+      if(tab==='overview'){renderOverview();upgradeTargets(current);if(!agents.get(current)?.detail_loaded)hydrate(current);}else if(tab==='management'){renderManagement();upgradeTargets(current);if(!agents.get(current)?.detail_loaded)hydrate(current);}else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
       else if(tab==='resources'){pending=false;renderResourceFacts();renderPlot();request();}
 
     }

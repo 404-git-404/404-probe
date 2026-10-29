@@ -945,12 +945,14 @@ func (s *Store) SaveOutboundSnapshot(ctx context.Context, agentID string, snapsh
 }
 
 func (s *Store) GetOutboundSnapshot(ctx context.Context, agentID string) (OutboundSnapshot, bool, error) {
+	return scanDashboardOutbound(s.db.QueryRowContext(ctx, `SELECT agent_id,available,status,payload_json,checked_at,updated_at FROM agent_outbound_snapshots WHERE agent_id=?`, agentID))
+}
+func scanDashboardOutbound(row dashboardScanner) (OutboundSnapshot, bool, error) {
 	var result OutboundSnapshot
 	var available int
 	var payload string
 	var updatedAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT agent_id,available,status,payload_json,checked_at,updated_at FROM agent_outbound_snapshots WHERE agent_id=?`, agentID).
-		Scan(&result.AgentID, &available, &result.Status, &payload, &result.CheckedAt, &updatedAt)
+	err := row.Scan(&result.AgentID, &available, &result.Status, &payload, &result.CheckedAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OutboundSnapshot{}, false, nil
 	}

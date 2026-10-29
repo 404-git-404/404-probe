@@ -88,6 +88,8 @@
     country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country',
     plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', public_egress_check: 'egress',
     security: 'security', management: 'management', traffic: 'traffic', removal: 'removal',
+    group_id:'organization', tag_ids:'organization', organization_revision:'organization',
+    renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', dashboard_loaded:'summary', network:'summary',
   })[key] || 'runtime';
   const fullEvent = value => ['created_at', 'revoked', 'management', 'outbounds', 'google_status', 'security', 'plan']
     .some(key => Object.hasOwn(value, key));
@@ -151,7 +153,7 @@
       const e = entry(id), token = {id, entry: e, lifetime: e.lifetime, start: e.revision, context,
         versions: new Map(e.versions), reads: new Map(), groups};
       // Per-resource latest invocation; an upgrade read cannot invalidate detail fields.
-      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','egress','security','management','traffic','removal'];
+      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','egress','security','management','traffic','removal','organization','summary'];
       for (const group of all) {
         const next = (e.reads.get(group) || 0) + 1;
         e.reads.set(group, next); token.reads.set(group, next);
@@ -241,6 +243,7 @@
       return true;
     }
     return {agents, revokedAgentIDs, beginRefresh, validCycle, endRefresh, read, commitRead, commitDetail, missing,
+      invalidate(id,groups){const e=entry(id);if(!e.blocked)changed(e,groups);},
       commitList, event, fullEvent, beginMutation, finishMutation, beginDelete, finishDelete,
       busy: (id, group) => entries.get(id)?.pending.has(group) || false,
       pending: id => Boolean(entries.get(id)?.pending.size),

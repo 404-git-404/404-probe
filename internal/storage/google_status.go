@@ -75,12 +75,16 @@ func (s *Store) GetGoogleStatus(ctx context.Context, agentID string) (GoogleStat
 }
 
 func readGoogleStatus(ctx context.Context, db googleStatusReader, agentID string) (GoogleStatusSnapshot, bool, error) {
+	return scanDashboardGoogle(db.QueryRowContext(ctx, `SELECT agent_id,youtube_status,youtube_region,sent_to_china,youtube_error,
+		search_status,search_error,signin_status,signin_error,gemini_status,gemini_region,gemini_error,
+		checked_at,unknown_streak,next_due_at,youtube_premium_notice FROM agent_google_status WHERE agent_id=?`, agentID))
+}
+
+func scanDashboardGoogle(row dashboardScanner) (GoogleStatusSnapshot, bool, error) {
 	var snapshot GoogleStatusSnapshot
 	var youtubeRegion, youtubeError, searchError, signinError, geminiRegion, geminiError sql.NullString
 	var sentToChina, premiumNotice sql.NullInt64
-	err := db.QueryRowContext(ctx, `SELECT agent_id,youtube_status,youtube_region,sent_to_china,youtube_error,
-		search_status,search_error,signin_status,signin_error,gemini_status,gemini_region,gemini_error,
-		checked_at,unknown_streak,next_due_at,youtube_premium_notice FROM agent_google_status WHERE agent_id=?`, agentID).Scan(
+	err := row.Scan(
 		&snapshot.AgentID, &snapshot.Result.YouTube.Status, &youtubeRegion, &sentToChina, &youtubeError,
 		&snapshot.Result.Search.Status, &searchError, &snapshot.Result.SignIn.Status, &signinError,
 		&snapshot.Result.Gemini.Status, &geminiRegion, &geminiError, &snapshot.CheckedAt, &snapshot.UnknownStreak, &snapshot.NextDueAt, &premiumNotice)

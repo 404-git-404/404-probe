@@ -51,21 +51,24 @@ type dashboardNetworkEntry struct {
 }
 type dashboardSummary struct {
 	webAgentSummaryView
-	Lifecycle            string             `json:"lifecycle"`
-	Hostname             string             `json:"hostname"`
-	CountryCode          string             `json:"country_code"`
-	CountrySource        string             `json:"country_source"`
-	GroupID              *string            `json:"group_id"`
-	TagIDs               []string           `json:"tag_ids"`
-	OrganizationRevision int64              `json:"organization_revision"`
-	Resources            dashboardResources `json:"resources"`
-	State                *webAgentStateView `json:"state"`
-	Plan                 *storage.AgentPlan `json:"plan"`
-	Traffic              dashboardTraffic   `json:"traffic"`
-	Renewal              dashboardRenewal   `json:"renewal"`
-	Network              dashboardNetwork   `json:"network"`
-	MaskedIPs            []string           `json:"masked_ips"`
-	SearchFields         []string           `json:"search_fields"`
+	Lifecycle            string                 `json:"lifecycle"`
+	Hostname             string                 `json:"hostname"`
+	CountryCode          string                 `json:"country_code"`
+	CountrySource        string                 `json:"country_source"`
+	GroupID              *string                `json:"group_id"`
+	TagIDs               []string               `json:"tag_ids"`
+	OrganizationRevision int64                  `json:"organization_revision"`
+	Resources            dashboardResources     `json:"resources"`
+	State                *webAgentStateView     `json:"state"`
+	Plan                 *storage.AgentPlan     `json:"plan"`
+	Traffic              dashboardTraffic       `json:"traffic"`
+	Renewal              dashboardRenewal       `json:"renewal"`
+	Network              dashboardNetwork       `json:"network"`
+	GoogleStatus         webGoogleStatusView    `json:"google_status"`
+	Outbounds            webOutboundsView       `json:"outbounds"`
+	AccumulatedTraffic   *storage.TrafficTotals `json:"accumulated_traffic"`
+	MaskedIPs            []string               `json:"masked_ips"`
+	SearchFields         []string               `json:"search_fields"`
 }
 type dashboardResponse struct {
 	Partial       bool                   `json:"partial"`
@@ -262,6 +265,22 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			v.Lifecycle = "offline"
 		}
 		v.Resources = dashboardResources{Stale: true, MaxAgeMS: a.offlineTimeout.Milliseconds()}
+		v.AccumulatedTraffic = raw.TrafficTotals
+		v.Outbounds = webOutboundsView{Selectors: []protocol.OutboundSelector{}}
+		if o := raw.Outbound; o != nil {
+			checked := o.CheckedAt
+			v.Outbounds = webOutboundsView{Configured: true, Available: o.Available, Status: o.Status, Stale: now.Sub(time.UnixMilli(o.CheckedAt)) > outboundSnapshotStaleAfter, OrderSource: o.OrderSource, Selectors: o.Selectors, CheckedAt: &checked, UpdatedAt: o.UpdatedAt}
+		}
+		v.GoogleStatus = webGoogleStatusView{Supported: raw.GoogleSupported, Pending: raw.GooglePending, Stale: !record.Online || record.Agent.DisabledAt != nil || record.Agent.Revoked}
+		if g := raw.Google; g != nil {
+			copy := *g
+			v.GoogleStatus.Result, v.GoogleStatus.CheckedAt, v.GoogleStatus.NextDueAt = &copy.Result, &copy.CheckedAt, &copy.NextDueAt
+			v.GoogleStatus.UnknownStreak = copy.UnknownStreak
+			v.GoogleStatus.Stale = v.GoogleStatus.Stale || now.UnixMilli() >= copy.NextDueAt
+			if yt := copy.Result.YouTube; yt.Status != protocol.YouTubeUnknown && !protocol.ValidCountryCode(yt.Region) {
+				copy.Result.YouTube = protocol.YouTubeResult{Status: protocol.YouTubeUnknown, Error: protocol.GoogleServiceError{Category: "invalid_region"}}
+			}
+		}
 		if state := record.State; state != nil {
 			v.Hostname = state.Hostname
 			v.SearchFields = append(v.SearchFields, state.Hostname)

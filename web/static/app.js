@@ -57,13 +57,13 @@ let overviewReady = false;
 const overview = Overview.create({size:CardMetrics.size,deadline:planDeadline});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   identity: agent => countryMark(agent?.country_code,agent?.country_source),
-  management: agent => agentCards.get(agent.agent_id)?.detailPanel,
-  overview: agent => agentCards.get(agent.agent_id)?.overviewPanel,
+  management: agent => detailsFor(agent.agent_id)?.management,
+  overview: agent => detailsFor(agent.agent_id)?.overview,
   upgradeTargets: id => loadDetailUpgradeTargets(id),
   // Revealed IP addresses never outlive the dialog or a switch to another Agent.
-  conceal: () => { for (const view of agentCards.values()) view.egressPanel?.conceal(); },
+  conceal: () => { for (const view of detailViews.values()) view.egressPanel?.conceal(); },
   resourceFacts: agent => resourceFactsFor(agent).filter(row=>row[0]==='DISK'),
-  hydrate: id => { if(agents.has(id)&&!agents.get(id).detail_loaded)reconciliation.notify(id); }});
+  hydrate: id => hydrateActiveDetail(id)});
 const revokedAgentIDs = agentState.revokedAgentIDs;
 const selectorController = Selector.create({
   state: agentState, fetcher: (...args) => fetch(...args), csrf: () => mutationCSRFToken,
@@ -1109,13 +1109,16 @@ function setCardText(node, value) {
   if (node.textContent !== value) node.textContent = value;
 }
 
+const renderedCardKeys=new Map();
+function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.tag_ids,mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 function render() {
   overview.update(agents,overviewReady);
   const ids = [...agents.keys()];
   networkQuality.sync(ids); latencyCharts.sync(ids); trafficCharts.sync(ids); cardObservations.sync(ids); selectorView.sync(ids); cardFaces.sync(ids);
   for (const [id, view] of agentCards) {
-    if (!agents.has(id)) { view.card.remove(); view.detailPanel.remove(); agentCards.delete(id); }
+    if (!agents.has(id)) { view.card.remove(); agentCards.delete(id);renderedCardKeys.delete(id); }
   }
+  for(const [id,view] of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
   selectorView.refreshActive();
   const list = [...agents.values()].sort((left, right) =>
     (left.name || '').localeCompare(right.name || '') || left.agent_id.localeCompare(right.agent_id));
@@ -1124,14 +1127,15 @@ function render() {
   for (const agent of list) {
     let view = agentCards.get(agent.agent_id);
     if (!view) { view = createAgentCard(agent); agentCards.set(agent.agent_id, view); }
-    else view.update(agent);
+    else if(renderedCardKeys.get(agent.agent_id)!==cardRenderKey(agent))view.update(agent);
+    renderedCardKeys.set(agent.agent_id,cardRenderKey(agent));
     if (view.card !== position) {
       // moveBefore retains focus/selection on supported browsers; insertBefore is the fallback.
       if (view.card.parentNode === container && container.moveBefore) container.moveBefore(view.card, position);
       else container.insertBefore(view.card, position);
     }
     position = view.card.nextElementSibling;
-    deviceDetails.update(agent);
+    if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===agent.agent_id){detailViews.get(agent.agent_id)?.update(agent);deviceDetails.update(agent);}
   }
   deviceDetails.sync(); planEditor.sync(); planRenewal.sync();
   for(const id of new Set([...trafficResetRequests.keys(),...trafficResetFeedback.keys(),...trafficResetControllers.keys()]))if(!agents.has(id)){trafficResetControllers.get(id)?.abort();trafficResetControllers.delete(id);trafficResetRequests.delete(id);trafficResetFeedback.delete(id);}
@@ -1321,93 +1325,6 @@ function createAgentCard(initialAgent) {
     card.append(googleTools);
     selectorView.refresh(agent.agent_id);
 
-    const remove = document.createElement('button');
-    remove.className = 'remove-agent';
-    remove.dataset.agentId = agent.agent_id;
-    remove.type = 'button';
-    remove.textContent = '撤销…';
-    remove.dataset.focusKey = 'remove';
-    remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
-    remove.addEventListener('click', () => openRemoveAgentDialog(agent));
-    const stateAction = document.createElement('button');
-    stateAction.className = 'agent-state-action';
-    stateAction.dataset.agentId = agent.agent_id;
-    stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
-    stateAction.type = 'button';
-    stateAction.textContent = agent.disabled_at ? '恢复监控' : '暂停…';
-    stateAction.dataset.focusKey = 'state';
-    stateAction.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'lifecycle') || agentState.blocked(agent.agent_id);
-    stateAction.addEventListener('click', () => setAgentDisabled(agent, !agent.disabled_at, stateAction));
-    const upgrade = document.createElement('button');
-    upgrade.className = 'upgrade-agent';
-    upgrade.type = 'button';
-    upgrade.textContent = '升级…';
-    upgrade.dataset.focusKey = 'upgrade';
-    const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
-    upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
-    upgrade.title = upgradeHint(agent);
-    upgrade.addEventListener('click', () => openUpgradeAgentDialog(agent));
-    const detailPanel = document.createElement('section');
-    detailPanel.className = 'card-detail-panel';
-    detailPanel.hidden = true;
-    const facts = document.createElement('div');
-    facts.className = 'card-detail-facts';
-    const detailFacts = () => [
-      detailFact('主机名', agent.state?.hostname),
-      detailFact('系统', [agent.state?.os, agent.state?.arch].filter(Boolean).join(' · ')),
-      detailFact('负载', agent.state ? `${Number(agent.state.load1 || 0).toFixed(2)} / ${Number(agent.state.load5 || 0).toFixed(2)} / ${Number(agent.state.load15 || 0).toFixed(2)}` : '—'),
-      detailFact('CPU steal', agent.state?.cpu_steal_percent == null || !agent.state || !agent.online || agent.disabled_at || agent.state.stale ? '—' : `${pct(agent.state.cpu_steal_percent)} · 等待宿主机 CPU`),
-      detailFact('Swap', agent.state ? `${bytes(agent.state.swap_used,false,true)} / ${bytes(agent.state.swap_total,false,true)}` : '—'),
-      detailFact('磁盘 I/O', agent.state?.disk_busy_percent == null || !agent.online || agent.disabled_at || agent.state.stale ? '—' : `最忙 ${pct(agent.state.disk_busy_percent)} · 读 ${bytes(agent.state.disk_read_rate,true,true)} · 写 ${bytes(agent.state.disk_write_rate,true,true)}`),
-      detailFact('Agent 版本', agent.version),
-      detailFact(cardUptimeLabel(agent), agent.state ? duration(agent.state.uptime) : '—'),
-      detailFact('最近上报', seen(agent.last_seen)),
-      detailFact('检测时间', agent.google_status?.checked_at ? seen(agent.google_status.checked_at) : '尚未检测'),
-      detailFact('流量周期截止', agent.plan?.cycle_end ? dateInTimezone(agent.plan.cycle_end, agent.plan.timezone || 'UTC') : '未配置或尚未开始'),
-      detailFact('续费日期', agent.plan?.renewal_date || '未配置'),
-      detailFact('到期日期', agent.plan?.expiry_date || '未配置'),
-    ];
-    facts.append(...detailFacts());
-    detailPanel.append(facts);
-    const detailActions = document.createElement('div');
-    detailActions.className = 'card-detail-actions';
-    const historyLink = document.createElement('a');
-    historyLink.href = `/history.html?id=${encodeURIComponent(agent.agent_id)}`;
-    historyLink.textContent = '旧版历史页面（兼容入口）';
-    historyLink.dataset.focusKey = 'history';
-    const recheck = document.createElement('button');
-    recheck.type = 'button';
-    recheck.textContent = agent.google_status?.pending ? '检测中…' : '重新检测';
-    recheck.dataset.focusKey = 'recheck';
-    recheck.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || agent.revoked || !agent.google_status?.supported || agent.google_status?.pending || agentState.busy(agent.agent_id, 'google') || agentState.blocked(agent.agent_id);
-    const checkFeedback = document.createElement('span');
-    checkFeedback.setAttribute('aria-live', 'polite');
-    checkFeedback.textContent = agentActionErrors.get(`${agent.agent_id}/google`) || '';
-    recheck.addEventListener('click', () => rerunGoogleStatus(agent, recheck, checkFeedback));
-    detailActions.append(historyLink, recheck, checkFeedback);
-    const management = document.createElement('div');
-    management.className = 'agent-actions';
-    if (!agent.revoked) management.append(upgrade, stateAction);
-    management.append(remove);
-    const resetTraffic = document.createElement('button');
-    resetTraffic.type = 'button'; resetTraffic.dataset.focusKey = 'traffic-reset';
-    resetTraffic.textContent = trafficResetRequests.has(agent.agent_id) ? '核实前次请求' : '重新开始…';
-    resetTraffic.disabled = !canResetTraffic(agent);
-    resetTraffic.addEventListener('click', () => resetAccumulatedTraffic(agent.agent_id));
-    const resetFeedback = document.createElement('span');resetFeedback.setAttribute('aria-live','polite');
-    resetFeedback.textContent = trafficResetFeedback.get(agent.agent_id) || '';
-    detailActions.append(resetTraffic,resetFeedback);
-    const countryControls = countryCodeLookupControls(agent);
-    // Public IP detection lives in the same panel as the other device management actions.
-    const egressPanel = PublicEgressCheck.createPanel({
-      agentId: agent.agent_id, csrf: () => mutationCSRFToken, idPrefix: 'detail-egress',
-      begin: () => agentState.beginMutation(agent.agent_id, ['egress']),
-      finish: (token, patch) => finishResource(token, patch),
-    });
-    egressPanel.update(agent);
-    detailPanel.append(detailActions, egressPanel.node, countryControls, management);
-    card.append(detailPanel);
-
     const detailToggle = document.createElement('button');
     detailToggle.className = 'detail-toggle score-detail c7-detail';
     detailToggle.type = 'button';
@@ -1459,14 +1376,8 @@ function createAgentCard(initialAgent) {
     showOffline();
     card.append(offline);
 
-    const splitEgress=egressPanel.split();
-    const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
-      edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a)});
-    detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
-    const overviewPanel=summary.overview;
-    return {card, detailPanel, egressPanel, overviewPanel, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
+    return {card, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
-      egressPanel.update(agent);
       const state = agent.state || {}, hasState = Boolean(agent.state);
       const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
@@ -1506,7 +1417,90 @@ function createAgentCard(initialAgent) {
       const deadline = planDeadline(agent.plan); renewPlan.className = `renew-plan c7-money ${deadline.tone}`; setCardText(due, deadline.label);
       setCardText(price, compactPrice(agent.plan));
       setCardText(editHint, agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎'); editPlan.title = agent.plan ? '编辑套餐' : '添加套餐';
-      detailFacts().forEach((fact, index) => updateDisplay(facts.children[index], fact));
+      editPlan.disabled = planActionBlocked(agent);
+      renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
+      showOffline();
+    }};
+}
+
+const detailViews=new Map();
+function detailsFor(id){
+ if(!agents.has(id))return null;
+ if(!detailViews.has(id))detailViews.set(id,createAgentDetails(agents.get(id)));
+ return detailViews.get(id);
+}
+function createAgentDetails(initial){
+ let agent=initial;
+    const remove = document.createElement('button');
+    remove.className = 'remove-agent';
+    remove.dataset.agentId = agent.agent_id;
+    remove.type = 'button';
+    remove.textContent = '撤销…';
+    remove.dataset.focusKey = 'remove';
+    remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
+    remove.addEventListener('click', () => openRemoveAgentDialog(agent));
+    const stateAction = document.createElement('button');
+    stateAction.className = 'agent-state-action';
+    stateAction.dataset.agentId = agent.agent_id;
+    stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
+    stateAction.type = 'button';
+    stateAction.textContent = agent.disabled_at ? '恢复监控' : '暂停…';
+    stateAction.dataset.focusKey = 'state';
+    stateAction.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'lifecycle') || agentState.blocked(agent.agent_id);
+    stateAction.addEventListener('click', () => setAgentDisabled(agent, !agent.disabled_at, stateAction));
+    const upgrade = document.createElement('button');
+    upgrade.className = 'upgrade-agent';
+    upgrade.type = 'button';
+    upgrade.textContent = '升级…';
+    upgrade.dataset.focusKey = 'upgrade';
+    const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
+    upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
+    upgrade.title = upgradeHint(agent);
+    upgrade.addEventListener('click', () => openUpgradeAgentDialog(agent));
+    const detailPanel = document.createElement('section');
+    detailPanel.className = 'card-detail-panel';
+    detailPanel.hidden = true;
+    const historyLink = document.createElement('a');
+    historyLink.href = `/history.html?id=${encodeURIComponent(agent.agent_id)}`;
+    historyLink.textContent = '旧版历史页面（兼容入口）';
+    historyLink.dataset.focusKey = 'history';
+    const recheck = document.createElement('button');
+    recheck.type = 'button';
+    recheck.textContent = agent.google_status?.pending ? '检测中…' : '重新检测';
+    recheck.dataset.focusKey = 'recheck';
+    recheck.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || agent.revoked || !agent.google_status?.supported || agent.google_status?.pending || agentState.busy(agent.agent_id, 'google') || agentState.blocked(agent.agent_id);
+    const checkFeedback = document.createElement('span');
+    checkFeedback.setAttribute('aria-live', 'polite');
+    checkFeedback.textContent = agentActionErrors.get(`${agent.agent_id}/google`) || '';
+    recheck.addEventListener('click', () => rerunGoogleStatus(agent, recheck, checkFeedback));
+    const management = document.createElement('div');
+    management.className = 'agent-actions';
+    if (!agent.revoked) management.append(upgrade, stateAction);
+    management.append(remove);
+    const resetTraffic = document.createElement('button');
+    resetTraffic.type = 'button'; resetTraffic.dataset.focusKey = 'traffic-reset';
+    resetTraffic.textContent = trafficResetRequests.has(agent.agent_id) ? '核实前次请求' : '重新开始…';
+    resetTraffic.disabled = !canResetTraffic(agent);
+    resetTraffic.addEventListener('click', () => resetAccumulatedTraffic(agent.agent_id));
+    const resetFeedback = document.createElement('span');resetFeedback.setAttribute('aria-live','polite');
+    resetFeedback.textContent = trafficResetFeedback.get(agent.agent_id) || '';
+    const countryControls = countryCodeLookupControls(agent);
+    // Public IP detection lives in the same panel as the other device management actions.
+    const egressPanel = PublicEgressCheck.createPanel({
+      agentId: agent.agent_id, csrf: () => mutationCSRFToken, idPrefix: 'detail-egress',
+      begin: () => agentState.beginMutation(agent.agent_id, ['egress']),
+      finish: (token, patch) => finishResource(token, patch),
+    });
+    egressPanel.update(agent);
+
+
+    const splitEgress=egressPanel.split();
+    const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
+      edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a)});
+    detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
+
+ return {management:detailPanel,overview:summary.overview,egressPanel,update(next){
+  agent=next;egressPanel.update(agent);
       const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
       remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
       stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
@@ -1520,12 +1514,10 @@ function createAgentCard(initialAgent) {
       setCardText(resetTraffic, trafficResetRequests.has(agent.agent_id) ? '核实前次请求' : '重新开始…');
       resetTraffic.disabled = !canResetTraffic(agent);
       setCardText(resetFeedback, trafficResetFeedback.get(agent.agent_id) || '');
-      editPlan.disabled = planActionBlocked(agent);
-      renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
 
       countryControls.update(agent);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
-      showOffline();
-    }};
+
+ }};
 }
 
 function canResetTraffic(agent) {
@@ -1604,10 +1596,10 @@ async function readAgentDetail(id, signal, context = null) {
   }
 }
 
-async function readAgentUpgrade(id, context) {
+async function readAgentUpgrade(id, context, signal) {
   const ticket = agentState.read(id, context, ['upgrade']);
   try {
-    const upgrade = await readOptionalJSON(`/api/v1/web/agents/${encodeURIComponent(id)}/upgrade`, context?.controller.signal);
+    const upgrade = await readOptionalJSON(`/api/v1/web/agents/${encodeURIComponent(id)}/upgrade`, context?.controller.signal||signal);
     if (agentState.commitRead(ticket, {upgrade})) render();
   } catch (error) {
     if (!context?.controller.signal.aborted && error.name !== 'AbortError' && error.status !== 404) throw error;
@@ -1615,38 +1607,20 @@ async function readAgentUpgrade(id, context) {
 }
 
 const pendingTelemetry = new Map();
-const reconciliation = AgentState.reconcile(agentState, readAgentDetail, render, () => {
-  stream.textContent = '部分资料读取失败'; stream.classList.remove('live');
-});
-async function refresh() {
-  const context = agentState.beginRefresh();
-  try {
-    const snapshot = [];
-    const seenCursors = new Set();
-    let cursor = '';
-    do {
-      const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-      const page = await readJSON(`/api/v1/web/agents?limit=100${suffix}`, context.controller.signal);
-      for (const summary of page.items) {
-        snapshot.push(summary);
-      }
-      cursor = page.next_cursor || '';
-      if (cursor && seenCursors.has(cursor)) throw new Error('pagination loop');
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
-    if (!agentState.commitList(context, snapshot)) return;
-    overviewReady = true;
-    render();
-    await hydrateDetails([...agents.values()], context);
-    if (agentState.validCycle(context)) render();
-  } catch (error) {
-    if (!agentState.validCycle(context) || error.name === 'AbortError') return;
-    stream.textContent = '读取失败';
-    stream.classList.remove('live');
-  } finally {
-    agentState.endRefresh(context);
-  }
+const detailJobs=new Map();
+function hydrateActiveDetail(id){
+ if(!agents.has(id)||detailJobs.has(id)||suspended)return detailJobs.get(id)?.task;
+ const controller=new AbortController();
+ const task=Promise.allSettled([readAgentDetail(id,controller.signal),readAgentUpgrade(id,null,controller.signal)]).finally(()=>detailJobs.delete(id));
+ detailJobs.set(id,{controller,task});return task;
 }
+const dashboardData=DashboardData.create({state:agentState,read:readJSON,onchange:ids=>{overviewReady=true;render(ids);},onerror:()=>{stream.textContent='部分资料读取失败';stream.classList.remove('live');}});
+const reconciliation={
+ notify(id){dashboardData.notify(id);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===id)hydrateActiveDetail(id);},
+ retry(){dashboardData.retry();},cancel(id){detailJobs.get(id)?.controller.abort();detailJobs.delete(id);},
+ close(){for(const id of detailJobs.keys())this.cancel(id);dashboardData.close();}
+};
+function refresh(){return dashboardData.refresh();}
 
 loadMutationSession();
 refresh();
@@ -1657,22 +1631,24 @@ addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); p
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 
 const events = new EventSource('/api/v1/web/events');
+let streamOpened=false;
 events.onopen = () => {
   if (suspended) return;
   stream.textContent = '实时连接';
   stream.classList.add('live');
-  if (!agentState.refreshing()) refresh();
+  if(streamOpened)refresh();streamOpened=true;
 };
 events.onerror = () => {
   stream.textContent = '正在重连';
   stream.classList.remove('live');
 };
 events.addEventListener('agent', event => {
-  const update = JSON.parse(event.data);
-  if (revokedAgentIDs.has(update.agent_id)) return;
-  if (agentState.fullEvent(update)) reconciliation.notify(update.agent_id);
-  else if (!agents.has(update.agent_id)) {
-    pendingTelemetry.set(update.agent_id, update);
-    reconciliation.notify(update.agent_id);
-  } else if (agentState.event(update)) render();
+ let update;try{update=JSON.parse(event.data);}catch{return;}
+ const id=update.agent_id;if(revokedAgentIDs.has(id))return;
+ if(agentState.fullEvent(update))agentState.invalidate(id,[...new Set(Object.keys(update).map(AgentState.resource))]);
+ else if(agentState.event(update))render(new Set([id]));
+ dashboardData.notify(id);
+ if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===id&&agentState.fullEvent(update))hydrateActiveDetail(id);
 });
+events.addEventListener('dashboard',event=>{try{const value=JSON.parse(event.data);dashboardData.metadata(value);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===value.agent_id&&!value.revoked)hydrateActiveDetail(value.agent_id);}catch{}});
+events.addEventListener('organization',event=>{try{const value=JSON.parse(event.data);dashboardData.organization(value);}catch{}});

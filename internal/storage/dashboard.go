@@ -9,9 +9,13 @@ import (
 )
 
 type DashboardRecord struct {
-	Snapshot                   AgentSnapshot
-	Plan                       *AgentPlan
-	CountryCode, CountrySource string
+	Snapshot                       AgentSnapshot
+	Plan                           *AgentPlan
+	CountryCode, CountrySource     string
+	Google                         *GoogleStatusSnapshot
+	GoogleSupported, GooglePending bool
+	Outbound                       *OutboundSnapshot
+	TrafficTotals                  *TrafficTotals
 }
 type DashboardData struct {
 	Catalog OrganizationCatalog
@@ -144,11 +148,18 @@ func (s *Store) ReadDashboardData(ctx context.Context, now time.Time, offlineTim
 	if err != nil {
 		return out, err
 	}
+	cards, err := readDashboardCards(ctx, tx, now)
+	if err != nil {
+		return out, err
+	}
 	for _, agent := range agents {
 		if agent.Revoked && !includeRevoked {
 			continue
 		}
-		record := DashboardRecord{Snapshot: AgentSnapshot{Agent: agent, StateStale: true}, CountrySource: "unknown"}
+		record := cards[agent.ID]
+		record.Snapshot = AgentSnapshot{Agent: agent, StateStale: true}
+		record.CountrySource = "unknown"
+
 		if state, ok := states[agent.ID]; ok {
 			state.Name = agent.Name
 			record.Snapshot.State = &state
