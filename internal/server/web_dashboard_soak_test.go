@@ -119,6 +119,39 @@ func normalizeSoakSample(sample *protocol.QualitySample, value float64) {
 	sample.Details = d.Encode()
 }
 
+func dashboardSoakHandler(t *testing.T, a *App, count int) http.Handler {
+	handler := a.Handler()
+	root := os.Getenv("V110_SOAK_ROOT")
+	if root == "" {
+		return handler
+	}
+	if !filepath.IsAbs(root) {
+		t.Fatal("absolute soak root required")
+	}
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(filepath.Join(root, fmt.Sprintf("server-requests-%d.jsonl", count)), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { file.Close() })
+	var mu sync.Mutex
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		handler.ServeHTTP(w, r)
+		if r.URL.Path == "/api/v1/web/dashboard" {
+			elapsed := time.Since(start).Seconds() * 1000
+			mu.Lock()
+			err := json.NewEncoder(file).Encode(map[string]any{"at": start.UnixMilli(), "milliseconds": elapsed, "partial": r.URL.Query().Has("ids")})
+			mu.Unlock()
+			if err != nil {
+				t.Error(err)
+			}
+		}
+	})
+}
+
 func saveSoakQuality(t *testing.T, a *App, token string, samples []protocol.QualitySample) {
 	t.Helper()
 	w := postWithHeaders(t, a, token, "/api/v1/agent/network-quality", protocol.QualityBatch{Version: 2, Epoch: "1", SessionID: "session", Samples: samples}, userHeaders)

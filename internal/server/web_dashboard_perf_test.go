@@ -106,7 +106,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 					}
 				}
 			}
-			server := httptest.NewServer(a.Handler())
+			server := httptest.NewServer(dashboardSoakHandler(t, a, n))
 			defer server.Close()
 			client := server.Client()
 			samples := []float64{}
