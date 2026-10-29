@@ -391,7 +391,7 @@ def main():
     repo = Path(__file__).resolve().parent.parent
     if not all((repo / name).is_file() for name in ('install.sh', 'scripts/installer-fixture-commands.sh', 'scripts/installer-fixture-entry.sh')):
         return skipped('source tree is incomplete (install.sh and fixture support scripts required)')
-    if opts.root:
+    if opts.root and sys.platform == 'linux':
         reason = validate_root(Path(opts.root), selected_profile(opts, repo), in_place_candidate())
         if reason:
             return skipped(reason)

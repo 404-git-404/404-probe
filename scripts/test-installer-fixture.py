@@ -21,6 +21,24 @@ spec.loader.exec_module(fixture)
 
 
 class FixtureBoundaryTests(unittest.TestCase):
+    def test_unsupported_platform_explicit_root_skips_without_uid_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            with patch.object(sys, 'argv', ['fixture', '--root', directory, '--probe']), patch.object(sys, 'platform', 'win32'), patch.dict(os.environ, INSTALLER_FIXTURE_REQUIRED='0'), redirect_stderr(output):
+                self.assertEqual(fixture.main(), 77)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+            self.assertEqual(output.getvalue().count('INSTALLER-FIXTURE-SKIPPED:'), 1)
+
+    def test_incomplete_source_has_one_clear_skip_before_bootstrap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            with patch.object(fixture, '__file__', str(Path(directory)/'scripts/installer-fixture.py')), patch.object(sys, 'argv', ['fixture', '--root', directory]), patch.dict(os.environ, INSTALLER_FIXTURE_REQUIRED='0'), patch.object(fixture, 'bootstrap_boundary') as bootstrap, redirect_stderr(output):
+                self.assertEqual(fixture.main(), 77)
+                bootstrap.assert_not_called()
+            self.assertIn('source tree is incomplete', output.getvalue())
+            self.assertEqual(output.getvalue().count('INSTALLER-FIXTURE-SKIPPED:'), 1)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     @unittest.skipUnless(sys.platform == 'linux', 'Linux ownership/mode preflight')
     def test_root_preflight_rejects_system_foreign_nonempty_and_inaccessible(self):
         with tempfile.TemporaryDirectory() as temporary:
