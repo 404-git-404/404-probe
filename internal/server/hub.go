@@ -3,10 +3,11 @@ package server
 import "sync"
 
 type hub struct {
-	mu          sync.Mutex
-	clients     map[chan []byte]struct{}
-	limit       int
-	queuedBytes map[chan []byte]int
+	mu                  sync.Mutex
+	clients             map[chan []byte]struct{}
+	limit               int
+	queuedBytes         map[chan []byte]int
+	overflowDisconnects uint64
 }
 
 func newHub(limit int) *hub {
@@ -39,6 +40,7 @@ func (h *hub) publish(message []byte) {
 		// existing reconnect/full-read path instead of silently losing config or
 		// lifecycle changes among runtime samples.
 		if h.queuedBytes[ch]+len(message) > 1<<20 {
+			h.overflowDisconnects++
 			close(ch)
 			delete(h.clients, ch)
 			delete(h.queuedBytes, ch)
@@ -49,6 +51,7 @@ func (h *hub) publish(message []byte) {
 		case ch <- copyMessage:
 			h.queuedBytes[ch] += len(copyMessage)
 		default:
+			h.overflowDisconnects++
 			close(ch)
 			delete(h.clients, ch)
 			delete(h.queuedBytes, ch)

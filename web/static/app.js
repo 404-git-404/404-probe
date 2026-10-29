@@ -1123,6 +1123,7 @@ const renderDirty=new Set();
 const groupViews=new Map();
 function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
 function renderDashboard(dirty=null) {
+  const deadline=performance.now()+8,deferred=new Set();let updated=0;
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs=dashboardUI.preferences.value;
   document.body.classList.toggle('dashboard-simple',model.simple);
   overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild,simple:model.simple});
@@ -1148,14 +1149,17 @@ function renderDashboard(dirty=null) {
     let position=gv.body.firstElementChild;
     for(const agent of group.items){let view=agentCards.get(agent.agent_id);const remount=!view;
       if(!view&&dormantCards.has(agent.agent_id)){view=dormantCards.get(agent.agent_id);dormantCards.delete(agent.agent_id);agentCards.set(agent.agent_id,view);}
-      if(remount||dirty===null||dirty.has(agent.agent_id)){const key=cardRenderKey(agent);
+      if(remount||dirty===null||dirty.has(agent.agent_id)){
+       if(updated&&performance.now()>=deadline){deferred.add(agent.agent_id);if(!view)continue;}
+       else{const key=cardRenderKey(agent);updated++;
        if(!view){view=createAgentCard(agent);agentCards.set(agent.agent_id,view);}else if(renderedCardKeys.get(agent.agent_id)!==key)view.update(agent);
        renderedCardKeys.set(agent.agent_id,key);
+       }
       }
       if(layout!==lastLayout&&view.card!==position){if(view.card.parentNode===gv.body&&gv.body.moveBefore)gv.body.moveBefore(view.card,position);else gv.body.insertBefore(view.card,position);}position=view.card.nextElementSibling;
     }
   }
-  lastLayout=layout;
+  if(!deferred.size)lastLayout=layout;else render(deferred);
   const open=deviceDetails.snapshot();if(open.open&&agents.has(open.id)){detailViews.get(open.id)?.update(agents.get(open.id));deviceDetails.update(agents.get(open.id));}
   deviceDetails.sync();planEditor.sync();planRenewal.sync();
   for(const id of new Set([...trafficResetRequests.keys(),...trafficResetFeedback.keys(),...trafficResetControllers.keys()]))if(!agents.has(id)){trafficResetControllers.get(id)?.abort();trafficResetControllers.delete(id);trafficResetRequests.delete(id);trafficResetFeedback.delete(id);}
@@ -1217,7 +1221,8 @@ function createPublicEgress(agentID) {
       if(!available||stale)continue;
       const at=new Date(observation.checked_at).toLocaleString();
       const mask=observation===masked?masked.ip:PublicEgressCheck.maskIP(observation.ip);
-      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${mask} · ${at}；Agent 实际网络路径的出站观测`;
+      const history=observation.last_success,historyIP=history&&(observation===masked?history.ip:PublicEgressCheck.maskIP(history.ip));
+      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${mask} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+historyIP+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出站观测`;
       setCardText(tip,full);item.setAttribute('aria-label',full);
       item.dataset.status=status;item.dataset.stale='false';
       shown.push(item,tip);families.push(family);
@@ -1322,6 +1327,10 @@ function createAgentCard(initialAgent) {
 
     // ---- which face each module shows; kept in this browser ----
     const modules = [machineModule, trafficModule, networkModule];
+    // History/quality plots have their own data/config timers. Rebuilding their
+    // SVG paths for a CPU report or a summary calibration is unnecessary.
+    const chartKey=a=>JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.removal,a.state?.hostname]);
+    let renderedCharts=chartKey(agent);
     const remember = () => cardFaces.write(agent.agent_id, modules.map(m => m.face).join(''));
     const flip = document.createElement('button');
     flip.type = 'button'; flip.className = 'c7-flip dv-all'; flip.dataset.focusKey = 'dv-all';
@@ -1432,7 +1441,7 @@ function createAgentCard(initialAgent) {
       setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
       machine.update(Card.machineView(agent, observed, oldMetrics));
       updateTraffic();
-      trafficCharts.mount(agent); latencyCharts.mount(agent); networkQuality.mount(agent);
+      const charts=chartKey(agent);if(charts!==renderedCharts){renderedCharts=charts;trafficCharts.mount(agent);latencyCharts.mount(agent);networkQuality.mount(agent);}
       updateDisplay(googleTools.querySelector('.google-checks'), googleStatusPanel(agent));
       positionYouTubeTooltip();
       const nextTrigger = selectorView.trigger(agent);
@@ -1607,7 +1616,7 @@ async function readAgentDetail(id, signal, context = null) {
         pendingTelemetry.delete(id);
         if (pending !== eventAtStart) agentState.event(pending);
       }
-      render();
+      render(new Set([id]));
     }
     return committed;
   } catch (error) {
