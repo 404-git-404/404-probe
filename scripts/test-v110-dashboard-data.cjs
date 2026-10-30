@@ -38,10 +38,17 @@ test('runtime summaries wait ten seconds per device and coalesce at one batch pe
  await api.refresh();
  for(let i=0;i<200;i++){state.event({agent_id:A,state:{cpu_percent:i}});api.telemetry(A);}
  assert.equal(state.agents.get(A).state.cpu_percent,199);await advance(9999);assert.equal(calls.length,1);
- await advance(10000);assert.equal(calls.length,2);api.telemetry(A);api.telemetry(B);
- await advance(10999);assert.equal(calls.length,2);await advance(11000);assert.equal(calls.length,3);
+ await advance(20000);assert.equal(calls.length,2);api.telemetry(A);api.telemetry(B);
+ await advance(20999);assert.equal(calls.length,2);await advance(21000);assert.equal(calls.length,3);
  assert.ok(calls[2].url.includes(B));assert.ok(!calls[2].url.includes(A));
- api.telemetry(A);await advance(19999);assert.equal(calls.length,3);await advance(20000);assert.equal(calls.length,4);
- api.metadata({agent_id:A,kind:'name'});await advance(20001);assert.equal(calls.length,5,'metadata bypasses telemetry delay');
+ api.telemetry(A);await advance(29999);assert.equal(calls.length,3);await advance(30000);assert.equal(calls.length,4);
+ api.metadata({agent_id:A,kind:'name'});await advance(30001);assert.equal(calls.length,5,'metadata bypasses telemetry delay');
  api.close();assert.equal(timers.size,0);
+});
+test('200-device ID phases split batches and full reads suppress queued telemetry',async()=>{
+ const {simulate}=require('./lib/v110-dashboard-clock.cjs');const run=await simulate({partialLatency:30});
+ const partial=run.calls.filter(c=>c.partial);assert(partial.length>10);assert(Math.max(...partial.map(c=>c.ids.length))<50);
+ for(let i=1;i<partial.length;i++)assert(partial[i].at-partial[i-1].at>=1000);
+ const last=new Map();for(const call of partial)for(const id of call.ids){if(last.has(id))assert(call.at-last.get(id)>=10000);last.set(id,call.at);}
+ for(const full of run.calls.filter(c=>!c.partial))assert(!partial.some(p=>p.at>full.at+30&&p.at<full.at+10030),'full reply must renew queued devices');
 });
