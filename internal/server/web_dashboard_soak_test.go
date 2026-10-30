@@ -325,7 +325,8 @@ func dashboardSoak(t *testing.T, a *App, server *httptest.Server, ids []string, 
 				if err != nil {
 					t.Fatal(err)
 				}
-				replacement := httptest.NewUnstartedServer(next.Handler())
+				next.startDashboardNetworkWarmup()
+				replacement := httptest.NewUnstartedServer(dashboardSoakHandler(t, next, n))
 				replacement.Listener.Close()
 				replacement.Listener = listener
 				replacement.Start()

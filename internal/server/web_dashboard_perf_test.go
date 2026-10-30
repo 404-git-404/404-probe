@@ -106,6 +106,9 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 					}
 				}
 			}
+			// The populated fixture now enters the same startup warmup as a
+			// production CleanupLoop, without waiting for its completion.
+			a.startDashboardNetworkWarmup()
 			server := httptest.NewServer(dashboardSoakHandler(t, a, n))
 			defer server.Close()
 			client := server.Client()
