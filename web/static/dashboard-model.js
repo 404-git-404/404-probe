@@ -3,6 +3,10 @@
  const State=root.AgentState||(typeof require==='function'?require('./agent-state.js'):null);
  const KEY='404-probe.dashboard.v1',QUICK={offline:'离线',network:'网络异常',resources:'资源吃紧',traffic:'流量将满',renewal:'7 天内续费',health:'需要关注',upgrade:'待升级'};
  const STATUS={online:'在线',offline:'离线',paused:'暂停',unknown:'状态未知'};
+ // Client display window: 10s telemetry throttle, 15s calibration, read latency
+ // and margin. Two refresh cycles tolerate one failed read; the Server's 5s
+ // computation TTL and resource max_age_ms remain independent.
+ const NETWORK_SUMMARY_FRESH_MS=30000;
  const defaults=()=>({version:1,search:'',groups:[],tags:[],countries:[],statuses:[],quick:[],sort:'group',collapsed:[],overviewClosed:false,expensePeriod:'monthly',expanded:false});
  function preferences(storage=()=>root.localStorage){
   let value=defaults();
@@ -14,9 +18,7 @@
  function flags(a,server,now=Date.now()){
   const r=a.resources,t=a.dashboard_traffic||{},p=a.plan,n=a.network;
   const fresh=!!r?.known&&!r.stale&&(!r.max_age_ms||!r.collected_at||now-r.collected_at<=r.max_age_ms);
-  // The five-second expires_at is the Server computation-cache TTL. A client
-  // snapshot stays usable over its ten-second refresh plus one batch interval.
-  const networkFresh=a.dashboard_received_at?now-a.dashboard_received_at<=11000:!n?.expires_at||now<=n.expires_at;
+  const networkFresh=a.dashboard_received_at?now-a.dashboard_received_at<=NETWORK_SUMMARY_FRESH_MS:!n?.expires_at||now<=n.expires_at;
   const networkKnown=!!n?.known&&typeof n.active==='boolean'&&(!n.monitored||networkFresh);
   const resource=fresh&&[r.cpu_percent,r.ram_percent,r.disk_percent].some(v=>typeof v==='number'&&Number.isFinite(v)&&v>=90);
   const traffic=t.quota_state==='current'&&typeof p?.quota_bytes==='number'&&p.quota_bytes>0&&typeof p?.usage_bytes==='number'&&p.usage_bytes/p.quota_bytes>=.8;
@@ -54,5 +56,5 @@
   const sections=p.sort==='group'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
   return {list,sections,summary:aggregate(agents,server,now),simple:agents.size<=3&&!catalog.groups.length&&!catalog.tags.length&&!active(p)&&!p.expanded};
  }
- const api={KEY,QUICK,STATUS,defaults,preferences,lifecycle,flags,aggregate,active,matches,select};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,flags,aggregate,active,matches,select};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);

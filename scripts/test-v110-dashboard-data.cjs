@@ -3,6 +3,14 @@ const State=require('../web/static/agent-state.js'),Data=require('../web/static/
 const A='a'.repeat(32),B='b'.repeat(32),tick=()=>new Promise(setImmediate);
 const row=id=>({agent_id:id,name:id,online:true,revoked:false,group_id:null,tag_ids:[],state:{cpu_percent:1},traffic:{quota_state:'current'},accumulated_traffic:{rx_total:12},plan:{renewal_price:'1'}});
 const response=items=>({items,revision:1,groups:[],tags:[],exchange_rates:[],expenses:{monthly_usd:'1.00',yearly_usd:'12.00'}});
+test('slow partial reads never flicker the 200-device network union',async()=>{
+ const {simulate}=require('./lib/v110-dashboard-clock.cjs');const run=await simulate({source:process.env.V110_TEST_SOURCE,partialLatency:1500});
+ for(const s of run.samples)assert.deepEqual([s.network,s.insufficient,s.health],[200,0,200],JSON.stringify(s));
+});
+test('continuous read failure eventually expires the network snapshot',async()=>{
+ const {simulate}=require('./lib/v110-dashboard-clock.cjs');const run=await simulate({failReads:true});
+ assert.equal(run.samples.find(s=>s.at===29950).network,200);assert.equal(run.samples.find(s=>s.at===30100).network,0);assert.equal(run.samples.at(-1).insufficient,200);
+});
 function fixture(){const state=State.create(),frames=[],calls=[],pending=[];let next=response([row(A),row(B)]);const api=Data.create({state,frame:f=>frames.push(f),read:async url=>{calls.push(url);if(next)return next;return new Promise((resolve,reject)=>pending.push({resolve,reject}));}});return {state,api,frames,calls,pending,set(v){next=v;},async frame(){frames.shift()?.();await tick();}};}
 test('dashboard starts with one batch and same-frame identities share one ids request',async()=>{
  const f=fixture();await f.api.refresh();assert.deepEqual(f.calls,['/api/v1/web/dashboard']);assert.equal(f.state.agents.get(A).traffic.rx_total,12);

@@ -16,7 +16,8 @@ test('P5c missing, expired and null network observations remain unknown; never b
 
 test('P5c a known summary survives the server cache TTL during its throttled refresh window',()=>{
  const a=agent({dashboard_received_at:now,network:{known:true,active:true,monitored:true,expires_at:now+5000}});
- assert.equal(M.flags(a,server,now+10000).network,true);assert.equal(M.flags(a,server,now+11001).network,false);
+ assert.equal(M.NETWORK_SUMMARY_FRESH_MS,30000);
+ assert.equal(M.flags(a,server,now+M.NETWORK_SUMMARY_FRESH_MS-1).network,true);assert.equal(M.flags(a,server,now+M.NETWORK_SUMMARY_FRESH_MS+1).network,false);
  assert.equal(M.flags({...a,network:{known:false,active:null}},server,now+1000).network,false);
 });
 test('P5c traffic >=80% requires current positive quota; partial observations retain the same threshold',()=>{
