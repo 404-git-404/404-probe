@@ -2,6 +2,7 @@ package server
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -187,6 +188,10 @@ func (a *App) invalidateDashboardNetwork(id string) {
 	a.dashboardNetwork[id] = entry
 }
 func (a *App) cachedDashboardNetwork(r *http.Request, id string, now time.Time) dashboardNetwork {
+	return a.dashboardNetworkValue(r.Context(), id, now, true)
+}
+
+func (a *App) dashboardNetworkValue(ctx context.Context, id string, now time.Time, cacheFailure bool) dashboardNetwork {
 	a.dashboardMu.Lock()
 	entry := a.dashboardNetwork[id]
 	if now.Before(entry.Expires) {
@@ -197,17 +202,21 @@ func (a *App) cachedDashboardNetwork(r *http.Request, id string, now time.Time) 
 	cacheReset := a.dashboardResets
 	a.dashboardMu.Unlock()
 	out := dashboardNetwork{CheckedAt: now.UnixMilli(), ExpiresAt: now.Add(5 * time.Second).UnixMilli()}
-	gate, err := a.store.QualityAlertGate(r.Context(), id)
+	gate, err := a.store.QualityAlertGate(ctx, id)
 	if err == nil {
 		out.Monitored = gate
 		active := false
 		if gate {
-			active, err = a.store.QualityAlertActive(r.Context(), id, now)
+			active, err = a.store.QualityAlertActive(ctx, id, now)
 		}
 		if err == nil {
 			out.Active = &active
 			out.Known = true
 		}
+	}
+	// A failed background prewarm must not seed a five-second unknown entry.
+	if !out.Known && !cacheFailure {
+		return out
 	}
 	a.dashboardMu.Lock()
 	defer a.dashboardMu.Unlock()

@@ -50,6 +50,9 @@ type App struct {
 	dashboardNetwork              map[string]dashboardNetworkEntry
 	dashboardGeneration           uint64
 	dashboardResets               uint64
+	dashboardWarmupOnce           sync.Once
+	dashboardWarmupDone           chan struct{}
+	dashboardWarmupProbe          func(string)
 }
 
 const (
@@ -82,6 +85,7 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 	}
 	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, removalReceiptCleanupInterval: 5 * time.Minute, walHealthInterval: sqliteWALHealthInterval, buildInfo: buildinfo.Current(), qualityLookup: systemQualityLookup, qualityDNSSlots: make(chan struct{}, qualityDNSCheckSlots)}
 	a.traffic = traffic
+	a.dashboardWarmupDone = make(chan struct{})
 	for _, option := range options {
 		if option == nil {
 			cancel()
@@ -711,9 +715,14 @@ func (a *App) Shutdown() {
 		a.webAuth.shutdown()
 	}
 	a.cancel()
+	if a.dashboardWarmupDone != nil {
+		a.dashboardWarmupOnce.Do(func() { close(a.dashboardWarmupDone) })
+		<-a.dashboardWarmupDone
+	}
 }
 
 func (a *App) CleanupLoop() {
+	a.startDashboardNetworkWarmup()
 	if a.removalReceiptCleanupInterval <= 0 {
 		a.removalReceiptCleanupInterval = 5 * time.Minute
 	}
