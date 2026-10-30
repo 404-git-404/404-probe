@@ -106,6 +106,9 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 					}
 				}
 			}
+			if os.Getenv("V110_SOAK_ROOT") != "" {
+				prepareDashboardSoakClock(t, a, ids, tokens, cfgs, now)
+			}
 			// The populated fixture now enters the same startup warmup as a
 			// production CleanupLoop, without waiting for its completion.
 			a.startDashboardNetworkWarmup()

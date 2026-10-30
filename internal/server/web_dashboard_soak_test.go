@@ -166,6 +166,44 @@ func saveSoakQuality(t *testing.T, a *App, token string, samples []protocol.Qual
 	}
 }
 
+// Large fixture construction uses a frozen ingestion clock. Before starting
+// background workers or exposing the live fixture, bridge the quality minutes
+// elapsed during construction. Otherwise a real minute boundary can make the
+// deliberately red fixture look healthy until its first live quality reports.
+func prepareDashboardSoakClock(t *testing.T, a *App, ids []string, tokens map[string]string, cfgs map[string]protocol.QualityV4Config, seededAt time.Time) {
+	t.Helper()
+	a.now = time.Now
+	end := time.Now().Truncate(time.Minute)
+	for i, id := range ids {
+		if i%5 == 0 {
+			continue // Preserve the deliberately missing devices.
+		}
+		seq := int64(50000)
+		samples := []protocol.QualitySample{}
+		for at := seededAt.Truncate(time.Minute); !at.After(end); at = at.Add(time.Minute) {
+			for laneIndex, slot := range protocol.QualitySlotOrder() {
+				outcome, value := "success", float64(20+i%25)
+				if i%3 == 0 {
+					outcome, value = "timeout", 2500
+				}
+				seq++
+				sample := userTCPSample(t, cfgs[id], slot, seq, at, value, outcome)
+				normalizeSoakSample(&sample, value)
+				sample.ResolvedIP = []string{"8.8.8.8", "1.1.1.1", "9.9.9.9"}[laneIndex]
+				samples = append(samples, sample)
+				if len(samples) == 24 {
+					saveSoakQuality(t, a, tokens[id], samples)
+					samples = nil
+				}
+			}
+		}
+		if len(samples) > 0 {
+			saveSoakQuality(t, a, tokens[id], samples)
+		}
+	}
+	t.Logf("V110_SOAK_CLOCK bridged_from=%s through=%s", seededAt.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339))
+}
+
 func dashboardSoak(t *testing.T, a *App, server *httptest.Server, ids []string, tokens map[string]string, cfgs map[string]protocol.QualityV4Config) {
 	root := os.Getenv("V110_SOAK_ROOT")
 	if root == "" {
@@ -177,7 +215,6 @@ func dashboardSoak(t *testing.T, a *App, server *httptest.Server, ids []string, 
 	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	a.now = time.Now
 	a.webAuth.publicOrigin, _ = url.Parse(server.URL)
 	a.webAuth.secureCookie = false
 	write := func(name string, v any) {
