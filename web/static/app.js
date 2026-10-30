@@ -1131,7 +1131,9 @@ function renderDashboard(dirty=null) {
   for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
   for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);dormantCards.set(id,view);}
   for(const id of dormantCards.keys())if(!agents.has(id)){dormantCards.delete(id);renderedCardKeys.delete(id);}
-  networkQuality.sync(allIds,mounted,agents);latencyCharts.sync([...mounted]);trafficCharts.sync([...mounted]);cardObservations.sync(allIds);selectorView.sync(allIds);cardFaces.sync(allIds);
+  networkQuality.sync(allIds,mounted,agents);latencyCharts.sync(allIds);trafficCharts.sync(allIds);
+  for(const id of allIds)if(!mounted.has(id)){latencyCharts.setVisible(id,false);trafficCharts.setVisible(id,false);}
+  cardObservations.sync(allIds);selectorView.sync(allIds);cardFaces.sync(allIds);
   for(const [id,view]of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
   selectorView.refreshActive();
   empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
