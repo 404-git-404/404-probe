@@ -59,7 +59,7 @@
   }
   function update(agents,c,server,ready){
    catalog=c;if(ready)preferences.validate(catalog);model=M.select(agents,catalog,p,server);
-   const nextControls=JSON.stringify([ready,p,catalog.revision,model.summary.quick,model.summary.online,model.list.length,[...agents.values()].map(a=>[a.agent_id,a.group_id,a.tag_ids,a.country_code,M.lifecycle(a)])]);
+   const nextControls=JSON.stringify([ready,p,catalog.revision,model.summary.quick,model.summary.health,model.summary.online,model.list.length,[...agents.values()].map(a=>[a.agent_id,a.group_id,a.tag_ids,a.country_code,M.lifecycle(a)])]);
    if(nextControls===controlsKey)return model;controlsKey=nextControls;
    home.hidden=model.simple;get('dashboard-expand').hidden=!model.simple;
    const all=[...agents.values()].filter(a=>!a.revoked),count=(key,id)=>all.filter(a=>key==='tags'?(a.tag_ids||[]).includes(id):key==='groups'?(catalog.groups.some(g=>g.id===a.group_id)?a.group_id:'__ungrouped')===id:key==='countries'?(a.country_code||'unknown')===id:M.lifecycle(a)===id).length;

@@ -193,6 +193,12 @@ func (a *App) cachedDashboardNetwork(r *http.Request, id string, now time.Time) 
 
 func (a *App) dashboardNetworkValue(ctx context.Context, id string, now time.Time, cacheFailure bool) dashboardNetwork {
 	a.dashboardMu.Lock()
+	// The reader that resets the map takes its ticket in the new epoch. Older
+	// computations still fail the epoch check and cannot refill this map.
+	if len(a.dashboardNetwork) > 2048 {
+		a.dashboardNetwork = map[string]dashboardNetworkEntry{}
+		a.dashboardResets++
+	}
 	entry := a.dashboardNetwork[id]
 	if now.Before(entry.Expires) {
 		a.dashboardMu.Unlock()
@@ -218,14 +224,13 @@ func (a *App) dashboardNetworkValue(ctx context.Context, id string, now time.Tim
 	if !out.Known && !cacheFailure {
 		return out
 	}
+	if a.dashboardBeforeCommit != nil {
+		a.dashboardBeforeCommit(id)
+	}
 	a.dashboardMu.Lock()
 	defer a.dashboardMu.Unlock()
 	if a.dashboardNetwork == nil {
 		a.dashboardNetwork = map[string]dashboardNetworkEntry{}
-	}
-	if len(a.dashboardNetwork) > 2048 {
-		a.dashboardNetwork = map[string]dashboardNetworkEntry{}
-		a.dashboardResets++
 	}
 	// Unrelated device invalidations must not invalidate this computation. A map
 	// reset has its own epoch so an old computation cannot repopulate a new map.

@@ -53,6 +53,7 @@ type App struct {
 	dashboardWarmupOnce           sync.Once
 	dashboardWarmupDone           chan struct{}
 	dashboardWarmupProbe          func(string)
+	dashboardBeforeCommit         func(string)
 }
 
 const (
