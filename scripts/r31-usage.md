@@ -4,7 +4,7 @@ scripts/r31-rehearse.sh 只能在 `CLAUDE.local.md` 登记的测试 Server 上�
 
 ## 版本登记与正式产物
 
-`scripts/r31-versions.json` 登记已正式发布的起始版本：版本、GitHub tag 的完整提交、schema、相对上一版的表增删。当前登记 v1.0.6/schema34、v1.0.7/schema35（删除 tcp_mini_high、tcp_mini_state）、v1.0.8/schema35（无表增删）。未登记的起始版本一律拒绝。
+`scripts/r31-versions.json` 登记已正式发布的起始版本：版本、GitHub tag 的完整提交、schema、相对上一版的表增删。当前登记 v1.0.6/schema34、v1.0.7/schema35（删除 tcp_mini_high、tcp_mini_state）、v1.0.8/schema35（无表增删）、v1.0.9/schema35（无表增删）。未登记的起始版本一律拒绝。
 
 每次正式发布后，在下一版准备工作中将该版补入登记表，并核对正式 tag、schema 和表增删；不要把开发分支提交或未发布候选写进去。
 
@@ -38,18 +38,18 @@ Linux amd64/arm64，root、systemd、既有 Server 用户/组，以及已安装�
 1. 干净源码中的 scripts/r31-rehearse.sh、r31-preflight.py、r31-run-with-evidence.py、r31-upgrade.py、r31-generate.py、r31lib.py、r31-versions.json 保持同一套版本；直接引用该源码目录，或将这几件文件一起复制到仓库外工具目录。
 2. 正式 v1.0.6 底座、所选起始版、目标版各自的七件产物目录；起始版已安装，二进制必须与其产物完全相同。
 3. 仓库外的 root 私有0700工作目录及全新的空 `evidence/`、`results/`（均0700）；没有 run-started、operator-exit.txt、operator-summary.json 或上次恢复残留。
-4. 创建配置文件。下面是 **v1.0.8→v1.0.9、目标 schema35 的示例**；实际目标 schema 由发布任务确认。路径都是参数，不在工具里写死机器、提交或目录：
+4. 创建配置文件。下面是 **v1.0.9→v1.0.10、目标 schema36（未登记目标，必须显式提供）的示例**；实际目标 schema 由发布任务确认。路径都是参数，不在工具里写死机器、提交或目录：
 
 ```json
 {
-  "from_version": "v1.0.8",
-  "to_version": "v1.0.9",
-  "from_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.8",
-  "to_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.9",
+  "from_version": "v1.0.9",
+  "to_version": "v1.0.10",
+  "from_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.9",
+  "to_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.10",
   "base_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.6",
   "work_dir": "/var/lib/404-probe-rehearsal/run",
   "scale": "snapshot",
-  "expected_schema": 35
+  "expected_schema": 36
 }
 ```
 
