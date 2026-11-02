@@ -55,7 +55,7 @@ const cardObservations = CardMetrics.createObserver();
 const agents = agentState.agents;
 let overviewReady = false;
 let organizationDialogs=null,expenseDialog=null;
-const dashboardUI=DashboardView.create({onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
+const dashboardUI=DashboardView.create({csrf:()=>mutationCSRFToken,read:readJSON,onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
 const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(trigger)});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   identity: agent => countryMark(agent?.country_code,agent?.country_source),
@@ -138,7 +138,8 @@ async function loadMutationSession() {
     const session = await readJSON('/api/v1/web/session');
     mutationCSRFToken = session.csrf_token || '';
     serverBuild = await readJSON('/api/v1/web/version');
-    serverVersion.textContent = `Server ${serverBuild.version || 'unknown'}`;
+    serverVersion.textContent = serverBuild.version || 'unknown';
+    dashboardUI.updateVersion(serverBuild);
     addAgentButton.disabled = !mutationCSRFToken;
     render();
   } catch (error) {
@@ -1663,7 +1664,7 @@ expenseDialog=ExpenseDialog.create({api:organizationAPI,visibleIDs:()=>Dashboard
 loadMutationSession();
 refresh();
 let suspended = false;
-setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); if (!agentState.refreshing()) refresh(); }, 15000);
+setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); dashboardUI.refreshVersion(); if (!agentState.refreshing()) refresh(); }, 15000);
 document.addEventListener('visibilitychange',()=>{if(!suspended&&!document.hidden)dashboardData.reload();});
 addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
