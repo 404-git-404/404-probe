@@ -27,6 +27,11 @@ func safeStateFile(info os.FileInfo) bool {
 	return info.Mode().IsRegular() && info.Mode().Perm() == 0600 && ok && stat.Uid == uint32(os.Geteuid())
 }
 
+func ownedTemporaryFile(_ *os.Root, _ string, info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid())
+}
+
 func syncDirectory(root *os.Root) error {
 	f, err := root.Open(".")
 	if err != nil {

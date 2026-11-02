@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"404-probe/internal/buildinfo"
@@ -20,6 +21,9 @@ import (
 func New(path string, info buildinfo.Info, logger *slog.Logger) *Checker {
 	c := newChecker(State{}, info, logger)
 	if path != "" {
+		if err := cleanupTemporaryFiles(path); err != nil {
+			c.warn("could not clean temporary state files")
+		}
 		state, err := loadAt(path, c.now(), c.warn)
 		if err != nil {
 			c.warn("state unreadable; update checks disabled")
@@ -116,6 +120,10 @@ func save(path string, s State) error {
 		return err
 	}
 	defer root.Remove(name)
+	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
 	wire := struct {
 		Enabled   bool   `json:"enabled"`
 		Latest    string `json:"latest"`
@@ -136,4 +144,41 @@ func save(path string, s State) error {
 		return err
 	}
 	return syncDirectory(root)
+}
+
+func cleanupTemporaryFiles(path string) error {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, ".update-check-") || !strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		info, err := root.Lstat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() || !ownedTemporaryFile(root, name, info) {
+			continue
+		}
+		if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
