@@ -142,7 +142,7 @@ func (c *Checker) initialDelay() time.Duration {
 	c.mu.Unlock()
 	// Re-enabling/restarting cannot circumvent the last successful check.
 	if checked > 0 {
-		if remaining := time.UnixMilli(checked).Add(interval).Sub(c.now()); remaining > delay {
+		if remaining := min(max(time.UnixMilli(checked).Add(interval).Sub(c.now()), 0), interval); remaining > delay {
 			delay = remaining
 		}
 	}
@@ -188,7 +188,8 @@ func (c *Checker) check(ctx context.Context) error {
 		c.mu.Unlock()
 		return nil
 	}
-	if c.state.CheckedAt > 0 && c.now().Before(time.UnixMilli(c.state.CheckedAt).Add(interval)) {
+	age := c.now().Sub(time.UnixMilli(c.state.CheckedAt))
+	if c.state.CheckedAt > 0 && age >= 0 && age < interval {
 		c.mu.Unlock()
 		return nil
 	}

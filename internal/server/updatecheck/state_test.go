@@ -81,7 +81,7 @@ func TestStatePersistence(t *testing.T) {
 	if s, err := load(path); err != nil || !s.Enabled {
 		t.Fatal(s, err)
 	}
-	for _, raw := range []string{`{}`, `{"enabled":null}`, `{"enabled":true,"latest":"v1.1.0-rc.1","checked_at":1}`, `{"enabled":true,"latest":"v1.1.0","checked_at":0}`, `{"enabled":true} {}`} {
+	for _, raw := range []string{`{}`, `{"enabled":null}`, `{"enabled":true,"latest":"v1.1.0-rc.1","checked_at":1}`, `{"enabled":true} {}`} {
 		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 			t.Fatal(err)
 		}

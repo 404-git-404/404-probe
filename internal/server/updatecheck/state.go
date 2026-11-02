@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"404-probe/internal/buildinfo"
 )
@@ -19,7 +20,7 @@ import (
 func New(path string, info buildinfo.Info, logger *slog.Logger) *Checker {
 	c := newChecker(State{}, info, logger)
 	if path != "" {
-		state, err := load(path)
+		state, err := loadAt(path, c.now(), c.warn)
 		if err != nil {
 			c.warn("state unreadable; update checks disabled")
 		} else {
@@ -34,6 +35,10 @@ func New(path string, info buildinfo.Info, logger *slog.Logger) *Checker {
 // SameFile reject symlinks and substitution before any bytes are read. Rename
 // replaces the directory entry itself; it never opens a preexisting destination.
 func load(path string) (State, error) {
+	return loadAt(path, time.Now(), nil)
+}
+
+func loadAt(path string, now time.Time, warn func(string)) (State, error) {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return State{}, err
@@ -76,12 +81,18 @@ func load(path string) (State, error) {
 	}
 	d := json.NewDecoder(bytes.NewReader(body))
 	d.DisallowUnknownFields()
-	if d.Decode(&wire) != nil || wire.Enabled == nil || wire.CheckedAt < 0 || (wire.Latest != "" && (!buildinfo.IsCanonicalVersion(wire.Latest) || wire.CheckedAt == 0)) || (wire.Latest == "" && wire.CheckedAt != 0) {
+	if d.Decode(&wire) != nil || wire.Enabled == nil || wire.CheckedAt < 0 || (wire.Latest != "" && !buildinfo.IsCanonicalVersion(wire.Latest)) || (wire.Latest == "" && wire.CheckedAt != 0) {
 		return State{}, errors.New("invalid state file")
 	}
 	var extra any
 	if d.Decode(&extra) != io.EOF {
 		return State{}, errors.New("invalid state file suffix")
+	}
+	if wire.CheckedAt > now.Add(5*time.Minute).UnixMilli() {
+		wire.CheckedAt = 0
+		if warn != nil {
+			warn("future checked_at ignored; a new check is required")
+		}
 	}
 	return State{Enabled: *wire.Enabled, Latest: wire.Latest, CheckedAt: wire.CheckedAt}, nil
 }
