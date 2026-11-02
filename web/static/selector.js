@@ -226,6 +226,8 @@
   // focus trapping; dismissal hands focus back to the opening button.
   function view({controller, state, csrf, onopen = () => {}}) {
     const triggers = new Map();
+    const compactTriggers = new Map();
+    let activeTrigger=null;
     let panel = null, activeID = '';
     const el = (tag, text, className = '') => {
       const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
@@ -236,8 +238,8 @@
       activeID = '';
       if (panel.open) panel.close();
       controller.close(id);
-      triggers.get(id)?.setAttribute('aria-expanded', 'false');
-      triggers.get(id)?.focus({preventScroll: true});
+      (activeTrigger||triggers.get(id))?.setAttribute('aria-expanded', 'false');
+      (activeTrigger||triggers.get(id))?.focus({preventScroll: true});activeTrigger=null;
     }
     function ensure() {
       if (panel) return;
@@ -370,6 +372,7 @@
         ensure();
         if (activeID === id) { hide(); return; }
         if (activeID) hide();
+        activeTrigger=button;
         activeID = id;
         for(const selector of state.agents.get(id)?.outbounds?.selectors||[])controller.group(id,selector.name).draft=null;
         renderedPanel=null;controller.open(id); refresh(id);
@@ -378,7 +381,22 @@
       });
       return button;
     }
-    return {trigger, refresh, hide, sync: ids => {const live=new Set(ids);for(const id of triggers.keys())if(!live.has(id)){triggers.delete(id);if(activeID===id)hide();}}, refreshActive: () => { if (activeID) refresh(activeID); }};
+    // Own nodes: a compact row must never steal the card's cached trigger.
+    function compactTrigger(agent){
+      const id=agent.agent_id;let button=compactTriggers.get(id);
+      if(!button){button=el('button','','selector-compact');button.type='button';button.dataset.agentId=id;button.setAttribute('aria-controls','selector-popover');compactTriggers.set(id,button);
+        button.addEventListener('click',()=>{
+          const current=state.agents.get(id);if(reason(current,csrf())||state.blocked(id))return;
+          ensure();if(activeID===id){hide();return;}if(activeID)hide();activeID=id;activeTrigger=button;
+          for(const selector of current.outbounds.selectors||[])controller.group(id,selector.name).draft=null;
+          renderedPanel=null;controller.open(id);refresh(id);panel.showModal();
+          (panel.querySelector('select:not(:disabled)')||panel.querySelector('[data-selector-kind="close"]'))?.focus({preventScroll:true});onopen(id);
+        });
+      }
+      const selectors=agent.outbounds?.selectors||[],hint=selectors.map(s=>`${s.name}：${s.current||'—'}`).join('\n'),blocked=reason(agent,csrf())||(state.blocked(id)?'设备操作中':'');
+      button.textContent=selectors.length?`${selectors[0].current||'—'}${selectors.length>1?' +'+(selectors.length-1):''} ▾`:'未配置';button.title=[hint,blocked].filter(Boolean).join('\n');button.setAttribute('aria-label','出站选择：'+button.textContent);button.disabled=!!blocked;button.setAttribute('aria-expanded',String(controller.model(id).open));return button;
+    }
+    return {trigger, compactTrigger, refresh, hide, sync: ids => {const live=new Set(ids);for(const cache of [triggers,compactTriggers])for(const id of cache.keys())if(!live.has(id)){cache.delete(id);if(activeID===id)hide();}}, refreshActive: () => { if (activeID) refresh(activeID); }};
   }
   const api = {create, view, reason, errors};
   if (typeof module === 'object' && module.exports) module.exports = api;
