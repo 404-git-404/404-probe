@@ -1,33 +1,33 @@
 /* Isolated native modal; opening never inserts content into card geometry. */
-#renewal-dialog.plan-renewal{position:fixed;inset:auto;margin:0;box-sizing:border-box;width:min(560px,calc(100vw - 32px));max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);border:1px solid #d8d2c8;border-radius:18px;padding:0;overflow:hidden;color:#29393b;color-scheme:light;background:#faf8f3;box-shadow:0 24px 70px #24353733}
+#renewal-dialog.plan-renewal{position:fixed;inset:auto;margin:0;box-sizing:border-box;width:min(560px,calc(100vw - 32px));max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);border:1px solid var(--color-line-24);border-radius:18px;padding:0;overflow:hidden;color:var(--color-text-15);color-scheme:light;background:var(--color-surface-23);box-shadow:0 24px 70px var(--color-shadow-06)}
 #renewal-dialog[open]{display:flex;flex-direction:column}
-#renewal-dialog::backdrop{background:#283e424d;backdrop-filter:blur(5px)}
-#renewal-dialog .drawer-head,#renewal-dialog .drawer-actions{flex-shrink:0;padding:18px 22px;border-bottom:1px solid #e3ddd3}
+#renewal-dialog::backdrop{background:var(--color-overlay-11);backdrop-filter:blur(5px)}
+#renewal-dialog .drawer-head,#renewal-dialog .drawer-actions{flex-shrink:0;padding:18px 22px;border-bottom:1px solid var(--color-line-25)}
 #renewal-dialog .drawer-head p{overflow-wrap:anywhere}
 #renewal-dialog .renewal-body{min-height:0;overflow:auto;padding:12px 22px;overscroll-behavior:contain;line-height:1.55}
 #renewal-dialog .renewal-body p{margin:10px 0}
 #renewal-dialog label{display:block;margin-bottom:6px}
-#renewal-dialog select,#renewal-dialog button{font:inherit;color:#29393b;border:1px solid #786e60;border-radius:9px;padding:8px 12px;background:#fffdf8;box-sizing:border-box}
-#renewal-dialog button{cursor:pointer}#renewal-dialog button:disabled{color:#6d675e;cursor:not-allowed}
-#renewal-dialog .drawer-actions{display:flex;justify-content:flex-end;gap:12px;border-bottom:0;border-top:1px solid #e3ddd3;margin:0}
-#renewal-dialog #renewal-confirm{color:white;background:#168577;border-color:#168577}
+#renewal-dialog select,#renewal-dialog button{font:inherit;color:var(--color-text-15);border:1px solid var(--color-line-11);border-radius:9px;padding:8px 12px;background:var(--color-surface-24);box-sizing:border-box}
+#renewal-dialog button{cursor:pointer}#renewal-dialog button:disabled{color:var(--color-text-31);cursor:not-allowed}
+#renewal-dialog .drawer-actions{display:flex;justify-content:flex-end;gap:12px;border-bottom:0;border-top:1px solid var(--color-line-25);margin:0}
+#renewal-dialog #renewal-confirm{color:var(--color-text-01);background:var(--color-surface-42);border-color:var(--color-line-26)}
 #renewal-dialog .renewal-dates{display:flex;gap:14px;align-items:center;padding:16px 0}
 #renewal-dialog .renewal-dates small,#renewal-dialog .renewal-dates strong{display:block}#renewal-dialog .renewal-dates strong{font-size:21px}
 #renewal-dialog .renewal-tools,#renewal-dialog .renewal-recovery div{display:flex;gap:8px;flex-wrap:wrap}
-#renewal-dialog .field-note{color:#596563;font-size:13px}#renewal-dialog .renewal-warning{color:#805019}
-#renewal-dialog .renewal-recovery{flex-shrink:0;padding:12px 22px;background:#f6eee2;border-top:1px solid #e3ddd3;max-height:30dvh;overflow:auto;line-height:1.5}
+#renewal-dialog .field-note{color:var(--color-text-17);font-size:13px}#renewal-dialog .renewal-warning{color:var(--color-text-32)}
+#renewal-dialog .renewal-recovery{flex-shrink:0;padding:12px 22px;background:var(--color-surface-43);border-top:1px solid var(--color-line-25);max-height:30dvh;overflow:auto;line-height:1.5}
 #renewal-dialog .renewal-recovery p{margin:0 0 8px;font-size:13px}#renewal-dialog code{display:block;overflow-wrap:anywhere;user-select:all;margin-bottom:8px}
-#renewal-dialog .renewal-error{flex-shrink:0;padding:12px 22px;max-height:15dvh;overflow:auto;overflow-wrap:anywhere;line-height:1.5;color:#a83a40;background:#f8eee9;border-top:1px solid #e3ddd3}
+#renewal-dialog .renewal-error{flex-shrink:0;padding:12px 22px;max-height:15dvh;overflow:auto;overflow-wrap:anywhere;line-height:1.5;color:var(--color-text-19);background:var(--color-surface-44);border-top:1px solid var(--color-line-25)}
 #renewal-dialog [hidden]{display:none!important}
 @media(max-width:620px){#renewal-dialog.plan-renewal{left:0;top:0;width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;border:0;border-radius:0}#renewal-dialog .renewal-body{flex:1;padding:12px 16px}#renewal-dialog .drawer-head,#renewal-dialog .drawer-actions{padding:16px}#renewal-dialog .renewal-error,#renewal-dialog .renewal-recovery{padding:12px 16px}}
-#renewal-dialog button:not(:disabled):hover{background:#f0e6d8;border-color:#785b42}
-#renewal-dialog button:not(:disabled):active{background:#e5d7c0}
-#renewal-dialog #renewal-confirm:not(:disabled):hover{background:#126e62;border-color:#126e62}
-#renewal-dialog #renewal-confirm:not(:disabled):active{background:#0e5a51;border-color:#0e5a51}
-#renewal-dialog #renewal-confirm:disabled{background:#e9e3d9;border-color:#a69b8d;color:#6d675e}
-#renewal-dialog :is(select,button):disabled{background:#e9e3d9;border-color:#a69b8d;color:#6d675e}
+#renewal-dialog button:not(:disabled):hover{background:var(--color-surface-26);border-color:var(--color-line-12)}
+#renewal-dialog button:not(:disabled):active{background:var(--color-surface-27)}
+#renewal-dialog #renewal-confirm:not(:disabled):hover{background:var(--color-surface-45);border-color:var(--color-line-39)}
+#renewal-dialog #renewal-confirm:not(:disabled):active{background:var(--color-surface-46);border-color:var(--color-line-40)}
+#renewal-dialog #renewal-confirm:disabled{background:var(--color-surface-47);border-color:var(--color-line-41);color:var(--color-text-31)}
+#renewal-dialog :is(select,button):disabled{background:var(--color-surface-47);border-color:var(--color-line-41);color:var(--color-text-31)}
 
-#renewal-dialog.plan-renewal{width:420px;min-height:340px;background:#FBF8F3;color:#2A2622;border-color:#E2D9CC;border-radius:16px;font:14px/1.5 system-ui,sans-serif}#renewal-dialog .drawer-head{padding:18px 24px 14px;align-items:flex-start}#renewal-dialog .drawer-head h2{margin:0;font-size:18px;line-height:25px}#renewal-dialog .drawer-head p{margin:3px 0 0;font-size:13px;line-height:18px;color:#6E655B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#renewal-dialog .drawer-head>div{min-width:0}#renewal-dialog #renewal-cancel{height:32px;width:32px;padding:0;font-size:20px}#renewal-dialog .renewal-body{display:flex;flex-direction:column;flex:1;padding:18px 24px;min-height:0}#renewal-dialog #renewal-detail{order:-1;margin:0 0 12px}#renewal-dialog #renewal-dates{padding:0;margin:0 0 12px;gap:16px}#renewal-dialog #renewal-from{text-decoration:line-through;color:#6E655B}#renewal-dialog .renewal-dates small{font-size:12px;color:#6E655B}#renewal-dialog .renewal-dates strong{font-size:21px;line-height:28px}#renewal-dialog .renewal-tools{align-items:center;gap:6px}#renewal-dialog .renewal-edit-link{padding:0;border:0;border-radius:0;text-decoration:underline;color:#1F6F62;background:none;font-size:12px}#renewal-dialog .drawer-actions{padding:14px 24px;gap:8px;border-color:#E2D9CC}#renewal-dialog .drawer-actions button{height:36px;padding:0 14px;border-color:#D8CEBF;background:#FBF8F3;color:#2A2622}#renewal-dialog #renewal-confirm{background:#2A6F63;color:white;border-color:#2A6F63}#renewal-dialog .renewal-body p:empty{display:none}
-@media(max-width:620px){#renewal-dialog.plan-renewal{height:auto;min-height:340px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);border:1px solid #E2D9CC;border-radius:16px}}
+#renewal-dialog.plan-renewal{width:420px;min-height:340px;background:var(--color-card);color:var(--color-text);border-color:var(--color-line);border-radius:16px;font:14px/1.5 system-ui,sans-serif}#renewal-dialog .drawer-head{padding:18px 24px 14px;align-items:flex-start}#renewal-dialog .drawer-head h2{margin:0;font-size:18px;line-height:25px}#renewal-dialog .drawer-head p{margin:3px 0 0;font-size:13px;line-height:18px;color:var(--color-text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#renewal-dialog .drawer-head>div{min-width:0}#renewal-dialog #renewal-cancel{height:32px;width:32px;padding:0;font-size:20px}#renewal-dialog .renewal-body{display:flex;flex-direction:column;flex:1;padding:18px 24px;min-height:0}#renewal-dialog #renewal-detail{order:-1;margin:0 0 12px}#renewal-dialog #renewal-dates{padding:0;margin:0 0 12px;gap:16px}#renewal-dialog #renewal-from{text-decoration:line-through;color:var(--color-text-muted)}#renewal-dialog .renewal-dates small{font-size:12px;color:var(--color-text-muted)}#renewal-dialog .renewal-dates strong{font-size:21px;line-height:28px}#renewal-dialog .renewal-tools{align-items:center;gap:6px}#renewal-dialog .renewal-edit-link{padding:0;border:0;border-radius:0;text-decoration:underline;color:var(--color-accent-text);background:none;font-size:12px}#renewal-dialog .drawer-actions{padding:14px 24px;gap:8px;border-color:var(--color-line)}#renewal-dialog .drawer-actions button{height:36px;padding:0 14px;border-color:var(--color-line-strong);background:var(--color-card);color:var(--color-text)}#renewal-dialog #renewal-confirm{background:var(--color-accent);color:var(--color-text-01);border-color:var(--color-accent)}#renewal-dialog .renewal-body p:empty{display:none}
+@media(max-width:620px){#renewal-dialog.plan-renewal{height:auto;min-height:340px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);border:1px solid var(--color-line);border-radius:16px}}
 
-#renewal-dialog #renewal-cancel{border-color:#D8CEBF}
+#renewal-dialog #renewal-cancel{border-color:var(--color-line-strong)}
