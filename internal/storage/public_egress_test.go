@@ -79,7 +79,7 @@ func TestM10MigrationFrom27(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	s, err := Open(ctx, file)
+	s, err := openDatabase(ctx, file, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
