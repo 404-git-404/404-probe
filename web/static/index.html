@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="/dashboard-dialogs.css">
 </head>
 <body>
-  <header><div><h1>404-probe</h1><p><span id="server-version">面板版本读取中</span></p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
+  <header><div><h1>404-probe</h1><p><span id="server-version">面板版本读取中</span></p></div><div class="header-actions"><button id="add-agent" class="primary-action" type="button" disabled>+ 添加 Agent</button><a class="nav-link" href="/schedules.html">Schedules</a><a class="nav-link" href="/jobs.html">Probe Jobs</a><span id="stream" class="stream">正在连接</span><button class="theme-toggle" data-theme-toggle type="button" title="主题：跟随系统" aria-label="主题：跟随系统">◐</button><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
   <main>
     <details id="overview" class="overview" open><summary id="overview-summary"><span>总览 <small id="overview-scope">正在读取</small></span><span id="overview-action">收起 ▴</span></summary>
       <section class="overview-groups" aria-label="全部设备总览">
@@ -192,6 +192,7 @@
   <script src="/public-egress-check.js" defer></script>
   <script src="/agent-enrollment.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/theme-toggle.js" defer></script>
   <script src="/session.js" defer></script>
 </body>
 </html>

@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header><div><a class="back" href="/">← Agents</a><h1>Probe Jobs</h1><p>结果摘要与 typed measurements</p></div><div class="header-actions"><a class="nav-link" href="/schedules.html">Schedules</a><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
+  <header><div><a class="back" href="/">← Agents</a><h1>Probe Jobs</h1><p>结果摘要与 typed measurements</p></div><div class="header-actions"><a class="nav-link" href="/schedules.html">Schedules</a><div class="header-actions"><button class="theme-toggle" data-theme-toggle type="button" title="主题：跟随系统" aria-label="主题：跟随系统">◐</button><button id="logout" class="logout" type="button" disabled>退出</button></div></header>
   <main>
     <div id="job-empty" class="empty">正在加载 Probe Jobs</div>
     <section id="jobs" class="job-list" aria-live="polite"></section>
@@ -16,6 +16,7 @@
   </main>
   <footer>Probe Job 与 Result 仅供观察，Web 不提供执行或修改操作</footer>
   <script src="/jobs.js" defer></script>
+  <script src="/theme-toggle.js" defer></script>
   <script src="/session.js" defer></script>
 </body>
 </html>
