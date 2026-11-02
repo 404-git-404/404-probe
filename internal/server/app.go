@@ -17,6 +17,7 @@ import (
 
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
+	"404-probe/internal/server/updatecheck"
 	"404-probe/internal/storage"
 	"404-probe/web"
 )
@@ -42,6 +43,7 @@ type App struct {
 	walHealthAlert                sqliteWALAlertState
 	webAuth                       *webAuthenticator
 	buildInfo                     buildinfo.Info
+	updateCheck                   *updatecheck.Checker
 	handler                       http.Handler
 	staticAssets                  *staticAssets
 	qualityLookup                 qualityLookupFunc
@@ -108,6 +110,7 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 		cancel()
 		return nil, fmt.Errorf("initialize static assets: %w", err)
 	}
+	a.initializeUpdateCheck()
 	a.handler = a.routes()
 	return a, nil
 }
@@ -716,6 +719,9 @@ func (a *App) Shutdown() {
 		a.webAuth.shutdown()
 	}
 	a.cancel()
+	if a.updateCheck != nil {
+		a.updateCheck.Close()
+	}
 	if a.dashboardWarmupDone != nil {
 		a.dashboardWarmupOnce.Do(func() { close(a.dashboardWarmupDone) })
 		<-a.dashboardWarmupDone
@@ -723,6 +729,7 @@ func (a *App) Shutdown() {
 }
 
 func (a *App) CleanupLoop() {
+	a.updateCheck.Start(a.shutdown)
 	a.startDashboardNetworkWarmup()
 	if a.removalReceiptCleanupInterval <= 0 {
 		a.removalReceiptCleanupInterval = 5 * time.Minute

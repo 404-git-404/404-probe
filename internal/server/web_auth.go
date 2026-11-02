@@ -134,6 +134,7 @@ func webLoopbackHost(host string) bool {
 
 func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	a.organizationRoutes(mux)
+	mux.Handle("PUT /api/v1/web/settings/update-check", a.requireWebMutation(http.HandlerFunc(a.handlePutUpdateCheck)))
 	mux.Handle("POST /api/v1/web/expenses/estimate", a.requireWebMutation(http.HandlerFunc(a.handleExpenseEstimate)))
 	mux.Handle("GET /api/v1/web/dashboard", a.requireWebSession(http.HandlerFunc(a.handleDashboard), true))
 	mux.Handle("GET /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLoginPage)))
