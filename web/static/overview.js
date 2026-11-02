@@ -2,9 +2,8 @@
  'use strict';
  const M=root.DashboardModel||(typeof require==='function'?require('./dashboard-model.js'):null);
  function create({doc=root.document,preferences,onfilter=()=>{},onexpense=()=>{}}={}){
-  const get=id=>doc.getElementById('overview-'+id),shell=doc.getElementById('overview'),p=preferences?.value||M.defaults();
-  const save=()=>preferences?.save();shell.open=!p.overviewClosed;
-  shell.addEventListener('toggle',()=>{p.overviewClosed=!shell.open;get('action').textContent=shell.open?'收起 ▴':'展开 ▾';save();});
+  const get=id=>doc.getElementById('overview-'+id),p=preferences?.value||M.defaults();
+  const save=()=>preferences?.save();
   for(const [id,key]of [['upgrade','upgrade'],['health','health'],['renewal','renewal']])get(id).addEventListener('click',()=>onfilter(key));
   get('expense').addEventListener('click',e=>onexpense(e.currentTarget));
   let last=null;
@@ -14,14 +13,12 @@
   function money(){get('money').textContent=last&&last.included_count!==0?'$'+(p.expensePeriod==='yearly'?last.yearly_usd:last.monthly_usd)+' / '+(p.expensePeriod==='yearly'?'年':'月'):'—';get('money-note').textContent=last?.included_count===0?`未设置价格 ${last.missing_price_count||0} 台`:last?.missing_rates?.length?'有币种缺汇率':'';for(const b of periods)b.setAttribute('aria-pressed',String(b.dataset.period===p.expensePeriod));}
   money();
   let painted='';
-  function update(agents,ready,{summary=null,catalog={},server={},simple=false}={}){
-   const signature=JSON.stringify([ready,simple,summary&&{...summary,nearest:summary.nearest&&[summary.nearest.name,summary.nearest.renewal]},catalog.expenses]);if(signature===painted)return;painted=signature;
-   shell.classList.toggle('overview-simple',simple);get('scope').textContent=ready?'全部 '+summary.registered+' 台':'正在读取';
-   doc.getElementById('dashboard-expand').hidden=!simple;
+  function update(agents,ready,{summary=null,catalog={},server={}}={}){
+   const signature=JSON.stringify([ready,summary&&{...summary,nearest:summary.nearest&&[summary.nearest.name,summary.nearest.renewal]},catalog.expenses]);if(signature===painted)return;painted=signature;
+   get('scope').textContent=ready?'全部 '+summary.registered+' 台':'正在读取';
    if(!ready){for(const id of ['online','health','renewal'])get(id).textContent='等待读取';get('health-note').textContent='资料读取完成后显示健康汇总';return;}
-   const s=summary||M.aggregate(agents,server);shell.classList.toggle('has-attention',!!(s.health||s.insufficient));get('online').textContent=`${s.online} / ${s.registered}`;
-   get('offline').textContent=`离线 ${s.offline} · 暂停 ${s.paused}`;get('upgrade').textContent=`待升级 ${s.upgrade} 台`;get('upgrade').disabled=!s.upgrade;get('upgrade').hidden=simple&&!s.upgrade;
-   get('few-offline').textContent=`离线 ${s.offline}`;
+   const s=summary||M.aggregate(agents,server);get('online').textContent=`${s.online} / ${s.registered}`;
+   get('offline').textContent=`离线 ${s.offline} · 暂停 ${s.paused}`;get('upgrade').textContent=`待升级 ${s.upgrade} 台`;get('upgrade').disabled=!s.upgrade;
    get('versions').textContent=[s.versionNonformal?`非正式版本 ${s.versionNonformal} 台，未计入待升级`:'',s.versionUnknown?`版本无法识别 ${s.versionUnknown} 台`:'',s.unknown?`状态未知 ${s.unknown} 台`:''].filter(Boolean).join(' · ');
    get('health').textContent=s.health?`⚠ ${s.health} 台需要关注`:s.insufficient?'暂无已知异常':s.registered?'✓ 全部正常':'尚无设备';
    get('health').classList.toggle('attention',s.health>0);get('health').disabled=!s.health;
@@ -31,7 +28,8 @@
    if(doc.createElement){const count=doc.createElement('strong'),label=doc.createElement('span');count.textContent=s.renewal+' 台';label.textContent='7 天内续费';get('renewal').append(count,label);}else get('renewal').textContent=`${s.renewal} 台 7 天内续费`;
    get('renewal').classList.toggle('attention',s.renewal>0);get('renewal').disabled=!s.renewal;get('overdue').textContent=`已到期 ${s.overdue}`;
    get('nearest').textContent=s.nearest?`最近：${s.nearest.name} · ${s.nearest.renewal.date}（${s.nearest.renewal.days===0?'今天':s.nearest.renewal.days+' 天后'}）`:s.renewalInvalid?'续费日期或时区需要检查':'尚未设置待续费日期';
-   last=catalog.expenses||null;money();get('action').textContent=shell.open?'收起 ▴':'展开 ▾';
+   doc.getElementById('panel-online').textContent=`${s.online}/${s.registered}`;doc.getElementById('panel-health').textContent='⚠ '+s.health;doc.getElementById('panel-renewal').textContent='↻ '+s.renewal;
+   last=catalog.expenses||null;money();
   }
   return {update};
  }

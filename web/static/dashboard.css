@@ -36,3 +36,6 @@ body #dashboard-main{width:100%;max-width:none;margin:0;min-width:0;padding:0 1.
 .dashboard-card-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))}
 .dashboard-card-grid>.agent-card{content-visibility:auto;contain-intrinsic-size:auto 532px}.dashboard-card-grid>.agent-card:is(:hover,:focus-within){content-visibility:visible}
 .dashboard-group-header[hidden],.dashboard-card-grid[hidden]{display:none}.dashboard-group-header small{font-size:.75rem;font-weight:400;color:var(--color-text-muted)}.dashboard-group-header .all-online{color:var(--color-accent-text)}
+
+/* One stationary search input remains sticky inside the content column. */
+.dashboard-toolbar{position:sticky;top:0;z-index:100}

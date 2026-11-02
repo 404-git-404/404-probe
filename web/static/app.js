@@ -1125,8 +1125,7 @@ function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs=dashboardUI.preferences.value;
-  document.body.classList.toggle('dashboard-simple',model.simple);
-  overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild,simple:model.simple});
+  overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild});
   const allIds=[...agents.keys()],mounted=new Set();
   for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
   for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);dormantCards.set(id,view);}
@@ -1137,7 +1136,7 @@ function renderDashboard(dirty=null) {
   for(const [id,view]of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
   selectorView.refreshActive();
   empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
-  const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([prefs.sort,model.simple,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
+  const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([prefs.sort,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
   for(const [id,view]of groupViews)if(!liveGroups.has(id)){view.node.remove();groupViews.delete(id);}
   let groupPosition=container.firstElementChild;
   for(const group of model.sections){
@@ -1145,7 +1144,7 @@ function renderDashboard(dirty=null) {
     if(!gv){const node=document.createElement('section'),header=document.createElement('button'),body=document.createElement('div');node.className='dashboard-group';header.type='button';header.className='dashboard-group-header';header.addEventListener('click',()=>dashboardUI.collapse(group.id));body.className='dashboard-card-grid';node.append(header,body);gv={node,header,body};groupViews.set(group.id,gv);}
     const collapsed=prefs.collapsed.includes(group.id),counts={online:0,offline:0,paused:0,unknown:0};for(const a of group.items)counts[DashboardModel.lifecycle(a)]++;
     const status=counts.online===group.items.length?'全部在线':Object.entries(counts).filter(([,n])=>n).map(([key,n])=>DashboardModel.STATUS[key]+' '+n).join(' · ');
-    const title=`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台`,headerKey=title+status;if(gv.header.dataset.key!==headerKey){gv.header.dataset.key=headerKey;const name=document.createElement('span'),note=document.createElement('small');name.textContent=title;note.textContent=status;note.className=counts.online===group.items.length?'all-online':'';gv.header.replaceChildren(name,note);}gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=prefs.sort!=='group'||model.simple;gv.body.hidden=collapsed;
+    const title=`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台`,headerKey=title+status;if(gv.header.dataset.key!==headerKey){gv.header.dataset.key=headerKey;const name=document.createElement('span'),note=document.createElement('small');name.textContent=title;note.textContent=status;note.className=counts.online===group.items.length?'all-online':'';gv.header.replaceChildren(name,note);}gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=prefs.sort!=='group';gv.body.hidden=collapsed;
     if(layout!==lastLayout){if(gv.node!==groupPosition){if(gv.node.parentNode===container&&container.moveBefore)container.moveBefore(gv.node,groupPosition);else container.insertBefore(gv.node,groupPosition);}groupPosition=gv.node.nextElementSibling;}
     if(collapsed)continue;
     let position=gv.body.firstElementChild;

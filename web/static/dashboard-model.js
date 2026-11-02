@@ -54,7 +54,7 @@
   const list=[...agents.values()].map(a=>a.group_id&&!groupIDs.has(a.group_id)?{...a,group_id:null}:a).filter(a=>matches(a,p,server,now)),groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
   if(p.sort==='renewal')list.sort((a,b)=>(a.renewal?.days??Infinity)-(b.renewal?.days??Infinity)||byName(a,b));else list.sort(byName);
   const sections=p.sort==='group'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
-  return {list,sections,summary:aggregate(agents,server,now),simple:agents.size<=3&&!catalog.groups.length&&!catalog.tags.length&&!active(p)&&!p.expanded};
+  return {list,sections,summary:aggregate(agents,server,now)};
  }
  const api={KEY,QUICK,STATUS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,flags,aggregate,active,matches,select};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);
