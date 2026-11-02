@@ -41,7 +41,7 @@
 
     function show(name){
       const step=name==='choice'?1:2;
-      for(const n of root.document?.querySelectorAll('.enrollment-steps [data-step]')||[])if(Number(n.dataset.step)===step)n.setAttribute('aria-current','step');else n.removeAttribute('aria-current');
+      for(const n of root.document?.querySelectorAll('.enrollment-steps [data-step]')||[]){const number=Number(n.dataset.step);n.dataset.complete=String(number<step);const circle=n.querySelector?.('.step-circle');if(circle)circle.textContent=number<step?'✓':String(number);if(number===step)n.setAttribute('aria-current','step');else n.removeAttribute('aria-current');}
       for(const pane of panes)els[pane].classList.toggle('hidden',pane!==name);
     }
     function displayCommand(command){
