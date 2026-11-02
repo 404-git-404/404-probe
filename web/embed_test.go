@@ -2,6 +2,7 @@ package web
 
 import (
 	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -175,7 +176,8 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 			t.Fatalf("dashboard script missing pause/resume behavior %q", required)
 		}
 	}
-	for _, required := range []string{`.paused{color:#ffd58a}`, `.agent-state-action{`, `.agent-actions{`} {
+	assertLightColorToken(t, "--color-text-35", "#ffd58a")
+	for _, required := range []string{`.paused{color:var(--color-text-35)}`, `.agent-state-action{`, `.agent-actions{`} {
 		if !strings.Contains(stylesheet, required) {
 			t.Fatalf("dashboard stylesheet missing paused state %q", required)
 		}
@@ -231,7 +233,8 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	if !strings.Contains(string(cardCSS), `repeat(4,minmax(0,1fr))`) {
 		t.Fatal("card grid columns missing")
 	}
-	for _, required := range []string{`.c7-ring`, `.nq7-b-red`, `--c7-ring-ok:#2A8C7C`, `.c7-offline`, `.c7 .c7-mod[data-module=network]{height:164px}`} {
+	assertLightColorToken(t, "--color-status-01", "#2A8C7C")
+	for _, required := range []string{`.c7-ring`, `.nq7-b-red`, `--c7-ring-ok:var(--color-status-01)`, `.c7-offline`, `.c7 .c7-mod[data-module=network]{height:164px}`} {
 		if !strings.Contains(string(v7CSS), required) {
 			t.Fatalf("card layout missing %q", required)
 		}
@@ -260,6 +263,21 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 		if strings.Contains(stylesheet+javascript, forbidden) {
 			t.Fatalf("dashboard fixed-card flow contains customization behavior %q", forbidden)
 		}
+	}
+}
+
+// Keep the old colour assertions exact after introducing aliases. Checking only
+// a var() reference would miss a regression in the palette it points to.
+func assertLightColorToken(t *testing.T, name, want string) {
+	t.Helper()
+	data, err := fs.ReadFile(Files, "static/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	light := strings.SplitN(string(data), ":root[data-theme=dark]", 2)[0]
+	match := regexp.MustCompile(regexp.QuoteMeta(name) + `:\s*([^;}]+)`).FindStringSubmatch(light)
+	if len(match) != 2 || !strings.EqualFold(strings.TrimSpace(match[1]), want) {
+		t.Fatalf("light token %s = %v, want %s", name, match, want)
 	}
 }
 
