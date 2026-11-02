@@ -122,7 +122,7 @@ func TestPublicEgressMigrationLeavesExistingAgentsDisabled(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(ctx, path)
+	store, err := openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

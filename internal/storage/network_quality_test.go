@@ -312,7 +312,7 @@ func TestN2aQuality22MigrationPreservesResourceIdentity(t *testing.T) {
 	}
 	t.Logf("schema22 fixture matches %d actual baseline objects", len(actualObjects))
 	db.Close()
-	s, err = Open(ctx, path)
+	s, err = openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

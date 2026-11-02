@@ -30,7 +30,7 @@ func TestMigratesV3ToV4QueryIndexesAndPreservesData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v3.db")
 	agentID := prepareV3QueryFixture(t, path)
 
-	store, err := Open(context.Background(), path)
+	store, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestMigratesV3ToV4QueryIndexesAndPreservesData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err = Open(context.Background(), path)
+	store, err = openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestMigrationV4RollsBackAllIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := Open(context.Background(), path)
+	store, err := openDatabase(context.Background(), path, 0)
 	if store != nil {
 		store.Close()
 		t.Fatal("migration with conflicting index unexpectedly succeeded")
@@ -115,7 +115,7 @@ func TestMigrationV4RollsBackAllIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err = Open(context.Background(), path)
+	store, err = openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

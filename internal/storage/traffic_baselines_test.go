@@ -188,7 +188,7 @@ func TestTrafficResetMigrationPreservesLatestV15IdempotencyKey(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err = Open(ctx, path)
+	store, err = openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

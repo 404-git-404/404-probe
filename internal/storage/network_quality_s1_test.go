@@ -124,7 +124,7 @@ func TestS1BudgetMigrationPeakAndLowSpaceDefersBackfill(t *testing.T) {
 	}
 	dropQualityRollupFixtureSchema(t, s.db)
 	s.Close()
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestS1Schema26BackfillAtomicResumeAndLiveUpload(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestS1Schema26BackfillAtomicResumeAndLiveUpload(t *testing.T) {
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s, err = Open(context.Background(), path)
+	s, err = openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
