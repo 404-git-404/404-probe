@@ -9,6 +9,7 @@ import (
 )
 
 type DashboardRecord struct {
+	NetworkSlots                   [3]DashboardNetworkSlot
 	Snapshot                       AgentSnapshot
 	Plan                           *AgentPlan
 	CountryCode, CountrySource     string
@@ -152,11 +153,16 @@ func (s *Store) ReadDashboardData(ctx context.Context, now time.Time, offlineTim
 	if err != nil {
 		return out, err
 	}
+	networkSlots, err := readDashboardNetworkSlots(ctx, tx, now)
+	if err != nil {
+		return out, err
+	}
 	for _, agent := range agents {
 		if agent.Revoked && !includeRevoked {
 			continue
 		}
 		record := cards[agent.ID]
+		record.NetworkSlots = networkSlots[agent.ID]
 		record.Snapshot = AgentSnapshot{Agent: agent, StateStale: true}
 		record.CountrySource = "unknown"
 

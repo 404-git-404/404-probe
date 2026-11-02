@@ -53,6 +53,7 @@ type dashboardNetworkEntry struct {
 	Generation uint64
 }
 type dashboardSummary struct {
+	NetworkSlots [3]storage.DashboardNetworkSlot `json:"network_slots"`
 	webAgentSummaryView
 	Lifecycle            string                           `json:"lifecycle"`
 	Hostname             string                           `json:"hostname"`
@@ -293,6 +294,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			v.Lifecycle = "offline"
 		}
 		v.Resources = dashboardResources{Stale: true, MaxAgeMS: a.offlineTimeout.Milliseconds()}
+		v.NetworkSlots = raw.NetworkSlots
 		v.AccumulatedTraffic = raw.TrafficTotals
 		v.Outbounds = webOutboundsView{Selectors: []protocol.OutboundSelector{}}
 		if o := raw.Outbound; o != nil {
