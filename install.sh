@@ -3153,20 +3153,20 @@ identify_installed_server_version() {
   if version_json="$("${SERVER_BINARY}" version --json 2>/dev/null)"; then
     version="$(json_string_field "${version_json}" version)"
     release_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
-      || die "installed Server returned an untrusted build identity; no files were changed"
+      || die "server_version_unrecognized: installed Server returned an untrusted build identity; first upgrade with install.sh from release v1.0.9 (PROBE_404_VERSION=v1.0.9) or v1.0.10 (PROBE_404_VERSION=v1.0.10), then upgrade to this release; no files were changed"
     printf '%s\n' "${version}"
     return
   fi
-  die "server_version_unrecognized: installed Server build cannot be identified safely; upgrade to v1.0.9 or v1.0.10 first; no files were changed"
+  die "server_version_unrecognized: installed Server build cannot be identified safely; first upgrade with install.sh from release v1.0.9 (PROBE_404_VERSION=v1.0.9) or v1.0.10 (PROBE_404_VERSION=v1.0.10), then upgrade to this release; no files were changed"
 }
 
 # Update before each release according to the supported upgrade window.
 require_supported_server_version() {
   local comparison
   comparison="$(compare_versions "$1" v1.0.9)" \
-    || die "server_version_unrecognized: upgrade to v1.0.9 or v1.0.10 first; no files were changed"
+    || die "server_version_unrecognized: installed Server version is invalid; first upgrade with install.sh from release v1.0.9 (PROBE_404_VERSION=v1.0.9) or v1.0.10 (PROBE_404_VERSION=v1.0.10), then upgrade to this release; no files were changed"
   [[ "${comparison}" != -1 ]] \
-    || die "server_version_too_old: database version is too old; please upgrade to v1.0.9 or v1.0.10 before upgrading to this release; no files were changed"
+    || die "server_version_too_old: installed Server $1 is older than the supported window; first upgrade with install.sh from release v1.0.9 (PROBE_404_VERSION=v1.0.9) or v1.0.10 (PROBE_404_VERSION=v1.0.10), then upgrade to this release; no files were changed"
 }
 
 write_server_upgrade_state() {
@@ -3486,7 +3486,7 @@ upgrade_existing_server() (
   fi
   if [[ -e "${SERVER_UPGRADE_STATE}" ]]; then
     note "An interrupted Server upgrade was found; restoring its recorded pre-upgrade state first."
-    restore_server_upgrade || die "interrupted upgrade recovery requires manual attention; recovery files were preserved"
+    restore_server_upgrade || die "interrupted upgrade recovery requires manual attention; if this state was left by a v1.0.8 or earlier installer, first complete recovery with the original installer (请先用当初的安装器完成恢复); recovery files were preserved"
     die "interrupted upgrade was recovered; run the installer again to start a fresh upgrade"
   fi
   # The unlocked check only rejects unsupported starts without changing files.

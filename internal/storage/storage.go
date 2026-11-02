@@ -30,7 +30,7 @@ var (
 	ErrAgentRevoked             = fmt.Errorf("agent revoked: %w", ErrUnauthorized)
 	ErrAgentDisabled            = fmt.Errorf("agent disabled: %w", ErrUnauthorized)
 	ErrUnsupportedSchemaVersion = errors.New("unsupported newer schema version")
-	ErrSchemaTooOld             = errors.New("database_schema_too_old: database version is too old; upgrade to v1.0.9 or v1.0.10 before upgrading to this release")
+	ErrSchemaTooOld             = errors.New("database_schema_too_old: database version is too old; first upgrade with install.sh from release v1.0.9 (PROBE_404_VERSION=v1.0.9) or v1.0.10 (PROBE_404_VERSION=v1.0.10), then upgrade to this release; no database migrations were run")
 	ErrUpgradeNotFound          = errors.New("upgrade operation not found")
 	ErrUpgradeConflict          = errors.New("agent already has an active upgrade")
 	ErrUpgradeTransition        = errors.New("invalid upgrade status transition")
