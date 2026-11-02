@@ -86,7 +86,9 @@ func dashboardBrowserPerformance(t *testing.T, a *App, server *httptest.Server, 
 				t.Fatal("synthetic authenticated report failed", response.Code, response.Body.String())
 			}
 			last = cmd.Sequence
-			write("ack-"+prefix+".json", map[string]any{"sequence": last, "posted_at": posted, "status": response.Code})
+			// Sequence-specific acknowledgements are published once, so the Windows
+			// reader never holds the destination open while we replace it.
+			write("ack-"+prefix+"-"+fmt.Sprint(last)+".json", map[string]any{"sequence": last, "posted_at": posted, "status": response.Code})
 		}
 	}
 }
