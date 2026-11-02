@@ -42,7 +42,7 @@ const dashboardSlotsSQL = `WITH slots(slot,number) AS (VALUES('telecom',1),('uni
 const dashboardSlotSampleSQL = `WITH targets(target_id) AS (VALUES %s)
  SELECT t.target_id,f.rtt,f.sample_time FROM targets t
  LEFT JOIN quality_facts f ON f.id=(SELECT fact.id FROM quality_facts fact
- WHERE fact.target_id=t.target_id AND fact.sample_time<=? AND fact.eligible=1 AND fact.rtt>=0
+ WHERE fact.target_id=t.target_id AND fact.sample_time>=? AND fact.sample_time<=? AND fact.eligible=1 AND fact.rtt>=0
  ORDER BY fact.sample_time DESC,fact.seq DESC,fact.id DESC LIMIT 1)`
 
 type dashboardSlotSample struct {
@@ -148,7 +148,7 @@ func readDashboardNetworkSlots(ctx context.Context, q dashboardSlotQueryer, now 
 		}
 	}
 	if len(targets) > 0 {
-		args = append(args, now.UnixMilli())
+		args = append(args, now.Add(-time.Hour).UnixMilli(), now.UnixMilli())
 		sampleRows, err := q.QueryContext(ctx, fmt.Sprintf(dashboardSlotSampleSQL, strings.Join(targets, ",")), args...)
 		if err != nil {
 			return nil, err
@@ -188,7 +188,7 @@ func readDashboardNetworkSlots(ctx context.Context, q dashboardSlotQueryer, now 
 		v := samples[p.target]
 		slots := out[p.agent]
 		slot := &slots[p.index]
-		if v.MS.Valid && v.Sampled.Valid && !math.IsNaN(v.MS.Float64) && !math.IsInf(v.MS.Float64, 0) {
+		if v.MS.Valid && v.Sampled.Valid && v.Sampled.Int64 >= now.Add(-time.Hour).UnixMilli() && v.Sampled.Int64 <= now.UnixMilli() && !math.IsNaN(v.MS.Float64) && !math.IsInf(v.MS.Float64, 0) {
 			ms := v.MS.Float64
 			slot.LatestMS = &ms
 			slot.SampledAt = v.Sampled.Int64

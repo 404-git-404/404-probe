@@ -65,6 +65,17 @@ func TestDashboardNetworkSlotsStatesAndSamples(t *testing.T) {
 			t.Fatal(got)
 		}
 	}
+	// A warm value also crosses the inclusive one-hour boundary immediately.
+	if got := read(at.Add(time.Hour))[0]; got.State != "stale" || got.LatestMS == nil {
+		t.Fatal(got)
+	}
+	if got := read(at.Add(time.Hour + time.Millisecond))[0]; got.State != "no_data" || got.LatestMS != nil || got.SampledAt != 0 {
+		t.Fatal(got)
+	}
+	k.s.dashboardSlots.entries = nil
+	if got := read(at.Add(time.Hour + time.Millisecond))[0]; got.State != "no_data" || got.LatestMS != nil {
+		t.Fatal(got)
+	}
 	// Labels come from current settings; the previously successful sample stays.
 	k.now = at.Add(2 * time.Minute)
 	renamed := v4Slot("telecom", "example.com", 443, "v4tcp", "v4icmp", "v6tcp", "v6icmp")
@@ -135,7 +146,7 @@ func TestDashboardNetworkSlotsBatchQueryCount(t *testing.T) {
 	}
 	// Query plan must seek the existing per-target/time index, never sort or scan
 	// all raw history separately for each device.
-	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+fmt.Sprintf(dashboardSlotSampleSQL, "(?)"), "target", time.Now().UnixMilli())
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+fmt.Sprintf(dashboardSlotSampleSQL, "(?)"), "target", time.Now().Add(-time.Hour).UnixMilli(), time.Now().UnixMilli())
 	if err != nil {
 		t.Fatal(err)
 	}
