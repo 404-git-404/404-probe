@@ -2,7 +2,7 @@
 body>header{padding-block:9px 7px}
 body>header,body>main,body>footer{width:calc(100% - 56px);max-width:2100px}body>header{padding:12px 0 10px;gap:20px}body>header>div:first-child{display:flex;align-items:baseline;gap:14px}body>header h1{font-size:24px}body>header p{font-size:12px;margin:2px 0 0}.header-actions{flex-wrap:wrap;font-size:12px}
 
-@media(min-width:1500px) and (max-width:1849px){}@media(min-width:1850px){}@media(max-width:760px){body>header,body>main,body>footer{width:calc(100% - 28px)}body>header{align-items:start;flex-direction:column;gap:8px}.header-actions{flex-direction:row}}
+@media(max-width:760px){body>header,body>main,body>footer{width:calc(100% - 28px)}body>header{align-items:start;flex-direction:column;gap:8px}.header-actions{flex-direction:row}}
 .agent-card.state-paused{border-style:dashed}.agent-card.state-unknown{border-color:var(--color-line-01)}
 .agent-card .country-mark,.agent-card .country-flag{width:48px;min-width:48px;height:36px;border-radius:5px}.agent-card .country-mark{display:grid;place-items:center;font-size:27px;overflow:hidden}.agent-card .country-flag{object-fit:cover}
 .agent-card .name-tooltip{display:none;position:absolute;top:100%;left:0;z-index:60;width:max-content;max-width:min(270px,calc(100vw - 90px));padding:7px 9px;border-radius:8px;background:var(--color-surface-01);color:var(--color-text-01);font-size:12px;line-height:1.5;overflow-wrap:anywhere;pointer-events:none}.agent-name-display h2:hover~.name-tooltip,.agent-name-display h2:focus~.name-tooltip{display:block}

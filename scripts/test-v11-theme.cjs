@@ -53,7 +53,7 @@ test('network history and legacy history canvas redraw on a live theme change',(
 test('manual light overrides OS dark in quality settings, native controls and backdrop',()=>ui(async({page:p})=>{
  await p.emulateMedia({colorScheme:'dark'});await scene(p,'Quality-Settings');
  assert.equal(await p.locator('.nq-dialog').evaluate(n=>getComputedStyle(n).colorScheme),'light');
- assert.equal(await p.locator('.nq-dialog').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(251, 248, 243)');
+ assert.equal(await p.locator('.nq-dialog').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(255, 253, 250)');
  await p.evaluate(()=>ProbeTheme.set('dark'));assert.equal(await p.locator('.nq-dialog').evaluate(n=>getComputedStyle(n).colorScheme),'dark');
  assert.match(await p.locator('#network-quality-settings').evaluate(n=>getComputedStyle(n,'::backdrop').backgroundColor),/^rgba\(0, 0, 0,/);
 }));

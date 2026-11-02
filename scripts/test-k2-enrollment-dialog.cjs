@@ -63,8 +63,8 @@ test('K2 dialog: choosing one-click shows the name form; generating shows comman
   h.els.name.value = 'web 1';
   assert.equal(await h.controller.submit(), true);
   assert.deepEqual(visible(h.els), ['oneclickResult']);
-  assert.equal(h.els.command.textContent, COMMAND);
-  assert.equal(h.els.countdown.textContent, '剩余 30:00');
+  assert.ok(!h.els.command.textContent.includes('T'.repeat(43)));assert.match(h.els.command.textContent,/PROBE_404_ENROLL_TOKEN=••/);
+  assert.equal(h.els.countdown.textContent, '⏱ 有效期 30:00');
   assert.equal(h.els.copy.disabled, false);
   assert.equal(h.els.revoke.disabled, false);
   const call = h.calls[0];
@@ -78,10 +78,10 @@ test('K2 dialog: the countdown ticks down and at zero the command disappears and
   const h = harness();
   await generate(h);
   h.tick(61000);
-  assert.equal(h.els.countdown.textContent, '剩余 28:59');
+  assert.equal(h.els.countdown.textContent, '⏱ 有效期 28:59');
   h.tick(28 * 60000 + 58000);
-  assert.equal(h.els.countdown.textContent, '剩余 00:01');
-  assert.equal(h.els.command.textContent, COMMAND);
+  assert.equal(h.els.countdown.textContent, '⏱ 有效期 00:01');
+  assert.ok(!h.els.command.textContent.includes('T'.repeat(43)));assert.match(h.els.command.textContent,/PROBE_404_ENROLL_TOKEN=••/);
   h.tick(1000);
   assert.equal(h.els.countdown.textContent, '已过期，请重新生成');
   assert.equal(h.els.command.textContent, '');
@@ -98,7 +98,7 @@ test('K2 dialog: copy writes the command, shows brief feedback and restores the 
   await generate(h);
   await h.els.copy.fire('click');
   assert.deepEqual(h.copied, [COMMAND]);
-  assert.equal(h.els.copy.textContent, '已复制');
+  assert.equal(h.els.copy.textContent, '✓ 已复制');
   h.tick(1500);
   assert.equal(h.els.copy.textContent, '复制命令');
   const failing = harness({copyFails: true});
@@ -209,7 +209,7 @@ test('K2 dialog: the page wires the dialog, nothing is persisted, and the manual
   assert.ok(app.includes('serverBuild.one_click_install'), 'availability comes from the Server version endpoint');
   assert.ok(app.includes('AgentEnrollment.createController') && app.includes('enrollmentDialog.reset()'));
   assert.ok(app.includes("fetch('/api/v1/web/agents'"), 'manual install still uses the existing endpoint');
-  assert.match(html, /请以 root 执行；非 root 用户先运行 sudo -i。需要该版本已发布到 GitHub。/);
+  assert.match(html, /以 root 运行（非 root 先 <code>sudo -i<\/code>）/);
   assert.doesNotMatch(COMMAND, /sudo|env/);
   assert.doesNotMatch(module_, /localStorage|sessionStorage|document\.cookie|indexedDB/);
   assert.match(html, /<p class="install-note">在目标 Linux 主机执行命令，然后在隐藏提示中粘贴下面的 enrollment value/, 'the manual instructions are unchanged');
@@ -263,7 +263,7 @@ test('N1: every failure reason has its own text; only a truly unknown one is gen
 });
 
 test('R38 name and method selection create no credentials before explicit next/generate',async()=>{
- const h=harness({frontChoice:true});h.els.choiceName.value='synthetic';await h.els.chooseManual.fire('click');assert.deepEqual(visible(h.els),['choice']);assert.equal(h.calls.length,0);await h.els.chooseOneClick.fire('click');await h.els.next.fire('click');assert.deepEqual(visible(h.els),['oneclick']);assert.equal(h.els.name.value,'synthetic');assert.equal(h.calls.length,0);await h.controller.submit();assert.equal(h.calls.length,1);
+ const h=harness({frontChoice:true});h.els.choiceName.value='synthetic';await h.els.chooseManual.fire('click');assert.deepEqual(visible(h.els),['choice']);assert.equal(h.calls.length,0);await h.els.chooseOneClick.fire('click');await h.els.next.fire('click');assert.deepEqual(visible(h.els),['oneclickResult']);assert.equal(h.els.name.value,'synthetic');assert.equal(h.calls.length,1);assert.deepEqual(JSON.parse(h.calls[0].init.body),{name:'synthetic'});
 });
 test('R38 late enrollment response after closing never restores secret or opens a result',async()=>{
  let resolve;const h=harness({respond:()=>new Promise(r=>resolve=r)});h.controller.chooseOneClick();h.els.name.value='synthetic';const task=h.controller.submit();h.controller.close();resolve({ok:true,status:201,json:async()=>({command:COMMAND,enrollment_id:'e',expires_at:T0+60000})});await task;assert.equal(h.els.command.textContent,'');assert.deepEqual(visible(h.els),['choice']);assert.equal(h.controller.hasCommand,false);

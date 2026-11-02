@@ -39,7 +39,7 @@ const planAgentName = document.querySelector('#plan-agent-name');
 const planTrafficEnabled = document.querySelector('#plan-traffic-enabled');
 const planTrafficFields = document.querySelector('#plan-traffic-fields');
 const planError = document.querySelector('#plan-error');
-const addShell = DialogShell.attach(addAgentDialog,{title:'添加 Agent',subtitle:'把一台新机器接入面板'});
+const addShell = DialogShell.attach(addAgentDialog,{title:'添加 Agent',subtitle:'把一台新机器接入面板',onclose:clearEnrollmentDialog});
 const upgradeShell = DialogShell.attach(upgradeAgentDialog,{size:'small',title:'升级 Agent'});
 const removeShell = DialogShell.attach(removeAgentDialog,{size:'small',title:'撤销 Agent'});
 const agentState = AgentState.create();
@@ -56,7 +56,7 @@ const agents = agentState.agents;
 let overviewReady = false;
 let organizationDialogs=null,expenseDialog=null;
 const dashboardUI=DashboardView.create({csrf:()=>mutationCSRFToken,read:readJSON,onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
-const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(trigger)});
+const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(matchMedia('(max-width:42rem)').matches?document.querySelector('#panel-mobile-open'):trigger)});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   identity: agent => countryMark(agent?.country_code,agent?.country_source),
   management: agent => detailsFor(agent.agent_id)?.management,

@@ -24,6 +24,7 @@ for(const mode of ['light','dark']){
  for(const bg of ['page','card','surface-module','surface-hover'])for(const fg of ['text','text-muted','text-secondary','accent-text','danger-text','warning-text'])check(fg+' on '+bg,'--color-'+fg,'--color-'+bg,4.5);
  for(const fg of ['--text','--muted'])for(const bg of ['--bg','--panel'])check(fg+' on '+bg,fg,bg,4.5);
  for(const [fg,bg]of [['--color-text-02','--color-accent'],['--color-text-02','--color-danger']])check('button '+fg+' on '+bg,fg,bg,4.5);
+for(const state of ['hover','focus','disabled'])for(const bg of ['--color-accent','--color-danger'])check('detail action '+state+' on '+bg,'--color-text-02',bg,4.5);
 // text on the module background (and on its hover colour)
 for(const bg of ['mod','mod-hover']){
   for(const fg of ['text','sub','pct-warn','pct-crit','up','warn-text','crit-text','quota-text'])check(`${fg} on ${bg}`,fg,bg,4.5);

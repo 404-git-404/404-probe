@@ -54,7 +54,7 @@
   let versionData=null,versionReadAt=0,versionBusy=false,settingsBusy=false,closed=false;
   function updateVersion(view){
    versionData=view?.update||{};
-   const latest=versionData.latest,valid=typeof latest==='string'&&/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(latest)&&latest.slice(1).split('.').every(v=>Number.isSafeInteger(Number(v)));
+   const latest=versionData.latest,valid=typeof latest==='string'&&/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(latest)&&latest===latest.trim()&&root.AgentState.compareStableVersions(latest,latest)===0;
    const link=get('panel-update');link.hidden=!(versionData.newer===true&&valid);
    link.removeAttribute('href');if(!link.hidden){link.href='https://github.com/404-git-404/404-probe/releases/tag/'+latest;link.querySelector('span').textContent='有新版本 '+latest+' · 说明';link.title='有新版本 '+latest+' · 说明';}
   }

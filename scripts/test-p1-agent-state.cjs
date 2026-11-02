@@ -83,7 +83,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
       if(route) {const value=route(url,options); if(value !== undefined) Promise.resolve(value).then(d.resolve,d.reject);}
       return d.promise;
     },EventSource:class {constructor(){this.listeners=new Map();sources.push(this);}close(){this.closed=true;}addEventListener(type,f){this.listeners.set(type,f);}}};
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/dashboard-model.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/management.js'),'utf8'),sandbox,{filename:'management.js'});
   sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};
@@ -785,9 +785,9 @@ test('P5c actual app uses exact primary card deadline with timezone; current pla
 });
 test('P5c actual render twenty SSE keeps stable native overview, focus and original plan dirty draft without new requests/writes',async()=>{
  const app=dashboard();seed(app.state,{...dto(),state:null});app.eval(`overviewReady=true;render=actualDashboardRender;openPlanDialog(agents.get('${A}'))`);app.nodes.get('#plan-currency').value='GBP';await app.nodes.get('#plan-currency').emit('input');
- app.eval("document.activeElement=document.querySelector('#overview-summary')");const shell=app.nodes.get('#overview'),summary=app.nodes.get('#overview-summary');shell.open=false;await shell.emit('toggle');const before=app.requests.length;
+ app.eval("document.activeElement=document.querySelector('#dashboard-search')");const shell=app.nodes.get('#dashboard-panel'),summary=app.nodes.get('#dashboard-search');const before=app.requests.length;
  for(let i=0;i<20;i++)app.event({agent_id:A,online:true,state:{collected_at:Date.now(),rx_rate:0,tx_rate:1000000,cpu_percent:i}});
- assert.equal(app.nodes.get('#overview'),shell);assert.equal(app.nodes.get('#overview-summary'),summary);assert.equal(shell.open,false);assert.equal(app.eval("document.activeElement===document.querySelector('#overview-summary')"),true);assert.equal(app.nodes.get('#plan-currency').value,'GBP');assert.equal(app.nodes.get('#plan-dialog').open,true);assert.equal(app.requests.length,before);assert.match(app.nodes.get('#overview-rates').textContent,/0 B\/s.*1.00 MB\/s/);
+ assert.equal(app.nodes.get('#dashboard-panel'),shell);assert.equal(app.nodes.get('#dashboard-search'),summary);assert.equal(app.eval("document.activeElement===document.querySelector('#dashboard-search')"),true);assert.equal(app.nodes.get('#plan-currency').value,'GBP');assert.equal(app.nodes.get('#plan-dialog').open,true);assert.equal(app.requests.length,before);assert.match(app.nodes.get('#overview-rates').textContent,/0 B\/s.*1.00 MB\/s/);
 });
 test('P5c actual renewal merges current_plan not replay receipt into overview and unknown original ID remains across renders',async()=>{
  const app=dashboard();await readyRenewal(app);app.eval('overviewReady=true;render=actualDashboardRender');const applying=app.nodes.get('#renewal-confirm').emit('click');const request=app.request('/renewal/apply'),id=JSON.parse(request.options.body).request_id;request.resolve(response({error:{message:'uncertain'}},503));await applying;await flush();

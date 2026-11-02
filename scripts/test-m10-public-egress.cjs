@@ -78,7 +78,7 @@ function loadApp() {
     location: {search: '', assign() {}}, setInterval() {}, setTimeout, clearTimeout, queueMicrotask, addEventListener() {},
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
   for (const file of ['dashboard-model.js','dashboard-data.js','management.js', 'selector.js', 'range-slider.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'card.js', 'resource-history.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js','dashboard-view.js','organization-name.js','organization-api.js','organization-dialogs.js','expense-dialog.js', 'plan-units.js', 'youtube-status.js', 'public-egress-check.js', 'agent-enrollment.js', 'latency-mini.js', 'app.js'])
     vm.runInContext((file==='app.js'?"globalThis.DialogShell={attach:()=>({heading(){}}),confirm:async()=>true};\n":'')+fs.readFileSync(path.join(__dirname, '../web/static', file), 'utf8'), sandbox);
   const render = input => {sandbox.input = input; return vm.runInContext('(()=>{const e=createPublicEgress("a");e.update(input);return e.element;})()', sandbox);};

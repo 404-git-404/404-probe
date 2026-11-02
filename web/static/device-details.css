@@ -81,5 +81,5 @@ html { scrollbar-gutter: stable; }
 .details-config{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Preserve action contrast in both palettes for every interaction state. */
-.device-details .details-action-row .upgrade-agent:is(:hover,:focus-visible,:disabled){background:var(--color-accent);color:var(--color-text-02);border-color:var(--color-accent);opacity:1}
-.device-details .details-danger .remove-agent:is(:hover,:focus-visible,:disabled){background:var(--color-danger);color:var(--color-text-02);border-color:var(--color-danger);opacity:1}
+#device-details .details-action-row .upgrade-agent:is(:hover,:focus-visible,:disabled){background:var(--color-accent);color:var(--color-text-02);border-color:var(--color-accent);opacity:1}
+#device-details .details-danger .remove-agent:is(:hover,:focus-visible,:disabled){background:var(--color-danger);color:var(--color-text-02);border-color:var(--color-danger);opacity:1}

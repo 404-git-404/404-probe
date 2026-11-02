@@ -77,7 +77,7 @@ async function scene(page,name){
  if(name==='Assign'){await page.evaluate(id=>organizationDialogs.openAssignment(id),id);await page.waitForFunction(()=>document.querySelector('#organization-group')?.options.length>1);return;}
  if(name==='Groups'||name==='Tags'){await page.evaluate(kind=>organizationDialogs.openManage(kind),name==='Groups'?'groups':'tags');await page.waitForSelector('.organization-manage-row');return;}
  if(name==='Expense'){await page.locator('#overview-expense').click();await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));return;}
- if(name==='Filter'){await page.evaluate(()=>{document.querySelector('#dashboard-filter-body').append(document.querySelector('#dashboard-filters'));document.querySelector('#dashboard-filter-dialog').showModal();});return;}
+ if(name==='Filter'){await page.locator('#panel-more-toggle').click();return;}
  if(name==='Quality-Settings'||name==='Quality-Copy'){
   await page.evaluate(async id=>{await networkQuality.ensureHistoryTargets(id);networkQuality.openSettings(id);},id);await page.waitForSelector('#network-quality-settings');
   if(name==='Quality-Copy')await page.locator('#network-quality-settings').getByRole('button',{name:'从其他设备复制',exact:false}).click();return;

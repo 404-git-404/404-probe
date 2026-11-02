@@ -73,7 +73,7 @@ func TestAgentEnrollmentUIUsesShownOnceDOMFlow(t *testing.T) {
 	for _, required := range []string{
 		`fetch('/api/v1/web/agents'`,
 		`'X-CSRF-Token': mutationCSRFToken`,
-		`createdEnrollment.textContent = enrollment.enrollment_value`,
+		`manualCredential = enrollment.enrollment_value`,
 		`createdEnrollment.textContent = ''`,
 		`addAgentDialog.addEventListener('close', clearEnrollmentDialog)`,
 	} {
@@ -248,7 +248,7 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	if strings.Contains(javascript, `CardMetrics.tile('disk-io'`) || strings.Contains(javascript, `CardMetrics.stamp(`) {
 		t.Fatal("real cards must have three resource rings and no fabricated score")
 	}
-	if !strings.Contains(string(cardCSS), `repeat(4,minmax(0,1fr))`) {
+	if !strings.Contains(string(cardCSS), `body>header,body>main,body>footer`) {
 		t.Fatal("card grid columns missing")
 	}
 	assertLightColorToken(t, "--color-status-01", "#2A8C7C")

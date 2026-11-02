@@ -17,7 +17,7 @@ function makeRows(n){const now=Date.now(),names=['DediRock-LAX-1','Aike-HKG-2','
   if(n>3){if(i<7)a.tag_ids.push(ID(200));if([0,1,7,8,9,10].includes(i))a.tag_ids.push(ID(201));if([1,2,11].includes(i))a.tag_ids.push(ID(202));if([5,12,13,14].includes(i))a.tag_ids.push(ID(203));if([6,15].includes(i))a.tag_ids.push(ID(204));}return a;
  });
 }
-async function start({n=28}={}){
+async function start({n=28,handle=null}={}){
  const state={items:makeRows(n),revision:1,groups:n>3?[{id:ID(100),name:'常用',sort_order:0},{id:ID(101),name:'备用',sort_order:1}]:[],tags:n>3?['GIA','便宜','视频专用','测试','大硬盘'].map((name,i)=>({id:ID(200+i),name})):[],exchange_rates:[{currency:'USD',units_per_usd:'1'},{currency:'CNY',units_per_usd:'7.1'},{currency:'EUR',units_per_usd:'.93'.replace(/^\./,'0.')},{currency:'HKD',units_per_usd:'7.78'},{currency:'JPY',units_per_usd:'152'}]},requests=[],streams=new Set();let counter=500,conflict=false;
  const expense=ids=>{const selected=ids===null?state.items:state.items.filter(a=>ids.includes(a.agent_id)),out={revision:state.revision,scope_count:selected.length,included_count:0,once_count:0,missing_price_count:0,excluded_count:0,currencies:[],devices:[],excluded:[],missing_price_devices:[],missing_rates:[]};let total=rat(0);const currencies=new Map(),missing=new Map();
   for(const a of selected){const p=a.plan||{},purchase=!p.renewal_price&&p.renewal_price!=='0',price=purchase?p.purchase_price:p.renewal_price,period=purchase?p.purchase_price_period:p.renewal_price_period,device={id:a.agent_id,name:a.name,currency:p.currency,price:price||'',period,estimated_from_purchase:purchase,monthly_usd:null,monthly_original:'0'};let reason=period==='once'?'once':price===undefined||price===''?'missing_price':!p.currency?'missing_currency':!period?'missing_period':!['monthly','quarterly','semiannual','yearly'].includes(period)?'invalid_period':'';
@@ -29,6 +29,7 @@ async function start({n=28}={}){
  const catalog=()=>({...clone(state),partial:false,total:state.items.length,server_now:Date.now(),expenses:expense(null)});
  const config=()=>{const value=load('v4-running');value.slots.forEach((s,i)=>{s.kind='custom';s.region=['上海','广州','北京'][i];s.isp=['电信','联通','移动'][i];});return value;};
  const server=http.createServer(async(req,res)=>{const url=new URL(req.url,'http://localhost'),method=req.method;let raw='';for await(const b of req)raw+=b;let body=null;try{body=raw?JSON.parse(raw):null;}catch{}requests.push({method,path:url.pathname,query:url.search,body,headers:req.headers});const json=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));},fail=(code='invalid_request',status=400)=>json({error:{code}},status);
+  if(handle&&await handle({req,res,url,body,json,fail}))return;
   if(url.pathname==='/api/v1/web/events'){res.writeHead(200,{'Content-Type':'text/event-stream'});res.write('retry: 3000\n\n');streams.add(res);req.on('close',()=>streams.delete(res));return;}
   if(url.pathname==='/api/v1/web/session')return json({csrf_token:'synthetic-csrf'});if(url.pathname==='/api/v1/web/version')return json({version:'v1.0.10',upgrade_eligible:true});
   if(url.pathname==='/api/v1/web/organization/catalog')return json(catalog());

@@ -26,7 +26,7 @@ function page(file) {
     location:{search:'?id='+('a'.repeat(32)),assign(){}},setInterval(){},setTimeout,queueMicrotask,addEventListener(){},
     navigator:{clipboard:{writeText:async()=>{}}},crypto:{randomUUID:()=> 'b'.repeat(32)},
     fetch:()=>new Promise(()=>{}),EventSource:class{addEventListener(){}close(){}}};
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};vm.createContext(sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/dashboard-model.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/management.js'),'utf8'),sandbox);
   sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};
