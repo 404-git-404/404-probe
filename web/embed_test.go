@@ -225,7 +225,7 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	if !strings.Contains(html, `id="agents" class="dashboard-groups"`) || !strings.Contains(javascript, `body.className='dashboard-card-grid'`) {
 		t.Fatal("dashboard Agent collection is missing its responsive grid hook")
 	}
-	cardCSS, err := fs.ReadFile(static, "card-layout.css")
+	cardCSS, err := fs.ReadFile(static, "dashboard.css")
 	v7CSS, err2 := fs.ReadFile(static, "card-v7.css")
 	if err != nil || err2 != nil || !strings.Contains(string(v7CSS), `.c7 .c7-foot1 .google-checks{display:flex;flex:0 1 auto;min-width:0`) || strings.Index(html, `href="/card-v7.css"`) <= strings.Index(html, `href="/style.css"`) {
 		t.Fatal("current card service row needs its loaded single-column override")
@@ -248,7 +248,7 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	if strings.Contains(javascript, `CardMetrics.tile('disk-io'`) || strings.Contains(javascript, `CardMetrics.stamp(`) {
 		t.Fatal("real cards must have three resource rings and no fabricated score")
 	}
-	if !strings.Contains(string(cardCSS), `body>header,body>main,body>footer`) {
+	if !strings.Contains(string(cardCSS), `grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))`) || !strings.Contains(string(cardCSS), `@media(max-width:42rem)`) || !strings.Contains(string(cardCSS), `.dashboard-card-grid{grid-template-columns:minmax(0,1fr)}`) {
 		t.Fatal("card grid columns missing")
 	}
 	assertLightColorToken(t, "--color-status-01", "#2A8C7C")

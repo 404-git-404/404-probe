@@ -81,3 +81,9 @@ test('management button text retains 4.5:1 contrast at rest, hover, focus and di
   }finally{await f.close();}
  }
 });
+test('unsupported Alpine upgrade row suppresses the contradictory same-version explanation',async()=>{
+ const {open:themeOpen,scene}=require('./lib/v11-theme-fixture.cjs');const f=await themeOpen(browser);
+ try{const p=f.page;f.f.state.items[0].version='v1.0.10';f.f.state.items[0].updater_health={status:'unsupported'};await p.evaluate(()=>dashboardData.reload());await p.waitForFunction(()=>[...agents.values()][0].version==='v1.0.10');await scene(p,'Details-management');
+  const row=p.locator('.details-action-row').filter({hasText:'暂不支持从面板升级'});await row.waitFor();const text=await row.textContent();assert(!text.includes('无需升级'));assert(!text.includes('以后更新面板'));assert(text.includes('Alpine/OpenRC'));assert.equal(await row.locator('.upgrade-agent').isDisabled(),true);assert.deepEqual(f.errors,[]);
+ }finally{await f.close();}
+});

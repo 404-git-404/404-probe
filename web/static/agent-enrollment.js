@@ -1,6 +1,6 @@
 /* "Add Agent" dialog flow: choose one-click or manual install; for one-click, create a single-use
    30-minute registration token, show the install command with a copy button and a countdown, and
-   allow revoking it. The command lives only in this controller's memory and in one text node: it is
+   allow revoking it. The full command lives only in controller memory; the DOM receives a token-masked view. It is
    dropped when the dialog closes or resets, and it is never stored in the page or the browser. */
 (function(root){
   'use strict';
