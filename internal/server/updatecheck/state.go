@@ -50,7 +50,7 @@ func load(path string) (State, error) {
 	if !safeStateFile(before) {
 		return State{}, errors.New("unsafe state file")
 	}
-	f, err := root.Open(name)
+	f, err := openStateFile(root, name)
 	if err != nil {
 		return State{}, err
 	}
