@@ -19,7 +19,7 @@ import (
 
 func testStore(t *testing.T, path string) (*Store, string, string) {
 	t.Helper()
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestAgentDisableEnableLifecyclePersists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err = Open(ctx, path)
+	s, err = openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := Open(context.Background(), path)
+	store, err := openDatabase(context.Background(), path, 0)
 	if store != nil {
 		store.Close()
 		t.Fatal("future schema was opened")
@@ -306,14 +306,14 @@ func TestRejectsFutureSchemaWithoutSideEffects(t *testing.T) {
 
 func TestOpenExistingV4(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v4.db")
-	store, err := Open(context.Background(), path)
+	store, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	store, err = Open(context.Background(), path)
+	store, err = openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestTrafficAndEpochSurviveServerRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := Open(ctx, path)
+	s, err := openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestTrafficAndEpochSurviveServerRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err = Open(ctx, path)
+	s, err = openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +547,7 @@ func TestMigratesV1StateToV4(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

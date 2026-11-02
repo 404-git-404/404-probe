@@ -78,7 +78,7 @@ func rerunMigration31(t *testing.T, s *Store, path string) *Store {
 		t.Fatal(err)
 	}
 	migration34Skip = true // observe what migration 31 itself produces
-	reopened, err := Open(context.Background(), path)
+	reopened, err := openDatabase(context.Background(), path, 0)
 	migration34Skip = false
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +224,7 @@ func TestMigration31IsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	migration34Skip = true
-	bad, err := Open(context.Background(), path)
+	bad, err := openDatabase(context.Background(), path, 0)
 	migration34Skip = false
 	if err == nil {
 		bad.Close()

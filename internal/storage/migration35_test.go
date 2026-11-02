@@ -241,7 +241,7 @@ func TestMigration35BackfillsPlansFromMinuteData(t *testing.T) {
 	cases := m35Cases()
 	ids := m35Seed(t, s, cases)
 	s.Close()
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestMigration35From34KeepsEverythingElseAndDropsTCPMini(t *testing.T) {
 	if v := m35Version(t, path); v != 34 {
 		t.Fatalf("fixture schema %d", v)
 	}
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +396,7 @@ func TestMigration35IsIdempotentAndRepeatableOnAnOperatorCopy(t *testing.T) {
 	rewindV107Fixture(t, s.db)
 	m35Seed(t, s, m35Cases())
 	s.Close()
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestMigration35IsIdempotentAndRepeatableOnAnOperatorCopy(t *testing.T) {
 		}
 	}
 	s.Close()
-	s, err = Open(context.Background(), path)
+	s, err = openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestMigration35FailureAtEveryStageLeavesSchema34Untouched(t *testing.T) {
 				return nil
 			}
 			t.Cleanup(func() { migration35FailAt = nil })
-			if s, err := Open(context.Background(), path); err == nil {
+			if s, err := openDatabase(context.Background(), path, 0); err == nil {
 				s.Close()
 				t.Fatal("the injected failure was ignored")
 			} else if !errors.Is(err, boom) {
@@ -476,7 +476,7 @@ func TestMigration35FailureAtEveryStageLeavesSchema34Untouched(t *testing.T) {
 			}
 
 			migration35FailAt = nil
-			s, err = Open(context.Background(), path)
+			s, err = openDatabase(context.Background(), path, 0)
 			if err != nil {
 				t.Fatalf("retry: %v", err)
 			}
@@ -501,7 +501,7 @@ func TestMigration35OldDatabaseWalksTheWholeChain(t *testing.T) {
 	if v := m35Version(t, path); v >= 29 {
 		t.Fatalf("fixture schema %d", v)
 	}
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatalf("chain: %v", err)
 	}

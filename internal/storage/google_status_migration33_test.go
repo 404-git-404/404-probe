@@ -81,7 +81,7 @@ func TestMigration33AddsNullablePremiumNotice(t *testing.T) {
 	}
 	db.Close()
 	for attempt := 0; attempt < 2; attempt++ { // the second open proves it is idempotent
-		store, err = Open(ctx, path)
+		store, err = openDatabase(ctx, path, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,7 +94,7 @@ func TestMigration33AddsNullablePremiumNotice(t *testing.T) {
 		}
 		store.Close()
 	}
-	store, err = Open(ctx, path)
+	store, err = openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestMigration33SkipsAnExistingColumnAndKeepsItsValues(t *testing.T) {
 	}
 	db.Close()
 	for attempt := 0; attempt < 2; attempt++ {
-		store, err = Open(ctx, path)
+		store, err = openDatabase(ctx, path, 0)
 		if err != nil {
 			t.Fatalf("attempt %d: %v", attempt, err)
 		}

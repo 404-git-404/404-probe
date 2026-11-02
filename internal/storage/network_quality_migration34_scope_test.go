@@ -23,7 +23,7 @@ func TestMigration34LayerOneScope(t *testing.T) {
 	s.Close()
 	withoutMigration34(t)
 	migration34Skip = false
-	s, err := Open(context.Background(), path)
+	s, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

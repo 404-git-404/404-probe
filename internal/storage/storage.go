@@ -21,11 +21,15 @@ import (
 
 const currentSchemaVersion = 36
 
+// 每个版本发布前按升级支持策略更新。v1.0.9/v1.0.10 use schema 35/36.
+const minimumUpgradeSchemaVersion = 35
+
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
 	ErrAgentRevoked             = fmt.Errorf("agent revoked: %w", ErrUnauthorized)
 	ErrAgentDisabled            = fmt.Errorf("agent disabled: %w", ErrUnauthorized)
 	ErrUnsupportedSchemaVersion = errors.New("unsupported newer schema version")
+	ErrSchemaTooOld             = errors.New("database_schema_too_old: database version is too old; upgrade to v1.0.9 or v1.0.10 before upgrading to this release")
 	ErrUpgradeNotFound          = errors.New("upgrade operation not found")
 	ErrUpgradeConflict          = errors.New("agent already has an active upgrade")
 	ErrUpgradeTransition        = errors.New("invalid upgrade status transition")
@@ -132,6 +136,11 @@ type OutboundSnapshot struct {
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
+	return openDatabase(ctx, path, minimumUpgradeSchemaVersion)
+}
+
+// Migration-chain tests use a zero floor to exercise historical steps needed by fresh installs.
+func openDatabase(ctx context.Context, path string, minimumSchema int) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("database path is required")
 	}
@@ -142,7 +151,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	databasePath := sqliteDatabasePath(path)
 	s := &Store{db: db, databasePath: databasePath}
-	if err := checkSupportedSchemaVersion(ctx, db); err != nil {
+	if err := checkUpgradeSchemaVersion(ctx, db, minimumSchema, true); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -225,7 +234,7 @@ func VerifyReadOnly(ctx context.Context, path string) (DatabaseVerification, err
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := checkSupportedSchemaVersion(ctx, db); err != nil {
+	if err := checkUpgradeSchemaVersion(ctx, db, minimumUpgradeSchemaVersion, false); err != nil {
 		return DatabaseVerification{}, err
 	}
 	version, err := schemaVersion(ctx, db)
@@ -978,6 +987,31 @@ func scanDashboardOutbound(row dashboardScanner) (OutboundSnapshot, bool, error)
 		result.OrderSource, result.Selectors = document.OrderSource, document.Selectors
 	}
 	return result, true, nil
+}
+
+// Empty databases are permitted only on Open, so a fresh install still walks 1→36.
+// The floor is checked before WAL mode or any migration can change the file.
+func checkUpgradeSchemaVersion(ctx context.Context, db *sql.DB, minimum int, allowEmpty bool) error {
+	if err := checkSupportedSchemaVersion(ctx, db); err != nil {
+		return err
+	}
+	version, err := schemaVersion(ctx, db)
+	if err != nil {
+		return err
+	}
+	if version >= minimum {
+		return nil
+	}
+	if allowEmpty && version == 0 {
+		var objects int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+			return err
+		}
+		if objects == 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w (schema %d, minimum %d)", ErrSchemaTooOld, version, minimum)
 }
 
 func checkSupportedSchemaVersion(ctx context.Context, db *sql.DB) error {

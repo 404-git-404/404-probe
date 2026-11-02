@@ -3150,7 +3150,7 @@ download_server_upgrade_candidate() (
 )
 
 identify_installed_server_version() {
-  local version_json version inspected commit
+  local version_json version
   if version_json="$("${SERVER_BINARY}" version --json 2>/dev/null)"; then
     version="$(json_string_field "${version_json}" version)"
     release_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
@@ -3158,16 +3158,16 @@ identify_installed_server_version() {
     printf '%s\n' "${version}"
     return
   fi
-  inspected="$("${SERVER_UPGRADE_CANDIDATE}" version inspect --json "${SERVER_BINARY}" 2>/dev/null)" \
-    || die "installed Server build cannot be identified safely; no files were changed"
-  commit="$(json_string_field "${inspected}" commit)"
-  [[ "${inspected}" == *'"dirty":false'* ]] || die "installed Server is a modified build; no files were changed"
-  case "${commit}" in
-    e3a614d54eb868e14a1382455579f3872e26463d) printf '%s\n' v0.8.0 ;;
-    4dfbd3e9018123d9e8a43a5857a5f0f6758abe35) printf '%s\n' v0.8.1 ;;
-    05d566e41063764c3322cf5264eb8329366d1240) printf '%s\n' v0.9.0 ;;
-    *) die "installed legacy Server is unknown (commit ${commit:-unavailable}); refusing to guess its version" ;;
-  esac
+  die "server_version_unrecognized: installed Server build cannot be identified safely; upgrade to v1.0.9 or v1.0.10 first; no files were changed"
+}
+
+# Update before each release according to the supported upgrade window.
+require_supported_server_version() {
+  local comparison
+  comparison="$(compare_versions "$1" v1.0.9)" \
+    || die "server_version_unrecognized: upgrade to v1.0.9 or v1.0.10 first; no files were changed"
+  [[ "${comparison}" != -1 ]] \
+    || die "server_version_too_old: database version is too old; please upgrade to v1.0.9 or v1.0.10 before upgrading to this release; no files were changed"
 }
 
 write_server_upgrade_state() {
@@ -3492,6 +3492,9 @@ server_upgrade_trap() {
 upgrade_existing_server() (
   reject_openrc_deferred Server-upgrade
   local target current comparison active=0 enabled=0 helper_existed=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
+  # Read-only support check precedes locks, candidates, backup rotation and service changes.
+  current="$(identify_installed_server_version)" || exit 1
+  require_supported_server_version "${current}"
   if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
     [[ -d "${SERVER_UPGRADE_LOCK_DIRECTORY}" && ! -L "${SERVER_UPGRADE_LOCK_DIRECTORY}" \
       && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK_DIRECTORY}")" == "root:root:700" ]] \
@@ -3550,7 +3553,6 @@ upgrade_existing_server() (
   render_local_helper >"${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "could not render upgraded local helper"
   chmod 0755 "${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "could not protect upgraded local helper"
   bash -n "${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "upgraded local helper failed syntax validation"
-  current="$(identify_installed_server_version)"
   comparison="$(compare_versions "${current}" "${target}")"
   if [[ "${comparison}" == 0 ]]; then
     rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"

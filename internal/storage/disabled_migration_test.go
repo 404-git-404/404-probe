@@ -90,7 +90,7 @@ func TestMigratesV4DatabaseWithAgentsEnabledByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err = Open(ctx, path)
+	store, err = openDatabase(ctx, path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

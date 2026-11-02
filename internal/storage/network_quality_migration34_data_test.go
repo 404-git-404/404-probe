@@ -117,7 +117,7 @@ func TestMigration34KeepsR23DataAndHistory(t *testing.T) {
 						return nil
 					}
 					t.Cleanup(func() { migration34FailAt = nil })
-					if _, err := Open(context.Background(), path); !errors.Is(err, injected) {
+					if _, err := openDatabase(context.Background(), path, 0); !errors.Is(err, injected) {
 						t.Fatalf("Open: %v", err)
 					}
 					db, err := sql.Open("sqlite", path)
@@ -139,7 +139,7 @@ func TestMigration34KeepsR23DataAndHistory(t *testing.T) {
 					}
 					migration34FailAt = nil
 				}
-				s, err := Open(context.Background(), path)
+				s, err := openDatabase(context.Background(), path, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
