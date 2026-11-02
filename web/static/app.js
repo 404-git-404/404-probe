@@ -1124,15 +1124,18 @@ let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
 const groupViews=new Map();
+const bannerHost=document.createElement('section');bannerHost.id='agent-list';bannerHost.hidden=true;container.after(bannerHost);
+const bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger)=>{planRenewal.close();deviceDetails.open(id,'overview',trigger);},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot)});
 function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs=dashboardUI.preferences.value;
   document.querySelector('#network-placeholder').hidden=prefs.viewMode!=='network';
   container.hidden=prefs.viewMode==='network';document.querySelector('.status-legend').hidden=prefs.viewMode==='network';
+  const cards=prefs.viewMode==='cards';container.hidden=!cards;bannerHost.hidden=prefs.viewMode!=='list';
   overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild});
   const allIds=[...agents.keys()],mounted=new Set();
-  for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
+  if(cards)for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
   for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);dormantCards.set(id,view);}
   for(const id of dormantCards.keys())if(!agents.has(id)){dormantCards.delete(id);renderedCardKeys.delete(id);}
   networkQuality.sync(allIds,mounted,agents);latencyCharts.sync(allIds);trafficCharts.sync(allIds);
@@ -1141,10 +1144,12 @@ function renderDashboard(dirty=null) {
   for(const [id,view]of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
   selectorView.refreshActive();
   empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
+  if(prefs.viewMode==='network')empty.classList.add('hidden');
+  if(prefs.viewMode==='list')for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,deadline}))deferred.add(id);
   const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([prefs.sort,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
   for(const [id,view]of groupViews)if(!liveGroups.has(id)){view.node.remove();groupViews.delete(id);}
   let groupPosition=container.firstElementChild;
-  for(const group of model.sections){
+  if(cards)for(const group of model.sections){
     let gv=groupViews.get(group.id);
     if(!gv){const node=document.createElement('section'),header=document.createElement('button'),body=document.createElement('div');node.className='dashboard-group';header.type='button';header.className='dashboard-group-header';header.addEventListener('click',()=>dashboardUI.collapse(group.id));body.className='dashboard-card-grid';node.append(header,body);gv={node,header,body};groupViews.set(group.id,gv);}
     const collapsed=prefs.collapsed.includes(group.id),counts={online:0,offline:0,paused:0,unknown:0};for(const a of group.items)counts[DashboardModel.lifecycle(a)]++;

@@ -13,6 +13,7 @@ import (
 
 // These are the reviewed production references, not a request-populated cache.
 var fingerprintAssetNames = []string{
+ "banner-view.js", "banner.css",
 	"theme.js", "theme-toggle.js",
 	"dashboard-data.js", "dashboard-model.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "dashboard.css", "dashboard-dialogs.css",
 	"agent-state.js", "app.js", "card-metrics.js", "device-details.js", "history.js",
@@ -28,7 +29,7 @@ var fingerprintAssetNames = []string{
 
 var staticPageNames = []string{"index.html", "history.html", "jobs.html", "schedules.html"}
 var staticPageReferences = map[string][]string{
-	"index.html":     {"theme.js", "style.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "card-layout.css", "card-v7.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "dashboard.css", "dashboard-dialogs.css", "agent-state.js", "dashboard-data.js", "dashboard-model.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "range-slider.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "latency-mini.js", "card-metrics.js", "card.js", "resource-history.js", "device-details.js", "plan-editor.js", "plan-renewal.js", "overview.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "plan-units.js", "youtube-status.js", "public-egress-check.js", "agent-enrollment.js", "app.js", "theme-toggle.js", "session.js"},
+	"index.html":     {"banner-view.js", "banner.css", "theme.js", "style.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "card-layout.css", "card-v7.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "dashboard.css", "dashboard-dialogs.css", "agent-state.js", "dashboard-data.js", "dashboard-model.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "range-slider.js", "network-quality-core.js", "network-quality.js", "traffic-chart.js", "latency-mini.js", "card-metrics.js", "card.js", "resource-history.js", "device-details.js", "plan-editor.js", "plan-renewal.js", "overview.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "plan-units.js", "youtube-status.js", "public-egress-check.js", "agent-enrollment.js", "app.js", "theme-toggle.js", "session.js"},
 	"history.html":   {"theme.js", "style.css", "agent-state.js", "management.js", "selector.js", "youtube-status.js", "public-egress-check.js", "history.js", "theme-toggle.js", "session.js"},
 	"jobs.html":      {"theme.js", "style.css", "jobs.js", "theme-toggle.js", "session.js"},
 	"schedules.html": {"theme.js", "style.css", "schedules.js", "theme-toggle.js", "session.js"},
