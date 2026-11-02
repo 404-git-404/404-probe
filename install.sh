@@ -3452,6 +3452,9 @@ upgrade_existing_server() (
   reject_openrc_deferred Server-upgrade
   local target current comparison active=0 enabled=0 helper_existed=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
   # Read-only support check precedes locks, candidates, backup rotation and service changes.
+  [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" \
+    && "$(stat -c '%U:%G:%a' "${SERVER_BINARY}")" == "root:root:755" ]] \
+    || die "installed Server binary ownership or mode is unsafe; no files were changed"
   current="$(identify_installed_server_version)" || exit 1
   require_supported_server_version "${current}"
   if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
