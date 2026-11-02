@@ -42,6 +42,8 @@ test('old non-V2 Agent instructions change display only and preserve other prior
    assert.equal(display(target,agent),text);assert.equal(target.supported,false);assert.equal(target.reason_code,reason_code);
   }
   assert.equal(hint(agent,server),text);
+  for(const reason_code of ['updater_unsupported','updater_future','rc_future'])
+   assert.equal(display({reason_code,reason:'original'},agent),display({reason_code,reason:'original'}));
   assert.equal(hint(agent,server,true),'正在升级，请等待完成');
   assert.equal(hint({...agent,online:false},server),display({reason_code:'agent_unavailable'}));
  }

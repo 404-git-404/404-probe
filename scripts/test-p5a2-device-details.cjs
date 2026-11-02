@@ -30,6 +30,20 @@ function fixture(fetch){const {doc,dialog,Element}=dom(),agents=new Map([[id,{ag
  const details=D.create({document:doc,state:S,agents,coordinator:queue,Plot,Resize:null,management:()=>pane,network:()=>({releaseHistory(){released++;},openHistoryFor(){restored++;}}),fetcher:(url,options)=>{requests.push({url,options});return fetch?fetch(url,options):Promise.resolve(new Response(JSON.stringify(dto(url.includes(other)?other:id))));}});
  return{doc,dialog,Element,agents,queue,details,requests,plots,pane,released:()=>released,restored:()=>restored,close(){details.shutdown();queue.close();}};
 }
+
+test('old Agent detail summary gives reinstall guidance in both target and updater-health rows',()=>{
+ const {doc,Element}=dom(),vm=require('node:vm'),fs=require('node:fs');
+ const context={AgentState:S,Management:{countries:()=>[]},Card:{trafficView:()=>({}),cycleDays:()=>null,resetText:()=>''},Date,Intl};
+ vm.runInNewContext(fs.readFileSync(require.resolve('../web/static/device-details.js'),'utf8'),context);
+ const actions=Object.fromEntries(['upgrade','reset','resetFeedback','google','googleFeedback','pause','remove','history'].map(k=>[k,new Element('button')]));
+ const summary=context.DetailSummary.create({document:doc,actions,egress:{addresses:new Element('div'),controls:new Element('div')},country:new Element('div'),canWrite:()=>true});
+ const agent={version:'v1.0.1',upgrade_v2:false,online:true};
+ for(const health of [undefined,{status:'unreachable'}]){
+  summary.update({...agent,updater_health:health},{version:'v1.1.0',supported:false,reason_code:'updater_unavailable'},{version:'v1.1.0'});
+  const text=summary.management.all().map(n=>n.textContent).join(' ');
+  assert.match(text,/请在机器上重新安装/);assert.doesNotMatch(text,/不用重装/);
+ }
+});
 test('OS1b actual security pane distinguishes platform unavailable from setup and other statuses',()=>{
  const f=fixture();try{for(const [status,reason,label]of [['unavailable','platform_unsupported','此平台暂不支持安全观察'],['unavailable','setup_required','需要配置'],['failed','platform_unsupported','采集失败'],['unavailable','sandbox_unavailable','当前环境无法运行安全观察'],['unavailable','collector_start_failed','本地安全采集服务启动失败'],['no_data','no_sing_box_logs','未发现 sing-box 日志'],['failed','journal_read_failed','采集失败'],['failed','invalid_export','采集失败']]){
   f.agents.get(id).security={supported:true,status,reason};f.details.open(id,'security');f.details.update(f.agents.get(id));

@@ -39,6 +39,8 @@ func TestPlatformServeConfirmedHandoffWiring(t *testing.T) {
 			}
 			callback, ok := call.Args[4].(*ast.Ident)
 			wired = ok && callback.Name == "reexecConfirmedUpdater"
+			committed, ok := call.Args[1].(*ast.Ident)
+			wired = wired && ok && committed.Name == "committed"
 			return true
 		})
 	}

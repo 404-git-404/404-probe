@@ -37,7 +37,7 @@
     const code=target?.reason_code;
     const order=compareReleaseVersions(agent?.version,'v1.0.1');
     // Display only: retain the Server's support decision and reason code.
-    if ((typeof code==='string' && (code.startsWith('updater_') || code.startsWith('rc_'))) && agent && !agent.upgrade_v2 && order!==null && order<=0)
+    if (['updater_unavailable','updater_socket_missing','updater_directory_missing','updater_unreachable','updater_identity_mismatch','rc_agent_required','rc_updater_required','rc_server_agent_required'].includes(code) && agent && !agent.upgrade_v2 && order!==null && order<=0)
       return '这台机器的 Agent 版本过旧，不能从面板升级，请在机器上重新安装';
     return Object.hasOwn(upgradeReasons,target?.reason_code) ? upgradeReasons[target.reason_code] : target?.reason || '';
   }
