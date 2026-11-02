@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -144,6 +145,11 @@ func openDatabase(ctx context.Context, path string, minimumSchema int) (*Store, 
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("database path is required")
 	}
+	if minimumSchema > 0 {
+		if err := checkExistingUpgradeSchemaReadOnly(ctx, path, minimumSchema); err != nil {
+			return nil, err
+		}
+	}
 	db, err := sql.Open("sqlite", sqliteOpenDSN(path))
 	if err != nil {
 		return nil, err
@@ -212,6 +218,40 @@ func sqliteOpenDSN(path string) string {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+func sqliteReadOnlyDSN(abs string) string {
+	return "file:" + (&url.URL{Path: filepath.ToSlash(abs)}).EscapedPath() + "?mode=ro"
+}
+
+// Inspect existing files without opening a writable connection: even closing a
+// writable SQLite connection can checkpoint a WAL belonging to a rejected DB.
+func checkExistingUpgradeSchemaReadOnly(ctx context.Context, path string, minimum int) error {
+	diskPath := sqliteDatabasePath(path)
+	if diskPath == "" { // An in-memory database has no existing file to protect.
+		return nil
+	}
+	info, err := os.Stat(diskPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("database is not a regular file")
+	}
+	abs, err := filepath.Abs(diskPath)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(abs))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	return checkUpgradeSchemaVersion(ctx, db, minimum, true)
+}
+
 // VerifyReadOnly checks an existing database without running migrations or
 // changing SQLite journal settings. It is safe to use against the live Server
 // database after the service has started.
@@ -227,7 +267,7 @@ func VerifyReadOnly(ctx context.Context, path string) (DatabaseVerification, err
 	if !info.Mode().IsRegular() {
 		return DatabaseVerification{}, errors.New("database is not a regular file")
 	}
-	dsn := "file:" + filepath.ToSlash(abs) + "?mode=ro"
+	dsn := sqliteReadOnlyDSN(abs)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return DatabaseVerification{}, err
@@ -1004,7 +1044,7 @@ func checkUpgradeSchemaVersion(ctx context.Context, db *sql.DB, minimum int, all
 	}
 	if allowEmpty && version == 0 {
 		var objects int
-		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE substr(name,1,7) <> 'sqlite_'`).Scan(&objects); err != nil {
 			return err
 		}
 		if objects == 0 {
