@@ -4,6 +4,21 @@ set -Eeuo pipefail
 temporary="$(mktemp -d)"
 trap 'rm -rf -- "${temporary}"' EXIT
 source <(sed '$d' "${INSTALLER_FIXTURE_INSTALLER}")
+# The default fixture masks /etc/passwd and /etc/group. Preserve observed
+# numeric ownership/mode, translating UID/GID 0 to their production names.
+stat() {
+  if [[ "$1" == -c && "$2" == '%U:%G:%a' ]]; then
+    local observed
+    observed="$(command stat -c '%u:%g:%a' "$3")" || return
+    if [[ "${observed}" == 0:0:* ]]; then
+      printf 'root:root:%s\n' "${observed##*:}"
+    else
+      printf '%s\n' "${observed}"
+    fi
+  else
+    command stat "$@"
+  fi
+}
 mkdir -p "$(dirname "${SERVER_BINARY}")" "$(dirname "${SERVER_UNIT}")" "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" "$(dirname "${INSTALL_HELPER}")"
 printf original-unit >"${SERVER_UNIT}"
 printf original-configuration >"${CONFIG_DIRECTORY}/server.env"
