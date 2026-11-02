@@ -91,12 +91,14 @@
       if(doc.hidden){for(const c of cards.values())release(c,true);if(timer!==null){clear(timer);timer=null;}}
       else{if(timer===null&&!closed)timer=interval(tick,30000);tick();}
     }
+    const themeChanged=()=>{for(const c of cards.values())draw(c);};
+    root.addEventListener?.('404-probe:themechange',themeChanged);
     doc.addEventListener('visibilitychange',visibility);
     if(!observer){root.addEventListener?.('scroll',fallback,{passive:true});root.addEventListener?.('resize',fallback,{passive:true});}
     if(!doc.hidden)timer=interval(tick,30000);
     return {mount,sync,tick,setActive(id,value){const c=cards.get(id);if(!c||c.active===value)return;c.active=value;if(!value)release(c,true);else refresh(c);},setVisible(id,value){const c=cards.get(id);if(c)visible(c,value);},
       close(){if(closed)return;closed=true;if(timer!==null)clear(timer);timer=null;observer?.disconnect();for(const c of [...cards.values()])retire(c);
-        doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
+        root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
       snapshot:()=>({cards:cards.size,requests:queue.snapshot(),timer:timer!==null,observations:[...cards.values()].map(c=>({id:c.id,active:c.active,visible:c.visible,loading:c.loading,points:c.data?.points.length||0}))})};
   }
   const api={create,bytes,paths};

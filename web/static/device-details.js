@@ -193,6 +193,8 @@
     }
     function visibility(){if(doc.hidden){if(tab==='resources'){pending=loading;release();}}else if(active('resources')&&pending){pending=false;request();}else if(active('resources'))renderPlot();}
     // Native close events are queued: an older event must not close a reopened modal.
+    const themeChanged=()=>{if(active('resources'))renderPlot();};
+    root.addEventListener?.('404-probe:themechange',themeChanged);
     const cancel=e=>{e.preventDefault();close();},closed=()=>{if(!dialog.open)close();};
     let backdropPress=false;
     const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);};
@@ -203,7 +205,7 @@
     dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',closed);doc.addEventListener('visibilitychange',visibility);
     return {open,close,update,active,
       sync(){if(current&&!agents.has(current)){close({restoreFocus:false});current=null;data=null;}},
-      shutdown(){close({restoreFocus:false});dead=true;release();doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);dialog.removeEventListener('pointerdown',pointerDown);dialog.removeEventListener('pointercancel',pointerCancel);dialog.removeEventListener('click',backdropClick);current=null;data=null;},
+      shutdown(){close({restoreFocus:false});dead=true;release();root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);dialog.removeEventListener('pointerdown',pointerDown);dialog.removeEventListener('pointercancel',pointerCancel);dialog.removeEventListener('click',backdropClick);current=null;data=null;},
       snapshot:()=>({id:current,tab,open:dialog.open,loading,points:data?.points.length||0,plot:!!plot,query:{...query},draft:{from:from.value,to:to.value}})};
   }
   const api={create};if(typeof module==='object'&&module.exports)module.exports=api;else root.DeviceDetails=api;

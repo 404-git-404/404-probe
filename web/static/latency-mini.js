@@ -234,11 +234,13 @@
     function retire(c){invalidate(c,true);c.dead=true;c.slider.destroy();c.resize?.disconnect();observer?.unobserve(c.node);c.node.remove();cards.delete(c.id);}
     function tick(){if(closed||doc.hidden)return;fallback();queue.pump();for(const c of cards.values())request(c);}
     function visibility(){if(doc.hidden){for(const c of cards.values())invalidate(c);if(timer!==null)clear(timer);timer=null;}else{if(timer===null&&!closed)timer=interval(tick,30000);tick();}}
+    function themeChanged(){for(const c of cards.values()){for(const [slot,b] of c.legend){const color=colorToken(colors[slot]);b.style.setProperty('--lm-color',color);const dot=b.querySelector('.lm-dot');if(dot)dot.style.background=color;}render(c);}}
+    root.addEventListener?.('404-probe:themechange',themeChanged);
     doc.addEventListener('visibilitychange',visibility);if(!observer){root.addEventListener?.('scroll',fallback,{passive:true});root.addEventListener?.('resize',fallback,{passive:true});}if(!doc.hidden)timer=interval(tick,30000);
     return {mount,bindConfig,familyChanged,tick,sync(ids){const live=new Set(ids);for(const c of [...cards.values()])if(!live.has(c.id))retire(c);},
       setActive(id,value){const c=cards.get(id);if(!c||c.active===value)return;c.active=value;if(!value)invalidate(c);else{render(c);request(c);}},
       setVisible(id,value){const c=cards.get(id);if(c)setVisible(c,value);},
-      close(){if(closed)return;closed=true;if(timer!==null)clear(timer);observer?.disconnect();for(const c of [...cards.values()])retire(c);doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
+      close(){if(closed)return;closed=true;if(timer!==null)clear(timer);observer?.disconnect();for(const c of [...cards.values()])retire(c);root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
       snapshot:()=>({cards:cards.size,requests:queue.snapshot(),views:[...cards.values()].map(c=>({id:c.id,protocol:c.protocol,family:family(c.id),isps:[...c.isps],follow:c.follow,start:c.range.start,end:c.range.end,visible:c.visible,loading:c.loading.size,cachedTargets:c.cache.size}))})};
   }
   const api={rangeText,create,normalize,normalizeMarks,mergeRuns,ratio,recent};if(typeof module==='object'&&module.exports)module.exports=api;else root.LatencyMini=api;

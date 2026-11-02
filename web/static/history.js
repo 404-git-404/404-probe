@@ -328,6 +328,7 @@ async function load() {
     };
     render();
     addEventListener('resize', render);
+    addEventListener('404-probe:themechange', render);
   } catch (error) {
     if (controller.signal.aborted || error.name === 'AbortError') return;
     empty.textContent = '加载失败';
