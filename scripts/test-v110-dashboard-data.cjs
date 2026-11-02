@@ -38,11 +38,13 @@ test('runtime summaries wait ten seconds per device and coalesce at one batch pe
  await api.refresh();
  for(let i=0;i<200;i++){state.event({agent_id:A,state:{cpu_percent:i}});api.telemetry(A);}
  assert.equal(state.agents.get(A).state.cpu_percent,199);await advance(9999);assert.equal(calls.length,1);
- await advance(20000);assert.equal(calls.length,2);api.telemetry(A);api.telemetry(B);
- await advance(20999);assert.equal(calls.length,2);await advance(21000);assert.equal(calls.length,3);
+ // FNV-1a phases are fixed test vectors: A=8005ms, B=4229ms.
+ await advance(18004);assert.equal(calls.length,1);
+ await advance(18005);assert.equal(calls.length,2);assert.equal(calls[1].time,18005);api.telemetry(A);api.telemetry(B);
+ await advance(19004);assert.equal(calls.length,2);await advance(19005);assert.equal(calls.length,3);assert.equal(calls[2].time,19005);
  assert.ok(calls[2].url.includes(B));assert.ok(!calls[2].url.includes(A));
- api.telemetry(A);await advance(29999);assert.equal(calls.length,3);await advance(30000);assert.equal(calls.length,4);
- api.metadata({agent_id:A,kind:'name'});await advance(30001);assert.equal(calls.length,5,'metadata bypasses telemetry delay');
+ api.telemetry(A);await advance(28004);assert.equal(calls.length,3);await advance(28005);assert.equal(calls.length,4);assert.equal(calls[3].time,28005);
+ api.metadata({agent_id:A,kind:'name'});await advance(28006);assert.equal(calls.length,5,'metadata bypasses telemetry delay');
  api.close();assert.equal(timers.size,0);
 });
 test('200-device ID phases split batches and full reads suppress queued telemetry',async()=>{
