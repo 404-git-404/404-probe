@@ -3451,12 +3451,15 @@ server_upgrade_trap() {
 upgrade_existing_server() (
   reject_openrc_deferred Server-upgrade
   local target current comparison active=0 enabled=0 helper_existed=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
-  # Read-only support check precedes locks, candidates, backup rotation and service changes.
-  [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" \
-    && "$(stat -c '%U:%G:%a' "${SERVER_BINARY}")" == "root:root:755" ]] \
-    || die "installed Server binary ownership or mode is unsafe; no files were changed"
-  current="$(identify_installed_server_version)" || exit 1
-  require_supported_server_version "${current}"
+  # A pending transaction must recover before inspecting the interrupted binary.
+  if [[ ! -e "${SERVER_UPGRADE_STATE}" ]]; then
+    # Read-only support check precedes locks, candidates, backup rotation and service changes.
+    [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" \
+      && "$(stat -c '%U:%G:%a' "${SERVER_BINARY}")" == "root:root:755" ]] \
+      || die "installed Server binary ownership or mode is unsafe; no files were changed"
+    current="$(identify_installed_server_version)" || exit 1
+    require_supported_server_version "${current}"
+  fi
   if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
     [[ -d "${SERVER_UPGRADE_LOCK_DIRECTORY}" && ! -L "${SERVER_UPGRADE_LOCK_DIRECTORY}" \
       && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK_DIRECTORY}")" == "root:root:700" ]] \
@@ -3486,6 +3489,13 @@ upgrade_existing_server() (
     restore_server_upgrade || die "interrupted upgrade recovery requires manual attention; recovery files were preserved"
     die "interrupted upgrade was recovered; run the installer again to start a fresh upgrade"
   fi
+  # The unlocked check only rejects unsupported starts without changing files.
+  # Re-read under the lock: another installer may have changed the binary.
+  [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" \
+    && "$(stat -c '%U:%G:%a' "${SERVER_BINARY}")" == "root:root:755" ]] \
+    || die "installed Server binary ownership or mode is unsafe; no files were changed"
+  current="$(identify_installed_server_version)" || exit 1
+  require_supported_server_version "${current}"
   [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" && -f "${SERVER_UNIT}" && ! -L "${SERVER_UNIT}" \
     && -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" && -f "${SERVER_DATABASE}" && ! -L "${SERVER_DATABASE}" ]] \
     || die "existing Server installation is incomplete or unsupported; no files were changed"

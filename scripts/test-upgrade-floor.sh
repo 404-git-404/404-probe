@@ -19,12 +19,44 @@ stat() {
     command stat "$@"
   fi
 }
+# Account names are hidden in this fixture; files are already owned by UID/GID0.
+install() {
+  local args=()
+  while (($#)); do
+    case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac
+  done
+  command install "${args[@]}"
+}
 mkdir -p "$(dirname "${SERVER_BINARY}")" "$(dirname "${SERVER_UNIT}")" "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" "$(dirname "${INSTALL_HELPER}")"
 printf original-unit >"${SERVER_UNIT}"
 printf original-configuration >"${CONFIG_DIRECTORY}/server.env"
 printf original-database >"${SERVER_DATABASE}"
 printf original-helper >"${INSTALL_HELPER}"
 managed="${INSTALLER_FIXTURE_ROOT}/system"
+
+# Recovery remains reachable even when the interrupted executable is unusable/old.
+for identity in unknown v1.0.8; do
+  if [[ "${identity}" == unknown ]]; then
+    printf '#!/bin/bash\nexit 1\n' >"${SERVER_BINARY}"
+  else
+    printf '#!/bin/bash\nprintf '\''{"version":"%s","dirty":false}\n'\''\n' "${identity}" >"${SERVER_BINARY}"
+  fi
+  chmod 0755 "${SERVER_BINARY}"
+  mkdir -p "${SERVER_UPGRADE_DIRECTORY}"
+  chmod 0700 "${SERVER_UPGRADE_DIRECTORY}"
+  printf pending >"${SERVER_UPGRADE_STATE}"
+  rm -f -- "${temporary}/restored"
+  if (
+    restore_server_upgrade() { printf restored >"${temporary}/restored"; }
+    upgrade_existing_server
+  ) >"${temporary}/recovery" 2>&1; then
+    printf 'FAIL recovery must request a fresh installer run\n'; exit 1
+  fi
+  [[ -f "${temporary}/restored" ]]
+  grep -Fq 'interrupted upgrade was recovered' "${temporary}/recovery"
+  rm -rf -- "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_LOCK_DIRECTORY}"
+  printf 'PASS interrupted %s Server enters recovery before version rejection\n' "${identity}"
+done
 
 # Real product transaction must reject before creating locks, candidates or backups.
 for identity in v1.0.8 unknown; do
