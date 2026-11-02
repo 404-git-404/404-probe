@@ -91,20 +91,26 @@ func platformServe(ctx context.Context) error {
 			if manager.current() != listener {
 				continue
 			}
-			if ctx.Err() != nil {
-				return nil
-			}
-			select {
-			case <-committed:
-				engine.mu.Lock()
-				confirmed := engine.state
-				engine.mu.Unlock()
-				return reexecConfirmedUpdater(confirmed)
-			default:
-			}
-			return err
+			return finishPlatformServe(ctx, committed, engine, err, reexecConfirmedUpdater)
 		}
 		go handleConnection(connection, engine, uint32(uid), manager)
+	}
+}
+
+// Preserve shutdown priority; only a committed/rolled-back transaction hands
+// the daemon to the confirmed installed executable after its listener closes.
+func finishPlatformServe(ctx context.Context, committed <-chan struct{}, engine *Engine, acceptErr error, reexec func(State) error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	select {
+	case <-committed:
+		engine.mu.Lock()
+		confirmed := engine.state
+		engine.mu.Unlock()
+		return reexec(confirmed)
+	default:
+		return acceptErr
 	}
 }
 
