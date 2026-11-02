@@ -101,19 +101,6 @@ func TestHandoffNeverExecutesPendingUnpersistedOrUnsafeBinary(t *testing.T) {
 	}
 }
 
-func TestLocalMigrationReturnsWithoutDaemonExec(t *testing.T) {
-	for _, status := range []string{"succeeded", "rolled_back", "failed"} {
-		err := finishUpdaterHandoff(true, State{Status: status}, func(State) error { t.Fatal("migration exec'd instead of returning"); return nil })
-		if (err == nil) != (status == "succeeded") {
-			t.Fatal(status, err)
-		}
-	}
-	called := false
-	if err := finishUpdaterHandoff(false, State{Status: "rolled_back"}, func(State) error { called = true; return nil }); err != nil || !called {
-		t.Fatal("normal daemon not wired to exec", err)
-	}
-}
-
 func TestTwoDigitHandoffOnCommitAndRollback(t *testing.T) {
 	for _, status := range []string{"succeeded", "rolled_back"} {
 		t.Run(status, func(t *testing.T) {

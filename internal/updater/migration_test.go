@@ -71,38 +71,6 @@ func versionedEngineFixture(t *testing.T, target string, schema int) (*Engine, R
 	return engine, request, live, previous, commands
 }
 
-func TestLocalMigrationPreservesExistingBinaryUntilRealHealth(t *testing.T) {
-	for _, from := range []string{"v0.9.3", "v1.0.0", "v1.0.1-beta.1", "v1.0.1-beta.2"} {
-		t.Run(from, func(t *testing.T) {
-			engine, request, live, previous, _ := versionedEngineFixture(t, "v1.0.1", 1)
-			engine.config.LocalMigration = true
-			engine.config.CurrentVersion = from
-			if _, err := engine.Start(request); err != nil {
-				t.Fatal(err)
-			}
-			state := waitLocalStatus(t, engine, request, "health_check")
-			if !state.LocalMigration {
-				t.Fatal("root authorization lost")
-			}
-			persisted, err := readStateFile(filepath.Join(engine.config.StateDirectory, "operation.json"))
-			if err != nil || !persisted.LocalMigration {
-				t.Fatal("persistent authorization", err)
-			}
-			if old, err := os.ReadFile(previous); err != nil || string(old) != "old-agent" {
-				t.Fatal("previous binary not preserved")
-			}
-			request.Action = ActionHealthy
-			if _, err := engine.Healthy(request); err != nil {
-				t.Fatal(err)
-			}
-			waitLocalStatus(t, engine, request, "succeeded")
-			if installed, err := os.ReadFile(live); err != nil || string(installed) != "new-agent" {
-				t.Fatal("installed binary", err)
-			}
-		})
-	}
-}
-
 func TestV2InterruptedStatesRetainAuthorizationAndRecover(t *testing.T) {
 	for _, status := range []string{"claimed", "downloading", "verifying", "staging", "installing", "restarting", "health_check"} {
 		t.Run(status, func(t *testing.T) {

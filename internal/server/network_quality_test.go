@@ -80,13 +80,13 @@ func TestN2aQualityHTTPCompatibilityAuthAndPartialACK(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "duplicate") {
 		t.Fatal("lost ACK retry", w.Body.String())
 	}
-	r := httptest.NewRequest(http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/tcp-mini", nil)
+	r := httptest.NewRequest(http.MethodGet, webAgentPathPrefix+id+"/network-quality/v5/card", nil)
 	unauth := httptest.NewRecorder()
 	a.Handler().ServeHTTP(unauth, r)
 	if unauth.Code == 200 {
 		t.Fatal("unauth GET")
 	}
-	r = httptest.NewRequest(http.MethodPut, webAgentPathPrefix+id+"/network-quality/config", strings.NewReader(`{}`))
+	r = httptest.NewRequest(http.MethodPut, webAgentPathPrefix+id+"/network-quality/v4/config", strings.NewReader(`{}`))
 	addTestWebSession(t, a, r)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Origin", "https://evil.test")

@@ -18,25 +18,9 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 	a.qualityV4Routes(mux, path)
 	mux.Handle("GET "+path+"v5/card", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardV5), true)))
 	mux.Handle("GET "+path+"v5/marks", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityMarksV5), true)))
-	// Routes of the catalog era. The static files are embedded in the binary, but a page that was open
-	// during a Server upgrade still calls them, so they answer 410 instead of vanishing (R07 4.1).
-	outdated := http.HandlerFunc(a.handleQualityClientOutdated)
-	mux.Handle("GET /api/v1/web/network-quality/catalog", qualityBudgetHandler(a.requireWebSession(outdated, true)))
-	for _, suffix := range []string{"config", "v2/config"} {
-		mux.Handle("GET "+path+suffix, qualityBudgetHandler(a.requireWebSession(outdated, true)))
-		mux.Handle("PUT "+path+suffix, qualityBudgetHandler(a.requireWebMutation(outdated)))
-	}
-	// v1.0.7 moved the card to v5/card; the old card read answers 410 so an open page asks to be refreshed.
-	mux.Handle("GET "+path+"v3/card-history", qualityBudgetHandler(a.requireWebSession(outdated, true)))
-	mux.Handle("GET "+path+"v3/card-config", qualityBudgetHandler(a.requireWebSession(outdated, true)))
-	// Schema 35 retires the TCP Mini evidence tables; R25 judges the stored minute buckets instead.
-	mux.Handle("GET "+path+"v3/tcp-mini", qualityBudgetHandler(a.requireWebSession(outdated, true)))
+
 }
 
-func (a *App) handleQualityClientOutdated(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	writeJobError(w, http.StatusGone, "client_outdated", "页面版本已过期，请刷新页面后重试")
-}
 func qualityWebPath(r *http.Request, suffix string) bool {
 	return validWebAgentID(r.PathValue("agent_id")) && r.URL.EscapedPath() == webAgentPathPrefix+r.PathValue("agent_id")+"/network-quality/"+suffix
 }

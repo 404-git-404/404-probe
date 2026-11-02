@@ -155,14 +155,3 @@ func containsAny(s string, needles ...string) bool {
 	}
 	return false
 }
-
-// Schema 35 retired the TCP Mini evidence; a page of v1.0.6 that is still open gets the "refresh" answer.
-func TestV107TCPMiniEndpointAnswersGone(t *testing.T) {
-	a, s, id, _ := testApp(t)
-	defer s.Close()
-	defer a.Shutdown()
-	w := qualityWebRequest(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/v3/tcp-mini?timezone=UTC", "")
-	if w.Code != http.StatusGone || !strings.Contains(w.Body.String(), "client_outdated") {
-		t.Fatal(w.Code, w.Body.String())
-	}
-}

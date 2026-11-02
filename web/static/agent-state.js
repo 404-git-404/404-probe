@@ -26,12 +26,10 @@
     updater_identity_mismatch: '这台机器的升级服务目录或连接文件被替换，或属主、权限不符合要求，升级按钮已停用。请保留现场并按升级服务排查文档检查；不要删除占位文件、改权限或反复重启，原配置和历史应保留。',
     updater_unsupported: '这台机器的系统（如 Alpine/OpenRC）暂不支持从面板升级，升级按钮已停用，监控仍可使用。请保持现状，等待后续版本；不要为了启用按钮修改服务或重装。',
     rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先按对应候选版的说明更新配套升级服务，保留原配置和历史。旧正式版迁移用的 v1.0.1 upgrade-agent 命令不能替代这一步。',
-    legacy_migration_required: '这台机器使用较旧的升级方式，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。（命令见 README 的升级说明）',
     agent_unavailable: '这台机器当前离线、已暂停或已撤销，升级按钮已停用。请先恢复连接或监控；已撤销的机器需要重新添加。',
     version_unrecognized: '面板无法识别这台机器当前的版本号，升级按钮已停用。请确认这台机器运行的是正式发布的程序（不用重装，原配置和历史会保留）。',
     already_latest: '这台机器已与面板版本相同，无需升级。以后更新面板后可再检查。',
     agent_newer_than_server: '这台机器的 Agent 比面板新，不能从面板降级；需要降级请在机器上重新安装。重装前请先确认是否需要保留配置和历史。',
-    old_beta_migration_required: '这台机器使用较早的测试版，暂时不能从面板升级。请先在机器上运行固定 v1.0.1 install.sh 的 upgrade-agent 命令修复升级服务，保留原配置和历史。（命令见 README 的升级说明）',
     rc_server_agent_required: '面板正在使用候选测试版，这台机器的旧版程序暂时不能从面板升级。请先在机器上更新配套程序，原有监控仍可使用。',
     server_build_ineligible: '当前面板版本不能发起远程升级，升级按钮已停用。请先将面板更新为官方发布的可升级版本。',
   });
@@ -78,8 +76,8 @@
       : updaterHealthReason(agent.updater_health) || (!agent.upgrade_capable ? 'updater_unavailable'
       : /-rc\./.test(server.version) && !rcAware ? 'rc_agent_required'
       : /-rc\./.test(agent.version) && !agent.upgrade_v2 ? 'rc_updater_required'
-      : /-beta\./.test(agent.version) && !agent.upgrade_v2 ? 'old_beta_migration_required'
-      : (server.required_protocol ?? 2) === 2 && !agent.upgrade_v2 ? 'legacy_migration_required'
+      : /-beta\./.test(agent.version) && !agent.upgrade_v2 ? 'updater_unavailable'
+      : (server.required_protocol ?? 2) === 2 && !agent.upgrade_v2 ? 'updater_unavailable'
       : !server.upgrade_eligible ? 'server_build_ineligible' : '');
     return upgradeReasonDisplay({reason_code: code}) || '可从面板升级到与面板相同的版本';
   }

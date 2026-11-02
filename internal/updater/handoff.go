@@ -2,21 +2,10 @@ package updater
 
 import (
 	"errors"
-	"fmt"
 	"runtime"
 
 	"404-probe/internal/buildinfo"
 )
-
-func finishUpdaterHandoff(migration bool, state State, reexec func(State) error) error {
-	if migration {
-		if state.Status == "succeeded" {
-			return nil
-		}
-		return fmt.Errorf("local migration did not commit: %s (%s); rerun upgrade-agent to recover", state.Status, state.FailureCode)
-	}
-	return reexec(state)
-}
 
 type updaterHandoffOps struct {
 	readState func(string) (State, error)

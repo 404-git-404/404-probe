@@ -122,7 +122,7 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if record.State == nil || !record.State.AgentUpgradeCapable {
-		writeJobError(w, http.StatusConflict, "bootstrap_required", "Updater missing: supported v0.9.3/v1.0.0 installations can use version-pinned v1.0.1 install.sh upgrade-agent to preserve identity and configuration")
+		writeJobError(w, http.StatusConflict, "bootstrap_required", "Updater unavailable; preserve identity and configuration and inspect the local updater")
 		return
 	}
 	if !releasemetadata.IsCommit(a.buildInfo.Commit) || (!a.buildInfo.UpgradeEligible() && !(a.buildInfo.ExplicitUpgradeEligible() && input.Channel == "beta" && input.ConfirmBeta)) {
@@ -142,18 +142,6 @@ func (a *App) handleCreateWebUpgrade(w http.ResponseWriter, r *http.Request) {
 	if !available.Supported {
 		writeJobError(w, 409, "bootstrap_required", available.Reason)
 		return
-	}
-	if requiresLegacyStaticProof(target.Version, record.State.AgentUpgradeV2) {
-		// Preserve the legacy Updater's Server-side static proof. Only this
-		// old-protocol path needs GitHub; modern tasks use buildInfo directly.
-		legacy, err := a.releaseTarget(r.Context(), target.Version)
-		if err == nil {
-			err = a.verifyLegacyRelease(r.Context(), legacy, record.State.Arch)
-		}
-		if err != nil {
-			writeJobError(w, 409, "release_unavailable", err.Error())
-			return
-		}
 	}
 	operationID, err := auth.NewID()
 	if err != nil {
@@ -235,10 +223,6 @@ func requiresNewUpgradeContract(version string) bool {
 	return ok && comparison >= 0
 }
 
-func requiresLegacyStaticProof(version string, v2 bool) bool {
-	comparison, ok := buildinfo.CompareReleaseVersions(version, "v1.0.1")
-	return !v2 && ok && comparison >= 0 && !requiresNewUpgradeContract(version)
-}
 func protocolCommit(t upgradeTarget) string {
 	if t.RequiredProtocol == 2 {
 		return t.Commit

@@ -17,7 +17,7 @@ func Host() Policy { return detect(runtime.GOOS, readRelease) }
 
 func (p Policy) CheckCommand(command string) error {
 	if p.DeferredUnsupported && (command == "updater" || command == "security-collect") {
-		return fmt.Errorf("%s is unsupported on this platform in v1.0 (deferred to v1.1)", command)
+		return fmt.Errorf("%s is not supported yet on this platform (暂不支持)", command)
 	}
 	return nil
 }

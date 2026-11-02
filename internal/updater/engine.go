@@ -43,8 +43,6 @@ type Inspector func(string) (CandidateBuildInfo, error)
 type ServiceCommand func(context.Context, string) error
 
 type EngineConfig struct {
-	// LocalMigration is set only by the root-only, fixed Beta-to-v1.0.1 CLI.
-	LocalMigration   bool
 	CurrentVersion   string
 	GOOS             string
 	GOARCH           string
@@ -142,9 +140,6 @@ func (e *Engine) Start(request Request) (State, error) {
 	if err := request.Validate(); err != nil {
 		return State{}, err
 	}
-	if e.config.LocalMigration && (request.ProtocolVersion != 1 || request.TargetVersion != "v1.0.1" || !supportedLocalMigrationSource(e.config.CurrentVersion)) {
-		return State{}, errors.New("local migration is restricted to old Beta -> v1.0.1 Stable")
-	}
 	if e.config.GOOS != "linux" || (e.config.GOARCH != "amd64" && e.config.GOARCH != "arm64") {
 		return State{}, errors.New("unsupported platform")
 	}
@@ -166,7 +161,6 @@ func (e *Engine) Start(request Request) (State, error) {
 	}
 	candidate := State{OperationID: request.OperationID, TargetVersion: request.TargetVersion, Status: "claimed", UpdatedAt: e.config.Now().UnixMilli()}
 	candidate.SourceVersion = e.config.CurrentVersion
-	candidate.LocalMigration = e.config.LocalMigration
 	if request.ProtocolVersion == 2 {
 		candidate.ProtocolVersion = 2
 		candidate.Channel = request.Channel
@@ -205,10 +199,6 @@ func (e *Engine) Start(request Request) (State, error) {
 		return candidate, fmt.Errorf("updater start state committed but parent directory sync failed: %w", persistErr)
 	}
 	return candidate, nil
-}
-
-func supportedLocalMigrationSource(version string) bool {
-	return version == "v0.9.3" || version == "v1.0.0" || version == "v1.0.1-beta.1" || version == "v1.0.1-beta.2"
 }
 
 func (e *Engine) Status(request Request) (State, error) {
@@ -715,9 +705,6 @@ func readStateFile(path string) (State, error) {
 	var state State
 	if protocol.DecodeUpgradeJSON(data, &state) != nil || !validOperationID(state.OperationID) || (state.ReleaseCommit != "" && !releasemetadata.IsCommit(state.ReleaseCommit)) || (Request{ProtocolVersion: stateProtocol(state), Action: ActionStatus, OperationID: state.OperationID, TargetVersion: state.TargetVersion, Channel: state.Channel, TargetCommit: state.TargetCommit, ServerVersion: state.ServerVersion}).Validate() != nil {
 		return State{}, errors.New("stored updater state is invalid")
-	}
-	if state.LocalMigration && (stateProtocol(state) != 1 || state.TargetVersion != "v1.0.1") {
-		return State{}, errors.New("invalid local migration authorization")
 	}
 	if state.SourceVersion != "" {
 		comparison, ok := buildinfo.CompareReleaseVersions(state.SourceVersion, state.TargetVersion)

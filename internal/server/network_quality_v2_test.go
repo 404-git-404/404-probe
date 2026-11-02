@@ -194,27 +194,3 @@ func TestR07QualityNegotiationOverHTTP(t *testing.T) {
 		t.Fatal("Server gave Alpine work", w.Body.String())
 	}
 }
-
-// Old routes of the catalog era answer 410 so that a page left open during a Server upgrade says so
-// instead of failing silently (design 4.1).
-func TestR07OldQualityRoutesAnswerClientOutdated(t *testing.T) {
-	a, s, id, _ := testApp(t)
-	defer s.Close()
-	defer a.Shutdown()
-	base := webAgentPathPrefix + id + "/network-quality/"
-	for _, tc := range []struct{ method, path string }{
-		{"GET", "/api/v1/web/network-quality/catalog"},
-		{"GET", base + "config"}, {"PUT", base + "config"},
-		{"GET", base + "v2/config"}, {"PUT", base + "v2/config"},
-		{"GET", base + "v3/card-config"},
-	} {
-		w := qualityWebRequest(t, a, tc.method, tc.path, `{"expected_revision":"0"}`)
-		var body struct {
-			Error struct{ Code, Message string }
-		}
-		_ = json.Unmarshal(w.Body.Bytes(), &body)
-		if w.Code != http.StatusGone || body.Error.Code != "client_outdated" || body.Error.Message != "页面版本已过期，请刷新页面后重试" || w.Header().Get("Cache-Control") != "no-store" {
-			t.Fatalf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body.String())
-		}
-	}
-}

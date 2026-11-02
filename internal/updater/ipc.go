@@ -88,7 +88,6 @@ func (r Request) Validate() error {
 
 type State struct {
 	SourceVersion   string `json:"source_version,omitempty"`
-	LocalMigration  bool   `json:"local_migration,omitempty"`
 	ServerVersion   string `json:"server_version,omitempty"`
 	ProtocolVersion int    `json:"protocol_version,omitempty"`
 	Channel         string `json:"channel,omitempty"`
