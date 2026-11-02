@@ -161,13 +161,13 @@ func m34Specs() []m34Spec {
 	all := []string{"telecom", "unicom", "mobile"}
 	var specs []m34Spec
 	slotsA, intervalsA, targetsA := m34Catalog(all, 5)
-	province := m34Spec{name: "province", revision: 5, enabled: true, regionID: `["province","娌冲寳",null]`, slots: slotsA, intervals: intervalsA, targets: targetsA, history: true}
+	province := m34Spec{name: "province", revision: 5, enabled: true, regionID: `["province","河北",null]`, slots: slotsA, intervals: intervalsA, targets: targetsA, history: true}
 	specs = append(specs, province)
 	city := province
-	city.name, city.regionID = "city", `["city","骞夸笢","娣卞湷"]`
+	city.name, city.regionID = "city", `["city","广东","深圳"]`
 	specs = append(specs, city)
 	unknown := province
-	unknown.name, unknown.regionID = "unknown province", `["province","棣欐腐",null]`
+	unknown.name, unknown.regionID = "unknown province", `["province","香港",null]`
 	specs = append(specs, unknown)
 	none := province
 	none.name, none.regionID = "unselected", ""
@@ -181,11 +181,11 @@ func m34Specs() []m34Spec {
 	specs = append(specs, paused)
 	fromChoices := province
 	fromChoices.name, fromChoices.regionID = "choices region", ""
-	fromChoices.choices = `[{"slot":"telecom","source":"catalog","protocol":"tcp","region":"[\"province\",\"姹熻嫃\",null]"},{"slot":"unicom","source":"catalog","protocol":"tcp"},{"slot":"mobile","source":"catalog","protocol":"tcp"}]`
+	fromChoices.choices = `[{"slot":"telecom","source":"catalog","protocol":"tcp","region":"[\"province\",\"江苏\",null]"},{"slot":"unicom","source":"catalog","protocol":"tcp"},{"slot":"mobile","source":"catalog","protocol":"tcp"}]`
 	specs = append(specs, fromChoices)
 	fromLanes := province
 	fromLanes.name, fromLanes.regionID = "lanes region", ""
-	fromLanes.lanes = `[{"slot":"mobile","family":"ipv4","protocol":"tcp","source":"catalog","region":"[\"city\",\"鍥涘窛\",\"鎴愰兘\"]","enabled":true}]`
+	fromLanes.lanes = `[{"slot":"mobile","family":"ipv4","protocol":"tcp","source":"catalog","region":"[\"city\",\"四川\",\"成都\"]","enabled":true}]`
 	specs = append(specs, fromLanes)
 	specs = append(specs, m34Spec{name: "enabled without targets", revision: 2, enabled: true})
 	orphan := province
@@ -309,10 +309,10 @@ func TestMigration34UserTargetsFromSchema33And32(t *testing.T) {
 				t.Fatalf("R23 column missing: %d %v", premium, err)
 			}
 			wantRegion := map[string][3]string{
-				"province": {"娌冲寳", "娌冲寳", "娌冲寳"}, "city": {"骞夸笢", "骞夸笢", "骞夸笢"}, "unknown province": {"", "", ""}, "unselected": {"", "", ""},
-				"paused": {"娌冲寳", "娌冲寳", "娌冲寳"}, "choices region": {"姹熻嫃", "", ""}, "lanes region": {"", "", "鍥涘窛"},
+				"province": {"河北", "河北", "河北"}, "city": {"广东", "广东", "广东"}, "unknown province": {"", "", ""}, "unselected": {"", "", ""},
+				"paused": {"河北", "河北", "河北"}, "choices region": {"江苏", "", ""}, "lanes region": {"", "", "四川"},
 				"enabled without targets": {"", "", ""}, "no config row": {"", "", ""}, "unreadable choices": {"", "", ""},
-				"damaged payload": {"娌冲寳", "娌冲寳", "娌冲寳"}, "already retired": {"娌冲寳", "娌冲寳", "娌冲寳"}, "alpine": {"娌冲寳", "娌冲寳", "娌冲寳"}, "revoked": {"娌冲寳", "娌冲寳", "娌冲寳"},
+				"damaged payload": {"河北", "河北", "河北"}, "already retired": {"河北", "河北", "河北"}, "alpine": {"河北", "河北", "河北"}, "revoked": {"河北", "河北", "河北"},
 			}
 			for name, id := range ids {
 				var revision, settings, interval, granted int64

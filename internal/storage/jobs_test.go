@@ -1284,7 +1284,7 @@ func TestSubmitResultRollsBackWhenJobUpdateFails(t *testing.T) {
 func TestMigratesV2ToV4WithoutChangingV01Data(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "v2.db")
 	prepareV2Database(t, path)
-	store, err := Open(context.Background(), path)
+	store, err := openDatabase(context.Background(), path, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
