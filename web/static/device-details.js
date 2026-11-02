@@ -73,6 +73,8 @@
 /* One native dialog, independent of card remounts. History never follows SSE. */
 (function(root) {
   'use strict';
+  const colorToken=name=>globalThis.getComputedStyle?.(globalThis.document?.documentElement)?.getPropertyValue('--color-'+name).trim()||'';
+
   const H=root.ResourceHistory||(typeof require==='function'?require('./resource-history.js'):null);
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   function create({document:doc=root.document,state=root.AgentState,agents,coordinator,fetcher=(...args)=>root.fetch(...args),
@@ -180,8 +182,8 @@
         if(key==='traffic'){box.classList.add('resource-wide');summary.replaceChildren(el('span','details-down','↓ '+fmt(stats.rx_total)),el('span','details-up','↑ '+fmt(stats.tx_total)),el('span','',`峰值 ↓ ${peak(stats.rx?.max)}/s · ↑ ${peak(stats.tx?.max)}/s`));}
         const adapted=H.columns(data,key);if(key==='memory'){adapted.data=adapted.data.slice(0,2);adapted.spec={...adapted.spec,names:['内存']};}const spec=adapted.spec,width=()=>Math.max(210,Math.floor(canvas.getBoundingClientRect().width));
         const p=new Plot({width:width(),height:key==='traffic'?150:110,legend:{show:false},cursor:{drag:{x:false,y:false}},padding:[0,0,0,0],scales:{x:{time:true},y:{range:(_u,min,max)=>[0,key==='cpu'?Math.max(20,max*1.1):key==='memory'?Math.max(50,max*1.1):Math.max(1,max*1.05)]}},
-          axes:[{show:false},{show:true,size:0,grid:{stroke:'#E6DDD1',width:.8},ticks:{show:false},splits:(_u,_i,min,max)=>key==='traffic'?[0,max/2,max*.75]:[0,max/2],values:()=>[]}],
-          series:[{},...spec.names.map((label,i)=>({label,stroke:key==='memory'?'#3D6FA8':['#1F7A6C','#7A4FA0'][i],fill:key==='memory'?'#3D6FA818':i?'#7A4FA016':'#1F7A6C20',width:1.5,spanGaps:false,points:{show:false}}))],
+          axes:[{show:false},{show:true,size:0,grid:{stroke:colorToken('chart-grid'),width:.8},ticks:{show:false},splits:(_u,_i,min,max)=>key==='traffic'?[0,max/2,max*.75]:[0,max/2],values:()=>[]}],
+          series:[{},...spec.names.map((label,i)=>({label,stroke:key==='memory'?colorToken('chart-memory'):[colorToken('chart-down'),colorToken('chart-up')][i],fill:key==='memory'?colorToken('text-68'):i?colorToken('text-69'):colorToken('text-70'),width:1.5,spanGaps:false,points:{show:false}}))],
           hooks:{setCursor:[u=>{const point=adapted.points[u.cursor.idx];if(point&&active('resources'))select(data.points.indexOf(point));}]}},adapted.data,canvas);
         p.over?.addEventListener('pointerdown',e=>{if(!active('resources')||e.isPrimary===false)return;const r=p.over.getBoundingClientRect(),point=adapted.points[p.posToIdx(e.clientX-r.left)];if(point)select(data.points.indexOf(point));});
         const labels=el('div','resource-axis-labels');for(let i=0;i<5;i++){const v=data.from+(data.to-data.from)*i/4,d=new Date(query.hours===24?Math.round(v/3600000)*3600000:v),pad=n=>String(n).padStart(2,'0');labels.append(el('span','',i===4?'现在':query.hours===168?pad(d.getMonth()+1)+'-'+pad(d.getDate()):(i===0&&query.hours===24?'昨天 ':'')+pad(d.getHours())+':'+pad(d.getMinutes())));}box.append(labels);plots.push(p);if(!plot)plot=p;

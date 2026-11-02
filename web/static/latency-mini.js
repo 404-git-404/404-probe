@@ -2,10 +2,12 @@
    a two-handle range. The Server owns the samples; the page only draws them. */
 (function(root){
   'use strict';
+  const colorToken=name=>globalThis.getComputedStyle?.(globalThis.document?.documentElement)?.getPropertyValue('--color-'+name).trim()||'';
+
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   const RS=root.RangeSlider||(typeof require==='function'?require('./range-slider.js'):null);
   const MINUTE=60000,HOUR=3600000,DAY=24*HOUR,TTL=120000,MIN_SPAN=10*MINUTE;
-  const colors={telecom:'#3D6FA8',unicom:'#8A5BB0',mobile:'#4F5B62'};
+  const colors={telecom:'chart-memory',unicom:'chart-unicom',mobile:'chart-mobile'};
   const finite=C.finite,integer=v=>Number.isSafeInteger(v)&&v>=0;
   const identity=t=>JSON.stringify([t.id,t.slot,t.family,t.protocol,t.slot_revision,t.status]);
   const metric=t=>t.protocol==='tcp'?'pure_connect':'echo_rtt';
@@ -109,11 +111,11 @@
       const pw=Math.max(1,w-left),x=v=>left+(v-start)/(end-start)*pw,y=v=>ph-ratio(v)*(ph-4)-1,topY=y(CEIL),mw=pw/((end-start)/MINUTE),ns='http://www.w3.org/2000/svg';
       const svg=doc.createElementNS(ns,'svg');svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.setAttribute('aria-hidden','true');
       const add=(tag,attrs,text)=>{const n=doc.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,String(v));if(text!=null)n.textContent=text;svg.append(n);return n;};
-      for(const v of GRID)add('path',{d:`M${left} ${y(v).toFixed(2)}H${w}`,fill:'none',stroke:'#e6ddd1','stroke-width':.6,'data-grid':v});
-      add('path',{d:`M${left} 1V${ph}H${w}`,fill:'none',stroke:'#b9aa99','stroke-width':.6});
-      for(const v of GRID)add('text',{x:left-4,y:Math.max(8,y(v)+3),fill:'#5E564D','font-size':9,'font-family':'Arial,sans-serif','text-anchor':'end'},String(v)).dataset.axisTick=String(v);
+      for(const v of GRID)add('path',{d:`M${left} ${y(v).toFixed(2)}H${w}`,fill:'none',stroke:colorToken('chart-grid'),'stroke-width':.6,'data-grid':v});
+      add('path',{d:`M${left} 1V${ph}H${w}`,fill:'none',stroke:colorToken('chart-axis'),'stroke-width':.6});
+      for(const v of GRID)add('text',{x:left-4,y:Math.max(8,y(v)+3),fill:colorToken('text-secondary'),'font-size':9,'font-family':'Arial,sans-serif','text-anchor':'end'},String(v)).dataset.axisTick=String(v);
       for(const {t,points}of rows){
-        const color=colors[t.slot],name=label(c,t.slot);let d='',prev=null,run=null;
+        const color=colorToken(colors[t.slot]),name=label(c,t.slot);let d='',prev=null,run=null;
         // Minutes above the ruler are one dashed run on the top edge; the solid line joins it from, and back to, the scale.
         const flush=()=>{if(!run)return;const x1=x(run.first.start),x2=x(run.last.start)+Math.max(mw,3);
           const dash=add('path',{d:`M${x1.toFixed(2)},${topY}H${x2.toFixed(2)}`,fill:'none',stroke:color,'stroke-width':1.4,'stroke-dasharray':DASH,'data-boundary':'above-scale','data-start':run.first.start,'data-minutes':run.n});
@@ -134,10 +136,10 @@
         }
         flush();if(d.includes('L'))add('path',{d,fill:'none',stroke:color,'stroke-width':1.3});
       }
-      if(c.cursor!==null&&c.cursor>=start&&c.cursor<=end)add('path',{d:`M${x(c.cursor).toFixed(2)} 1V${ph}`,fill:'none',stroke:'#2A2622','stroke-width':.8,'data-cursor':'true'});
+      if(c.cursor!==null&&c.cursor>=start&&c.cursor<=end)add('path',{d:`M${x(c.cursor).toFixed(2)} 1V${ph}`,fill:'none',stroke:colorToken('text'),'stroke-width':.8,'data-cursor':'true'});
       const lanes=[...c.isps].map(slot=>C.laneNotice(c.config,slot,family(c.id),c.protocol)),stopped=lanes.filter(n=>n&&!n.measured),allStopped=c.config&&lanes.length>0&&stopped.length===lanes.length,
         message=!c.isps.size?'未选择卡槽':inactive(c)?'设备暂停/撤销':!c.config?'等待配置':allStopped?stopped[0].text:!values.length?(c.loading.size?'读取历史…':rows.some(r=>r.entry?.error)?'历史读取失败':'暂无有效 RTT'):rows.some(r=>r.entry?.error)||c.agent.online===false?'旧历史':'';
-      if(message)add('text',{x:left+pw/2,y:14,fill:'#5E564D','font-size':10,'font-family':'Arial,sans-serif','text-anchor':'middle'},message);
+      if(message)add('text',{x:left+pw/2,y:14,fill:colorToken('text-secondary'),'font-size':10,'font-family':'Arial,sans-serif','text-anchor':'middle'},message);
       c.plot.replaceChildren(svg);
       c.plot.dataset.scale='fixed-sqrt';c.plot.dataset.start=String(start);c.plot.dataset.end=String(end);c.plot.dataset.pointCount=String(values.length);c.plot.dataset.axisLeft=String(left);
       c.plot.title='';
@@ -206,7 +208,7 @@
         const fam=segment([['ipv4','IPv4'],['ipv6','IPv6']],'',f=>{if(family(c.id)!==f)setFamily(c.id,f);},'lm-family-');c.families=fam.map;
         const settings=btn('设置',event=>openSettings(c.id,event.currentTarget),'lm7-btn');settings.dataset.focusKey='lm-settings';
         head.append(title,proto.group,fam.group,settings);
-        for(const slot of C.slots){const b=btn('',()=>{invalidate(c);if(c.isps.has(slot))c.isps.delete(slot);else c.isps.add(slot);render(c);request(c);});const dot=el('span','lm-dot');dot.setAttribute('aria-hidden','true');dot.style.background=colors[slot];const num=el('span','lm-num'),loss=el('span','lm-loss');loss.hidden=true;c.nums.set(slot,num);const nameNode=el('span','lm-name',C.names[slot]);c.legendNodes.set(slot,{b,nameNode,loss});b.title=C.names[slot];b.append(dot,nameNode,num,loss);b.style.setProperty('--lm-color',colors[slot]);b.setAttribute('aria-label',C.names[slot]+' RTT 曲线');b.dataset.focusKey='lm-'+slot;c.legend.set(slot,b);legend.append(b);}
+        for(const slot of C.slots){const b=btn('',()=>{invalidate(c);if(c.isps.has(slot))c.isps.delete(slot);else c.isps.add(slot);render(c);request(c);});const dot=el('span','lm-dot');dot.setAttribute('aria-hidden','true');dot.style.background=colorToken(colors[slot]);const num=el('span','lm-num'),loss=el('span','lm-loss');loss.hidden=true;c.nums.set(slot,num);const nameNode=el('span','lm-name',C.names[slot]);c.legendNodes.set(slot,{b,nameNode,loss});b.title=C.names[slot];b.append(dot,nameNode,num,loss);b.style.setProperty('--lm-color',colorToken(colors[slot]));b.setAttribute('aria-label',C.names[slot]+' RTT 曲线');b.dataset.focusKey='lm-'+slot;c.legend.set(slot,b);legend.append(b);}
         const span=el('span','lm7-span','24h');rangeRow.append(span,c.slider.element);
         head.title='每分钟一个点的 5 分钟滑动 P50；缺测断线；超过 1000 ms 用顶边虚线表示';
         node.append(head,legend,plot,rangeRow,output,tip);

@@ -1,3 +1,4 @@
+const colorToken=name=>globalThis.getComputedStyle?.(globalThis.document?.documentElement)?.getPropertyValue('--color-'+name).trim()||'';
 const id = new URLSearchParams(location.search).get('id');
 const empty = document.querySelector('#history-empty');
 const outboundStatus = document.querySelector('#outbounds-status');
@@ -253,8 +254,8 @@ function draw(canvas, points, key, color, format) {
   context.clearRect(0, 0, width, height);
   const values = points.map(point => Number(point[key] || 0));
   const maximum = Math.max(1, ...values) * 1.1;
-  context.strokeStyle = '#c8beb1';
-  context.fillStyle = '#5c554d';
+  context.strokeStyle = colorToken('text-71');
+  context.fillStyle = colorToken('text-72');
   context.font = '11px system-ui';
   for (let index = 0; index <= 4; index++) {
     const y = padding + (height - padding * 2) * index / 4;
@@ -320,10 +321,10 @@ async function load() {
       return;
     }
     const render = () => {
-      draw(document.querySelector('#cpu'), points, 'cpu', '#4f8b63', value => `${value.toFixed(0)}%`);
-      draw(document.querySelector('#ram'), points, 'ram_percent', '#c47729', value => `${value.toFixed(0)}%`);
-      draw(document.querySelector('#rx'), points, 'rx_rate', '#826247', rate);
-      draw(document.querySelector('#tx'), points, 'tx_rate', '#b84f48', rate);
+      draw(document.querySelector('#cpu'), points, 'cpu', colorToken('text-73'), value => `${value.toFixed(0)}%`);
+      draw(document.querySelector('#ram'), points, 'ram_percent', colorToken('text-74'), value => `${value.toFixed(0)}%`);
+      draw(document.querySelector('#rx'), points, 'rx_rate', colorToken('text-75'), rate);
+      draw(document.querySelector('#tx'), points, 'tx_rate', colorToken('text-76'), rate);
     };
     render();
     addEventListener('resize', render);

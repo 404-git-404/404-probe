@@ -1,6 +1,8 @@
 /* Narrow card/config/history UI; samples remain Server-owned, never persisted by this page. */
 (function(root) {
   'use strict';
+  const colorToken=name=>globalThis.getComputedStyle?.(globalThis.document?.documentElement)?.getPropertyValue('--color-'+name).trim()||'';
+
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   const OUTDATED='页面已过期，请刷新',CONFLICT='配置已被其他页面修改',CONFIG_REFRESH_MS=30000,SUMMARY_FRESH_MS=25000;
   function create({document:doc=root.document,fetcher=(...args)=>root.fetch(...args),csrf=()=>'',unauthorized=()=>root.location.assign('/login'),
@@ -401,12 +403,12 @@
       const measured=data[0].filter((_x,i)=>data.slice(1).some(col=>C.finite(col[i]))).length;
       if(measured<2){chart.append(el('p','nq-empty',measured===1?'只有一个真实测量时间桶；不补点绘图':'暂无可绘制测量数据'));return;}
       if(!Plot){chart.append(el('p','nq-empty','本地图表库未加载'));return;}
-      const color=root.getComputedStyle?.(dialog)?.color||'#dfd8cc';
+      const color=root.getComputedStyle?.(dialog)?.color||colorToken('text-77');
       const width=()=>Math.max(240,Math.floor(chart.getBoundingClientRect().width));
       plot=new Plot({width:width(),height:320,legend:{show:true},cursor:{drag:{x:false,y:false}},
         scales:{x:{time:true},y:h.kind==='ratio'?{range:()=>[0,100]}:{auto:true}},
-        axes:[{stroke:color,grid:{stroke:'#8883'}},{stroke:color,font:AXIS_FONT,grid:{stroke:'#8883'},values:(_u,ticks)=>axisLabels(ticks,h.kind),size:(_u,values)=>axisWidth(values)}],
-        series:[{},...data.slice(1).map((_col,i)=>({label:h.kind==='latency'?(i===0?'P50':'P95'):r.label,stroke:i===0?'#65b9a6':'#dfaa65',spanGaps:false,width:2}))],
+        axes:[{stroke:color,grid:{stroke:colorToken('text-78')}},{stroke:color,font:AXIS_FONT,grid:{stroke:colorToken('text-78')},values:(_u,ticks)=>axisLabels(ticks,h.kind),size:(_u,values)=>axisWidth(values)}],
+        series:[{},...data.slice(1).map((_col,i)=>({label:h.kind==='latency'?(i===0?'P50':'P95'):r.label,stroke:i===0?colorToken('text-79'):colorToken('text-80'),spanGaps:false,width:2}))],
         hooks:{setCursor:[u=>{const b=adapted.blocks[u.cursor.idx];tooltip.textContent=b?C.blockText(b,h.target.protocol):'';}]}
       },data,chart);
       if(Resize){resize=new Resize(()=>{if(history===h&&historyActive(h)&&plot)plot.setSize({width:width(),height:320});});resize.observe(chart);}
