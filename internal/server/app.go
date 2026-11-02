@@ -729,7 +729,7 @@ func (a *App) Shutdown() {
 }
 
 func (a *App) CleanupLoop() {
-	if a.updateCheck != nil {
+	if a.webAuth != nil && a.updateCheck != nil {
 		a.updateCheck.Start(a.shutdown)
 	}
 	a.startDashboardNetworkWarmup()

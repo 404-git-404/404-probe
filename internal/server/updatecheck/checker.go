@@ -61,6 +61,14 @@ func newChecker(initial State, info buildinfo.Info, logger *slog.Logger) *Checke
 	return c
 }
 
+// NewDisabled is a permanently inactive checker for Servers without Web
+// authentication. It neither reads local settings nor starts network work.
+func NewDisabled(info buildinfo.Info, logger *slog.Logger) *Checker {
+	c := newChecker(State{}, info, logger)
+	c.closed = true
+	return c
+}
+
 func randomDelay() time.Duration {
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(9*time.Minute)))
 	if err != nil {

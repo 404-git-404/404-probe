@@ -14,6 +14,8 @@
 
 ## v1.1.0 版本检查缓存
 
+未启用 Web 认证（`webAuth == nil`）的 Server 不启动版本检查器，不读取更新检查设置，Snapshot 固定为关闭状态且不发外网请求；安装器正常创建的带 Web 认证 Server 仍按开关设置运行。
+
 `GET /api/v1/web/version` 保留原字段，新增 `update:{enabled,latest,newer,checked_at}`。`latest` 缺失为 ""，`checked_at` 为最近成功查询的 Unix 毫秒、缺失为 0；仅 `newer=true` 时提示。关闭、开发/dirty/RC 本机构建均不提示。失败保留上一次成功值，页面不显示网络错误。读取此接口不访问外网、不唤醒检查器。
 
 `PUT /api/v1/web/settings/update-check` 使用现有会话、Origin、`Sec-Fetch-Site: same-origin` 和 `X-CSRF-Token` 校验；JSON 请求 `{"enabled":bool}`，上限 1 KiB，返回上述 update 对象本身。状态文件损坏/不可读时 `enabled=false`，设置弹窗仍可显式开启，成功保存会原子覆盖坏文件。保存失败返回 500，前端应保留原开关状态。关闭保留缓存但使 `newer=false`；重新开启仍受成功请求间隔至少 12 小时约束，其他情况下随机延迟 1–10 分钟后检查。

@@ -10,6 +10,10 @@ import (
 )
 
 func (a *App) initializeUpdateCheck() {
+	if a.webAuth == nil {
+		a.updateCheck = updatecheck.NewDisabled(a.buildInfo, a.logger)
+		return
+	}
 	path := ""
 	if dir := a.store.StateDirectory(); dir != "" {
 		path = filepath.Join(dir, "update-check.json")
