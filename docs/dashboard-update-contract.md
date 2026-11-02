@@ -14,6 +14,10 @@
 
 ## v1.1.0 版本检查缓存
 
+状态文件的 `checked_at` 若超过 Server 当前时间五分钟，会清为 0 并保留上次已验证的 latest，记录一次警告并重新安排检查；0 也可能表示成功缓存的时间不可信。时钟回拨不会触发“尚未满 12 小时”的负差值门槛，启动剩余等待最多 12 小时。写盘与缓存读取使用不同锁，磁盘持久化挂起不阻塞 `/version` 的 Snapshot；设置保存失败保留内存原值。主动关闭引发的请求取消不算检查失败。
+
+默认外联、状态文件和卸载保留规则见 [新版本检查运维说明](update-check-operations.md)。
+
 未启用 Web 认证（`webAuth == nil`）的 Server 不启动版本检查器，不读取更新检查设置，Snapshot 固定为关闭状态且不发外网请求；安装器正常创建的带 Web 认证 Server 仍按开关设置运行。
 
 `GET /api/v1/web/version` 保留原字段，新增 `update:{enabled,latest,newer,checked_at}`。`latest` 缺失为 ""，`checked_at` 为最近成功查询的 Unix 毫秒、缺失为 0；仅 `newer=true` 时提示。关闭、开发/dirty/RC 本机构建均不提示。失败保留上一次成功值，页面不显示网络错误。读取此接口不访问外网、不唤醒检查器。
