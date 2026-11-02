@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,75 @@ import (
 
 	"404-probe/internal/server/updatecheck"
 )
+
+func TestUpdateCheckSettingsAdditionalValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, contentType string
+		fetchSite               bool
+		want                    int
+	}{
+		{"content_type", "/api/v1/web/settings/update-check", "text/plain", true, 415},
+		{"query_string", "/api/v1/web/settings/update-check?enabled=false", "application/json", true, 400},
+		{"missing_fetch_site", "/api/v1/web/settings/update-check", "application/json", false, 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, s, _, _ := testApp(t)
+			defer s.Close()
+			defer a.Shutdown()
+			a.updateCheck.Close()
+			a.updateCheck = updatecheck.New(filepath.Join(t.TempDir(), "update-check.json"), a.buildInfo, nil)
+			before := a.updateCheck.Snapshot()
+			r := httptest.NewRequest("PUT", tc.path, strings.NewReader(`{"enabled":false}`))
+			session := addTestWebSession(t, a, r)
+			r.Header.Set("Origin", "https://probe.test")
+			r.Header.Set("X-CSRF-Token", session.csrfToken)
+			r.Header.Set("Content-Type", tc.contentType)
+			if tc.fetchSite {
+				r.Header.Set("Sec-Fetch-Site", "same-origin")
+			}
+			w := httptest.NewRecorder()
+			a.Handler().ServeHTTP(w, r)
+			if w.Code != tc.want || a.updateCheck.Snapshot() != before {
+				t.Fatal(w.Code, w.Body.String(), a.updateCheck.Snapshot())
+			}
+		})
+	}
+}
+
+func TestUpdateCheckSettingsPersistenceFailureKeepsState(t *testing.T) {
+	a, s, _, _ := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	path := filepath.Join(t.TempDir(), "update-check.json")
+	a.updateCheck.Close()
+	a.updateCheck = updatecheck.New(path, a.buildInfo, nil)
+	before := a.updateCheck.Snapshot()
+	// A directory at the destination makes atomic replacement fail on both OSes.
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("PUT", "/api/v1/web/settings/update-check", strings.NewReader(`{"enabled":false}`))
+	session := addTestWebSession(t, a, r)
+	r.Header.Set("Origin", "https://probe.test")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	r.Header.Set("X-CSRF-Token", session.csrfToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	if w.Code != 500 || a.updateCheck.Snapshot() != before {
+		t.Fatal(w.Code, w.Body.String(), a.updateCheck.Snapshot(), before)
+	}
+	r = httptest.NewRequest("GET", "/api/v1/web/version", nil)
+	addTestWebSession(t, a, r)
+	w = httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	var got struct {
+		Update updatecheck.State `json:"update"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Update != before {
+		t.Fatal(w.Body.String(), err)
+	}
+}
 
 func TestUpdateCheckSettingsSecurity(t *testing.T) {
 	a, s, _, _ := testApp(t)
