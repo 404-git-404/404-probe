@@ -715,6 +715,7 @@ func readStateFile(path string) (State, error) {
 	if !isActiveLocalStatus(state.Status) && state.Status != "succeeded" && state.Status != "failed" && state.Status != "rolled_back" {
 		return State{}, errors.New("invalid stored updater status")
 	}
+	state.LocalMigration = false
 	return state, nil
 }
 

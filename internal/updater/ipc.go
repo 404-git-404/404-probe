@@ -87,6 +87,10 @@ func (r Request) Validate() error {
 }
 
 type State struct {
+	// Deprecated: old v1.0.1 journals may contain this flag. Accept and ignore
+	// it until all journals predating the supported upgrade window are retired;
+	// MarshalJSON never writes it, so any subsequent persistence removes it.
+	LocalMigration  bool   `json:"local_migration,omitempty"`
 	SourceVersion   string `json:"source_version,omitempty"`
 	ServerVersion   string `json:"server_version,omitempty"`
 	ProtocolVersion int    `json:"protocol_version,omitempty"`
@@ -99,6 +103,12 @@ type State struct {
 	FailureCode     string `json:"failure_code,omitempty"`
 	FailureMessage  string `json:"failure_message,omitempty"`
 	UpdatedAt       int64  `json:"updated_at"`
+}
+
+func (s State) MarshalJSON() ([]byte, error) {
+	type wireState State
+	s.LocalMigration = false
+	return json.Marshal(wireState(s))
 }
 
 type Response struct {
