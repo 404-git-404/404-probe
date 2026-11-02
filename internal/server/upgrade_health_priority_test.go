@@ -39,7 +39,7 @@ func TestUpdaterHealthVersionPriorityMatchesJavaScript(t *testing.T) {
 		}
 	}
 	body, _ := json.Marshal(rows)
-	command := exec.Command(node, "-e", `const fs=require('fs'),assert=require('assert/strict'),s=require('./web/static/agent-state.js');for(const row of JSON.parse(fs.readFileSync(0,'utf8'))){assert.equal(s.upgradeButtonHint(row.agent,{version:row.target_version,upgrade_eligible:true},row.busy),row.busy?'正在升级，请等待完成':s.upgradeReasonDisplay({reason_code:row.code})||'可从面板升级到与面板相同的版本',JSON.stringify(row));}`)
+	command := exec.Command(node, "-e", `const fs=require('fs'),assert=require('assert/strict'),s=require('./web/static/agent-state.js');for(const row of JSON.parse(fs.readFileSync(0,'utf8'))){assert.equal(s.upgradeButtonHint(row.agent,{version:row.target_version,upgrade_eligible:true},row.busy),row.busy?'正在升级，请等待完成':s.upgradeReasonDisplay({reason_code:row.code},row.agent)||'可从面板升级到与面板相同的版本',JSON.stringify(row));}`)
 	command.Dir = "../.."
 	command.Stdin = bytes.NewReader(body)
 	if out, err := command.CombinedOutput(); err != nil {
