@@ -29,6 +29,24 @@ func TestAgentStateModuleIsEmbeddedBeforePageConsumers(t *testing.T) {
 	}
 }
 
+func TestThemeResolvesSynchronouslyBeforeEveryPageStylesheet(t *testing.T) {
+	if _, err := fs.ReadFile(Files, "static/theme.js"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"index.html", "history.html", "jobs.html", "schedules.html"} {
+		data, err := fs.ReadFile(Files, "static/"+name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		html := string(data)
+		boot := strings.Index(html, `<script src="/theme.js"></script>`)
+		style := strings.Index(html, `<link rel="stylesheet"`)
+		if boot < 0 || boot > style {
+			t.Fatalf("%s must resolve theme synchronously before CSS", name)
+		}
+	}
+}
+
 func TestAgentEnrollmentUIUsesShownOnceDOMFlow(t *testing.T) {
 	static, err := fs.Sub(Files, "static")
 	if err != nil {

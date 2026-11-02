@@ -90,6 +90,9 @@ func TestStaticAssetsIdentityUpgradeAndRollback(t *testing.T) {
 		t.Fatal("upgrade HTML not updated")
 	}
 	for _, target := range []*staticAssets{a, b, rollback} {
+		if target.fingerprints["theme.js"] == "" {
+			t.Fatal("theme bootstrap must have a fingerprint")
+		}
 		for _, name := range staticPageNames {
 			original := staticReference.FindAllStringSubmatch(string(target.legacy["/"+name].data), -1)
 			served := staticReference.FindAllStringSubmatch(string(target.pages["/"+name].data), -1)
