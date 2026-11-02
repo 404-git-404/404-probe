@@ -264,13 +264,18 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 		`.agent-card .card-actions{display:flex`, `white-space:nowrap`,
 		`.agent-card h2{font-size:15px`, `white-space:nowrap;overflow:hidden;text-overflow:ellipsis`,
 		`.plan-drawer{position:fixed`, `@media(max-width:700px)`,
-		`.resource-grid{grid-template-columns:repeat(2,minmax(0,1fr))`,
 		`backdrop-filter:blur(16px)`,
 		`.progress-track::after{content:""`,
 	} {
 		if !strings.Contains(stylesheet, required) {
 			t.Fatalf("dashboard stylesheet missing fixed-card rule %q", required)
 		}
+	}
+	if strings.Contains(stylesheet, `.resource-grid{`) {
+		t.Fatal("unused legacy resource grid must stay removed")
+	}
+	if !strings.Contains(string(v7CSS), `.c7 .c7-machine-a{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))`) {
+		t.Fatal("live card resource grid missing")
 	}
 	for _, forbidden := range []string{`.agent-card{height:490px`, `min-height:490px`, `grid-template-rows:46px 116px 58px 88px 70px 36px`} {
 		if strings.Contains(stylesheet, forbidden) {

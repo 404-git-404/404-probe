@@ -118,6 +118,30 @@ func TestWebLoginPagePreservesSameOriginForFormSubmission(t *testing.T) {
 	}
 }
 
+func TestWebLoginThemeBootstrapIsPublicOnlyForAllowedTarget(t *testing.T) {
+	app, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	_, _, page := webLoginPage(t, app)
+	html := page.Body.String()
+	boot := strings.Index(html, `<script src="/theme.js"></script>`)
+	if boot < 0 || boot > strings.Index(html, `<link rel="stylesheet"`) {
+		t.Fatal("login theme must resolve synchronously before CSS")
+	}
+	for _, host := range []string{app.webAuth.publicOrigin.Host, "untrusted.invalid"} {
+		r := httptest.NewRequest(http.MethodGet, "/theme.js", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		app.Handler().ServeHTTP(w, r)
+		if host == app.webAuth.publicOrigin.Host {
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "404-probe.theme.v1") || len(w.Result().Cookies()) != 0 {
+				t.Fatalf("unauthenticated appearance bootstrap status=%d", w.Code)
+			}
+		} else if w.Code != http.StatusForbidden {
+			t.Fatalf("untrusted theme target status=%d", w.Code)
+		}
+	}
+}
+
 func TestWebRootRedirectContractAndStaleSessionRecovery(t *testing.T) {
 	app, store, _ := newWebAuthenticationTestApp(t)
 	defer store.Close()

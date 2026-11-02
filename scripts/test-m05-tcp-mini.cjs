@@ -1,5 +1,10 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const L=require('../web/static/latency-mini.js');
+// The fake DOM has no CSS engine. Read the production light palette so the
+// existing exact colour assertions still exercise the values used in browsers.
+const palette=Object.fromEntries([...require('node:fs').readFileSync(require('node:path').join(__dirname,'../web/static/style.css'),'utf8').split(':root[data-theme=dark]{')[0].matchAll(/(--[a-z0-9-]+):\s*([^;}\n]+)/g)].map(m=>[m[1],m[2].trim()]));
+const resolveColor=name=>{const value=palette[name],alias=value?.match(/^var\((--[a-z0-9-]+)\)$/);return alias?resolveColor(alias[1]):value||'';};
+globalThis.getComputedStyle=()=>({getPropertyValue:resolveColor});
 const M=60000,NOW=1792080030000,FIRST=Math.floor(NOW/M)*M-1439*M;
 const LAST=1439; // in-progress minute (end = NOW)
 function fixture(protocol='tcp',slot='telecom'){

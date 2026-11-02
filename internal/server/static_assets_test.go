@@ -378,9 +378,9 @@ func TestStaticAssetsStartupOnlyAndPerAppIsolation(t *testing.T) {
 		}
 	}
 	t.Logf("startup directory: legacy=%d immutable=%d page aliases=%d retained bytes=%d", len(b.legacy), len(b.immutable), len(b.pages), retained)
-	// Nine dashboard scripts/styles were added for M15/M16. Keep the original
+	// Dashboard assets plus two theme scripts. Keep the original
 	// 3 MiB retention bound, startup-only reads, and per-App isolation checks.
-	if len(b.legacy) != 333 || retained > 3<<20 {
+	if len(b.legacy) != 335 || retained > 3<<20 {
 		t.Fatal("unexpected resource footprint")
 	}
 }
