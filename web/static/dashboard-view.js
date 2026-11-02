@@ -79,7 +79,7 @@
   const country=code=>code==='unknown'?'未知':(()=>{try{return countryNames?.of(code)||code;}catch{return code;}})();
   function optionRows(key,rows){
    const o=options[key],live=new Set();
-   for(const [id,label,count]of rows){live.add(id);let v=o.nodes.get(id);if(!v){const n=el('label','dashboard-option'),input=el('input'),name=el('span'),number=el('small');input.type='checkbox';input.addEventListener('change',()=>toggle(key,id,input.checked));n.append(input,name,number);o.list.append(n);v={n,input,name,number};o.nodes.set(id,v);}v.input.checked=p[key].includes(id);v.name.textContent=label;v.number.textContent=count;}
+   for(const [id,label,count]of rows){live.add(id);let v=o.nodes.get(id);if(!v){const plain=key==='groups'||key==='tags',n=el(plain?'button':'label','dashboard-option'),input=plain?null:el('input'),name=el('span'),number=el('small');if(plain){n.type='button';n.addEventListener('click',()=>toggle(key,id,!p[key].includes(id)));}else{input.type='checkbox';input.addEventListener('change',()=>toggle(key,id,input.checked));n.append(input);}n.append(name,number);o.list.append(n);v={n,input,name,number};o.nodes.set(id,v);}if(v.input)v.input.checked=p[key].includes(id);else v.n.setAttribute('aria-pressed',String(p[key].includes(id)));v.name.textContent=label;v.number.textContent=count;}
    for(const [id,v]of o.nodes)if(!live.has(id)){v.n.remove();o.nodes.delete(id);}
    const label={groups:'分组',tags:'标签',countries:'国家/地区',statuses:'状态'}[key];o.host.querySelector('summary').textContent=label+(key==='tags'?' · 匹配任一':'')+(p[key].length?' · '+p[key].length:'');o.host.classList.toggle('selected',!!p[key].length);
   }
@@ -92,7 +92,7 @@
    optionRows('tags',catalog.tags.map(t=>[t.id,t.name,count('tags',t.id)]));
    optionRows('countries',[...new Set(all.map(a=>a.country_code||'unknown'))].sort().map(id=>[id,country(id),count('countries',id)]));
    optionRows('statuses',Object.entries(M.STATUS).map(([id,label])=>[id,label,count('statuses',id)]));
-   for(const [key,b]of Object.entries(quickButtons)){b.textContent=M.QUICK[key];const count=el('small','',model.summary.quick[key]);b.append(count);b.disabled=!model.summary.quick[key]&&!p.quick.includes(key);b.setAttribute('aria-pressed',String(p.quick.includes(key)));b.title=key==='traffic'?'用量达到套餐配额的 80%；部分统计可能低于实际用量':'';}
+   for(const [key,b]of Object.entries(quickButtons)){b.textContent=M.QUICK[key];const count=el('small','',model.summary.quick[key]);b.append(count);b.classList.toggle('is-zero',!model.summary.quick[key]);b.disabled=!model.summary.quick[key]&&!p.quick.includes(key);b.setAttribute('aria-pressed',String(p.quick.includes(key)));b.title=key==='traffic'?'用量达到套餐配额的 80%；部分统计可能低于实际用量':'';}
    const selected=[];if(p.search.trim())selected.push(['search','',`搜索：${p.search.trim()}`]);
    for(const key of ['groups','tags','countries','statuses','quick'])for(const id of p[key]){const label=key==='groups'?(id==='__ungrouped'?'未分组':catalog.groups.find(g=>g.id===id)?.name):key==='tags'?catalog.tags.find(t=>t.id===id)?.name:key==='countries'?country(id):key==='statuses'?M.STATUS[id]:M.QUICK[id];selected.push([key,id,label]);}
    const next=JSON.stringify(selected);if(next!==signature){signature=next;chips.replaceChildren(...selected.map(([key,id,label])=>button(label+' ×',()=>{if(key==='search'){p.search='';search.value='';}else p[key]=p[key].filter(x=>x!==id);change();},'dashboard-chip')));}
