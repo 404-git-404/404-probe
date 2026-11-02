@@ -21,7 +21,7 @@
 }
 
 /* R33: native top-layer modal, independent of card transforms and scrolling. */
-dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 32px);padding:20px;border:1px solid var(--c7-border);border-radius:16px;background:var(--c7-card);color:var(--c7-text);font:14px/1.45 system-ui,sans-serif;overflow:auto;color-scheme:light}
+dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 32px);padding:20px;border:1px solid var(--c7-border);border-radius:16px;background:var(--c7-card);color:var(--c7-text);font:14px/1.45 system-ui,sans-serif;overflow:auto;color-scheme:var(--theme-color-scheme)}
 .selector-dialog::backdrop{background:var(--color-overlay-01)}
 .selector-dialog h2{margin:0;font-size:18px;font-weight:700}
 .selector-dialog .selector-device{margin:2px 0 12px;color:var(--c7-sub);font-size:12px}

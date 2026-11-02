@@ -1,5 +1,5 @@
 /* Isolated native modal; opening never inserts content into card geometry. */
-#renewal-dialog.plan-renewal{position:fixed;inset:auto;margin:0;box-sizing:border-box;width:min(560px,calc(100vw - 32px));max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);border:1px solid var(--color-line-24);border-radius:18px;padding:0;overflow:hidden;color:var(--color-text-15);color-scheme:light;background:var(--color-surface-23);box-shadow:0 24px 70px var(--color-shadow-06)}
+#renewal-dialog.plan-renewal{position:fixed;inset:auto;margin:0;box-sizing:border-box;width:min(560px,calc(100vw - 32px));max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);border:1px solid var(--color-line-24);border-radius:18px;padding:0;overflow:hidden;color:var(--color-text-15);color-scheme:var(--theme-color-scheme);background:var(--color-surface-23);box-shadow:0 24px 70px var(--color-shadow-06)}
 #renewal-dialog[open]{display:flex;flex-direction:column}
 #renewal-dialog::backdrop{background:var(--color-overlay-11);backdrop-filter:blur(5px)}
 #renewal-dialog .drawer-head,#renewal-dialog .drawer-actions{flex-shrink:0;padding:18px 22px;border-bottom:1px solid var(--color-line-25)}

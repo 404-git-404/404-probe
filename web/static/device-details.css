@@ -1,5 +1,5 @@
 html { scrollbar-gutter: stable; }
-.device-details { box-sizing:border-box; width:min(80vw,1200px); max-width:calc(100vw - 32px); max-height:calc(100dvh - 48px); padding:0; border:1px solid var(--color-line-24); border-radius:18px; background:var(--color-surface-23); color:var(--color-text-15); color-scheme:light; overflow:hidden; box-shadow:0 24px 90px var(--color-shadow-06); }
+.device-details { box-sizing:border-box; width:min(80vw,1200px); max-width:calc(100vw - 32px); max-height:calc(100dvh - 48px); padding:0; border:1px solid var(--color-line-24); border-radius:18px; background:var(--color-surface-23); color:var(--color-text-15); color-scheme:var(--theme-color-scheme); overflow:hidden; box-shadow:0 24px 90px var(--color-shadow-06); }
 .device-details[open] { display:flex; flex-direction:column; }
 .device-details .details-header,.device-details .details-tabs { flex-shrink:0; }
 .device-details button,.device-details input,.device-details select { font:inherit; color:var(--color-text-15); background:var(--color-surface-24); border:1px solid var(--color-line-11); border-radius:8px; padding:7px 10px; }

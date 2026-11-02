@@ -1,5 +1,5 @@
 /* Scoped override of the existing drawer, without card/global layout changes. */
-#plan-dialog.plan-editor { position:fixed; inset:auto; margin:0; box-sizing:border-box; width:min(560px,calc(100vw - 32px)); max-width:calc(100vw - 32px); height:auto; max-height:calc(100dvh - 32px); border:1px solid var(--color-line-24); border-radius:18px; padding:0; overflow:hidden; color:var(--color-text-15); color-scheme:light; background:var(--color-surface-23); box-shadow:0 24px 70px var(--color-shadow-06); }
+#plan-dialog.plan-editor { position:fixed; inset:auto; margin:0; box-sizing:border-box; width:min(560px,calc(100vw - 32px)); max-width:calc(100vw - 32px); height:auto; max-height:calc(100dvh - 32px); border:1px solid var(--color-line-24); border-radius:18px; padding:0; overflow:hidden; color:var(--color-text-15); color-scheme:var(--theme-color-scheme); background:var(--color-surface-23); box-shadow:0 24px 70px var(--color-shadow-06); }
 #plan-dialog::backdrop { background:var(--color-overlay-11); backdrop-filter:blur(5px); }
 #plan-dialog form { padding:0; gap:0; min-height:0; max-height:calc(100dvh - 34px); display:flex; flex-direction:column; }
 #plan-dialog .drawer-head { flex-shrink:0; padding:18px 22px; border-bottom:1px solid var(--color-line-25); }

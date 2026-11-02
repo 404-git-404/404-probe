@@ -1,4 +1,6 @@
 :root{
+  --theme-color-scheme:light;
+
 /* Shared semantic palette. Light values preserve the v1.0.10 rendering. */
   --color-line-01:#A8AAA8;
   --color-surface-01:#222B31;
@@ -331,7 +333,7 @@
   --color-text-78:#8883;
   --color-text-79:#65b9a6;
   --color-text-80:#dfaa65;
-color-scheme:light;--bg:var(--color-surface-48);--panel:var(--color-overlay-12);--line:var(--color-line-42);--text:var(--color-text-33);--muted:var(--color-status-14);--green:var(--color-status-15);--red:var(--color-status-16);--blue:var(--color-status-17);--cyan:var(--color-status-17);--panel-soft:var(--color-overlay-13);--line-soft:var(--color-line-43);--purple:var(--color-status-17);--amber:var(--color-status-18)}
+color-scheme:var(--theme-color-scheme);--bg:var(--color-surface-48);--panel:var(--color-overlay-12);--line:var(--color-line-42);--text:var(--color-text-33);--muted:var(--color-status-14);--green:var(--color-status-15);--red:var(--color-status-16);--blue:var(--color-status-17);--cyan:var(--color-status-17);--panel-soft:var(--color-overlay-13);--line-soft:var(--color-line-43);--purple:var(--color-status-17);--amber:var(--color-status-18)}
 .agent-name-display .agent-name-edit{flex-shrink:0}
 #plan-country-preview{display:inline-flex;vertical-align:middle;margin-right:6px}
 #plan-country-code{max-width:100%;min-width:0}
@@ -435,10 +437,10 @@ a,.nav-link,.details,.detail-toggle,.card-detail-actions a,.card-detail-actions 
 .plan-drawer label{color:var(--muted)}
 .country-lookup-controls{grid-template-columns:auto minmax(0,1fr)}.country-lookup-controls>span{grid-column:auto;color:var(--muted)}.country-lookup-controls button{border:1px solid var(--color-line-53);border-radius:8px;padding:5px 8px;background:var(--color-surface-72);color:var(--color-text-45);cursor:pointer}.country-lookup-controls button:disabled{opacity:.55;cursor:not-allowed}
 /* P2b floating Selector only; do not inherit the global dark native controls. */
-.selector-popover{position:fixed;inset:auto;margin:0;padding:16px;box-sizing:border-box;border:1px solid var(--color-line-30);border-radius:14px;background:var(--color-surface-32);color:var(--color-text-21);box-shadow:0 12px 40px var(--color-shadow-22);overflow:auto;z-index:1000;color-scheme:light;max-width:calc(100vw - 24px)}
+.selector-popover{position:fixed;inset:auto;margin:0;padding:16px;box-sizing:border-box;border:1px solid var(--color-line-30);border-radius:14px;background:var(--color-surface-32);color:var(--color-text-21);box-shadow:0 12px 40px var(--color-shadow-22);overflow:auto;z-index:1000;color-scheme:var(--theme-color-scheme);max-width:calc(100vw - 24px)}
 .selector-popover[hidden]{display:none}
 .selector-popover-heading,.selector-popover-summary,.selector-popover-controls{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.selector-popover button,.selector-popover select{color:var(--color-text-21);background:var(--color-surface-24);border:1px solid var(--color-line-13);border-radius:8px;padding:8px;font:inherit;color-scheme:light}
+.selector-popover button,.selector-popover select{color:var(--color-text-21);background:var(--color-surface-24);border:1px solid var(--color-line-13);border-radius:8px;padding:8px;font:inherit;color-scheme:var(--theme-color-scheme)}
 .selector-popover button:disabled,.selector-popover select:disabled{color:var(--color-text-56);background:var(--color-surface-91);opacity:1}
 .selector-popover option{background:var(--color-surface-24);color:var(--color-text-21)}
 .selector-popover-status,.selector-popover small{color:var(--color-text-57);font-size:12px}
@@ -453,7 +455,7 @@ a,.nav-link,.details,.detail-toggle,.card-detail-actions a,.card-detail-actions 
 .google-selector-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 /* Stable/Beta selection belongs to the single-Agent upgrade dialog. */
 #upgrade-agent-dialog .upgrade-versions strong{color:var(--color-text-60)}
-#upgrade-release{width:100%;padding:8px;border:1px solid var(--color-line-62);border-radius:7px;background:var(--color-surface-93);color:var(--color-text-60);font:inherit;color-scheme:light}
+#upgrade-release{width:100%;padding:8px;border:1px solid var(--color-line-62);border-radius:7px;background:var(--color-surface-93);color:var(--color-text-60);font:inherit;color-scheme:var(--theme-color-scheme)}
 #upgrade-beta-label{display:flex;align-items:flex-start;gap:8px}
 #upgrade-beta-label[hidden],#upgrade-release-reason:empty{display:none}
 #upgrade-beta-confirm{width:auto;flex:none;margin:3px 0 0}
@@ -499,7 +501,7 @@ body .login-card{background:var(--color-card);border-color:var(--color-line);col
 
 /* R38: bounded modal sizes, independent content scrolling, stable page geometry. */
 html{scrollbar-gutter:stable}
-dialog.dialog-shell{--shell-border:var(--color-line);box-sizing:border-box;position:fixed;inset:0;margin:auto;width:560px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--shell-border);border-radius:16px;background:var(--color-card);color:var(--color-text);color-scheme:light;font:14px/1.5 system-ui,sans-serif;overflow:auto;overscroll-behavior:contain;box-shadow:0 24px 80px var(--color-shadow-10)}
+dialog.dialog-shell{--shell-border:var(--color-line);box-sizing:border-box;position:fixed;inset:0;margin:auto;width:560px;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--shell-border);border-radius:16px;background:var(--color-card);color:var(--color-text);color-scheme:var(--theme-color-scheme);font:14px/1.5 system-ui,sans-serif;overflow:auto;overscroll-behavior:contain;box-shadow:0 24px 80px var(--color-shadow-10)}
 dialog.dialog-shell.dialog-small{width:420px}
 dialog.dialog-shell::backdrop{background:var(--color-overlay-09)}
 .shell-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 24px 14px;border-bottom:1px solid var(--color-line);background:var(--color-card)}
@@ -534,3 +536,355 @@ body dialog.selector-dialog>.selector-options{padding:8px 0;margin:0 24px;border
 body .dialog-shell [hidden]{display:none!important}body .dialog-shell>.upgrade-versions{padding:0;border:0;background:none;border-radius:0;line-height:32px}body #upgrade-agent-dialog .upgrade-versions>strong:first-child{color:var(--color-text-muted)}body .dialog-shell .remove-warning{color:var(--color-danger-text)!important}body .dialog-shell .shell-head p{margin:3px 0 0;color:var(--color-text-muted);font-size:13px;line-height:18px}.dialog-shell .shell-head{align-items:flex-start}.dialog-shell .shell-head h2{line-height:25px}body .dialog-shell .shell-head>button{height:32px;padding:0}.dialog-shell form .dialog-actions{border-top:1px solid var(--color-line);margin:0 -24px -18px;padding:14px 24px}.dialog-shell #upgrade-agent-form{gap:0}.dialog-shell .upgrade-notes{margin-top:10px;margin-bottom:60px}.dialog-shell #add-agent-choice>label{margin-top:0;color:var(--color-text);font-size:14px}.dialog-shell #add-agent-choice .install-choices button{min-height:110px;padding:14px;vertical-align:top}.dialog-shell .install-choices strong{line-height:21px}.dialog-shell .install-choices [aria-checked=true]{background:var(--color-surface-101);outline:none;border:2px solid var(--color-accent)}.dialog-shell .install-choices small{margin-top:6px}body dialog.selector-dialog .selector-row{padding:0}body dialog.selector-dialog>.selector-actions{justify-content:space-between}body dialog.selector-dialog .selector-device{margin:3px 0 0}.dialog-shell input{box-shadow:none}
 
 body #upgrade-agent-dialog.dialog-shell>.upgrade-versions{padding:0;margin:18px 24px 0;line-height:32px}body #upgrade-agent-dialog.dialog-shell .upgrade-same-server{padding:2px 7px;line-height:17px}.dialog-shell .upgrade-notes{margin-bottom:58px}body dialog.dialog-shell.selector-dialog>.selector-options{padding:8px 0;margin:0 24px}body dialog.dialog-shell.selector-dialog>.selector-options:nth-child(2){padding-top:24px}body dialog.dialog-shell.selector-dialog>.selector-options:has(+.selector-actions){padding-bottom:36px}body dialog.dialog-shell.selector-dialog .selector-label{font-size:14px;font-weight:600}body .dialog-shell .shell-head p{color:var(--color-text-muted)!important}.dialog-shell #add-agent-choice .install-choices button{display:block}.dialog-shell #add-agent-choice .install-choices strong{text-align:left}.dialog-shell #add-agent-choice .install-choices{margin-bottom:42px}
+
+/* Mock v2 dark palette, shared by every surface and chart. */
+:root[data-theme=dark]{
+  --theme-color-scheme:dark;
+  --color-ink:#0E1012;
+  --color-warning:#E0A63E;
+  --color-warning-soft:#33270F;
+  --color-danger-soft:#3A1C17;
+  --color-success:#4CB38A;
+  --color-shadow:rgba(0,0,0,.6);
+  --color-backdrop:rgba(0,0,0,.6);
+  --color-chart-memory-fill:#86B4E818;
+  --color-chart-up-fill:#B797DC16;
+  --color-chart-down-fill:#55B89D20;
+  --color-line-01:var(--color-line);
+  --color-surface-01:var(--color-surface-module);
+  --color-text-01:var(--color-ink);
+  --color-surface-02:var(--color-surface-module);
+  --color-text-02:var(--color-ink);
+  --color-line-02:var(--color-line);
+  --color-surface-03:var(--color-warning-soft);
+  --color-shadow-01:var(--color-shadow);
+  --color-text-03:var(--color-text);
+  --color-line-03:var(--color-line);
+  --color-text-04:var(--color-text-muted);
+  --color-surface-04:var(--color-surface-module);
+  --color-surface-05:var(--color-accent);
+  --color-card:#16191C;
+  --color-line:#2A2F34;
+  --color-surface-module:#1B1F23;
+  --color-surface-hover:#1C2024;
+  --color-line-soft:#202428;
+  --color-line-strong:#2A2F34;
+  --color-text:#E7E4DF;
+  --color-text-muted:#949AA1;
+  --color-status-01:var(--color-success);
+  --color-status-02:var(--color-warning);
+  --color-danger:#EA6B57;
+  --color-surface-06:var(--color-surface-module);
+  --color-warning-text:#E2AA4E;
+  --color-danger-text:#EA6B57;
+  --color-chart-down:#55B89D;
+  --color-chart-up:#B797DC;
+  --color-bar:#2A2F34;
+  --color-surface-07:var(--color-accent-soft);
+  --color-text-secondary:#949AA1;
+  --color-surface-08:var(--color-warning-soft);
+  --color-line-04:var(--color-line);
+  --color-surface-09:var(--color-danger-soft);
+  --color-status-03:var(--color-success);
+  --color-status-04:var(--color-warning);
+  --color-status-05:var(--color-text-muted);
+  --color-line-05:var(--color-success);
+  --color-line-06:var(--color-warning);
+  --color-line-07:var(--color-text-muted);
+  --color-text-05:var(--color-ink);
+  --color-line-08:var(--color-line);
+  --color-surface-10:var(--color-danger-soft);
+  --color-accent:#55B89D;
+  --color-surface-11:var(--color-warning-soft);
+  --color-line-09:var(--color-warning);
+  --color-text-06:var(--color-warning-text);
+  --color-surface-12:var(--color-danger-soft);
+  --color-overlay-01:var(--color-backdrop);
+  --color-shadow-02:var(--color-shadow);
+  --color-line-10:var(--color-line);
+  --color-clear:transparent;
+  --color-line-11:var(--color-line);
+  --color-surface-13:var(--color-warning-soft);
+  --color-text-07:var(--color-text);
+  --color-surface-14:var(--color-surface-module);
+  --color-line-12:var(--color-line);
+  --color-line-13:var(--color-line);
+  --color-chart-axis:#949AA1;
+  --color-line-14:var(--color-line);
+  --color-shadow-03:var(--color-shadow);
+  --color-status-06:var(--color-success);
+  --color-surface-15:var(--color-danger-soft);
+  --color-overlay-02:var(--color-backdrop);
+  --color-line-15:var(--color-line);
+  --color-overlay-03:var(--color-backdrop);
+  --color-surface-16:var(--color-surface-module);
+  --color-line-16:var(--color-line);
+  --color-surface-17:var(--color-warning-soft);
+  --color-text-08:var(--color-warning-text);
+  --color-surface-18:var(--color-surface-module);
+  --color-accent-soft:#16302A;
+  --color-accent-text:#55B89D;
+  --color-line-17:var(--color-line);
+  --color-text-09:var(--color-danger);
+  --color-line-18:var(--color-line);
+  --color-line-19:var(--color-line);
+  --color-surface-19:var(--color-warning-soft);
+  --color-text-10:var(--color-warning-text);
+  --color-line-20:var(--color-line);
+  --color-text-11:var(--color-accent-text);
+  --color-line-21:var(--color-line);
+  --color-surface-20:var(--color-warning-soft);
+  --color-shadow-04:var(--color-shadow);
+  --color-text-12:var(--color-text-muted);
+  --color-line-22:var(--color-line);
+  --color-surface-21:var(--color-warning-soft);
+  --color-text-13:var(--color-text-muted);
+  --color-text-14:var(--color-text);
+  --color-surface-22:var(--color-surface-module);
+  --color-line-23:var(--color-line);
+  --color-overlay-04:var(--color-surface-module);
+  --color-shadow-05:var(--color-shadow);
+  --color-page:#0E1012;
+  --color-line-24:var(--color-line);
+  --color-surface-23:var(--color-surface-module);
+  --color-text-15:var(--color-text);
+  --color-shadow-06:var(--color-shadow);
+  --color-surface-24:var(--color-warning-soft);
+  --color-text-16:var(--color-text-muted);
+  --color-overlay-05:var(--color-backdrop);
+  --color-text-17:var(--color-text-muted);
+  --color-line-25:var(--color-line);
+  --color-surface-25:var(--color-accent-soft);
+  --color-text-18:var(--color-accent-text);
+  --color-line-26:var(--color-line);
+  --color-text-19:var(--color-danger);
+  --color-shadow-07:var(--color-shadow);
+  --color-surface-26:var(--color-surface-module);
+  --color-surface-27:var(--color-surface-module);
+  --color-surface-28:var(--color-surface-module);
+  --color-line-27:var(--color-line);
+  --color-surface-29:var(--color-danger-soft);
+  --color-line-28:var(--color-line);
+  --color-line-29:var(--color-line);
+  --color-surface-30:var(--color-warning-soft);
+  --color-text-20:var(--color-warning-text);
+  --color-surface-31:var(--color-accent);
+  --color-surface-32:var(--color-warning-soft);
+  --color-text-21:var(--color-text);
+  --color-text-22:var(--color-text-muted);
+  --color-line-30:var(--color-line);
+  --color-status-07:var(--color-text-muted);
+  --color-status-08:var(--color-warning);
+  --color-status-09:var(--color-danger);
+  --color-status-10:var(--color-text-muted);
+  --color-surface-33:var(--color-accent);
+  --color-text-23:var(--color-ink);
+  --color-line-31:var(--color-line);
+  --color-shadow-08:var(--color-shadow);
+  --color-shadow-09:var(--color-shadow);
+  --color-overlay-06:var(--color-backdrop);
+  --color-surface-34:var(--color-surface-module);
+  --color-text-24:var(--color-warning-text);
+  --color-text-25:var(--color-text-muted);
+  --color-line-32:var(--color-line);
+  --color-surface-35:var(--color-surface-module);
+  --color-status-11:var(--color-text-muted);
+  --color-overlay-07:var(--color-backdrop);
+  --color-status-12:var(--color-danger);
+  --color-status-13:var(--color-danger);
+  --color-surface-36:var(--color-surface-module);
+  --color-line-33:var(--color-line);
+  --color-line-34:var(--color-line);
+  --color-overlay-08:var(--color-backdrop);
+  --color-shadow-10:var(--color-shadow);
+  --color-overlay-09:var(--color-backdrop);
+  --color-surface-37:var(--color-warning-soft);
+  --color-text-26:var(--color-text-muted);
+  --color-overlay-10:var(--color-surface-module);
+  --color-surface-38:var(--color-accent-soft);
+  --color-line-35:var(--color-line);
+  --color-surface-39:var(--color-surface-module);
+  --color-line-36:var(--color-line);
+  --color-surface-40:var(--color-warning-soft);
+  --color-line-37:var(--color-line);
+  --color-surface-41:var(--color-danger-soft);
+  --color-line-38:var(--color-line);
+  --color-text-27:var(--color-text-muted);
+  --color-text-28:var(--color-text-muted);
+  --color-text-29:var(--color-warning-text);
+  --color-text-30:var(--color-danger);
+  --color-overlay-11:var(--color-backdrop);
+  --color-text-31:var(--color-text-muted);
+  --color-surface-42:var(--color-surface-module);
+  --color-surface-43:var(--color-warning-soft);
+  --color-surface-44:var(--color-warning-soft);
+  --color-surface-45:var(--color-surface-module);
+  --color-line-39:var(--color-line);
+  --color-surface-46:var(--color-surface-module);
+  --color-line-40:var(--color-line);
+  --color-surface-47:var(--color-surface-module);
+  --color-line-41:var(--color-line);
+  --color-text-32:var(--color-warning-text);
+  --color-surface-48:var(--color-surface-module);
+  --color-overlay-12:var(--color-surface-module);
+  --color-line-42:var(--color-line);
+  --color-text-33:var(--color-text);
+  --color-status-14:var(--color-text-muted);
+  --color-status-15:var(--color-success);
+  --color-status-16:var(--color-danger);
+  --color-status-17:var(--color-accent);
+  --color-overlay-13:var(--color-surface-module);
+  --color-line-43:var(--color-line);
+  --color-status-18:var(--color-warning-text);
+  --color-surface-49:var(--color-surface-module);
+  --color-line-44:var(--color-line);
+  --color-surface-50:var(--color-surface-module);
+  --color-line-45:var(--color-line);
+  --color-text-34:var(--color-ink);
+  --color-surface-51:var(--color-surface-module);
+  --color-shadow-11:var(--color-shadow);
+  --color-text-35:var(--color-warning-text);
+  --color-surface-52:var(--color-surface-module);
+  --color-line-46:var(--color-line);
+  --color-shadow-12:var(--color-shadow);
+  --color-overlay-14:var(--color-backdrop);
+  --color-text-36:var(--color-text);
+  --color-line-47:var(--color-line);
+  --color-surface-53:var(--color-accent);
+  --color-line-48:var(--color-line);
+  --color-text-37:var(--color-danger);
+  --color-surface-54:var(--color-surface-module);
+  --color-line-49:var(--color-line);
+  --color-surface-55:var(--color-surface-module);
+  --color-text-38:var(--color-text);
+  --color-line-50:var(--color-line);
+  --color-surface-56:var(--color-surface-module);
+  --color-text-39:var(--color-accent-text);
+  --color-surface-57:var(--color-surface-module);
+  --color-line-51:var(--color-line);
+  --color-surface-58:var(--color-surface-module);
+  --color-text-40:var(--color-text);
+  --color-surface-59:var(--color-surface-module);
+  --color-surface-60:var(--color-surface-module);
+  --color-surface-61:var(--color-surface-module);
+  --color-surface-62:var(--color-surface-module);
+  --color-line-52:var(--color-line);
+  --color-shadow-13:var(--color-shadow);
+  --color-text-41:var(--color-text-muted);
+  --color-surface-63:var(--color-surface-module);
+  --color-surface-64:var(--color-surface-module);
+  --color-surface-65:var(--color-surface-module);
+  --color-surface-66:var(--color-accent);
+  --color-text-42:var(--color-text-muted);
+  --color-text-43:var(--color-text-muted);
+  --color-surface-67:var(--color-surface-module);
+  --color-surface-68:var(--color-surface-module);
+  --color-surface-69:var(--color-surface-module);
+  --color-surface-70:var(--color-danger-soft);
+  --color-surface-71:var(--color-danger-soft);
+  --color-text-44:var(--color-text);
+  --color-line-53:var(--color-line);
+  --color-surface-72:var(--color-surface-module);
+  --color-text-45:var(--color-text);
+  --color-line-54:var(--color-line);
+  --color-surface-73:var(--color-surface-module);
+  --color-line-55:var(--color-line);
+  --color-surface-74:var(--color-surface-module);
+  --color-shadow-14:var(--color-shadow);
+  --color-text-46:var(--color-danger);
+  --color-surface-75:var(--color-surface-module);
+  --color-shadow-15:var(--color-shadow);
+  --color-overlay-15:var(--color-backdrop);
+  --color-line-56:var(--color-line);
+  --color-surface-76:var(--color-surface-module);
+  --color-line-57:var(--color-line);
+  --color-shadow-16:var(--color-shadow);
+  --color-text-47:var(--color-danger);
+  --color-shadow-17:var(--color-shadow);
+  --color-text-48:var(--color-text-muted);
+  --color-text-49:var(--color-text);
+  --color-text-50:var(--color-text);
+  --color-surface-77:var(--color-surface-module);
+  --color-text-51:var(--color-text);
+  --color-surface-78:var(--color-warning-soft);
+  --color-surface-79:var(--color-warning-soft);
+  --color-text-52:var(--color-warning-text);
+  --color-surface-80:var(--color-warning-soft);
+  --color-surface-81:var(--color-accent-soft);
+  --color-surface-82:var(--color-surface-module);
+  --color-surface-83:var(--color-surface-module);
+  --color-surface-84:var(--color-surface-module);
+  --color-surface-85:var(--color-surface-module);
+  --color-text-53:var(--color-ink);
+  --color-overlay-16:var(--color-surface-module);
+  --color-line-58:var(--color-line);
+  --color-shadow-18:var(--color-shadow);
+  --color-shadow-19:var(--color-shadow);
+  --color-overlay-17:var(--color-surface-module);
+  --color-surface-86:var(--color-accent-soft);
+  --color-surface-87:var(--color-warning-soft);
+  --color-surface-88:var(--color-danger-soft);
+  --color-overlay-18:var(--color-surface-module);
+  --color-surface-89:var(--color-surface-module);
+  --color-overlay-19:var(--color-surface-module);
+  --color-text-54:var(--color-text-muted);
+  --color-surface-90:var(--color-surface-module);
+  --color-line-59:var(--color-line);
+  --color-line-60:var(--color-line);
+  --color-shadow-20:var(--color-shadow);
+  --color-text-55:var(--color-text-muted);
+  --color-shadow-21:var(--color-shadow);
+  --color-shadow-22:var(--color-shadow);
+  --color-text-56:var(--color-text-muted);
+  --color-surface-91:var(--color-surface-module);
+  --color-text-57:var(--color-text-muted);
+  --color-line-61:var(--color-line);
+  --color-text-58:var(--color-danger);
+  --color-text-59:var(--color-text-muted);
+  --color-surface-92:var(--color-warning-soft);
+  --color-line-62:var(--color-line);
+  --color-text-60:var(--color-text);
+  --color-surface-93:var(--color-warning-soft);
+  --color-surface-94:var(--color-warning-soft);
+  --color-text-61:var(--color-text-muted);
+  --color-text-62:var(--color-text-muted);
+  --color-shadow-23:var(--color-shadow);
+  --color-line-63:var(--color-line);
+  --color-surface-95:var(--color-warning-soft);
+  --color-text-63:var(--color-danger);
+  --color-line-64:var(--color-line);
+  --color-text-64:var(--color-warning-text);
+  --color-text-65:var(--color-warning-text);
+  --color-surface-96:var(--color-accent);
+  --color-line-65:var(--color-line);
+  --color-surface-97:var(--color-danger-soft);
+  --color-surface-98:var(--color-accent);
+  --color-surface-99:var(--color-danger-soft);
+  --color-text-66:var(--color-danger);
+  --color-surface-100:var(--color-surface-module);
+  --color-text-67:var(--color-text-muted);
+  --color-surface-101:var(--color-accent-soft);
+  --color-chart-grid:#2A2F34;
+  --color-chart-memory:#86B4E8;
+  --color-text-68:var(--color-chart-memory-fill);
+  --color-text-69:var(--color-chart-up-fill);
+  --color-text-70:var(--color-chart-down-fill);
+  --color-text-71:var(--color-chart-grid);
+  --color-text-72:var(--color-text-muted);
+  --color-text-73:var(--color-success);
+  --color-text-74:var(--color-warning);
+  --color-text-75:var(--color-accent);
+  --color-text-76:var(--color-danger);
+  --color-chart-unicom:#B797DC;
+  --color-chart-mobile:#A4AFB8;
+  --color-text-77:var(--color-text);
+  --color-text-78:var(--color-chart-grid);
+  --color-text-79:var(--color-accent);
+  --color-text-80:var(--color-warning-text);
+}
+:root[data-theme=dark] body{background:var(--color-page);color:var(--color-text)}
+:root[data-theme=dark] .c7-offline-note{color:var(--color-text)}
+/* Third-party uPlot overrides; the vendored file stays intact. */
+:root[data-theme=dark] .uplot{color:var(--color-text)}
+:root[data-theme=dark] .u-select{background:var(--color-accent-soft)}
+:root[data-theme=dark] :is(.u-cursor-x,.u-cursor-y){border-color:var(--color-text-muted)}
