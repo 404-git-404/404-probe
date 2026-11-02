@@ -5,9 +5,6 @@
 #plan-dialog .drawer-head { flex-shrink:0; padding:18px 22px; border-bottom:1px solid var(--color-line-25); }
 #plan-dialog .drawer-head p { overflow-wrap:anywhere; }
 #plan-dialog .plan-editor-body { overflow:auto; min-height:0; padding:0 22px; overscroll-behavior:contain; }
-#plan-dialog .plan-section { padding:18px 0; }
-#plan-dialog .plan-section summary { cursor:pointer; font-weight:600; font-size:14px; }
-#plan-dialog .plan-section[open] summary { margin-bottom:16px; }
 #plan-dialog .drawer-actions { flex-shrink:0; display:flex; justify-content:flex-end; gap:12px; margin:0; padding:16px 22px; border-top:1px solid var(--color-line-25); }
 #plan-dialog input,#plan-dialog select,#plan-dialog button { font:inherit; color:var(--color-text-15); box-sizing:border-box; }
 #plan-dialog input,#plan-dialog select { background:var(--color-surface-24); }

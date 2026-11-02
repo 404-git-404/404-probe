@@ -79,3 +79,7 @@ html { scrollbar-gutter: stable; }
 .details-title-line{min-width:0;max-width:100%}.details-title-line strong{max-width:100%}.details-identity>.details-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 .details-config{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Preserve action contrast in both palettes for every interaction state. */
+.device-details .details-action-row .upgrade-agent:is(:hover,:focus-visible,:disabled){background:var(--color-accent);color:var(--color-text-02);border-color:var(--color-accent);opacity:1}
+.device-details .details-danger .remove-agent:is(:hover,:focus-visible,:disabled){background:var(--color-danger);color:var(--color-text-02);border-color:var(--color-danger);opacity:1}

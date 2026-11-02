@@ -37,10 +37,6 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
 .selector-dialog .selector-error{font-size:12px;color:var(--c7-crit-text)}
 
 /* ---- the card ---- */
-.agent-grid .card.agent-card.c7{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;padding:14px;border:1px solid var(--c7-border);border-radius:16px;background:var(--c7-card);box-shadow:0 4px 14px var(--color-shadow-02);color:var(--c7-text);overflow:visible;backdrop-filter:none;opacity:1;filter:none}
-.agent-grid .card.agent-card.c7.state-paused{border-style:dashed}
-.agent-grid .card.agent-card.c7.state-revoked{border-style:dashed;border-color:var(--color-line-10)}
-.agent-grid .card.agent-card.c7.state-unknown{border-color:var(--color-line-01)}
 .c7 button,.c7 select{font-family:inherit}
 
 /* ---- header ---- */
@@ -265,7 +261,6 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
 .c7 [hidden]{display:none!important}
 
 /* ---- narrow cards (a 4 to 5 column grid): the amounts go under the rates, the footer buttons keep their main text only ---- */
-.agent-grid .card.agent-card.c7{container-type:inline-size;container-name:c7}
 @container c7 (max-width:380px){
   .c7 .c7-dir{flex-direction:column;align-items:flex-start;gap:2px}
   .c7 .c7-rate{font-size:22px;line-height:1.2}
