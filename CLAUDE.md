@@ -37,7 +37,9 @@ go test ./... -count=1
 
 ## 发布流程（v1.0.2、v1.0.3 的做法）
 
-1. **升级支持策略：每个版本只支持从前 1–2 个正式版升级；v1.1.0 支持从 v1.0.9、v1.0.10 升级。** 发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。**发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
+**升级支持策略**：每个版本只支持从前 1–2 个正式版升级；v1.1.0 支持从 v1.0.9、v1.0.10 升级。发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。版本窗口只由安装器保证；手动替换二进制不保证（schema 35 的 v1.0.7 / v1.0.8 库仍会被迁移），发布说明也必须写明这一限制。
+
+1. **发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。发布准备提交还必须“按升级支持策略更新版本窗口”：`internal/storage` 的 `minimumUpgradeSchemaVersion`、`install.sh` 的 `require_supported_server_version` 版本、三处提示（`database_schema_too_old`、`server_version_too_old`、`server_version_unrecognized`）里的版本号、`internal/storage/upgrade_floor_test.go`、`scripts/test-upgrade-floor.sh`。README 的升级说明、迁移链描述和 v1.0.1 桥接节在发布 A 段统一改写。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
 2. **发布前做独立 High 评审**，并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20 -timeout=60m`。
 3. **从精确的、干净的发布提交构建产物，输出目录放在仓库外：**
 
