@@ -11,6 +11,23 @@ import (
 	"time"
 )
 
+type updateCheckLogWriter func([]byte) (int, error)
+
+func (w updateCheckLogWriter) Write(p []byte) (int, error) { return w(p) }
+
+func TestSnapshotDoesNotWaitForWarningOutput(t *testing.T) {
+	c, _ := testChecker(t, func(http.ResponseWriter, *http.Request) {})
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	c.logger = slog.New(slog.NewTextHandler(updateCheckLogWriter(func(p []byte) (int, error) { close(entered); <-release; return len(p), nil }), nil))
+	go func() { defer close(done); c.warn("simulated persistence failure") }()
+	<-entered
+	snapshotPromptly(t, c)
+	once.Do(func() { close(release) })
+	<-done
+}
+
 func snapshotPromptly(t *testing.T, c *Checker) State {
 	t.Helper()
 	done := make(chan State, 1)

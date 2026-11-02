@@ -277,10 +277,15 @@ func (c *Checker) fetch(ctx context.Context) (string, error) {
 	return release.Tag, nil
 }
 
-func (c *Checker) warn(message string) { c.mu.Lock(); defer c.mu.Unlock(); c.warnLocked(message) }
-func (c *Checker) warnLocked(message string) {
-	if c.lastWarning.IsZero() || c.now().Sub(c.lastWarning) >= 15*time.Minute {
+func (c *Checker) warn(message string) {
+	c.mu.Lock()
+	now := c.now()
+	due := c.lastWarning.IsZero() || now.Sub(c.lastWarning) >= 15*time.Minute
+	if due {
+		c.lastWarning = now
+	}
+	c.mu.Unlock()
+	if due {
 		c.logger.Warn("update check: " + message)
-		c.lastWarning = c.now()
 	}
 }
