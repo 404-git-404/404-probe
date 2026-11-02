@@ -28,7 +28,7 @@
   return {name,uptime,lifecycle,country:a.country_code||'',system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),youtube:{text:youtube.code||'—',tone:youtube.premium==='unavailable'?'crit':youtube.tone==='observed'?'ok':'unknown',title:youtube.description},price:price(p),renewal:renewal(a),soon:a.renewal?.type==='due_soon'||a.renewal?.type==='overdue',upgrade:M.flags(a,server,now).upgrade,outbounds:a.outbounds,disabled:root.Selector.reason(a,csrf)||blocked};
  }
  function create({host,document:doc=root.document,selector,onOpen=()=>{},onCollapse=()=>{},onSort=()=>{},onSlot=()=>{},csrf=()=>'',blocked=()=>false}={}){
-  const groups=new Map(),rows=new Map();let lastLayout='',headerKey='';
+  const groups=new Map(),rows=new Map();let lastLayout='',headerKey='',namesKey='';
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;},text=(n,s)=>{if(n.textContent!==s)n.textContent=s;};
   host.classList.add('banner-scroll');host.tabIndex=0;host.setAttribute('aria-label','设备列表，可横向滚动');
   const grid=el('div','banner-grid'),header=el('div','banner-header banner-columns');host.append(grid);grid.append(header);
@@ -52,6 +52,8 @@
    return {node,update,key:''};
   }
   function render(model,prefs,{dirty=null,server,deadline=Infinity}={}){
+   const names=model.list.map(a=>a.name||a.state?.hostname||'未命名 VPS'),nk=JSON.stringify(names);
+   if(nk!==namesKey){namesKey=nk;const context=doc.createElement('canvas').getContext('2d'),fontSize=parseFloat(root.getComputedStyle(host).fontSize);context.font=`600 ${fontSize*13/12}px system-ui`;const longest=Math.max(0,...names.map(n=>context.measureText(n).width));grid.style.setProperty('--device-width',Math.min(14,Math.max(8,(longest+62)/fontSize))+'em');}
    const deferred=new Set(),visible=new Set(),live=new Set(model.list.map(a=>a.agent_id));let updates=0;
    const hk=JSON.stringify([prefs.sort,prefs.sortDir,prefs.latencySlot]);if(hk!==headerKey){headerKey=hk;header.querySelector('.banner-slot').value=prefs.latencySlot||1;for(const b of header.querySelectorAll('[data-sort]')){const active=b.dataset.sort===prefs.sort;b.dataset.direction=active?(prefs.sortDir||'asc'):'';b.setAttribute('aria-label',(columns.find(c=>c[0]===b.dataset.sort)?.[1]||'待升级')+'排序'+(active?(prefs.sortDir==='desc'?'，降序':'，升序'):''));}}
    const layout=JSON.stringify(model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])),changed=layout!==lastLayout;
