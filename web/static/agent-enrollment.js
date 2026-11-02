@@ -8,7 +8,7 @@
   const pad=n=>String(n).padStart(2,'0');
   function countdownText(ms){
     const total=Math.max(0,Math.ceil(ms/1000));
-    return `剩余 ${pad(Math.floor(total/60))}:${pad(total%60)}`;
+    return `⏱ 有效期 ${pad(Math.floor(total/60))}:${pad(total%60)}`;
   }
 
   async function readError(response){
@@ -40,7 +40,16 @@
     let state=null,timer=null,submitting=false,revoking=false,copyReset=null,method='oneclick',generation=0;
 
     function show(name){
+      const step=name==='choice'?1:2;
+      for(const n of root.document?.querySelectorAll('.enrollment-steps [data-step]')||[])if(Number(n.dataset.step)===step)n.setAttribute('aria-current','step');else n.removeAttribute('aria-current');
       for(const pane of panes)els[pane].classList.toggle('hidden',pane!==name);
+    }
+    function displayCommand(command){
+      const masked=command.replace(/(PROBE_404_ENROLL_TOKEN=)(?:'[^']*'|"[^"]*"|[^\s]+)/g,'$1••••••••••••••••••••••••');
+      const formatted=masked.replace(/ \| /g,' \\\n  | ').replace(/ (PROBE_404_[A-Z_]+=)/g,' \\\n    $1');
+      els.command.textContent=formatted;
+      const doc=els.command.ownerDocument;
+      if(doc){const nodes=formatted.split(/(PROBE_404_[A-Z_]+=)/g).map(text=>{const n=doc.createElement(/^PROBE_404_[A-Z_]+=$/.test(text)?'strong':'span');n.textContent=text;return n;});els.command.replaceChildren(...nodes);}
     }
     function stopTimer(){if(timer!==null){clearTimer(timer);timer=null;}if(copyReset!==null){clearTimer(copyReset);copyReset=null;}}
     function status(text){els.status.textContent=text||'';}
@@ -51,6 +60,7 @@
     function render(){
       if(!state){els.copy.disabled=true;els.revoke.disabled=true;return;}
       const remaining=state.expiresAt-now();
+      if(els.regenerate)els.regenerate.hidden=!state.ended;
       if(state.ended){
         els.countdown.textContent=state.ended;
         els.copy.disabled=true;els.revoke.disabled=true;
@@ -60,7 +70,8 @@
         // Expired: the command is useless, so it is removed rather than left to be copied.
         els.command.textContent='';
         els.countdown.textContent='已过期，请重新生成';
-        state.ended='已过期，请重新生成';
+        state.ended='已过期，请重新生成';state.command='';
+        if(els.regenerate)els.regenerate.hidden=false;
         els.copy.disabled=true;els.revoke.disabled=true;
         stopTimer();
         return;
@@ -75,7 +86,8 @@
       submitting=false;revoking=false;
       els.command.textContent='';
       els.countdown.textContent='';
-      status('');
+      status('运行命令后，新机器会出现在首页。');
+      if(els.regenerate)els.regenerate.hidden=true;
       els.error.classList.add('hidden');
       els.name.value='';
       els.submit.disabled=false;
@@ -123,9 +135,9 @@
         }
         const view=await response.json();
         if(serial!==generation)return false;
-        state={id:view.enrollment_id,expiresAt:view.expires_at,ended:''};
-        els.command.textContent=view.command;
-        status('');
+        state={id:view.enrollment_id,expiresAt:view.expires_at,ended:'',command:view.command};
+        displayCommand(view.command);
+        status('运行命令后，新机器会出现在首页。');
         show('oneclickResult');
         render();
         timer=setTimer(render,1000);
@@ -142,8 +154,8 @@
       if(!state||state.ended)return false;
       const label='复制命令';
       try{
-        await clipboard().writeText(els.command.textContent);
-        els.copy.textContent='已复制';
+        render();if(state.ended)return false;await clipboard().writeText(state.command);
+        els.copy.textContent='✓ 已复制';
       }catch(error){els.copy.textContent='复制失败';}
       if(copyReset!==null)clearTimer(copyReset);
       copyReset=setTimer(()=>{els.copy.textContent=label;clearTimer(copyReset);copyReset=null;},1200);
@@ -161,15 +173,16 @@
           body:'{}',
         });
         if(response.status===401){unauthorized();return false;}
+        if(!state||state.id!==id)return false;
         if(response.ok){
           els.command.textContent='';
-          state.ended='已作废';
+          state.ended='已作废';state.command='';
           status('这条命令已作废，无法再用于安装。');
           return true;
         }
         const error=await readError(response);
         status(error.code==='enrollment_used'?'这条命令已被使用，无法作废。':'作废失败，请重试。');
-        if(error.code==='enrollment_used'){els.command.textContent='';state.ended='已使用';}
+        if(error.code==='enrollment_used'){els.command.textContent='';state.ended='已使用';state.command='';}
         return false;
       }catch(error){
         status('作废失败，请重试。');
@@ -182,8 +195,9 @@
     if(els.next){
       const select=value=>{method=value;els.chooseOneClick.setAttribute('aria-checked',String(value==='oneclick'));els.chooseManual.setAttribute('aria-checked',String(value==='manual'));};
       els.chooseOneClick.addEventListener('click',()=>select('oneclick'));els.chooseManual.addEventListener('click',()=>select('manual'));
-      els.next.addEventListener('click',()=>{if(!els.choiceName.reportValidity())return;if(method==='oneclick'&&!els.chooseOneClick.disabled)chooseOneClick();else chooseManual();});
+      els.next.addEventListener('click',()=>{if(!els.choiceName.reportValidity())return;if(method==='oneclick'&&!els.chooseOneClick.disabled){chooseOneClick();return submit();}else chooseManual();});
     }else{els.chooseOneClick.addEventListener('click',chooseOneClick);els.chooseManual.addEventListener('click',chooseManual);}
+    els.regenerate?.addEventListener('click',()=>{stopTimer();clearSecret();show('oneclick');submit();});
     els.oneclickBack.addEventListener('click',back);
     els.form.addEventListener('submit',event=>{if(event&&event.preventDefault)event.preventDefault();return submit();});
     els.copy.addEventListener('click',copy);

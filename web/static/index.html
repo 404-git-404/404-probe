@@ -55,6 +55,8 @@
     <div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="dashboard-groups" aria-live="polite"></section><p class="status-legend"><span class="tone-dot healthy"></span>正常 <span class="tone-dot warning"></span>注意 / 接近阈值 <span class="tone-dot critical"></span>异常 / 已到期 <span class="tone-dot unknown"></span>未知 / 旧结果</p></main>
   </div>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
+    <ol class="enrollment-steps" aria-label="安装步骤"><li data-step="1" aria-current="step">① 选择方式</li><li data-step="2">② 运行命令</li><li data-step="3">③ 等待接入</li></ol>
+    <p class="agent-connection">Agent 将连接到 <strong data-agent-server></strong></p>
     <div id="add-agent-choice">
       <h2 id="add-agent-title">添加 Agent</h2>
 
@@ -65,40 +67,38 @@
     </div>
     <div id="oneclick-pane" class="hidden">
       <h2>一键安装 Agent</h2>
-      <p>输入 Agent 名称，生成一条 30 分钟内有效、只能使用一次的安装命令。</p>
+      <p>正在生成安装命令…</p>
       <form id="oneclick-form" autocomplete="off">
-        <label for="oneclick-name">名称</label>
-        <input id="oneclick-name" name="name" type="text" maxlength="128" required>
+        <input id="oneclick-name" name="name" type="hidden">
         <div id="oneclick-error" class="dialog-error hidden" role="alert">生成失败，请重试。</div>
         <div class="dialog-actions"><button id="oneclick-back" type="button">返回</button><button id="oneclick-submit" class="primary-action" type="submit">生成命令</button></div>
       </form>
     </div>
     <div id="oneclick-result" class="hidden">
       <h2>安装命令已生成</h2>
-      <p class="secret-warning">命令含一次性注册 token，仅显示这一次；关闭对话框后无法再次查看，需要时请重新生成。</p>
-      <div class="copy-block secret-value"><code id="oneclick-command"></code><button id="oneclick-copy" type="button">复制命令</button></div>
-      <p class="install-note"><span id="oneclick-countdown" role="timer"></span>。请以 root 执行；非 root 用户先运行 sudo -i。需要该版本已发布到 GitHub。</p>
+      <p class="secret-warning">! 命令里含一次性注册凭证，只显示这一次。关闭后无法再查看，需要时重新生成。</p>
+      <div class="enrollment-command"><div class="enrollment-command-head"><span>安装命令</span><span id="oneclick-countdown" role="timer"></span><button id="oneclick-copy" class="primary-action" type="button">复制命令</button></div><code id="oneclick-command"></code></div>
+      <ul class="install-checklist"><li>在目标机器上以 root 运行（非 root 先 <code>sudo -i</code>）。</li><li>目标机器要能访问上面的 Server 地址。</li><li>Alpine 先装依赖：<code>apk add bash curl ca-certificates coreutils util-linux shadow tar</code></li></ul><button id="oneclick-regenerate" class="primary-action" type="button" hidden>重新生成命令</button>
       <p id="oneclick-status" class="install-note" role="status"></p>
-      <div class="dialog-actions"><button id="oneclick-revoke" class="danger-action" type="button">作废</button><button id="oneclick-done" class="primary-action" type="button">关闭</button></div>
+      <div class="dialog-actions"><button id="oneclick-revoke" class="enrollment-revoke" type="button">作废这条命令</button><button id="oneclick-done" class="primary-action" type="button">完成</button></div>
     </div>
     <div id="add-agent-create" class="hidden">
       <h2>手动安装</h2>
       <p>创建现有 404-probe Agent 身份并生成安全安装信息。</p>
       <form id="add-agent-form" autocomplete="off">
-        <label for="add-agent-name">名称</label>
-        <input id="add-agent-name" name="name" type="text" maxlength="128" required autofocus>
+        <input id="add-agent-name" name="name" type="hidden">
         <div id="add-agent-error" class="dialog-error hidden" role="alert">创建失败，请重试。</div>
         <div class="dialog-actions"><button id="add-agent-cancel" type="button">取消</button><button id="add-agent-submit" class="primary-action" type="submit">创建</button></div>
       </form>
     </div>
     <div id="add-agent-result" class="hidden">
-      <h2>Agent 已创建</h2>
+      <h2>手动安装</h2>
       <p class="secret-warning">Enrollment credential 仅显示这一次。关闭后无法再次查看。</p>
-      <label>安装命令</label>
+      <label>① 复制安装命令</label>
       <div class="copy-block"><code id="created-install-command"></code><button id="copy-install-command" type="button" data-copy-target="created-install-command">复制命令</button></div>
       <p class="install-note">在目标 Linux 主机执行命令，然后在隐藏提示中粘贴下面的 enrollment value。复制 credential 会将其留在系统剪贴板，使用后请清除。</p>
-      <label>Enrollment value</label>
-      <div class="copy-block secret-value"><code id="created-enrollment"></code><button type="button" data-copy-target="created-enrollment">复制 credential</button></div>
+      <label>② 复制注册码</label>
+      <div class="copy-block secret-value"><code id="created-enrollment"></code><button id="show-enrollment" type="button" aria-pressed="false">显示</button><button type="button" data-copy-target="created-enrollment">复制注册码</button></div>
       <div class="dialog-actions"><button id="add-agent-done" class="primary-action" type="button">完成并关闭</button></div>
     </div>
   </dialog>

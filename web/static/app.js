@@ -250,7 +250,7 @@ const enrollmentDialog = AgentEnrollment.createController({
     name: document.querySelector('#oneclick-name'), error: document.querySelector('#oneclick-error'), submit: document.querySelector('#oneclick-submit'),
     oneclickBack: document.querySelector('#oneclick-back'), command: document.querySelector('#oneclick-command'),
     copy: document.querySelector('#oneclick-copy'), countdown: document.querySelector('#oneclick-countdown'),
-    status: document.querySelector('#oneclick-status'), revoke: document.querySelector('#oneclick-revoke'),
+    regenerate: document.querySelector('#oneclick-regenerate'), status: document.querySelector('#oneclick-status'), revoke: document.querySelector('#oneclick-revoke'),
   },
   csrf: () => mutationCSRFToken,
   available: () => Boolean(serverBuild.one_click_install),
@@ -258,12 +258,14 @@ const enrollmentDialog = AgentEnrollment.createController({
   unauthorized: () => location.assign('/login'),
 });
 
-let manualEnrollmentGeneration=0;
+let manualEnrollmentGeneration=0,manualCredential='';
+for(const node of document.querySelectorAll('[data-agent-server]'))node.textContent=location.origin;
+document.querySelector('#show-enrollment').addEventListener('click',e=>{const show=e.currentTarget.getAttribute('aria-pressed')!=='true';createdEnrollment.textContent=show?manualCredential:'••••••••••••••••••••••••';e.currentTarget.setAttribute('aria-pressed',String(show));e.currentTarget.textContent=show?'隐藏':'显示';});
 function clearEnrollmentDialog() {
   manualEnrollmentGeneration++;
   createdInstallCommand.textContent = '';
 	copyInstallCommand.disabled = true;
-  createdEnrollment.textContent = '';
+  createdEnrollment.textContent = '';manualCredential='';document.querySelector('#show-enrollment').setAttribute('aria-pressed','false');document.querySelector('#show-enrollment').textContent='显示';
   addAgentForm.reset();
   addAgentError.classList.add('hidden');
   addAgentSubmit.disabled = false;
@@ -278,7 +280,7 @@ addAgentButton.addEventListener('click', () => {
 
 document.querySelector('#add-agent-choice-cancel').addEventListener('click', () => addAgentDialog.close());
 document.querySelector('#oneclick-done').addEventListener('click', () => addAgentDialog.close());
-document.querySelector('#add-agent-next').addEventListener('click', () => { if(document.querySelector('#add-agent-choice').classList.contains('hidden')) { addAgentName.value=document.querySelector('#add-agent-choice-name').value; (addAgentCreate.classList.contains('hidden')?document.querySelector('#oneclick-submit'):addAgentSubmit).focus(); } });
+document.querySelector('#add-agent-next').addEventListener('click', () => { if(document.querySelector('#add-agent-choice').classList.contains('hidden')) { addAgentName.value=document.querySelector('#add-agent-choice-name').value; if(!addAgentCreate.classList.contains('hidden'))addAgentForm.requestSubmit(); } });
 
 document.querySelector('#add-agent-cancel').addEventListener('click', () => addAgentDialog.close());
 document.querySelector('#add-agent-done').addEventListener('click', () => addAgentDialog.close());
@@ -306,7 +308,7 @@ addAgentForm.addEventListener('submit', async event => {
     if(generation!==manualEnrollmentGeneration||!addAgentDialog.open)return;
     createdInstallCommand.textContent = enrollment.install_available ? enrollment.install_command : (enrollment.install_message || '当前 Server 构建无法生成安全安装命令');
 	copyInstallCommand.disabled = !enrollment.install_available;
-    createdEnrollment.textContent = enrollment.enrollment_value;
+    manualCredential = enrollment.enrollment_value;createdEnrollment.textContent='••••••••••••••••••••••••';
     addAgentCreate.classList.add('hidden');
     addAgentResult.classList.remove('hidden');
     await refresh();
@@ -517,7 +519,7 @@ for (const button of document.querySelectorAll('[data-copy-target]')) {
     if (!target || !target.textContent) return;
     const label = button.textContent;
     try {
-      await navigator.clipboard.writeText(target.textContent);
+      await navigator.clipboard.writeText(target===createdEnrollment?manualCredential:target.textContent);
       button.textContent = '已复制';
       setTimeout(() => { button.textContent = label; }, 1200);
     } catch (error) {
