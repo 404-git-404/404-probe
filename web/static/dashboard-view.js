@@ -5,10 +5,16 @@
   const preferences=M.preferences(),p=preferences.value,get=id=>doc.getElementById(id);
   const search=get('dashboard-search');
   const sort=get('dashboard-sort'),chips=get('dashboard-chips'),counts=get('dashboard-count'),quick=get('dashboard-quick'),options={};
+  const order=M.createOrder();
+  sort.replaceChildren(...Object.entries(M.SORTS).map(([key,label])=>{const o=doc.createElement('option');o.value=key;o.textContent='排序：'+label;return o;}));
+  const direction=doc.createElement('button');direction.type='button';direction.id='dashboard-direction';sort.after(direction);
+  const showDirection=()=>{direction.textContent=p.sortDir==='desc'?'↓':'↑';direction.setAttribute('aria-label',p.sortDir==='desc'?'降序，点击切换升序':'升序，点击切换降序');};
+  direction.addEventListener('click',()=>{p.sortDir=p.sortDir==='desc'?'asc':'desc';showDirection();change();});showDirection();
   let catalog={groups:[],tags:[]},model=null,signature='',controlsKey='';
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
   const button=(text,action,cls='')=>{const b=el('button',cls,text);b.type='button';b.addEventListener('click',action);return b;};
   function change(){preferences.save();onchange();}
+  function sortBy(key){p.sortDir=p.sort===key&&p.sortDir!=='desc'?'desc':'asc';p.sort=key;sort.value=key;showDirection();change();}
   function view(){for(const b of doc.querySelectorAll('[data-view]'))b.setAttribute('aria-pressed',String(b.dataset.view===p.viewMode));}
   for(const b of doc.querySelectorAll('[data-view]'))b.addEventListener('click',()=>{p.viewMode=b.dataset.view;view();change();});view();
   search.value=p.search;sort.value=p.sort;
@@ -84,7 +90,7 @@
    const label={groups:'分组',tags:'标签',countries:'国家/地区',statuses:'状态'}[key];o.host.querySelector('summary').textContent=label+(key==='tags'?' · 匹配任一':'')+(p[key].length?' · '+p[key].length:'');o.host.classList.toggle('selected',!!p[key].length);
   }
   function update(agents,c,server,ready){
-   catalog=c;if(ready)preferences.validate(catalog);model=M.select(agents,catalog,p,server);
+   catalog=c;if(ready)preferences.validate(catalog);model=M.select(agents,catalog,p,server);if(p.viewMode==='list')order.apply(model,catalog,p);
    const nextControls=JSON.stringify([ready,p,catalog.revision,model.summary.quick,model.summary.health,model.summary.online,model.list.length,[...agents.values()].map(a=>[a.agent_id,a.group_id,a.tag_ids,a.country_code,M.lifecycle(a)])]);
    if(nextControls===controlsKey)return model;controlsKey=nextControls;
    const all=[...agents.values()].filter(a=>!a.revoked),count=(key,id)=>all.filter(a=>key==='tags'?(a.tag_ids||[]).includes(id):key==='groups'?(catalog.groups.some(g=>g.id===a.group_id)?a.group_id:'__ungrouped')===id:key==='countries'?(a.country_code||'unknown')===id:M.lifecycle(a)===id).length;
@@ -99,7 +105,7 @@
    get('dashboard-clear').hidden=!selected.length;counts.textContent=`显示 ${model.list.length} / ${all.length} 台`;get('dashboard-all').querySelector('small').textContent=all.length;get('dashboard-all').setAttribute('aria-pressed',String(!p.groups.length));
    return model;
   }
-  return {preferences,update,apply,clear,updateVersion,refreshVersion,collapse(id){toggle('collapsed',id,!p.collapsed.includes(id));},
+  return {preferences,update,apply,clear,sortBy,setSlot(slot){p.latencySlot=slot;change();},updateVersion,refreshVersion,collapse(id){toggle('collapsed',id,!p.collapsed.includes(id));},
    close(){closed=true;settingsShell.close();narrow.removeEventListener('change',breakpoint);phone.removeEventListener('change',breakpoint);panel.removeEventListener('click',closeOnChoice);mobileShell.close();},snapshot:()=>({state:{...p}})};
  }
  root.DashboardView={create};

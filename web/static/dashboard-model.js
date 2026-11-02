@@ -7,11 +7,13 @@
  // and margin. Two refresh cycles tolerate one failed read; the Server's 5s
  // computation TTL and resource max_age_ms remain independent.
  const NETWORK_SUMMARY_FRESH_MS=30000;
+ const SORTS={group:'分组',name:'名称',system:'系统',cpu:'CPU',memory:'内存',disk:'磁盘',rate:'实时速率',traffic:'周期流量 %',latency:'延迟',price:'价格',renewal:'续费',upgrade:'待升级'};
  const defaults=()=>({version:1,search:'',groups:[],tags:[],countries:[],statuses:[],quick:[],sort:'group',collapsed:[],expensePeriod:'monthly',panelCollapsed:false,viewMode:'cards'});
  function preferences(storage=()=>root.localStorage){
   let value=defaults();
   try{const saved=JSON.parse(storage().getItem(KEY));if(saved?.version===1){for(const k of ['groups','tags','countries','statuses','quick','collapsed'])if(Array.isArray(saved[k]))value[k]=[...new Set(saved[k].filter(x=>typeof x==='string'))];if(typeof saved.search==='string')value.search=saved.search.slice(0,256);if(['group','name','renewal'].includes(saved.sort))value.sort=saved.sort;for(const k of ['panelCollapsed'])value[k]=saved[k]===true;if(saved.expensePeriod==='yearly')value.expensePeriod='yearly';}}catch{}
-  try{const saved=JSON.parse(storage().getItem(KEY));if(['cards','list','network'].includes(saved?.viewMode))value.viewMode=saved.viewMode;}catch{}
+  value.sortDir='asc';value.latencySlot=1;
+  try{const saved=JSON.parse(storage().getItem(KEY));if(saved?.version===1){if(['cards','list','network'].includes(saved.viewMode))value.viewMode=saved.viewMode;if(Object.hasOwn(SORTS,saved.sort))value.sort=saved.sort;if(saved.sortDir==='desc')value.sortDir='desc';if([1,2,3].includes(saved.latencySlot))value.latencySlot=saved.latencySlot;}}catch{}
   const save=()=>{try{storage().setItem(KEY,JSON.stringify(value));}catch{}};
   return {value,save,validate(catalog){let changed=false;for(const [key,allowed]of [['groups',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['tags',new Set(catalog.tags.map(t=>t.id))],['collapsed',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['statuses',new Set(Object.keys(STATUS))],['quick',new Set(Object.keys(QUICK))]]){const filtered=value[key].filter(id=>allowed.has(id));if(filtered.length!==value[key].length){value[key]=filtered;changed=true;}}if(changed)save();}};
  }
@@ -50,12 +52,31 @@
  }
  const collator=new Intl.Collator('zh-CN');
  const byName=(a,b)=>collator.compare(a.name||'',b.name||'')||a.agent_id.localeCompare(b.agent_id);
+ function sortValue(a,key,p,server){
+  if(key==='system')return a.state?.os||null;
+  if(['cpu','memory','disk'].includes(key))return a.resources?.known&&!a.resources.stale?a.resources[{cpu:'cpu_percent',memory:'ram_percent',disk:'disk_percent'}[key]]:null;
+  if(key==='rate')return typeof a.state?.rx_rate==='number'&&typeof a.state?.tx_rate==='number'?a.state.rx_rate+a.state.tx_rate:null;
+  if(key==='traffic')return a.dashboard_traffic?.quota_state==='current'&&a.plan?.quota_bytes>0?100*a.plan.usage_bytes/a.plan.quota_bytes:null;
+  if(key==='latency'){const s=a.network_slots?.find(s=>s.slot===(p.latencySlot||1));return ['ok','stale'].includes(s?.state)?s.latest_ms:null;}
+  if(key==='price'){const v=a.plan?.renewal_price||a.plan?.purchase_price;return v!=null&&v!==''?Number(v):null;}
+  if(key==='renewal')return a.renewal?.days??null;
+  if(key==='upgrade')return flags(a,server).upgrade?1:0;
+  return a.name||'';
+ }
+ function comparator(p,server){return (a,b)=>{const x=sortValue(a,p.sort,p,server),y=sortValue(b,p.sort,p,server),valid=v=>v!=null&&(typeof v!=='number'||Number.isFinite(v));if(!valid(x)||!valid(y))return valid(x)?-1:valid(y)?1:byName(a,b);const c=typeof x==='string'?collator.compare(x,y):x-y;return c*(p.sortDir==='desc'?-1:1)||byName(a,b);};}
+ // Full reads, SSE and calibration contain no order signal. Keep ids, not DTOs.
+ function createOrder(){let key='',order=new Map();return {apply(model,catalog,p){
+  const next=JSON.stringify([p.sort,p.sortDir,p.search,p.groups,p.tags,p.countries,p.statuses,p.quick,catalog.groups.map(g=>[g.id,g.name,g.sort_order])]);
+  if(next!==key){key=next;order=new Map();}
+  const liveGroups=new Set();for(const g of model.sections){liveGroups.add(g.id);const byID=new Map(g.items.map(a=>[a.agent_id,a])),prior=(order.get(g.id)||[]).filter(id=>byID.has(id)),known=new Set(prior);for(const a of g.items)if(!known.has(a.agent_id)){known.add(a.agent_id);prior.push(a.agent_id);}order.set(g.id,prior);g.items=prior.map(id=>byID.get(id));}
+  for(const id of order.keys())if(!liveGroups.has(id))order.delete(id);return model;
+ }};}
  function select(agents,catalog,p,server,now=Date.now()){
   const groupIDs=new Set(catalog.groups.map(g=>g.id));
   const list=[...agents.values()].map(a=>a.group_id&&!groupIDs.has(a.group_id)?{...a,group_id:null}:a).filter(a=>matches(a,p,server,now)),groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
-  if(p.sort==='renewal')list.sort((a,b)=>(a.renewal?.days??Infinity)-(b.renewal?.days??Infinity)||byName(a,b));else list.sort(byName);
-  const sections=p.sort==='group'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
+  list.sort(comparator(p,server));
+  const sections=p.sort==='group'||p.viewMode==='list'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
   return {list,sections,summary:aggregate(agents,server,now)};
  }
- const api={KEY,QUICK,STATUS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,flags,aggregate,active,matches,select};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);
