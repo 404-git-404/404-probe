@@ -37,7 +37,7 @@ go test ./... -count=1
 
 ## 发布流程（v1.0.2、v1.0.3 的做法）
 
-1. **发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
+1. **升级支持策略：每个版本只支持从前 1–2 个正式版升级；v1.1.0 支持从 v1.0.9、v1.0.10 升级。** 发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。**发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
 2. **发布前做独立 High 评审**，并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20 -timeout=60m`。
 3. **从精确的、干净的发布提交构建产物，输出目录放在仓库外：**
 
@@ -54,7 +54,7 @@ go test ./... -count=1
 
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
-   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。发布时对照目标版 `install.sh` 复核 r31-usage.md 里的提示清单，不一致就先更新清单。
+   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 发布门槛的演练矩阵仅包含本版支持的前两个正式版（v1.1.0：v1.0.9、v1.0.10 → v1.1.0，expected_schema: 36）；更早起点可演练，但不属于发布门槛。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。发布时对照目标版 `install.sh` 复核 r31-usage.md 里的提示清单，不一致就先更新清单。
    - 每个版本正式发布后，在下一版准备工作里把该版补入 R31 登记表：版本、正式 tag 提交、schema、相对上一版的表增删。
 5. **推送顺序：** 推送和 gh 操作需要维护者授权，可以在任务书里一次性授权。任务书必须写明哪些情况一定要停下来问，至少包括：结果与预期不符、升级失败、需要维护者操作面板或输入密码。
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
