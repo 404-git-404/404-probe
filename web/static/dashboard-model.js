@@ -7,10 +7,11 @@
  // and margin. Two refresh cycles tolerate one failed read; the Server's 5s
  // computation TTL and resource max_age_ms remain independent.
  const NETWORK_SUMMARY_FRESH_MS=30000;
- const defaults=()=>({version:1,search:'',groups:[],tags:[],countries:[],statuses:[],quick:[],sort:'group',collapsed:[],expensePeriod:'monthly',panelCollapsed:false});
+ const defaults=()=>({version:1,search:'',groups:[],tags:[],countries:[],statuses:[],quick:[],sort:'group',collapsed:[],expensePeriod:'monthly',panelCollapsed:false,viewMode:'cards'});
  function preferences(storage=()=>root.localStorage){
   let value=defaults();
   try{const saved=JSON.parse(storage().getItem(KEY));if(saved?.version===1){for(const k of ['groups','tags','countries','statuses','quick','collapsed'])if(Array.isArray(saved[k]))value[k]=[...new Set(saved[k].filter(x=>typeof x==='string'))];if(typeof saved.search==='string')value.search=saved.search.slice(0,256);if(['group','name','renewal'].includes(saved.sort))value.sort=saved.sort;for(const k of ['panelCollapsed'])value[k]=saved[k]===true;if(saved.expensePeriod==='yearly')value.expensePeriod='yearly';}}catch{}
+  try{const saved=JSON.parse(storage().getItem(KEY));if(['cards','list','network'].includes(saved?.viewMode))value.viewMode=saved.viewMode;}catch{}
   const save=()=>{try{storage().setItem(KEY,JSON.stringify(value));}catch{}};
   return {value,save,validate(catalog){let changed=false;for(const [key,allowed]of [['groups',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['tags',new Set(catalog.tags.map(t=>t.id))],['collapsed',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['statuses',new Set(Object.keys(STATUS))],['quick',new Set(Object.keys(QUICK))]]){const filtered=value[key].filter(id=>allowed.has(id));if(filtered.length!==value[key].length){value[key]=filtered;changed=true;}}if(changed)save();}};
  }

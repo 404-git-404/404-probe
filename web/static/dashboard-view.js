@@ -9,6 +9,8 @@
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
   const button=(text,action,cls='')=>{const b=el('button',cls,text);b.type='button';b.addEventListener('click',action);return b;};
   function change(){preferences.save();onchange();}
+  function view(){for(const b of doc.querySelectorAll('[data-view]'))b.setAttribute('aria-pressed',String(b.dataset.view===p.viewMode));}
+  for(const b of doc.querySelectorAll('[data-view]'))b.addEventListener('click',()=>{p.viewMode=b.dataset.view;view();change();});view();
   search.value=p.search;sort.value=p.sort;
   search.addEventListener('input',()=>{p.search=search.value;change();});
   sort.addEventListener('change',()=>{p.sort=sort.value;change();});

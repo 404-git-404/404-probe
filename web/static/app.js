@@ -1128,6 +1128,8 @@ function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs=dashboardUI.preferences.value;
+  document.querySelector('#network-placeholder').hidden=prefs.viewMode!=='network';
+  container.hidden=prefs.viewMode==='network';document.querySelector('.status-legend').hidden=prefs.viewMode==='network';
   overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild});
   const allIds=[...agents.keys()],mounted=new Set();
   for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);

@@ -1,4 +1,11 @@
 /* Sidebar and content frame use scalable dimensions; cards keep their existing modules. */
+.panel-views{display:flex;flex-direction:column;gap:.2rem}
+.dashboard-panel .panel-view{display:flex;align-items:center;gap:.85rem;font-size:1.1875rem;font-weight:400;background:none;padding:.65rem .6rem;text-align:left}
+.dashboard-panel .panel-view[aria-pressed=true]{background:var(--color-surface-hover);font-weight:700}
+.panel-view svg{width:1.6875rem;height:1.6875rem;flex:none}
+.panel-collapsed .panel-views{align-items:center}.panel-collapsed .panel-view{justify-content:center;border-radius:50%;width:3.15rem;height:3.15rem;padding:.65rem}
+#network-placeholder{padding:2rem 0}#network-placeholder p{color:var(--color-text-muted)}
+#agents[hidden],.status-legend[hidden],#network-placeholder[hidden]{display:none}
 .sr-only{position:fixed;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 body{background:var(--color-page);color:var(--color-text)}
 .dashboard-app{--panel-width:17.5rem;display:grid;grid-template-columns:var(--panel-width) minmax(0,1fr);min-height:100dvh}
