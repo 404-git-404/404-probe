@@ -10,8 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Only the compile-time socket directory is prepared. The migration CLI does
-// not run inside the old service's RuntimeDirectory lifecycle.
+// Only the compile-time socket directory is prepared for the Updater service.
 func prepareAgentUpdaterRuntimeDirectory(agentGID uint32) error {
 	if filepath.Dir(agentUpdaterSocketDirectory) != "/run" {
 		return errors.New("invalid fixed Agent runtime directory")

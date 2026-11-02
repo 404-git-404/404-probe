@@ -266,13 +266,13 @@ require_openrc_tools() {
 }
 
 reject_openrc_deferred() {
-  [[ "${INSTALL_INIT:-systemd}" != openrc ]] || die "$1 is unsupported on Alpine v1.0 (not supported yet (暂不支持)); no managed files were changed"
+  [[ "${INSTALL_INIT:-systemd}" != openrc ]] || die "$1 is unsupported on Alpine v1.0 (not supported yet; 暂不支持); no managed files were changed"
 }
 reject_deferred_command_on_host() {
   case "$1" in setup-security|finalize-agent-removal-account|recover-agent-removal)
     local id
     id="$(awk -F= '$1 == "ID" { gsub(/["\047]/,"",$2); print $2 }' /etc/os-release 2>/dev/null || true)"
-    [[ "${id}" != alpine ]] || die "$1 is unsupported on Alpine v1.0 (not supported yet (暂不支持)); no managed files were changed"
+    [[ "${id}" != alpine ]] || die "$1 is unsupported on Alpine v1.0 (not supported yet; 暂不支持); no managed files were changed"
     ;;
   esac
 }
@@ -3284,7 +3284,6 @@ verify_server_upgrade_backup() {
   (cd "${backup}" && sha256sum --check --strict SHA256SUMS >/dev/null) || return 1
 }
 
-
 # Compare the complete restored file set before SQLite can rebuild sidecars.
 verify_restored_server_files() {
   local backup="$1" file expected actual
@@ -3673,8 +3672,6 @@ install_or_upgrade() {
   interactive_install
 }
 
-# The legacy Agent recovery protocol remains pinned to its published v1.0.1
-# runner and journal format. Finish that bridge, then use normal Stable upgrade.
 main() {
   case "${1:-}" in -h|--help|help) usage; return ;; esac
   if [[ -z "${1:-}" ]] && oneclick_variables_present; then oneclick_require_root; fi

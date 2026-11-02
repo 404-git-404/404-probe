@@ -25,7 +25,7 @@
     updater_unreachable: '这台机器的升级服务无法连接或没有正确应答，升级按钮已停用。先确认没有进行中的升级、恢复或移除，再只执行一次 sudo systemctl restart 404-probe-agent-updater；仍不可用就停下并按升级服务排查文档检查，保留原配置和历史。',
     updater_identity_mismatch: '这台机器的升级服务目录或连接文件被替换，或属主、权限不符合要求，升级按钮已停用。请保留现场并按升级服务排查文档检查；不要删除占位文件、改权限或反复重启，原配置和历史应保留。',
     updater_unsupported: '这台机器的系统（如 Alpine/OpenRC）暂不支持从面板升级，升级按钮已停用，监控仍可使用。请保持现状，等待后续版本；不要为了启用按钮修改服务或重装。',
-    rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先按对应候选版的说明更新配套升级服务，保留原配置和历史。旧正式版迁移用的 v1.0.1 upgrade-agent 命令不能替代这一步。',
+    rc_updater_required: '这台机器的升级服务还不支持当前候选测试版，升级按钮已停用。请先按对应候选版的说明更新配套升级服务，保留原配置和历史。',
     agent_unavailable: '这台机器当前离线、已暂停或已撤销，升级按钮已停用。请先恢复连接或监控；已撤销的机器需要重新添加。',
     version_unrecognized: '面板无法识别这台机器当前的版本号，升级按钮已停用。请确认这台机器运行的是正式发布的程序（不用重装，原配置和历史会保留）。',
     already_latest: '这台机器已与面板版本相同，无需升级。以后更新面板后可再检查。',
@@ -33,15 +33,20 @@
     rc_server_agent_required: '面板正在使用候选测试版，这台机器的旧版程序暂时不能从面板升级。请先在机器上更新配套程序，原有监控仍可使用。',
     server_build_ineligible: '当前面板版本不能发起远程升级，升级按钮已停用。请先将面板更新为官方发布的可升级版本。',
   });
-  function upgradeReasonDisplay(target) {
+  function upgradeReasonDisplay(target, agent) {
+    const code=target?.reason_code;
+    const order=compareReleaseVersions(agent?.version,'v1.0.1');
+    // Display only: retain the Server's support decision and reason code.
+    if ((typeof code==='string' && (code.startsWith('updater_') || code.startsWith('rc_'))) && agent && !agent.upgrade_v2 && order!==null && order<=0)
+      return '这台机器的 Agent 版本过旧，不能从面板升级，请在机器上重新安装';
     return Object.hasOwn(upgradeReasons,target?.reason_code) ? upgradeReasons[target.reason_code] : target?.reason || '';
   }
   function updaterTroubleshootingURL(server) {
     const tag = compareStableVersions(server?.version, server?.version) === 0 && !server?.dirty ? server.version : 'main';
     return `https://github.com/404-git-404/404-probe/blob/${tag}/docs/updater-troubleshooting.md`;
   }
-  function appendUpgradeReason(element, target, server) {
-    element.textContent = upgradeReasonDisplay(target);
+  function appendUpgradeReason(element, target, server, agent) {
+    element.textContent = upgradeReasonDisplay(target, agent);
     if (!element.textContent.includes('升级服务排查文档')) return;
     const [before, ...after] = element.textContent.split('升级服务排查文档');
     const link = document.createElement('a');
@@ -79,7 +84,7 @@
       : /-beta\./.test(agent.version) && !agent.upgrade_v2 ? 'updater_unavailable'
       : (server.required_protocol ?? 2) === 2 && !agent.upgrade_v2 ? 'updater_unavailable'
       : !server.upgrade_eligible ? 'server_build_ineligible' : '');
-    return upgradeReasonDisplay({reason_code: code}) || '可从面板升级到与面板相同的版本';
+    return upgradeReasonDisplay({reason_code: code}, agent) || '可从面板升级到与面板相同的版本';
   }
   const resource = key => ({
     name: 'name', revoked: 'lifecycle', disabled_at: 'lifecycle', created_at: 'lifecycle',

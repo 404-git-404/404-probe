@@ -33,8 +33,8 @@ func TestUpgradeReasonCodesKeepOriginalDiagnosticsAndDecisions(t *testing.T) {
 		code, reason        string
 	}{
 		{"v1.0.2", "v1.0.10-rc.1", true, true, true, 2, "rc_agent_required", "RC需要RC-aware Agent及Updater；旧Stable/Beta不能通过Web直接进入RC"},
-		{"v1.0.9", "v1.0.10", true, false, true, 2, "updater_unavailable", "本地 Updater 不可用；需要保留身份配置的原地迁移"},
-		{"v1.0.9-rc.1", "v1.0.10", false, true, true, 2, "rc_updater_required", "当前RC Agent未证明RC-aware Updater能力；不能使用旧v1.0.1桥接替代"},
+		{"v1.0.9", "v1.0.10", true, false, true, 2, "updater_unavailable", "本地 Updater 不可用；请检查本地升级服务"},
+		{"v1.0.9-rc.1", "v1.0.10", false, true, true, 2, "rc_updater_required", "当前RC Agent未证明RC-aware Updater能力；请更新配套升级服务"},
 		{"v1.0.9", "v1.0.10", false, true, true, 2, "updater_unavailable", "本地 Updater 协议不兼容，暂不支持从面板升级"},
 		{"v1.0.9", "v1.0.10", true, true, false, 2, "agent_unavailable", "设备离线、暂停或已撤销"},
 		{"unknown", "v1.0.10", true, true, true, 2, "version_unrecognized", "目标不是严格更新版本；重复升级与降级不可用"},

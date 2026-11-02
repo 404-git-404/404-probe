@@ -57,9 +57,9 @@ func targetForAgent(target upgradeTarget, record storage.AgentSnapshot, busy ...
 		"version_unrecognized":    "目标不是严格更新版本；重复升级与降级不可用",
 		"already_latest":          "已是最新版本",
 		"agent_newer_than_server": "Agent 版本高于 Server，不能回退；如需回退请重新安装",
-		"updater_unavailable":     "本地 Updater 不可用；需要保留身份配置的原地迁移",
+		"updater_unavailable":     "本地 Updater 不可用；请检查本地升级服务",
 		"rc_agent_required":       "RC需要RC-aware Agent及Updater；旧Stable/Beta不能通过Web直接进入RC",
-		"rc_updater_required":     "当前RC Agent未证明RC-aware Updater能力；不能使用旧v1.0.1桥接替代",
+		"rc_updater_required":     "当前RC Agent未证明RC-aware Updater能力；请更新配套升级服务",
 	}
 	if code != gated.ReasonCode {
 		gated.ReasonCode = code
@@ -103,13 +103,13 @@ func targetForAgentGate(target upgradeTarget, record storage.AgentSnapshot) upgr
 	}
 	if record.State == nil || !record.State.AgentUpgradeCapable {
 		target.Supported = false
-		target.Reason = "本地 Updater 不可用；需要保留身份配置的原地迁移"
+		target.Reason = "本地 Updater 不可用；请检查本地升级服务"
 		target.ReasonCode = "updater_unavailable"
 		return target
 	}
 	if buildinfo.IsRCVersion(record.State.AgentVersion) && !record.State.AgentUpgradeV2 {
 		target.Supported = false
-		target.Reason = "当前RC Agent未证明RC-aware Updater能力；不能使用旧v1.0.1桥接替代"
+		target.Reason = "当前RC Agent未证明RC-aware Updater能力；请更新配套升级服务"
 		target.ReasonCode = "rc_updater_required"
 		return target
 	}

@@ -150,7 +150,7 @@ async function loadMutationSession() {
 function refreshUpgradeSelection() {
   const target = upgradeReleaseTargets[Number(upgradeReleaseSelect.value)];
   upgradeTargetVersion.textContent = target?.version || '—';
-  AgentState.appendUpgradeReason(upgradeReleaseReason, target, serverBuild);
+  AgentState.appendUpgradeReason(upgradeReleaseReason, target, serverBuild, agents.get(pendingUpgradeAgentID));
   upgradeBetaLabel.hidden = target?.channel !== 'beta';
   upgradeAgentConfirm.disabled = !target?.supported || (target.channel === 'beta' && !upgradeBetaConfirm.checked);
 }

@@ -18,7 +18,6 @@ func (a *App) qualityRoutes(mux *http.ServeMux) {
 	a.qualityV4Routes(mux, path)
 	mux.Handle("GET "+path+"v5/card", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityCardV5), true)))
 	mux.Handle("GET "+path+"v5/marks", qualityBudgetHandler(a.requireWebSession(http.HandlerFunc(a.handleQualityMarksV5), true)))
-
 }
 
 func qualityWebPath(r *http.Request, suffix string) bool {
