@@ -54,3 +54,10 @@ test('200-device ID phases split batches and full reads suppress queued telemetr
  const last=new Map();for(const call of partial)for(const id of call.ids){if(last.has(id))assert(call.at-last.get(id)>=10000);last.set(id,call.at);}
  for(const full of run.calls.filter(c=>!c.partial))assert(!partial.some(p=>p.at>full.at+30&&p.at<full.at+10030),'full reply must renew queued devices');
 });
+
+
+test('additive network slots survive existing full and partial dashboard reads',async()=>{
+ const f=fixture(),slots=[1,2,3].map(slot=>({slot,target_name:'Synthetic '+slot,latest_ms:slot*10,sampled_at:123,state:'ok'}));
+ f.set(response([{...row(A),network_slots:slots},row(B)]));await f.api.refresh();assert.deepEqual(f.state.agents.get(A).network_slots,slots);
+ const changed=slots.map(s=>({...s,latest_ms:s.latest_ms+1}));f.set(response([{...row(A),network_slots:changed}]));f.api.notify(A);await f.frame();assert.deepEqual(f.state.agents.get(A).network_slots,changed);f.api.close();
+});

@@ -729,7 +729,9 @@ func (a *App) Shutdown() {
 }
 
 func (a *App) CleanupLoop() {
-	a.updateCheck.Start(a.shutdown)
+	if a.updateCheck != nil {
+		a.updateCheck.Start(a.shutdown)
+	}
 	a.startDashboardNetworkWarmup()
 	if a.removalReceiptCleanupInterval <= 0 {
 		a.removalReceiptCleanupInterval = 5 * time.Minute

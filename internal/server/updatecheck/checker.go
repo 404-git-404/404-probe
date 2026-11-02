@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -52,8 +53,10 @@ func newChecker(initial State, info buildinfo.Info, logger *slog.Logger) *Checke
 		logger = slog.Default()
 	}
 	c := &Checker{state: initial, persist: func(State) error { return nil }, info: info, logger: logger, wake: make(chan struct{}, 1), fetchURL: endpoint, delay: randomDelay, now: time.Now}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
+	transport := &http.Transport{
+		DialContext:       (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2: true, MaxIdleConns: 1, IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: 8 * time.Second,
+	}
 	c.client = &http.Client{Timeout: 8 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
 	return c
 }

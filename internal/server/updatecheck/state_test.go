@@ -1,14 +1,50 @@
 package updatecheck
 
 import (
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"404-probe/internal/buildinfo"
 )
+
+func TestPersistedSuccessSurvivesRestartAndReenable(t *testing.T) {
+	c, count := testChecker(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"tag_name":"v1.1.0"}`) })
+	path := filepath.Join(t.TempDir(), "update-check.json")
+	c.persist = func(s State) error { return save(path, s) }
+	if err := c.check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	first := c.Snapshot()
+	restarted := New(path, c.info, nil)
+	defer restarted.Close()
+	restarted.client.Transport = c.client.Transport
+	restarted.fetchURL = c.fetchURL
+	restarted.now = func() time.Time { return time.UnixMilli(first.CheckedAt).Add(time.Hour) }
+	if restarted.Snapshot() != first {
+		t.Fatal(restarted.Snapshot(), first)
+	}
+	if _, err := restarted.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if restarted.Snapshot().Newer {
+		t.Fatal("disabled hint")
+	}
+	if _, err := restarted.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.check(t.Context()); err != nil || count.Load() != 1 {
+		t.Fatal(err, count.Load())
+	}
+	if delay := restarted.initialDelay(); delay < 11*time.Hour {
+		t.Fatal(delay)
+	}
+}
 
 func TestStatePersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "update-check.json")

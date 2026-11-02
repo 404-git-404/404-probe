@@ -40,6 +40,7 @@ var (
 )
 
 type Store struct {
+	dashboardSlots     dashboardSlotCache
 	db                 *sql.DB
 	databasePath       string
 	qualityBudgetMu    sync.Mutex

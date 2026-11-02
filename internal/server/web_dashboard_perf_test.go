@@ -138,7 +138,14 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 				}
 			}
 			alerts := 0
+			slotStates := map[string]int{}
 			for _, item := range decoded.Items {
+				for index, slot := range item.NetworkSlots {
+					if slot.Slot != index+1 || slot.State == "" {
+						t.Fatal("invalid network slots", item.AgentID, item.NetworkSlots)
+					}
+					slotStates[slot.State]++
+				}
 				if item.Network.Active != nil && *item.Network.Active {
 					alerts++
 				}
@@ -150,6 +157,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 				t.Fatal("fixture has no actual red quality alerts")
 			}
 			t.Logf("V110_QUALITY red_devices=%d missing_devices=%d lanes=3 window_minutes=90", alerts, (n+4)/5)
+			t.Logf("V11_SLOTS states=%v sample_cache_ttl_ms=5000", slotStates)
 			warm := append([]float64(nil), samples[1:]...)
 			sort.Float64s(warm)
 			var rows int

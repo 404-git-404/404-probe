@@ -153,7 +153,7 @@ func (s *Store) ReadDashboardData(ctx context.Context, now time.Time, offlineTim
 	if err != nil {
 		return out, err
 	}
-	networkSlots, err := readDashboardNetworkSlots(ctx, tx, now)
+	networkSlots, err := readDashboardNetworkSlots(ctx, tx, now, &s.dashboardSlots)
 	if err != nil {
 		return out, err
 	}
