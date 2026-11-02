@@ -31,6 +31,7 @@ type State struct {
 
 type Checker struct {
 	mu            sync.Mutex
+	writeMu       sync.Mutex // serialize persistence without blocking Snapshot
 	state         State
 	info          buildinfo.Info
 	persist       func(State) error
@@ -42,6 +43,7 @@ type Checker struct {
 	done          chan struct{}
 	closed        bool
 	lastWarning   time.Time
+	lastSuccessAt int64 // successful HTTP request, even if its cache could not be persisted
 	// Private test seams: production has no address/config/environment override.
 	fetchURL string
 	delay    func() time.Duration
@@ -88,6 +90,8 @@ func (c *Checker) Snapshot() State {
 }
 
 func (c *Checker) SetEnabled(enabled bool) (State, error) {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -95,10 +99,11 @@ func (c *Checker) SetEnabled(enabled bool) (State, error) {
 	}
 	next := c.state
 	next.Enabled = enabled
+	c.mu.Unlock()
 	if err := c.persist(next); err != nil {
-		c.mu.Unlock()
 		return State{}, err
 	}
+	c.mu.Lock()
 	changed := c.state.Enabled != enabled
 	c.state = next
 	if changed && c.requestCancel != nil {
@@ -147,11 +152,14 @@ func (c *Checker) initialDelay() time.Duration {
 	delay := c.delay()
 	c.mu.Lock()
 	checked := c.state.CheckedAt
+	success := c.lastSuccessAt
 	c.mu.Unlock()
 	// Re-enabling/restarting cannot circumvent the last successful check.
-	if checked > 0 {
-		if remaining := min(max(time.UnixMilli(checked).Add(interval).Sub(c.now()), 0), interval); remaining > delay {
-			delay = remaining
+	for _, at := range []int64{checked, success} {
+		if at > 0 {
+			if remaining := min(max(time.UnixMilli(at).Add(interval).Sub(c.now()), 0), interval); remaining > delay {
+				delay = remaining
+			}
 		}
 	}
 	return delay
@@ -196,29 +204,42 @@ func (c *Checker) check(ctx context.Context) error {
 		c.mu.Unlock()
 		return nil
 	}
-	age := c.now().Sub(time.UnixMilli(c.state.CheckedAt))
-	if c.state.CheckedAt > 0 && age >= 0 && age < interval {
-		c.mu.Unlock()
-		return nil
+	for _, at := range []int64{c.state.CheckedAt, c.lastSuccessAt} {
+		age := c.now().Sub(time.UnixMilli(at))
+		if at > 0 && age >= 0 && age < interval {
+			c.mu.Unlock()
+			return nil
+		}
 	}
 	requestCtx, cancel := context.WithCancel(ctx)
 	c.requestCancel = cancel
 	c.mu.Unlock()
 	defer cancel()
 	latest, err := c.fetch(requestCtx)
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.requestCancel = nil
+	if !c.state.Enabled || c.closed || requestCtx.Err() != nil {
+		c.mu.Unlock()
+		// An intentional toggle/shutdown cancellation is not a failed check.
+		return nil
+	}
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	if !c.state.Enabled || c.closed || requestCtx.Err() != nil {
-		return context.Canceled
+	next := c.state
+	next.Latest, next.CheckedAt = latest, c.now().UnixMilli()
+	c.lastSuccessAt = next.CheckedAt
+	c.mu.Unlock()
+	if err := c.persist(next); err != nil {
+		c.warn("could not persist result; retaining last successful cache")
+		return nil
 	}
-	c.state.Latest, c.state.CheckedAt = latest, c.now().UnixMilli()
-	if err := c.persist(c.state); err != nil {
-		c.warnLocked("could not persist result; retaining memory cache")
-	}
+	c.mu.Lock()
+	c.state = next
+	c.mu.Unlock()
 	return nil
 }
 
