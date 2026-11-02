@@ -82,21 +82,4 @@ esac
 			}
 		})
 	}
-	oldFunctions, err := os.ReadFile(filepath.Join(filepath.Dir(file), "testdata", "install-bootstrap-v100.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldHarness := strings.Replace(harness, functions, string(oldFunctions), 1)
-	oldPath := filepath.Join(t.TempDir(), "old-channels.sh")
-	if err := os.WriteFile(oldPath, []byte(oldHarness), 0600); err != nil {
-		t.Fatal(err)
-	}
-	oldCommand := installerFixtureCommand(t, bash, shellTestPath(oldPath), "bootstrap")
-	oldCommand.Env = append(os.Environ(), "PROBE_404_VERSION=v1.0.1-beta.1", "FIXTURE_LATEST=v1.0.0")
-	oldOutput, oldErr := oldCommand.CombinedOutput()
-	if oldErr == nil || !strings.Contains(string(oldOutput), "explicit target version must use canonical") {
-		t.Fatalf("old helper boundary: %s %v", oldOutput, oldErr)
-	}
-	t.Log("v1.0.0 helper rejects Beta; explicitly fetch/checksum/use the Beta installer, whose selected version and integrity are verified above")
-
 }

@@ -128,7 +128,9 @@ func TestInstallerServerUpgradeTransactionContract(t *testing.T) {
 		`helper-state`,
 		`SERVER_UPGRADE_HELPER_CANDIDATE`,
 		`"${INSTALL_HELPER}" domains list`,
-		`verify_legacy_server_upgrade_backup`,
+		`verify_server_upgrade_backup`,
+		`require_supported_server_version`,
+		`server_version_too_old`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("installer missing Server upgrade contract %q", required)

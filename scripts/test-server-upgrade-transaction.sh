@@ -85,23 +85,6 @@ make_backup() {
   chmod 0600 "${SERVER_UPGRADE_BACKUP}/complete"
 }
 
-make_legacy_backup() {
-  rm -rf -- "${SERVER_UPGRADE_BACKUP}"
-  mkdir -p "${SERVER_UPGRADE_BACKUP}/config" "${SERVER_UPGRADE_BACKUP}/database"
-  chmod 0700 "${SERVER_UPGRADE_BACKUP}"
-  printf 'old-binary' >"${SERVER_UPGRADE_BACKUP}/server-binary"
-  printf 'old-unit' >"${SERVER_UPGRADE_BACKUP}/server.service"
-  printf 'secret' >"${SERVER_UPGRADE_BACKUP}/config/server.env"
-  printf 'old-database' >"${SERVER_UPGRADE_BACKUP}/database/404-probe.db"
-  tar -cpf "${SERVER_UPGRADE_BACKUP}/config.tar" -C "${SERVER_UPGRADE_BACKUP}" config
-  printf '404-probe.db\n' >"${SERVER_UPGRADE_BACKUP}/database-files"
-  (
-    cd "${SERVER_UPGRADE_BACKUP}"
-    sha256sum server-binary server.service config.tar database-files database/404-probe.db
-  ) >"${SERVER_UPGRADE_BACKUP}/SHA256SUMS"
-  chmod 0600 "${SERVER_UPGRADE_BACKUP}/config.tar" "${SERVER_UPGRADE_BACKUP}/database-files" "${SERVER_UPGRADE_BACKUP}/SHA256SUMS"
-  : >"${SERVER_UPGRADE_BACKUP}/complete"
-}
 
 SHA_FAIL_MODE=primary
 if make_backup; then
@@ -180,17 +163,6 @@ printf 'new-helper' >"${INSTALL_HELPER}"
 write_server_upgrade_state helper-replaced 0 0 v0.9.1
 restore_server_upgrade || { printf 'missing-helper recovery failed\n' >&2; exit 1; }
 [[ ! -e "${INSTALL_HELPER}" ]] || { printf 'helper absence was not restored\n' >&2; exit 1; }
-
-make_legacy_backup
-printf 'new-database' >"${SERVER_DATABASE}"
-printf 'new-binary' >"${SERVER_BINARY}"
-printf 'old-helper' >"${INSTALL_HELPER}"
-write_server_upgrade_state binary-replaced 1 1 v0.9.1
-restore_server_upgrade || { printf 'legacy v0.9.1 recovery failed\n' >&2; exit 1; }
-[[ "$(<"${SERVER_DATABASE}")" == old-database ]] || { printf 'legacy old DB was not restored\n' >&2; exit 1; }
-[[ "$(<"${SERVER_BINARY}")" == old-binary ]] || { printf 'legacy old binary was not restored\n' >&2; exit 1; }
-[[ "$(<"${INSTALL_HELPER}")" == old-helper ]] || { printf 'legacy recovery changed the helper\n' >&2; exit 1; }
-
 
 # --- #3: a recovery that started the old Server (which wrote to the database) and was then interrupted or
 # failed its health check must be retryable. In backup-complete nothing used to be copied back, so the retry

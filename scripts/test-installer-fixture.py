@@ -369,7 +369,7 @@ bash /work/fixture/installer-fixture-shell-harness.sh
 
     def test_every_audited_harness_uses_common_entry(self):
         scripts = Path(__file__).resolve().parent
-        for name in ("install-sandbox", "install-oneclick", "install-oneclick-token", "install-password", "server-upgrade-transaction", "selector-order-existing", "migration-preflight", "migration-service-lifecycle"):
+        for name in ("install-sandbox", "install-oneclick", "install-oneclick-token", "install-password", "server-upgrade-transaction", "selector-order-existing", "upgrade-floor"):
             self.assertIn("installer-fixture-entry.sh", (scripts / ("test-" + name + ".sh")).read_text(encoding="utf-8"))
         for name in ("uninstall_behavior", "security_rollback", "server_recovery", "download_behavior", "beta_channel"):
             source = (scripts.parent / "cmd/server" / ("installer_" + name + "_test.go")).read_text(encoding="utf-8")

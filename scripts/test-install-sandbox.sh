@@ -233,7 +233,7 @@ install_body="$(body install_agent)"
 probe_at="${install_body%%sandbox_prepare*}"; redeem_at="${install_body%%oneclick_redeem_token*}"
 (( ${#probe_at} < ${#redeem_at} )) || { printf 'the sandbox probe must run before the token is redeemed\n' >&2; exit 1; }
 [[ "${install_body}" == *security_collector_activate* && "${install_body}" == *sandbox_write_config* ]]
-for fn in bootstrap_existing_agent upgrade_old_beta_agent setup_security_existing; do
+for fn in bootstrap_existing_agent setup_security_existing; do
   text="$(body "${fn}")"
   [[ "${text}" == *sandbox_prepare* && "${text}" == *sandbox_write_config* ]] || { printf '%s does not reuse the sandbox adaptation\n' "${fn}" >&2; exit 1; }
 done
