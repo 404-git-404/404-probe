@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"404-probe/internal/protocol"
+	"404-probe/internal/server/updatecheck"
 	"404-probe/internal/storage"
 )
 
@@ -495,17 +496,18 @@ func newWebAgentSummaryView(record storage.AgentSnapshot) webAgentSummaryView {
 }
 
 type webVersionView struct {
-	Version         string `json:"version"`
-	Commit          string `json:"commit,omitempty"`
-	Dirty           bool   `json:"dirty"`
-	UpgradeEligible bool   `json:"upgrade_eligible"`
+	Update          updatecheck.State `json:"update"`
+	Version         string            `json:"version"`
+	Commit          string            `json:"commit,omitempty"`
+	Dirty           bool              `json:"dirty"`
+	UpgradeEligible bool              `json:"upgrade_eligible"`
 	// OneClickInstall: the Server is a clean release build (stable, beta or rc) whose release installer can be fetched by exact version.
 	OneClickInstall bool `json:"one_click_install"`
 }
 
 func (a *App) handleGetWebVersion(w http.ResponseWriter, _ *http.Request) {
 	info := a.buildInfo
-	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible(), OneClickInstall: webOneClickAvailable(info)})
+	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible(), OneClickInstall: webOneClickAvailable(info), Update: a.updateCheck.Snapshot()})
 }
 
 func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *webAgentStateView {
