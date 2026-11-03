@@ -272,3 +272,6 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
 }
 
 .c7 .c7-quota[data-kind=nocap]{background:var(--color-clear)}
+
+.c7.state-offline .status.offline,.c7 .c7-offline-pill{color:var(--color-danger-text);border-color:var(--color-danger)}
+.c7 .c7-foot1 .check-result[data-premium=unavailable]{background:var(--color-surface-12);color:var(--color-danger-text);border:1px solid var(--color-danger)}

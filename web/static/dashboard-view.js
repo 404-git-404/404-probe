@@ -26,15 +26,29 @@
   function toggle(key,id,checked){p[key]=p[key].filter(x=>x!==id);if(checked)p[key].push(id);change();}
   for(const key of ['groups','tags','countries','statuses']){
    const host=get('dashboard-'+key),list=host.querySelector('.dashboard-options');options[key]={host,list,nodes:new Map()};
-   if(key==='groups'||key==='tags')list.after(button(key==='groups'?'管理分组…':'管理标签…',e=>onManage(key==='groups'?'groups':'tags',host.querySelector('summary')),'dashboard-manage'));
+   if(key==='groups'||key==='tags'){const manage=button(key==='groups'?'管理分组…':'管理标签…',e=>onManage(key==='groups'?'groups':'tags',e.currentTarget),'dashboard-manage');if(key==='tags')host.append(manage);else list.after(manage);}
   }
+  const tagMore=get('dashboard-tags-more'),tagMenu=tagMore.querySelector('.dashboard-tag-overflow');
+  let tagFrame=0;
+  function fitTags(){
+   tagFrame=0;const list=options.tags.list,nodes=[...options.tags.nodes.values()].map(v=>v.n);if(!nodes.length){tagMore.hidden=true;return;}
+   tagMore.hidden=false;for(const n of nodes)if(n.parentNode!==list)list.append(n);
+   const gap=parseFloat(root.getComputedStyle(list).gap)||0,widths=nodes.map(n=>n.getBoundingClientRect().width+gap),available=list.clientWidth;
+   const all=widths.reduce((a,b)=>a+b,0)-gap;
+   if(all<=available+tagMore.getBoundingClientRect().width){tagMore.hidden=true;tagMore.open=false;return;}
+   let used=0,extra=0;for(let i=0;i<nodes.length;i++){used+=widths[i];if(used-gap>available){tagMenu.append(nodes[i]);extra++;}}
+   tagMore.querySelector('summary').textContent='+'+extra;tagMore.querySelector('summary').setAttribute('aria-label','更多标签，'+extra+' 个');
+  }
+  function scheduleTags(){if(!tagFrame)tagFrame=root.requestAnimationFrame(fitTags);}
+  const tagResize=new root.ResizeObserver(scheduleTags);tagResize.observe(options.tags.list);
+  get('dashboard-tags-clear').addEventListener('click',()=>{p.tags=[];change();});
   const quickButtons={};for(const key of ['offline','network','resources','traffic','renewal']){
    const b=button('',()=>toggle('quick',key,!p.quick.includes(key)),'dashboard-quick-item');b.dataset.quick=key;quickButtons[key]=b;quick.append(b);
   }
   function apply(key){if(!p.quick.includes(key))p.quick.push(key);change();}
   const panel=get('dashboard-panel'),app=doc.querySelector('.dashboard-app'),mobile=get('panel-mobile-dialog');
   const mobileShell=root.DialogShell.attach(mobile,{decorate:false});
-  const narrow=root.matchMedia('(max-width:80rem)'),phone=root.matchMedia('(max-width:42rem)');
+  const narrow=root.matchMedia('(max-width:80rem)'),phone=root.matchMedia('(max-width:44rem)');
   let manualExpanded=false;
   function layout(){
    if(!phone.matches&&mobile.open)mobileShell.close();
@@ -46,7 +60,7 @@
   get('panel-collapse').addEventListener('click',()=>{
    if(narrow.matches)manualExpanded=app.classList.contains('panel-collapsed');else{p.panelCollapsed=!app.classList.contains('panel-collapsed');preferences.save();}layout();
   });
-  const breakpoint=()=>{manualExpanded=false;layout();};
+  const breakpoint=()=>{manualExpanded=false;layout();onchange();};
   narrow.addEventListener('change',breakpoint);phone.addEventListener('change',breakpoint);
   get('panel-mobile-open').addEventListener('click',e=>{get('panel-mobile-body').append(panel);mobileShell.open(e.currentTarget);get('panel-mobile-close').focus();});
   get('panel-mobile-close').addEventListener('click',mobileShell.close);
@@ -87,7 +101,7 @@
    const o=options[key],live=new Set();
    for(const [id,label,count]of rows){live.add(id);let v=o.nodes.get(id);if(!v){const plain=key==='groups'||key==='tags',n=el(plain?'button':'label','dashboard-option'),input=plain?null:el('input'),name=el('span'),number=el('small');if(plain){n.type='button';n.addEventListener('click',()=>toggle(key,id,!p[key].includes(id)));}else{input.type='checkbox';input.addEventListener('change',()=>toggle(key,id,input.checked));n.append(input);}n.append(name,number);o.list.append(n);v={n,input,name,number};o.nodes.set(id,v);}if(v.input)v.input.checked=p[key].includes(id);else v.n.setAttribute('aria-pressed',String(p[key].includes(id)));v.name.textContent=label;v.number.textContent=count;}
    for(const [id,v]of o.nodes)if(!live.has(id)){v.n.remove();o.nodes.delete(id);}
-   const label={groups:'分组',tags:'标签',countries:'国家/地区',statuses:'状态'}[key];o.host.querySelector('summary').textContent=label+(key==='tags'?' · 匹配任一':'')+(p[key].length?' · '+p[key].length:'');o.host.classList.toggle('selected',!!p[key].length);
+   const label={groups:'分组',tags:'标签',countries:'国家/地区',statuses:'状态'}[key];o.host.querySelector('[data-filter-label],summary').textContent=label+(key==='tags'?' · 匹配任一':'')+(p[key].length?' · '+p[key].length:'');o.host.classList.toggle('selected',!!p[key].length);
   }
   function update(agents,c,server,ready){
    catalog=c;if(ready)preferences.validate(catalog);model=M.select(agents,catalog,p,server);order.apply(model,catalog,p);
@@ -95,7 +109,7 @@
    if(nextControls===controlsKey)return model;controlsKey=nextControls;
    const all=[...agents.values()].filter(a=>!a.revoked),count=(key,id)=>all.filter(a=>key==='tags'?(a.tag_ids||[]).includes(id):key==='groups'?(catalog.groups.some(g=>g.id===a.group_id)?a.group_id:'__ungrouped')===id:key==='countries'?(a.country_code||'unknown')===id:M.lifecycle(a)===id).length;
    optionRows('groups',[...catalog.groups.map(g=>[g.id,g.name,count('groups',g.id)]),['__ungrouped','未分组',count('groups','__ungrouped')]]);
-   optionRows('tags',catalog.tags.map(t=>[t.id,t.name,count('tags',t.id)]));
+   optionRows('tags',catalog.tags.map(t=>[t.id,t.name,count('tags',t.id)]));get('dashboard-tags-clear').hidden=!p.tags.length;scheduleTags();
    optionRows('countries',[...new Set(all.map(a=>a.country_code||'unknown'))].sort().map(id=>[id,country(id),count('countries',id)]));
    optionRows('statuses',Object.entries(M.STATUS).map(([id,label])=>[id,label,count('statuses',id)]));
    for(const [key,b]of Object.entries(quickButtons)){b.textContent=M.QUICK[key];const count=el('small','',model.summary.quick[key]);b.append(count);b.classList.toggle('is-zero',!model.summary.quick[key]);b.disabled=!model.summary.quick[key]&&!p.quick.includes(key);b.setAttribute('aria-pressed',String(p.quick.includes(key)));b.title=key==='traffic'?'用量达到套餐配额的 80%；部分统计可能低于实际用量':'';}
@@ -105,8 +119,8 @@
    get('dashboard-clear').hidden=!selected.length;counts.textContent=`显示 ${model.list.length} / ${all.length} 台`;get('dashboard-all').querySelector('small').textContent=all.length;get('dashboard-all').setAttribute('aria-pressed',String(!p.groups.length));
    return model;
   }
-  return {preferences,update,apply,clear,sortBy,setSlot(slot){p.latencySlot=slot;change();},updateVersion,refreshVersion,collapse(id){toggle('collapsed',id,!p.collapsed.includes(id));},
-   close(){closed=true;settingsShell.close();narrow.removeEventListener('change',breakpoint);phone.removeEventListener('change',breakpoint);panel.removeEventListener('click',closeOnChoice);mobileShell.close();},snapshot:()=>({state:{...p}})};
+  return {preferences,effectiveView:()=>p.viewMode==='list'&&phone.matches?'cards':p.viewMode,update,apply,clear,sortBy,setSlot(slot){p.latencySlot=slot;change();},updateVersion,refreshVersion,collapse(id){toggle('collapsed',id,!p.collapsed.includes(id));},
+   close(){closed=true;tagResize.disconnect();if(tagFrame)root.cancelAnimationFrame(tagFrame);settingsShell.close();narrow.removeEventListener('change',breakpoint);phone.removeEventListener('change',breakpoint);panel.removeEventListener('click',closeOnChoice);mobileShell.close();},snapshot:()=>({state:{...p}})};
  }
  root.DashboardView={create};
 })(globalThis);

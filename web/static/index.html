@@ -41,7 +41,6 @@
     <section id="panel-attention" class="panel-section"><h2>需要关注</h2><div id="dashboard-quick" class="dashboard-quick"></div></section>
     <section id="dashboard-filters" aria-label="设备筛选">
       <details id="dashboard-groups" class="panel-section" open><summary>分组</summary><div class="dashboard-menu"><button id="dashboard-all" type="button">全部设备 <small></small></button><div class="dashboard-options"></div></div></details>
-      <details id="dashboard-tags" class="panel-section" open><summary>标签 · 匹配任一</summary><div class="dashboard-menu"><div class="dashboard-options"></div></div></details>
     </section>
     <button id="panel-more-toggle" type="button" aria-expanded="false">··· 更多（国家 / 状态）</button>
       <details id="dashboard-countries" class="panel-section"><summary>国家/地区</summary><div class="dashboard-options"></div></details>
@@ -56,7 +55,7 @@
     </div>
   </aside>
   <main id="dashboard-main">
-    <div id="dashboard-toolbar" class="dashboard-toolbar"><button id="panel-mobile-open" type="button" aria-label="打开控制面板" title="控制面板">☰</button><div id="dashboard-search-slot"><label class="sr-only" for="dashboard-search">搜索设备</label><input id="dashboard-search" type="search" placeholder="搜索名称、主机名、地址…" autocomplete="off"></div><div id="dashboard-chips" class="dashboard-chips"></div><button id="dashboard-clear" type="button" hidden>清空</button><span id="dashboard-count"></span><label class="sr-only" for="dashboard-sort">排序</label><select id="dashboard-sort"><option value="group">排序：分组</option><option value="name">排序：名称</option><option value="renewal">排序：续费</option></select></div>
+    <div id="dashboard-toolbar" class="dashboard-toolbar"><button id="panel-mobile-open" type="button" aria-label="打开控制面板" title="控制面板">☰</button><div id="dashboard-search-slot"><label class="sr-only" for="dashboard-search">搜索设备</label><input id="dashboard-search" type="search" placeholder="搜索名称、主机名、地址…" autocomplete="off"></div><div id="dashboard-chips" class="dashboard-chips"></div><button id="dashboard-clear" type="button" hidden>清空</button><span id="dashboard-count"></span><label class="sr-only" for="dashboard-sort">排序</label><select id="dashboard-sort"><option value="group">排序：分组</option><option value="name">排序：名称</option><option value="renewal">排序：续费</option></select><span id="phone-view-note" hidden>手机上以卡片显示</span><div id="dashboard-tags" class="dashboard-tagbar" aria-label="标签筛选"><span data-filter-label>标签 · 匹配任一</span><div class="dashboard-options"></div><details id="dashboard-tags-more"><summary aria-label="更多标签">+0</summary><div class="dashboard-tag-overflow"></div></details><button id="dashboard-tags-clear" type="button" hidden>清空</button></div></div>
     <section id="network-placeholder" hidden><h2>网络状态</h2><p>这个视图将在后续版本提供</p></section>
     <div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="dashboard-groups" aria-live="polite"></section><p class="status-legend"><span class="tone-dot healthy"></span>正常 <span class="tone-dot warning"></span>注意 / 接近阈值 <span class="tone-dot critical"></span>异常 / 已到期 <span class="tone-dot unknown"></span>未知 / 旧结果</p></main>
   </div>

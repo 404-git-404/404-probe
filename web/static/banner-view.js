@@ -16,7 +16,7 @@
  }
  function projection(a,{slot=1,server,now=Date.now(),csrf='',blocked=false}={}){
   const lifecycle=M.lifecycle(a),r=a.resources||{},old=M.resourcesOld(a,now);
-  const name=a.name||a.state?.hostname||'未命名 VPS',uptime=lifecycle==='paused'?'暂停':lifecycle==='offline'?'离线':finite(a.state?.uptime)?`${Math.floor(a.state.uptime/86400)} 天 ${Math.floor(a.state.uptime%86400/3600)} 时`:'等待上报';
+  const name=a.name||a.state?.hostname||'未命名 VPS',uptime=lifecycle==='paused'?'暂停':lifecycle==='offline'?`离线 ${Math.floor(Math.max(0,now-(a.last_seen||now))/60000)} 分钟`:finite(a.state?.uptime)?`${Math.floor(a.state.uptime/86400)} 天 ${Math.floor(a.state.uptime%86400/3600)} 时`:'等待上报';
   const os=a.state?.os||'',system=/debian/i.test(os)?'Deb':/alpine/i.test(os)?'Alp':/ubuntu/i.test(os)?'Ubu':os.split(' ')[0]||'—';
   const metrics=['cpu_percent','ram_percent','disk_percent'].map(k=>{const v=a.state?.collected_at>=r.collected_at&&finite(a.state[k])?a.state[k]:r[k],tone=C.ringTone(v,old);return {tone,fill:tone==='unknown'?0:Math.max(0,Math.min(100,v)),text:tone==='unknown'?'—':Number(v.toFixed(1))+'%'};});
   const p=a.plan,t=a.dashboard_traffic||{},trafficOld=t.stale||t.quota_state==='expired'||(p?.traffic_mode&&!t.known),used=p?.usage_bytes,quota=p?.quota_bytes;

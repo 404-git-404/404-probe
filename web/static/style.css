@@ -889,7 +889,7 @@ body #upgrade-agent-dialog.dialog-shell>.upgrade-versions{padding:0;margin:18px 
   --color-text-80:var(--color-warning-text);
 }
 :root[data-theme=dark] body{background:var(--color-page);color:var(--color-text)}
-:root[data-theme=dark] .c7-offline-note{color:var(--color-text)}
+:root[data-theme=dark] .c7-offline-note{color:var(--color-danger-text)}
 /* Third-party uPlot overrides; the vendored file stays intact. */
 :root[data-theme=dark] .uplot{color:var(--color-text)}
 :root[data-theme=dark] .u-select{background:var(--color-accent-soft)}

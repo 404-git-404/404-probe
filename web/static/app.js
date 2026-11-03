@@ -1129,7 +1129,8 @@ function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('
 function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
-  const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs=dashboardUI.preferences.value;
+  const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs={...dashboardUI.preferences.value,viewMode:dashboardUI.effectiveView()};
+  document.querySelector('#phone-view-note').hidden=!(dashboardUI.preferences.value.viewMode==='list'&&prefs.viewMode==='cards');
   document.querySelector('#network-placeholder').hidden=prefs.viewMode!=='network';
   container.hidden=prefs.viewMode==='network';document.querySelector('.status-legend').hidden=prefs.viewMode==='network';
   const cards=prefs.viewMode==='cards';container.hidden=!cards;if(prefs.viewMode==='list')ensureBanner();if(bannerHost)bannerHost.hidden=prefs.viewMode!=='list';
