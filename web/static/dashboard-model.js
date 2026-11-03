@@ -77,7 +77,11 @@
  function createOrder(){let key='',order=new Map();return {apply(model,catalog,p){
   const next=JSON.stringify([p.sort,p.sortDir,p.sort==='latency'?p.latencySlot:null,p.search,p.groups,p.tags,p.countries,p.statuses,p.quick,catalog.groups.map(g=>[g.id,g.name,g.sort_order])]);
   if(next!==key){key=next;order=new Map();}
-  const liveGroups=new Set();for(const g of model.sections){liveGroups.add(g.id);const byID=new Map(g.items.map(a=>[a.agent_id,a])),prior=(order.get(g.id)||[]).filter(id=>byID.has(id)),known=new Set(prior);for(const a of g.items)if(!known.has(a.agent_id)){known.add(a.agent_id);prior.push(a.agent_id);}order.set(g.id,prior);g.items=prior.map(id=>byID.get(id));}
+  const liveGroups=new Set();for(const g of model.sections){liveGroups.add(g.id);const ids=order.get(g.id);
+   // The common live update already has the frozen ids in the same order.
+   // Keep its fresh DTOs without allocating reconciliation maps and arrays.
+   if(ids?.length===g.items.length&&g.items.every((a,i)=>a.agent_id===ids[i]))continue;
+   const byID=new Map(g.items.map(a=>[a.agent_id,a])),prior=(ids||[]).filter(id=>byID.has(id)),known=new Set(prior);for(const a of g.items)if(!known.has(a.agent_id)){known.add(a.agent_id);prior.push(a.agent_id);}order.set(g.id,prior);g.items=prior.map(id=>byID.get(id));}
   for(const id of order.keys())if(!liveGroups.has(id))order.delete(id);return model;
  },reset(){key='';order=new Map();}};}
  function select(agents,catalog,p,server,now=Date.now()){
