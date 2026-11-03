@@ -80,6 +80,8 @@ func TestSnapshotDoesNotWaitForBlockedPersistence(t *testing.T) {
 
 func TestPersistenceFailureKeepsSettingButUpdatesHintAndRequestSpacing(t *testing.T) {
 	c, count := testChecker(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"tag_name":"v1.1.0"}`) })
+	now := time.Now()
+	c.now = func() time.Time { return now }
 	before := c.Snapshot()
 	c.persist = func(State) error { return errors.New("disk unavailable") }
 	if _, err := c.SetEnabled(false); err == nil || c.Snapshot() != before {
