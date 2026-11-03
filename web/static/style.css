@@ -34,6 +34,7 @@ html{background:#F7F4EF}html[data-theme=dark]{background:#0E1012}
   --color-warning-text:#8A5D00;
   --color-danger-text:#9E2F2A;
   --color-chart-down:#1F7A6C;
+  --color-rate-down-text:#1C7567;
   --color-chart-up:#7A4FA0;
   --color-bar:#E9E3DA;
   --color-surface-07:#CFE6E0;
@@ -543,6 +544,7 @@ body #upgrade-agent-dialog.dialog-shell>.upgrade-versions{padding:0;margin:18px 
 
 /* Mock v2 dark palette, shared by every surface and chart. */
 :root[data-theme=dark]{
+  --color-rate-down-text:var(--color-chart-down);
   --theme-search-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23949AA1' stroke-width='1.6'%3E%3Ccircle cx='10' cy='10' r='6'/%3E%3Cpath d='m15 15 5 5'/%3E%3C/svg%3E");
 
   --theme-color-scheme:dark;
