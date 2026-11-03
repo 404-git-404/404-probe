@@ -3,12 +3,14 @@ param(
   [Parameter(Mandatory=$true)][string]$Baseline,
   [Parameter(Mandatory=$true)][string]$Candidate,
   [Parameter(Mandatory=$true)][string]$Go,
-  [int]$Rounds=3
+  [int]$Rounds=3,
+  [string]$RunName='pairs'
 )
 $ErrorActionPreference='Stop'
 if($Rounds -lt 3){throw 'At least three alternating pairs are required'}
 $repo=Split-Path -Parent $PSScriptRoot
-$output=Join-Path $Evidence 'pairs'
+if($RunName -notmatch '^pairs(?:-[a-z0-9]+)*$'){throw 'Invalid run directory name'}
+$output=Join-Path $Evidence $RunName
 New-Item -ItemType Directory -Force $output | Out-Null
 Set-Location -LiteralPath $repo
 $env:GOPROXY='off'
