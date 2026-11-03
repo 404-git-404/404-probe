@@ -71,11 +71,17 @@
     return {...Object.fromEntries(keys.map(k=>[k,plan[k]??(k==='cycle_count'?0:'')])),...patch};
   }
   function validPlanDate(value){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value);if(!m||+m[1]<1)return false;const d=new Date(0);d.setUTCFullYear(+m[1],+m[2]-1,+m[3]);return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3];}
+  function planDate(now=Date.now(),timezone='UTC'){
+    try{
+      const parts=new Intl.DateTimeFormat('en-US',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(now)),value=k=>parts.find(p=>p.type===k).value;
+      return `${value('year').padStart(4,'0')}-${value('month')}-${value('day')}`;
+    }catch{return '';}
+  }
   // The selected reset day must begin an active month, using the plan timezone.
   function monthlyQuotaAnchor(day,now=Date.now(),timezone='UTC'){
     day=Number(day);if(!Number.isInteger(day)||day<1||day>31)return '';
-    const parts=new Intl.DateTimeFormat('en-US',{timeZone:timezone,year:'numeric',month:'numeric',day:'numeric'}).formatToParts(new Date(now)),value=k=>Number(parts.find(p=>p.type===k).value);
-    let year=value('year'),month=value('month');if(day>value('day')&&--month===0){month=12;year--;}
+    const today=planDate(now,timezone);if(!today)return '';
+    let [year,month,dateDay]=today.split('-').map(Number);if(day>dateDay&&--month===0){month=12;year--;}
     const date=new Date(0);
     // Preserve the original reset day: Server clamps each short month using
     // this anchor's day, so the anchor itself must never be clamped.
@@ -104,7 +110,7 @@
     return payload;
   }
   const matchesDeviceName=(input,name)=>typeof name==='string'&&!!name.trim()&&typeof input==='string'&&input.trim()===name.trim();
-  const api = {monthlyQuotaAnchor,planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
+  const api = {planDate,monthlyQuotaAnchor,planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Management = api;
 })(globalThis);
