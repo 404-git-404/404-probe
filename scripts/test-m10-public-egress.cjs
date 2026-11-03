@@ -73,7 +73,7 @@ class Element {
 }
 function loadApp() {
   const nodes = new Map(), node = key => {if (!nodes.has(key)) nodes.set(key, new Element()); return nodes.get(key);};
-  const sandbox = {AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
+  const sandbox = {ResizeObserver:class{observe(){} disconnect(){}},AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
     document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
     location: {search: '', assign() {}}, setInterval() {}, setTimeout, clearTimeout, queueMicrotask, addEventListener() {},
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},

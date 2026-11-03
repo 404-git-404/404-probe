@@ -9,9 +9,9 @@ test('panel collapse persists; automatic narrow collapse and a manual expansion 
  for(const id of ['add-agent','stream','logout','server-version','dashboard-search','dashboard-sort','dashboard-chips','dashboard-clear','dashboard-count'])assert.equal(await p.locator('#'+id).count(),1,id);
  for(const b of await p.locator('.dashboard-panel button:visible').all())assert(await b.getAttribute('aria-label')||await b.textContent());
 }));
-test('three height tiers fold tags, groups, and attention under More using CSS',()=>ui(async({page:p})=>{
- for(const [height,hidden]of [[1000,['#dashboard-tags']],[800,['#dashboard-tags','#dashboard-groups']],[600,['#dashboard-tags','#dashboard-groups','#panel-attention']]]){
-  await p.setViewportSize({width:1920,height});for(const id of hidden)assert.equal(await p.locator(id).isVisible(),false,id);await p.locator('#panel-more-toggle').click();for(const id of hidden)assert.equal(await p.locator(id).isVisible(),true,id);await p.locator('#panel-more-toggle').click();
+test('height tiers fold groups and attention while toolbar tags stay visible',()=>ui(async({page:p})=>{
+ for(const [height,hidden]of [[1000,[]],[800,['#dashboard-groups']],[600,['#dashboard-groups','#panel-attention']]]){
+  await p.setViewportSize({width:1920,height});assert(await p.locator('#dashboard-tags').isVisible());for(const id of hidden)assert.equal(await p.locator(id).isVisible(),false,id);await p.locator('#panel-more-toggle').click();for(const id of hidden)assert.equal(await p.locator(id).isVisible(),true,id);await p.locator('#panel-more-toggle').click();
  }
 }));
 test('mobile overlay traps focus, closes on Escape/selection, and shares stacked scroll locking',()=>ui(async({page:p})=>{
@@ -26,7 +26,7 @@ test('panel group/tag/country/status and attention selections drive chips and co
  const online=await p.locator('#overview-online').textContent();
  for(const [key,label]of [['groups','常用'],['tags','GIA'],['countries','美国'],['statuses','在线']]){
   if(['countries','statuses'].includes(key)&&await p.locator('#panel-more-toggle').getAttribute('aria-expanded')==='false')await p.locator('#panel-more-toggle').click();
-  const host=p.locator('#dashboard-'+key);if(!await host.evaluate(n=>n.open))await host.locator('summary').click();const option=host.locator('.dashboard-option').filter({hasText:label}).first();if(['groups','tags'].includes(key))await option.click();else await option.locator('input').check();
+  const host=p.locator('#dashboard-'+key);if(key!=='tags'&&!await host.evaluate(n=>n.open))await host.locator('summary').click();const option=host.locator('.dashboard-option').filter({hasText:label}).first();if(['groups','tags'].includes(key))await option.click();else await option.locator('input').check();
  }
  await p.waitForFunction(()=>document.querySelectorAll('.dashboard-chip').length===4);await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='显示 1 / 28 台');assert.equal(await p.locator('#overview-online').textContent(),online);await p.locator('#dashboard-clear').click();await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='显示 28 / 28 台');
 }));

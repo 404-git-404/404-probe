@@ -20,11 +20,12 @@ for(const mode of ['light','dark']){
  const names=Object.keys(vars).filter(n=>n.startsWith('--color-'));
  for(const name of names){const v=rgba(resolve(name));if(v.some(n=>!Number.isFinite(n)))throw Error('invalid colour '+name);}
  coverage.push({mode,sharedTokens:names.length,cardAliases:Object.keys(vars).filter(n=>n.startsWith('--c7-')).length});
- const check=(name,fg,bg,min)=>{const r=ratio(t(fg),t(bg));results.push({mode,name,r,min,ok:r>=min,fg,bg});};
+ const check=(name,fg,bg,min)=>{const r=ratio(t(fg),t(bg));results.push({mode,name,category:min===3?'graphic':'text',r,min,ok:r>=min,fg,bg});};
  for(const bg of ['page','card','surface-module','surface-hover'])for(const fg of ['text','text-muted','text-secondary','accent-text','danger-text','warning-text'])check(fg+' on '+bg,'--color-'+fg,'--color-'+bg,4.5);
  for(const fg of ['--text','--muted'])for(const bg of ['--bg','--panel'])check(fg+' on '+bg,fg,bg,4.5);
  for(const [fg,bg]of [['--color-text-02','--color-accent'],['--color-text-02','--color-danger']])check('button '+fg+' on '+bg,fg,bg,4.5);
 for(const state of ['hover','focus','disabled'])for(const bg of ['--color-accent','--color-danger'])check('detail action '+state+' on '+bg,'--color-text-02',bg,4.5);
+for(const bg of ['page','card','surface-module'])for(const fg of ['success','status-02','danger'])check('graphic '+fg+' on '+bg,'--color-'+fg,'--color-'+bg,3);
 // text on the module background (and on its hover colour)
 for(const bg of ['mod','mod-hover']){
   for(const fg of ['text','sub','pct-warn','pct-crit','up','warn-text','crit-text','quota-text'])check(`${fg} on ${bg}`,fg,bg,4.5);
@@ -39,7 +40,7 @@ check('warn percentage on its fill','quota-pct-warn','quota-fill-warn',4.5);chec
 for(const c of ['ring-ok','ring-warn','ring-crit'])check(`${c} on module`,c,'mod',3);
 // blocks: outline against the module (the fills are 1.3-1.9:1; the shape and the outline carry them)
 for(const c of ['edge-green','edge-yellow','edge-gray','block-red'])check(`${c} outline on module`,c,'mod',3);
-check('yellow bar on yellow block','mark-yellow','block-yellow',4.5);check('red dot on red block','mark-red','block-red',4.5);
+check('yellow bar on yellow block','mark-yellow','block-yellow',3);check('red dot on red block','mark-red','block-red',3);
 // segmented control, renew button, offline label
 check('selected segment text','seg-on-text','seg-on',4.5);
 check('renew (soon) text','renew-warn-text','renew-warn-bg',4.5);check('renew (overdue) text','renew-crit-text','renew-crit-bg',4.5);

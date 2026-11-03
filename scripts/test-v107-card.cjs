@@ -121,7 +121,7 @@ test('traffic face A: rates, the cycle amounts, and the quota bar in each plan s
  const nocap=Card.trafficView(agent({plan:plan({quota_bytes:undefined})}),{now:NOW});
  assert.equal(nocap.bar.kind,'nocap');assert.equal(nocap.bar.right,'第 10/30 天 · 1 Gbps');assert.doesNotMatch(JSON.stringify(nocap.bar),/已用|配额 /);
  const none=Card.trafficView(agent({plan:undefined,traffic:{rx_total:79.3e9,tx_total:79.1e9}}),{now:NOW});
- assert.deepEqual([none.label,none.down,none.up,none.bar.kind,none.bar.text],['累计','79.3 GB','79.1 GB','none','未设置流量配额 · 点此编辑套餐']);
+ assert.deepEqual([none.label,none.down,none.up,none.bar.kind,none.bar.text],['累计','79.3 GB','79.1 GB','none','未设置流量配额 · 点此设置']);
  assert.equal(Card.trafficView(agent({plan:plan({cycle_kind:'none'})}),{now:NOW}).label,'累计','a plan without a cycle counts the device total');
  assert.equal(Card.trafficView(agent({plan:{currency:'USD'}}),{now:NOW}).bar.kind,'none');
  const old=Card.trafficView(a,{old:true,now:NOW});assert.deepEqual([old.rx,old.tx],['↓ —','↑ —']);
@@ -132,7 +132,7 @@ test('B3: a plan whose cycle has not started yet shows the device total, like a 
  const a=agent({plan:future,traffic:{rx_total:123456,tx_total:654321}});
  const v=Card.trafficView(a,{now:NOW});
  assert.deepEqual([v.label,v.down,v.up],['累计','123 KB','654 KB']);
- assert.equal(v.bar.kind,'none');assert.equal(v.bar.text,'未设置流量配额 · 点此编辑套餐');
+ assert.equal(v.bar.kind,'none');assert.equal(v.bar.text,'周期 1 月 1 日开始 · 配额 5.00 TB');
  assert.equal(Card.hasCycle(future),false);
  assert.equal(Card.hasCycle(plan()),true);
 });

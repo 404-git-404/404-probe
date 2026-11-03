@@ -1,0 +1,24 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const {launch,open,ID}=require('./lib/v11-panel-fixture.cjs');
+const out=path.resolve(process.argv[2]),mocks=path.resolve(process.argv[3]),manifest=[];fs.mkdirSync(out,{recursive:true});
+(async()=>{const browser=await launch();try{for(const theme of ['light','dark']){
+ const f=await open(browser,{width:1440,height:900,theme,preferences:{viewMode:'list'}}),p=f.page;
+ const snap=async name=>{await p.waitForFunction(()=>!renderFrame);await p.screenshot({path:path.join(out,theme+'-'+name+'.png')});manifest.push(theme+'-'+name+'.png');};
+ try{
+  await p.evaluate(()=>{for(const a of agents.values()){if(a.name==='Vultr-NRT-1'){a.resources.cpu_percent=a.state.cpu_percent=94;}if(a.name==='DediRock-LAX-1')a.plan.usage_bytes=4.3e12;}render();});
+  await snap('F1-actual');
+  const comparison=await browser.newPage({viewport:{width:2880,height:870}}),reference=fs.readFileSync(path.join(mocks,`F1-标签栏-配色-离线行-${theme==='light'?'浅色':'深色'}.png`)).toString('base64'),actual=fs.readFileSync(path.join(out,theme+'-F1-actual.png')).toString('base64');
+  await comparison.setContent(`<style>body{margin:0;background:${theme==='light'?'#f7f4ef':'#0e1012'}}header{font:20px system-ui;height:30px;color:${theme==='light'?'#26221e':'#ddd'};display:flex}header span{width:1440px}main{display:flex;height:840px;overflow:hidden}img{width:1440px;height:900px;flex:none}</style><header><span>F1（裁去底部设计说明）</span><span>实际界面</span></header><main><img src="data:image/png;base64,${reference}"><img src="data:image/png;base64,${actual}"></main>`);await comparison.screenshot({path:path.join(out,theme+'-F1-compare.png')});manifest.push(theme+'-F1-compare.png');await comparison.close();
+  f.f.state.tags.push(...Array.from({length:18},(_,i)=>({id:ID(500+i),name:'合成标签 '+i})));f.f.state.revision++;await p.evaluate(()=>dashboardData.reload());await p.waitForFunction(()=>!document.querySelector('#dashboard-tags-more').hidden);await snap('tags-folded');await p.locator('#dashboard-tags-more summary').click();await snap('tags-expanded');await p.locator('#dashboard-tags-more summary').click();await p.locator('#dashboard-tags .dashboard-options .dashboard-option').first().click();await snap('tags-selected');await p.locator('#dashboard-tags-clear').click();await snap('tags-cleared');
+  await p.locator('#agent-list').evaluate(n=>n.scrollLeft=280);await p.waitForFunction(()=>document.querySelector('#agent-list').classList.contains('is-scrolled'));await snap('horizontal-after');await p.locator('#agent-list').evaluate(n=>n.scrollLeft=0);await p.waitForFunction(()=>!document.querySelector('#agent-list').classList.contains('is-scrolled'));await snap('horizontal-before');
+  await p.locator('[data-view=cards]').click();await p.locator(`.agent-card[data-agent-id="${ID(3)}"]`).scrollIntoViewIfNeeded();await snap('offline-card');await p.evaluate(()=>scrollTo(0,0));
+  await p.evaluate(id=>openPlanDialog(agents.get(id),null,'quota'),ID(0));for(const kind of ['monthly','yearly','days']){await p.locator('#plan-cycle-kind').selectOption(kind);await snap('quota-'+kind);}await p.locator('#plan-cancel').click();if(await p.locator('#plan-confirmation').isVisible())await p.locator('#plan-discard').click();
+  await p.evaluate(id=>{const a=agents.get(id);a.plan={...a.plan,cycle_start:null,cycle_end:null,cycle_anchor:'2027-02-28'};render(new Set([id]));},ID(0));await snap('future-cycle-card');await p.locator(`.agent-card[data-agent-id="${ID(0)}"] .c7-quota-empty`).click();await snap('card-opens-quota');await p.locator('#plan-cancel').click();
+  await p.locator('[data-view=list]').click();await p.setViewportSize({width:390,height:844});await p.waitForFunction(()=>document.querySelectorAll('#agents .agent-card').length===28&&!renderFrame);await snap('phone-list-as-cards');assert(await p.locator('#phone-view-note').isVisible());
+  await p.setViewportSize({width:2560,height:1200});await p.waitForFunction(()=>!document.querySelector('#agent-list').hidden&&!renderFrame);await snap('wide-2560');
+  for(const scale of [125,150]){await p.evaluate(s=>document.documentElement.style.fontSize=s+'%',scale);await snap('font-'+scale);}
+  assert.deepEqual(f.errors,[]);
+ }finally{await f.close();}
+ }
+ const f=await open(browser,{width:1100,height:900,n:200,preferences:{viewMode:'list'}});try{await f.page.locator('#agent-list').evaluate(n=>n.scrollTop=n.scrollHeight);await f.page.waitForTimeout(100);await f.page.screenshot({path:path.join(out,'list-bottom-sticky-header.png')});manifest.push('list-bottom-sticky-header.png');}finally{await f.close();}
+}finally{await browser.close();fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({synthetic:true,referenceCrop:'comparison shows y=0..840 of each 900px image; standalone actual screenshots retain the full viewport',files:manifest},null,2));}})().catch(e=>{console.error(e);process.exitCode=1;});
