@@ -4,14 +4,14 @@
 .c7,.selector-dialog{
   --c7-card:var(--color-card);--c7-border:var(--color-line);--c7-mod:var(--color-surface-module);--c7-mod-hover:var(--color-surface-hover);--c7-mod-line:var(--color-line-soft);--c7-line:var(--color-line-strong);
   --c7-text:var(--color-text);--c7-sub:var(--color-text-muted);
-  --c7-ring-ok:var(--color-status-01);--c7-ring-warn:var(--color-status-02);--c7-ring-crit:var(--color-danger);--c7-ring-track:var(--color-surface-06);
+  --c7-ring-ok:var(--color-success);--c7-ring-warn:var(--color-status-02);--c7-ring-crit:var(--color-danger);--c7-ring-track:var(--color-surface-06);
   --c7-pct-ok:var(--color-text);--c7-pct-warn:var(--color-warning-text);--c7-pct-crit:var(--color-danger-text);
   --c7-down:var(--color-chart-down);--c7-up:var(--color-chart-up);
-  --c7-quota-track:var(--color-bar);--c7-quota-fill:var(--color-surface-07);--c7-quota-edge:var(--color-chart-down);--c7-quota-text:var(--color-text-secondary);--c7-quota-tick:var(--color-text-muted);
+  --c7-quota-track:var(--color-bar);--c7-quota-fill:var(--color-surface-07);--c7-quota-edge:var(--color-success);--c7-quota-text:var(--color-text-secondary);--c7-quota-tick:var(--color-text-muted);
   --c7-quota-fill-warn:var(--color-surface-08);--c7-quota-edge-warn:var(--color-line-04);--c7-quota-fill-crit:var(--color-surface-09);--c7-quota-edge-crit:var(--color-danger);
   --c7-quota-pct-warn:var(--color-warning-text);--c7-quota-pct-crit:var(--color-danger-text);
   --c7-block-green:var(--color-status-03);--c7-block-yellow:var(--color-status-04);--c7-block-red:var(--color-danger);--c7-block-gray:var(--color-status-05);
-  --c7-edge-green:var(--color-line-05);--c7-edge-yellow:var(--color-line-06);--c7-edge-gray:var(--color-line-07);
+  --c7-edge-green:var(--color-success);--c7-edge-yellow:var(--color-status-02);--c7-edge-gray:var(--color-line-07);
   --c7-mark-yellow:var(--color-text-05);--c7-mark-red:var(--color-text-02);
   --c7-offline:var(--color-line-08);--c7-offline-bg:var(--color-surface-10);
   --c7-seg-on:var(--color-accent);--c7-seg-on-text:var(--color-text-02);

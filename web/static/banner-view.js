@@ -31,6 +31,8 @@
   const groups=new Map(),rows=new Map();let lastLayout='',headerKey='',namesKey='';
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;},text=(n,s)=>{if(n.textContent!==s)n.textContent=s;};
   host.classList.add('banner-scroll');host.tabIndex=0;host.setAttribute('aria-label','设备列表，可横向滚动');
+  const toolbar=doc.getElementById('dashboard-toolbar'),size=()=>host.style.setProperty('--toolbar-height',(toolbar?.getBoundingClientRect().height||64)+'px');
+  const resize=new root.ResizeObserver(size);if(toolbar)resize.observe(toolbar);size();
   const grid=el('div','banner-grid'),header=el('div','banner-header banner-columns');host.append(grid);grid.append(header);
   const columns=[['name','设备'],['system','系统'],['cpu','CPU'],['memory','内存'],['disk','磁盘'],['rate','实时速率'],['traffic','周期流量'],['latency','延迟'],['outbound','出站'],['youtube','YouTube'],['price','价格 / 续费'],['upgrade','']];
   for(const [key,label]of columns){const cell=el('div','banner-cell');cell.dataset.column=key;
@@ -40,12 +42,12 @@
   }
   function bar(){const box=el('div','banner-metric'),track=el('div','banner-track'),fill=el('i'),label=el('small');track.append(fill);box.append(track,label);return {box,fill,label};}
   function row(a){
-   const node=el('div','banner-row banner-columns');node.dataset.agentId=a.agent_id;node.tabIndex=0;node.setAttribute('role','button');node.setAttribute('aria-label','查看设备详情');
-   const cells=columns.map(([key])=>{const n=el('div','banner-cell');n.dataset.column=key;node.append(n);return n;}),identity=el('div','banner-identity'),dot=el('i','banner-dot'),flag=el('span','banner-flag'),names=el('div','banner-names'),name=el('strong','banner-name'),uptime=el('small');names.append(name,uptime);identity.append(dot,flag,names);cells[0].append(identity);
+   const node=el('div','banner-row banner-columns');node.dataset.agentId=a.agent_id;
+   const cells=columns.map(([key])=>{const n=el('div','banner-cell');n.dataset.column=key;node.append(n);return n;}),identity=el('div','banner-identity'),dot=el('i','banner-dot'),flag=el('span','banner-flag'),names=el('div','banner-names'),name=el('button','banner-name'),uptime=el('small');name.type='button';name.addEventListener('click',()=>onOpen(a.agent_id,name));names.append(name,uptime);identity.append(dot,flag,names);cells[0].append(identity);
    const system=el('span','banner-os');cells[1].append(system);const metrics=[bar(),bar(),bar()];metrics.forEach((m,i)=>cells[2+i].append(m.box));const tx=el('span'),rx=el('small');cells[5].append(tx,rx);const traffic=bar();cells[6].append(traffic.box);const youtube=el('span','banner-youtube');cells[9].append(youtube);const cost=el('span'),renew=el('small');cells[10].append(cost,renew);
-   node.addEventListener('click',e=>{if(e.target.closest('button,a,input,select')||root.getSelection?.()?.toString())return;onOpen(a.agent_id,node);});node.addEventListener('keydown',e=>{if(e.target!==node||!['Enter',' '].includes(e.key))return;e.preventDefault();onOpen(a.agent_id,node);});
+   node.addEventListener('click',e=>{if(e.target.closest('button,a,input,select')||root.getSelection?.()?.toString())return;onOpen(a.agent_id,name);});
    function update(v,agent){
-    node.dataset.lifecycle=v.lifecycle;text(name,v.name);name.title=v.name;text(uptime,v.uptime);text(flag,v.country);flag.title=v.country;dot.dataset.state=v.lifecycle;text(system,v.system);system.title=v.os;
+    node.dataset.lifecycle=v.lifecycle;node.setAttribute('aria-label',v.name);text(name,v.name);name.title=v.name;name.setAttribute('aria-label','查看 '+v.name+' 详情');text(uptime,v.uptime);text(flag,v.country);flag.title=v.country;dot.dataset.state=v.lifecycle;text(system,v.system);system.title=v.os;
     const setBar=(m,v)=>{m.box.dataset.tone=v.tone;m.fill.style.width=v.fill+'%';text(m.label,v.text);};metrics.forEach((m,i)=>setBar(m,v.metrics[i]));text(tx,v.tx);text(rx,v.rx);setBar(traffic,v.traffic);text(cells[7],v.latency.text);cells[7].title=v.latency.title;cells[7].dataset.state=v.latency.state;
     const trigger=selector.compactTrigger(agent);if(trigger.parentNode!==cells[8])cells[8].append(trigger);text(youtube,v.youtube.text);youtube.dataset.tone=v.youtube.tone;youtube.title=v.youtube.title;text(cost,v.price);text(renew,v.renewal);renew.classList.toggle('due-soon',v.soon);text(cells[11],v.upgrade?'待升级':'');cells[11].classList.toggle('banner-upgrade',v.upgrade);
    }

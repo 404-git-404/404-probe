@@ -51,29 +51,38 @@
  }
  const collator=new Intl.Collator('zh-CN');
  const byName=(a,b)=>collator.compare(a.name||'',b.name||'')||a.agent_id.localeCompare(b.agent_id);
- function sortValue(a,key,p,server){
+ // Same monthly USD basis as estimateExpenses; keep decimal ordering exact.
+ function monthlyUSD(plan,rates=[]){
+  if(!plan)return null;
+  const renewal=plan.renewal_price!=null&&plan.renewal_price!=='',price=renewal?plan.renewal_price:plan.purchase_price,period=renewal?plan.renewal_price_period:plan.purchase_price_period,months={monthly:1,quarterly:3,semiannual:6,yearly:12}[period];
+  const rate=plan.currency==='USD'?'1':rates.find(r=>r.currency===plan.currency)?.units_per_usd;
+  if(!months||! /^(0|[1-9][0-9]{0,11})(\.[0-9]{1,3})?$/.test(price??'')||! /^(0|[1-9][0-9]{0,11})(\.[0-9]{1,12})?$/.test(rate??'')||!/[1-9]/.test(rate))return null;
+  const decimal=s=>{const [a,b='']=String(s).split('.');return {n:BigInt(a+b),d:10n**BigInt(b.length)};},v=decimal(price),r=decimal(rate);
+  return {n:v.n*r.d,d:v.d*r.n*BigInt(months)};
+ }
+ function sortValue(a,key,p,server,catalog){
   if(key==='system')return a.state?.os||null;
   if(['cpu','memory','disk'].includes(key)){const field={cpu:'cpu_percent',memory:'ram_percent',disk:'disk_percent'}[key],r=a.resources;return r?.known&&!r.stale?(a.state?.collected_at>=r.collected_at&&Number.isFinite(a.state?.[field])?a.state[field]:r[field]):null;}
   if(key==='rate')return typeof a.state?.rx_rate==='number'&&typeof a.state?.tx_rate==='number'?a.state.rx_rate+a.state.tx_rate:null;
   if(key==='traffic')return a.dashboard_traffic?.quota_state==='current'&&a.plan?.quota_bytes>0?100*a.plan.usage_bytes/a.plan.quota_bytes:null;
   if(key==='latency'){const s=a.network_slots?.find(s=>s.slot===(p.latencySlot||1));return ['ok','stale'].includes(s?.state)?s.latest_ms:null;}
-  if(key==='price'){const v=a.plan?.renewal_price||a.plan?.purchase_price;return v!=null&&v!==''?Number(v):null;}
+  if(key==='price')return monthlyUSD(a.plan,catalog?.exchange_rates);
   if(key==='renewal')return a.renewal?.days??null;
   if(key==='upgrade')return flags(a,server).upgrade?1:0;
   return a.name||'';
  }
- function comparator(p,server){return (a,b)=>{const x=sortValue(a,p.sort,p,server),y=sortValue(b,p.sort,p,server),valid=v=>v!=null&&(typeof v!=='number'||Number.isFinite(v));if(!valid(x)||!valid(y))return valid(x)?-1:valid(y)?1:byName(a,b);const c=typeof x==='string'?collator.compare(x,y):x-y;return c*(p.sortDir==='desc'?-1:1)||byName(a,b);};}
+ function comparator(p,server,catalog){return (a,b)=>{const x=sortValue(a,p.sort,p,server,catalog),y=sortValue(b,p.sort,p,server,catalog),valid=v=>v!=null&&(typeof v!=='number'||Number.isFinite(v));if(!valid(x)||!valid(y))return valid(x)?-1:valid(y)?1:byName(a,b);const delta=p.sort==='price'?x.n*y.d-y.n*x.d:null,c=delta!==null?(delta<0n?-1:delta>0n?1:0):typeof x==='string'?collator.compare(x,y):x-y;return c*(p.sortDir==='desc'?-1:1)||byName(a,b);};}
  // Full reads, SSE and calibration contain no order signal. Keep ids, not DTOs.
  function createOrder(){let key='',order=new Map();return {apply(model,catalog,p){
-  const next=JSON.stringify([p.sort,p.sortDir,p.search,p.groups,p.tags,p.countries,p.statuses,p.quick,catalog.groups.map(g=>[g.id,g.name,g.sort_order])]);
+  const next=JSON.stringify([p.sort,p.sortDir,p.sort==='latency'?p.latencySlot:null,p.search,p.groups,p.tags,p.countries,p.statuses,p.quick,catalog.groups.map(g=>[g.id,g.name,g.sort_order])]);
   if(next!==key){key=next;order=new Map();}
   const liveGroups=new Set();for(const g of model.sections){liveGroups.add(g.id);const byID=new Map(g.items.map(a=>[a.agent_id,a])),prior=(order.get(g.id)||[]).filter(id=>byID.has(id)),known=new Set(prior);for(const a of g.items)if(!known.has(a.agent_id)){known.add(a.agent_id);prior.push(a.agent_id);}order.set(g.id,prior);g.items=prior.map(id=>byID.get(id));}
   for(const id of order.keys())if(!liveGroups.has(id))order.delete(id);return model;
- }};}
+ },reset(){key='';order=new Map();}};}
  function select(agents,catalog,p,server,now=Date.now()){
   const groupIDs=new Set(catalog.groups.map(g=>g.id));
   const list=[...agents.values()].map(a=>a.group_id&&!groupIDs.has(a.group_id)?{...a,group_id:null}:a).filter(a=>matches(a,p,server,now)),groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
-  list.sort(comparator(p,server));
+  list.sort(comparator(p,server,catalog));
   const sections=p.sort==='group'||p.viewMode==='list'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
   return {list,sections,summary:aggregate(agents,server,now)};
  }
