@@ -17,8 +17,15 @@ fs.mkdirSync(out,{recursive:true});
   });
   const cdp=await context.newCDPSession(page);
   for(const [action,target]of [['open','/'],['reload','/'],['jobs','/jobs.html'],['schedules','/schedules.html'],['history','/history.html'],['login','/login']]){
+   const stem=label+'-'+action+'-'+round;
    const events=[];const onData=({value})=>events.push(...value);cdp.on('Tracing.dataCollected',onData);
    await cdp.send('Tracing.start',{categories:'devtools.timeline,disabled-by-default-devtools.screenshot,blink.user_timing,loading',transferMode:'ReportEvents'});
+   // Arm the recorder on the existing document before requesting navigation.
+   // Preserve its image as well: an asynchronous tracing-start readback of a
+   // new tab's already-drawn blank canvas must not race the new CommitLoad.
+   const initial=await cdp.send('Page.captureScreenshot',{format:'png'});
+   fs.writeFileSync(path.join(out,stem+'-before-navigation.png'),Buffer.from(initial.data,'base64'));
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    if(action==='reload')await page.reload();else if(action==='open')await page.goto(fixture.base+target);else{
     // Use document-initiated navigation so the browser can run the real cross-
     // document transition; address-bar automation does not exercise that path.
@@ -26,7 +33,7 @@ fs.mkdirSync(out,{recursive:true});
    }
    await page.waitForTimeout(350);const fact=await page.evaluate(()=>({theme:document.documentElement.dataset.theme,scheme:getComputedStyle(document.documentElement).colorScheme,meta:document.querySelector('meta[name="color-scheme"]')?.content||null,root:getComputedStyle(document.documentElement).backgroundColor,body:getComputedStyle(document.body).backgroundColor,navigationTransition:[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')&&r.navigation==='auto'))}));
    const done=new Promise(r=>cdp.once('Tracing.tracingComplete',r));await cdp.send('Tracing.end');await done;cdp.off('Tracing.dataCollected',onData);
-   const stem=label+'-'+action+'-'+round;fs.writeFileSync(path.join(out,stem+'-trace.json'),JSON.stringify({traceEvents:events}));
+   fs.writeFileSync(path.join(out,stem+'-trace.json'),JSON.stringify({traceEvents:events}));
    const commit=events.find(e=>e.name==='CommitLoad'&&e.args?.data?.isMainFrame&&e.args.data.url===fixture.base+target);assert(commit,'missing target CommitLoad: '+stem);
    const frames=events.filter(e=>e.name==='Screenshot'&&e.args?.snapshot);const decoder=await context.newPage();const samples=[];
    for(const [i,frame]of frames.entries()){
