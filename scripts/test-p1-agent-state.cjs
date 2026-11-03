@@ -71,7 +71,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
   const nodes=new Map(), requests=[], sources=[], redirects=[], windowListeners=new Map();
   let route=null;
   const getNode = selector => {if(!nodes.has(selector)) nodes.set(selector,new Element()); return nodes.get(selector);};
-  const sandbox={AgentState:{...State,fetchJSON:(url,options)=>State.fetchJSON(url,{...options,timeoutMs:readTimeout}),
+  const sandbox={ResizeObserver:class{observe(){} disconnect(){}},AgentState:{...State,fetchJSON:(url,options)=>State.fetchJSON(url,{...options,timeoutMs:readTimeout}),
     // Keep the production reconciler, but resolve the intentionally stubbed renderer
     // at call time rather than capture the original DOM renderer during startup.
     reconcile:(store,read,changed,failed)=>State.reconcile(store,read,()=>vm.runInContext(file==='app.js'?'render()':'renderCurrentAgent()',sandbox),failed)},AbortController,TextEncoder,Node:{TEXT_NODE:3},console,URLSearchParams,Intl,Date,Map,Set,Number,Object,JSON,
