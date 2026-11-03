@@ -71,6 +71,14 @@
     return {...Object.fromEntries(keys.map(k=>[k,plan[k]??(k==='cycle_count'?0:'')])),...patch};
   }
   function validPlanDate(value){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value);if(!m||+m[1]<1)return false;const d=new Date(0);d.setUTCFullYear(+m[1],+m[2]-1,+m[3]);return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3];}
+  // The selected reset day must begin an active month, using the plan timezone.
+  function monthlyQuotaAnchor(day,now=Date.now(),timezone='UTC'){
+    day=Number(day);if(!Number.isInteger(day)||day<1||day>31)return '';
+    const parts=new Intl.DateTimeFormat('en-US',{timeZone:timezone,year:'numeric',month:'numeric',day:'numeric'}).formatToParts(new Date(now)),value=k=>Number(parts.find(p=>p.type===k).value);
+    let year=value('year'),month=value('month');if(day>value('day')&&--month===0){month=12;year--;}
+    const date=new Date(0);date.setUTCFullYear(year,month,0);const last=date.getUTCDate();
+    return `${String(year).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(Math.min(day,last)).padStart(2,'0')}`;
+  }
   // Both presentations edit a disjoint subset of one full PUT contract.
   function planSectionPayload(plan={},section,fields={},options={}) {
     const copy=keys=>Object.fromEntries(keys.map(k=>[k,String(fields[k]??'').trim()]));
@@ -93,7 +101,7 @@
     return payload;
   }
   const matchesDeviceName=(input,name)=>typeof name==='string'&&!!name.trim()&&typeof input==='string'&&input.trim()===name.trim();
-  const api = {planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
+  const api = {monthlyQuotaAnchor,planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Management = api;
 })(globalThis);

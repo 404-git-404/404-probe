@@ -601,13 +601,15 @@ function openPlanDialog(agent, trigger = null, mode='plan') {
 }
 
 const shortPlanDate=v=>{const d=new Date(v);return String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
-function syncQuotaPresentation(){const limit=document.querySelector('#quota-limit').value;document.querySelector('#quota-amount').hidden=limit==='unlimited';for(const group of document.querySelectorAll('[data-quota-segment]')){const value=group.dataset.quotaSegment==='limit'?limit:document.querySelector('#plan-traffic-mode').value;for(const b of group.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.value===value));}const monthly=document.querySelector('#plan-cycle-kind').value==='monthly';document.querySelector('#quota-cycle-day').hidden=document.querySelector('#quota-cycle-day-label').hidden=!monthly;}
+function syncQuotaPresentation(){const limit=document.querySelector('#quota-limit').value;document.querySelector('#quota-amount').hidden=limit==='unlimited';for(const group of document.querySelectorAll('[data-quota-segment]')){const value=group.dataset.quotaSegment==='limit'?limit:document.querySelector('#plan-traffic-mode').value;for(const b of group.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.value===value));}const kind=document.querySelector('#plan-cycle-kind').value,monthly=kind==='monthly';document.querySelector('#quota-cycle-count-label').textContent={monthly:'每隔几个月',yearly:'每隔几年',days:'每隔几天'}[kind];document.querySelector('#quota-cycle-help').textContent={monthly:'每月固定某日清零',yearly:'按年给流量的套餐',days:'从起点起每隔 N 天，不按日历月'}[kind];document.querySelector('#quota-cycle-day').hidden=document.querySelector('#quota-cycle-day-label').hidden=!monthly;}
 for(const group of document.querySelectorAll('[data-quota-segment]'))for(const b of group.querySelectorAll('button'))b.addEventListener('click',()=>{document.querySelector(group.dataset.quotaSegment==='limit'?'#quota-limit':'#plan-traffic-mode').value=b.dataset.value;planEditGeneration++;syncQuotaPresentation();});
 planTrafficEnabled.addEventListener('change',()=>{if(!planTrafficEnabled.checked&&agents.get(pendingPlanAgentID)?.plan?.traffic_mode){quotaOffConfirmed=false;document.querySelector('#quota-off-confirm').hidden=false;}else{quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();}});
 document.querySelector('#quota-keep-on').addEventListener('click',()=>{planTrafficEnabled.checked=true;quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();});
 document.querySelector('#quota-confirm-off').addEventListener('click',()=>{quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();});
-document.querySelector('#quota-cycle-day').addEventListener('input',e=>{const input=document.querySelector('#plan-cycle-anchor');input.value=input.value.slice(0,8)+String(e.target.value).padStart(2,'0');});
-document.querySelector('#plan-cycle-kind').addEventListener('change',()=>{syncQuotaPresentation();if(document.querySelector('#plan-cycle-kind').value!=='monthly'){document.querySelector('.quota-cycle-more').open=true;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded','true');}});
+function setMonthlyQuotaDay(){document.querySelector('#plan-cycle-anchor').value=Management.monthlyQuotaAnchor(document.querySelector('#quota-cycle-day').value,Date.now(),document.querySelector('#plan-timezone').value||'UTC');}
+document.querySelector('#quota-cycle-day').addEventListener('input',setMonthlyQuotaDay);
+document.querySelector('#plan-open-quota').addEventListener('click',()=>{const a=agents.get(pendingPlanAgentID);if(a)openPlanDialog(a,document.querySelector('[data-focus-key=plan]'),'quota');});
+document.querySelector('#plan-cycle-kind').addEventListener('change',()=>{if(document.querySelector('#plan-cycle-kind').value==='monthly')setMonthlyQuotaDay();syncQuotaPresentation();if(document.querySelector('#plan-cycle-kind').value!=='monthly'){document.querySelector('.quota-cycle-more').open=true;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded','true');}});
 document.querySelector('#quota-cycle-options').addEventListener('click',()=>{const more=document.querySelector('.quota-cycle-more');more.open=!more.open;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded',String(more.open));if(more.open)document.querySelector('#plan-cycle-count').focus();});
 document.querySelector('#plan-currency').addEventListener('change',()=>{const input=document.querySelector('#plan-currency-custom'),custom=document.querySelector('#plan-currency').value==='__custom__';input.hidden=!custom;input.required=custom;if(custom)input.focus();});
 planForm.addEventListener('input', () => { planEditGeneration++; });
@@ -1320,11 +1322,11 @@ function createAgentCard(initialAgent) {
     // ---- traffic ----
     const trafficNode = trafficCharts.mount(agent);
     const quotaDisplay = plan => { try { return plan?.quota_value ? PlanUnits.display(plan.quota_value, plan.quota_unit) : null; } catch (_) { return null; } };
-    const trafficFaces = Card.trafficFaces(document, {chart: trafficNode, onEditPlan: trigger => openPlanDialog(agent, trigger)});
+    const trafficFaces = Card.trafficFaces(document, {chart: trafficNode, onEditPlan: trigger => openPlanDialog(agent, trigger,'quota')});
     const updateTraffic = () => {
       const old = Boolean(!agent.online || agent.disabled_at || agent.state?.stale || cardObservations.observe(agent).stale);
       trafficFaces.update(Card.trafficView(agent, {old, quotaDisplay: quotaDisplay(agent.plan)}), Card.trafficDetail(agent));
-      trafficFaces.emptyButton.disabled = planActionBlocked(agent);
+      trafficFaces.emptyButton.disabled = trafficFaces.quotaButton.disabled = planActionBlocked(agent);
     };
     const trafficModule = Card.createModule({document, key: 'traffic', label: '流量', host: document.createElement('section'), a: trafficFaces.a, b: trafficFaces.b,
       onFace: face => trafficCharts.setActive(agent.agent_id, face === 'B')});

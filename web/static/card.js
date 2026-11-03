@@ -103,12 +103,16 @@
     return {day,total,elapsed:Math.max(0,Math.min(1,(now-plan.cycle_start)/(plan.cycle_end-plan.cycle_start)))};
   }
   function resetText(plan) {
-    if(!hasCycle(plan))return '未设置周期';
+    if(!hasCycle(plan))return pendingCycle(plan)||'未设置周期';
     const [year,month,day]=String(plan.cycle_anchor||'').split('-').map(Number),count=plan.cycle_count||1;
     if(plan.cycle_kind==='days')return count===1?'每天重置':`每 ${count} 天重置`;
     if(plan.cycle_kind==='yearly'&&month&&day)return count===1?`每年 ${month} 月 ${day} 日重置`:`每 ${count} 年重置（${month} 月 ${day} 日）`;
     if(plan.cycle_kind==='monthly'&&day)return count===1?`每月 ${day} 日重置`:`每 ${count} 个月重置（${day} 日）`;
     return '按套餐周期重置';
+  }
+  function pendingCycle(plan){
+    if(!plan?.traffic_mode||!plan.cycle_kind||plan.cycle_kind==='none'||!plan.cycle_anchor)return '';
+    const [,month,day]=String(plan.cycle_anchor).split('-').map(Number);return month&&day?`周期 ${month} 月 ${day} 日开始`:'';
   }
   const bandwidthText=plan=>plan?.bandwidth_value?`${plan.bandwidth_value} ${plan.bandwidth_unit}`:'未设带宽';
   const dateText=ms=>{if(!finite(ms))return '';const d=new Date(ms);return `${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
@@ -129,7 +133,7 @@
       down:finite(down)?sig3(down):'—',up:finite(up)?sig3(up):'—',mark:mark.mark,markTitle:mark.title,
       bandwidth:bandwidthText(plan),oldMetrics:old,
     };
-    if(!cycle)return {...view,bar:{kind:'none',text:'未设置流量配额 · 点此编辑套餐'}};
+    if(!cycle){const pending=pendingCycle(plan);return {...view,bar:{kind:'none',text:pending?pending+' · 配额 '+(quotaDisplay?.text|| (plan.quota_bytes==null?'不限流量':sig3(plan.quota_bytes))):'未设置流量配额 · 点此设置'}};}
     const days=cycleDays(plan,now),dayText=days?`第 ${days.day}/${days.total} 天`:'周期尚未开始',right=`${dayText} · ${view.bandwidth}`;
     if(plan.quota_bytes==null)return {...view,bar:{kind:'nocap',left:'不限流量',right,time:days?days.elapsed:null}};
     const used=Number(plan.usage_bytes||0),quota=Number(plan.quota_bytes),percent=quota>0?used/quota*100:0;
@@ -204,13 +208,13 @@
     const el=make(doc),a=el('div','c7-traffic-a'),b=el('div','c7-traffic-b');
     const line=el('div','c7-dirs'),sides=[0,1].map(i=>{const side=el('div','c7-dir'),rate=el('span',`c7-rate ${i?'c7-tx':'c7-rx'}`),cyc=el('span','c7-cyc'),label=el('span','c7-cyc-label'),amount=el('span','c7-cyc-amount'),mark=el('sup','c7-cyc-mark');cyc.append(label,amount,mark);side.append(rate,cyc);return {side,rate,label,amount,mark};});
     line.append(sides[0].side,el('span','c7-sep'),sides[1].side);
-    const bar=el('div','c7-quota'),fill=el('span','c7-quota-fill'),tick=el('span','c7-quota-tick'),text=el('span','c7-quota-text'),left=el('span','c7-quota-left'),pctNode=el('span','c7-quota-pct'),right=el('span','c7-quota-right');
+    const bar=el('button','c7-quota'),fill=el('span','c7-quota-fill'),tick=el('span','c7-quota-tick'),text=el('span','c7-quota-text'),left=el('span','c7-quota-left'),pctNode=el('span','c7-quota-pct'),right=el('span','c7-quota-right');bar.type='button';bar.setAttribute('aria-label','设置流量配额');bar.addEventListener('click',()=>onEditPlan(bar));
     text.append(left,pctNode,right);bar.append(fill,tick,text);
     const empty=el('button','c7-quota-empty');empty.type='button';empty.dataset.focusKey='traffic-plan';empty.addEventListener('click',()=>onEditPlan(empty));
     a.append(line,bar,empty);
     const spark=chart,tot=el('div','c7-row'),totl=el('span'),totr=el('span','c7-muted');
     tot.append(totl,totr);b.append(spark,tot);
-    return {a,b,emptyButton:empty,update(view,detail){
+    return {a,b,emptyButton:empty,quotaButton:bar,update(view,detail){
       sides.forEach((s,i)=>{const rate=i?view.tx:view.rx;if(s.rate.textContent!==rate)s.rate.textContent=rate;s.label.textContent=view.label+' ';s.amount.textContent=i?view.up:view.down;s.mark.textContent=view.mark;s.mark.hidden=!view.mark;
         s.side.title=view.mark?view.markTitle:(view.oldMetrics?'旧数据，速率不是当前值':'');s.side.dataset.old=String(view.oldMetrics);});
       const kind=view.bar.kind;
