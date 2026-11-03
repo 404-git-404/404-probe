@@ -4,6 +4,12 @@
   const key='404-probe.theme.v1',modes=['light','dark','system'];
   const media=root.matchMedia('(prefers-color-scheme: dark)');
   const valid=value=>modes.includes(value)?value:'system';
+  // A browser may skip an optional document transition (for example a second
+  // navigation during its animation). Its ready rejection must be handled on
+  // that transition, while the document's resolved theme remains in force.
+  for(const name of ['pageswap','pagereveal'])root.addEventListener(name,event=>{
+    event.viewTransition?.ready.catch(()=>{});
+  });
   let preference='system';
   try{preference=valid(root.localStorage.getItem(key));}catch{/* Storage may be disabled. */}
   function apply(){
