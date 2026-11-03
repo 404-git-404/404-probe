@@ -13,7 +13,7 @@ test('three modes cycle in order and survive navigation/reload with accessible c
   assert.deepEqual(await theme(p),{mode,resolved});assert.equal(await button.getAttribute('aria-label'),'主题：'+label);assert.equal(await button.getAttribute('title'),'主题：'+label);await button.click();
  }
  assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});await p.reload();await waitTheme(p,'dark');assert.equal(await p.evaluate(()=>localStorage.getItem('404-probe.theme.v1')),'dark');
- for(const path of ['/history.html?id='+'1'.padStart(32,'0'),'/jobs.html','/schedules.html','/']){await p.goto(new URL(path,p.url()).href);assert.equal(await p.locator('[data-theme-toggle]').count(),1);assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});}
+ for(const path of ['/history.html?id='+'1'.padStart(32,'0'),'/jobs.html','/schedules.html','/']){await p.goto(new URL(path,p.url()).href);assert.equal(await p.locator('[data-theme-toggle]').count(),1);assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});assert(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')&&r.navigation==='auto'))));}
 }));
 test('default system mode follows OS changes while explicit modes ignore them',()=>ui(async({page:p})=>{
  assert.deepEqual(await theme(p),{mode:'system',resolved:'light'});await p.emulateMedia({colorScheme:'dark'});await waitTheme(p,'dark');
@@ -25,7 +25,7 @@ test('saved dark resolves while document is loading and the first styled frame i
  assert.equal(first.boot.theme,'dark');assert.equal(first.boot.ready,'loading');assert.equal(first.boot.meta,'dark');assert.equal(first.boot.scheme,'dark');assert.equal(first.frame,'rgb(14, 16, 18)');
  assert.equal(await p.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');
  await scene(p,'Login');assert.equal(await p.locator('[data-theme-toggle]').count(),0);assert.equal(await p.evaluate(()=>document.documentElement.dataset.theme),'dark');
- assert.equal(await p.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgb(14, 16, 18)');
+ assert.equal(await p.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgb(14, 16, 18)');assert(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')&&r.navigation==='auto'))));
 },{theme:'dark',prepare:async p=>p.addInitScript(()=>{
  const observer=new MutationObserver(()=>{if(document.documentElement?.dataset.theme&&!window.__themeBoot){window.__themeBoot={theme:document.documentElement.dataset.theme,ready:document.readyState,meta:document.querySelector('meta[name="color-scheme"]')?.content,scheme:document.documentElement.style.colorScheme};observer.disconnect();}});observer.observe(document,{subtree:true,attributes:true,attributeFilter:['data-theme']});
  const frame=()=>{if(document.body){window.__themeFrame=getComputedStyle(document.body).backgroundColor;}else requestAnimationFrame(frame);};requestAnimationFrame(frame);
