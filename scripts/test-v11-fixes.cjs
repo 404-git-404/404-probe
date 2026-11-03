@@ -13,8 +13,8 @@ test('frozen ids retain fresh DTOs through unchanged live order, reordered input
  assert.deepEqual(apply([c,b,a]),[a,b,c]);assert.deepEqual(apply([c,b]),[b,c]);
 });
 
-test('monthly anchor covers before/today/after, 31st, leap/nonleap February, January rollover and plan timezone',()=>{
- for(const [today,day,want]of [['2026-11-02',1,'2026-11-01'],['2026-11-02',2,'2026-11-02'],['2026-11-02',30,'2026-10-30'],['2026-03-02',31,'2026-02-28'],['2024-03-02',31,'2024-02-29'],['2026-02-28',28,'2026-02-28'],['2026-02-28',31,'2026-01-31'],['2026-01-02',31,'2025-12-31'],['2026-12-31',31,'2026-12-31']])assert.equal(Management.monthlyQuotaAnchor(day,Date.parse(today+'T12:00:00Z'),'UTC'),want);
+test('monthly anchor covers before/today/after, 31st, short months without changing the selected day, January rollover and plan timezone',()=>{
+ for(const [today,day,want]of [['2026-11-02',1,'2026-11-01'],['2026-11-02',2,'2026-11-02'],['2026-11-02',30,'2026-10-30'],['2026-03-02',31,'2026-01-31'],['2024-03-02',31,'2024-01-31'],['2026-02-28',28,'2026-02-28'],['2026-02-28',31,'2026-01-31'],['2026-01-02',31,'2025-12-31'],['2026-12-31',31,'2026-12-31']])assert.equal(Management.monthlyQuotaAnchor(day,Date.parse(today+'T12:00:00Z'),'UTC'),want);
  assert.equal(Management.monthlyQuotaAnchor(2,Date.parse('2026-11-02T00:30:00Z'),'America/Los_Angeles'),'2026-10-02');
  for(const day of [0,32,1.5,''])assert.equal(Management.monthlyQuotaAnchor(day),'');
 });

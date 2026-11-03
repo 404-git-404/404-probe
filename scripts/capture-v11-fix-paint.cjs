@@ -6,7 +6,7 @@ const out=path.resolve(process.argv[2]),baseline=path.resolve(process.argv[3]),c
 fs.mkdirSync(out,{recursive:true});
 (async()=>{const browser=await launch(),fixture=await start({n:1}),summary=[];
  try{for(const [label,source]of [['before',baseline],['after',current]])for(let round=1;round<=3;round++){
-  const context=await browser.newContext({viewport:{width:1100,height:780},colorScheme:'light'}),page=await context.newPage();
+  const context=await browser.newContext({viewport:{width:1100,height:780},colorScheme:'light'}),page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.addInitScript(()=>{localStorage.setItem('404-probe.theme.v1','dark');for(const name of ['pageswap','pagereveal'])addEventListener(name,e=>performance.mark('qa:'+name+':'+Boolean(e.viewTransition)));});
   await context.route('**/*',async route=>{const u=new URL(route.request().url());if(u.origin!==fixture.base)return route.abort();if(u.pathname.startsWith('/api/'))return route.continue();
    let file=path.join(source,'web/static',u.pathname==='/'?'index.html':u.pathname.slice(1)),body;
@@ -42,8 +42,8 @@ fs.mkdirSync(out,{recursive:true});
     samples.push({file,ts:frame.ts,phase:frame.ts<commit.ts?'before_commit':'after_commit',pixel,white:pixel.every(v=>v>240),dark:pixel.every(v=>v<64)});
    }await decoder.close();await page.screenshot({path:path.join(out,stem+'-settled.png')});
    const pre=samples.filter(f=>f.phase==='before_commit'),post=samples.filter(f=>f.phase==='after_commit');
-   const row={label,action,round,...fact,commit_ts:commit.ts,pre_commit_frames:pre.length,pre_commit_white_frames:pre.filter(f=>f.white).length,post_commit_frames:post.length,post_commit_white_frames:post.filter(f=>f.white).length,post_commit_dark_frames:post.filter(f=>f.dark).length,transition_marks:events.filter(e=>/^qa:(pageswap|pagereveal):/.test(e.name)).map(e=>({name:e.name,ts:e.ts})),paint_events:events.filter(e=>e.name==='Paint').length,frames:samples};summary.push(row);
-   assert.equal(fact.theme,'dark');assert.equal(fact.body,'rgb(14, 16, 18)');if(label==='after'){assert(post.length>0);assert(post.every(f=>!f.white),'white frame after target CommitLoad: '+stem);assert(post.every(f=>f.dark),'non-dark frame after target CommitLoad: '+stem);assert.equal(fact.meta,'dark');assert.equal(fact.scheme,'dark');assert.equal(fact.root,'rgb(14, 16, 18)');assert(fact.navigationTransition,'missing navigation:auto on '+target);}
+   const row={label,action,round,...fact,page_errors:[...errors],commit_ts:commit.ts,pre_commit_frames:pre.length,pre_commit_white_frames:pre.filter(f=>f.white).length,post_commit_frames:post.length,post_commit_white_frames:post.filter(f=>f.white).length,post_commit_dark_frames:post.filter(f=>f.dark).length,transition_marks:events.filter(e=>/^qa:(pageswap|pagereveal):/.test(e.name)).map(e=>({name:e.name,ts:e.ts})),paint_events:events.filter(e=>e.name==='Paint').length,frames:samples};summary.push(row);
+   assert.equal(fact.theme,'dark');assert.equal(fact.body,'rgb(14, 16, 18)');if(label==='after'){assert.deepEqual(errors,[]);assert(post.length>0);assert(post.every(f=>!f.white),'white frame after target CommitLoad: '+stem);assert(post.every(f=>f.dark),'non-dark frame after target CommitLoad: '+stem);assert.equal(fact.meta,'dark');assert.equal(fact.scheme,'dark');assert.equal(fact.root,'rgb(14, 16, 18)');assert.equal(fact.navigationTransition,false,'unexpected navigation transition on '+target);}
    console.log(JSON.stringify({label,action,round,pre_commit_white:row.pre_commit_white_frames,post_commit:post.length,post_commit_dark:row.post_commit_dark_frames,transition_marks:row.transition_marks.map(m=>m.name)}));
   }await context.close();
  }}finally{fixture.close();await browser.close();fs.writeFileSync(path.join(out,'summary.json'),JSON.stringify(summary,null,2));}
