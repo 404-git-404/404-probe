@@ -248,11 +248,11 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 	if strings.Contains(javascript, `CardMetrics.tile('disk-io'`) || strings.Contains(javascript, `CardMetrics.stamp(`) {
 		t.Fatal("real cards must have three resource rings and no fabricated score")
 	}
-	if !strings.Contains(string(cardCSS), `grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))`) || !strings.Contains(string(cardCSS), `@media(max-width:42rem)`) || !strings.Contains(string(cardCSS), `.dashboard-card-grid{grid-template-columns:minmax(0,1fr)}`) {
+	if !strings.Contains(string(cardCSS), `grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))`) || !strings.Contains(string(cardCSS), `@media(max-width:44rem)`) || !strings.Contains(string(cardCSS), `.dashboard-card-grid{grid-template-columns:minmax(0,1fr)}`) {
 		t.Fatal("card grid columns missing")
 	}
 	assertLightColorToken(t, "--color-status-01", "#2A8C7C")
-	for _, required := range []string{`.c7-ring`, `.nq7-b-red`, `--c7-ring-ok:var(--color-status-01)`, `.c7-offline`, `.c7 .c7-mod[data-module=network]{height:164px}`} {
+	for _, required := range []string{`.c7-ring`, `.nq7-b-red`, `--c7-ring-ok:var(--color-success)`, `.c7-offline`, `.c7 .c7-mod[data-module=network]{height:164px}`} {
 		if !strings.Contains(string(v7CSS), required) {
 			t.Fatalf("card layout missing %q", required)
 		}
