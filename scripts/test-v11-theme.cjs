@@ -30,6 +30,16 @@ test('skipped cross-document transitions keep dark pages and produce no unhandle
 },{theme:'dark',prepare:async p=>p.addInitScript(()=>{
  for(const name of ['pageswap','pagereveal'])addEventListener(name,event=>{if(event.viewTransition){localStorage.setItem('qa-transition-skips',String(Number(localStorage.getItem('qa-transition-skips')||0)+1));event.viewTransition.skipTransition();}});
 })}));
+test('login POST opts out for that submission and restores auto on the destination',()=>ui(async({page:p})=>{
+ await scene(p,'Login');await p.locator('#password').fill('synthetic-theme-test');
+ await Promise.all([p.waitForURL(new URL('/',p.url()).href,{waitUntil:'load'}),p.locator('button[type=submit]').click()]);
+ assert.equal(await p.evaluate(()=>localStorage.getItem('qa-login-navigation')),'none');
+ assert.equal(await p.evaluate(()=>document.documentElement.dataset.theme),'dark');
+ assert(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')&&r.navigation==='auto'))));
+},{theme:'dark',prepare:async p=>{
+ await p.route('**/login',r=>r.request().method()==='POST'?r.fulfill({status:303,headers:{Location:'/'},body:''}):r.fallback());
+ await p.addInitScript(()=>addEventListener('submit',()=>{const sheet=[...document.styleSheets].find(s=>s.href?.endsWith('/style.css'));localStorage.setItem('qa-login-navigation',[...sheet.cssRules].filter(r=>r.cssText.startsWith('@view-transition')).at(-1)?.navigation||'');}));
+}}));
 test('saved dark resolves while document is loading and the first styled frame is dark on a light OS',()=>ui(async({page:p})=>{
  const first=await p.evaluate(()=>({boot:window.__themeBoot,frame:window.__themeFrame}));
  assert.equal(first.boot.theme,'dark');assert.equal(first.boot.ready,'loading');assert.equal(first.boot.meta,'dark');assert.equal(first.boot.scheme,'dark');assert.equal(first.frame,'rgb(14, 16, 18)');
