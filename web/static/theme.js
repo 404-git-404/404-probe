@@ -17,6 +17,7 @@
     root.document.documentElement.dataset.theme=theme;
     const meta=root.document.querySelector('meta[name="color-scheme"]');if(meta)meta.content=theme;
     root.document.documentElement.style.colorScheme=theme;
+    root.document.documentElement.style.backgroundColor=theme==='dark'?'#0E1012':'#F7F4EF';
     root.dispatchEvent(new CustomEvent('404-probe:themechange',{detail:{theme,preference}}));
   }
   function set(value){
