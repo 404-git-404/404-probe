@@ -53,7 +53,7 @@
  const byName=(a,b)=>collator.compare(a.name||'',b.name||'')||a.agent_id.localeCompare(b.agent_id);
  function sortValue(a,key,p,server){
   if(key==='system')return a.state?.os||null;
-  if(['cpu','memory','disk'].includes(key))return a.resources?.known&&!a.resources.stale?a.resources[{cpu:'cpu_percent',memory:'ram_percent',disk:'disk_percent'}[key]]:null;
+  if(['cpu','memory','disk'].includes(key)){const field={cpu:'cpu_percent',memory:'ram_percent',disk:'disk_percent'}[key],r=a.resources;return r?.known&&!r.stale?(a.state?.collected_at>=r.collected_at&&Number.isFinite(a.state?.[field])?a.state[field]:r[field]):null;}
   if(key==='rate')return typeof a.state?.rx_rate==='number'&&typeof a.state?.tx_rate==='number'?a.state.rx_rate+a.state.tx_rate:null;
   if(key==='traffic')return a.dashboard_traffic?.quota_state==='current'&&a.plan?.quota_bytes>0?100*a.plan.usage_bytes/a.plan.quota_bytes:null;
   if(key==='latency'){const s=a.network_slots?.find(s=>s.slot===(p.latencySlot||1));return ['ok','stale'].includes(s?.state)?s.latest_ms:null;}

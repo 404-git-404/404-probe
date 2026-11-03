@@ -23,6 +23,11 @@ test('groups collapse without extra reads and retain preference',()=>ui(async({p
 test('header sort changes only group-internal order and toggles direction',()=>ui(async({page:p})=>{
  await p.locator('[data-sort=cpu]').click();await settle(p);assert.deepEqual((await order(p)).slice(0,3),[ID(0),ID(2),ID(1)]);assert.equal(await p.locator('.banner-group').count(),3);await p.locator('[data-sort=cpu]').click();await settle(p);assert.deepEqual((await order(p)).slice(0,3),[ID(1),ID(2),ID(0)]);await p.reload();await p.waitForFunction(()=>dashboardData.ready()&&!renderFrame);assert.equal(await p.locator('[data-sort=cpu]').getAttribute('data-direction'),'desc');
 }));
+test('explicit resource resort uses the same newer runtime value displayed in the row',()=>ui(async({page:p,f})=>{
+ f.publish('agent',{agent_id:ID(0),state:{...f.state.items[0].state,cpu_percent:99,collected_at:Date.now()}});
+ await p.waitForFunction(()=>document.querySelector('.banner-row[data-agent-id="00000000000000000000000000000001"] [data-column=cpu] small').textContent==='99%');
+ await p.locator('[data-sort=cpu]').click();await settle(p);assert.deepEqual((await order(p)).slice(0,3),[ID(2),ID(1),ID(0)]);
+}));
 test('SSE, actual 15-second calibration and EventSource reconnect preserve order and nodes',()=>ui(async({page:p,f})=>{
  await p.locator('[data-sort=cpu]').click();await settle(p);const before=await order(p);await p.evaluate(()=>{window.__rowNodes=[...document.querySelectorAll('.banner-row')];window.__rowMutations=0;window.__watch=new MutationObserver(ms=>{__rowMutations+=ms.filter(m=>m.type==='childList'&&[...m.addedNodes,...m.removedNodes].some(n=>n.classList?.contains('banner-row'))).length;});__watch.observe(document.querySelector('#agent-list'),{childList:true,subtree:true});});
  f.state.items[0].state.cpu_percent=99;f.state.items[0].state.collected_at=Date.now();f.state.items[0].resources.cpu_percent=99;f.publish('agent',{agent_id:ID(0),state:f.state.items[0].state});await p.waitForFunction(()=>document.querySelector('.banner-row [data-column=cpu] small').textContent==='99%');assert.deepEqual(await order(p),before);
