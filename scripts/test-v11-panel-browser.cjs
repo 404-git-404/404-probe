@@ -26,7 +26,7 @@ test('panel group/tag/country/status and attention selections drive chips and co
  const online=await p.locator('#overview-online').textContent();
  for(const [key,label]of [['groups','常用'],['tags','GIA'],['countries','美国'],['statuses','在线']]){
   if(['countries','statuses'].includes(key)&&await p.locator('#panel-more-toggle').getAttribute('aria-expanded')==='false')await p.locator('#panel-more-toggle').click();
-  const host=p.locator('#dashboard-'+key);if(!await host.evaluate(n=>n.open))await host.locator('summary').click();await host.locator('.dashboard-option').filter({hasText:label}).locator('input').first().check();
+  const host=p.locator('#dashboard-'+key);if(!await host.evaluate(n=>n.open))await host.locator('summary').click();const option=host.locator('.dashboard-option').filter({hasText:label}).first();if(['groups','tags'].includes(key))await option.click();else await option.locator('input').check();
  }
  await p.waitForFunction(()=>document.querySelectorAll('.dashboard-chip').length===4);await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='显示 1 / 28 台');assert.equal(await p.locator('#overview-online').textContent(),online);await p.locator('#dashboard-clear').click();await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='显示 28 / 28 台');
 }));

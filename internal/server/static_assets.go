@@ -13,7 +13,7 @@ import (
 
 // These are the reviewed production references, not a request-populated cache.
 var fingerprintAssetNames = []string{
- "banner-view.js", "banner.css",
+	"banner-view.js", "banner.css",
 	"theme.js", "theme-toggle.js",
 	"dashboard-data.js", "dashboard-model.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "dashboard.css", "dashboard-dialogs.css",
 	"agent-state.js", "app.js", "card-metrics.js", "device-details.js", "history.js",
