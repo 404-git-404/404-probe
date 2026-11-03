@@ -29,8 +29,8 @@ for(const bg of ['page','card','surface-module'])for(const fg of ['success','sta
 // text on the module background (and on its hover colour)
 for(const bg of ['mod','mod-hover']){
   for(const fg of ['text','sub','pct-warn','pct-crit','up','warn-text','crit-text','quota-text'])check(`${fg} on ${bg}`,fg,bg,4.5);
-  // The direction colours only colour the 20px bold rate (large text: 3:1); at rest they also reach 4.5:1.
-  for(const fg of ['down','up'])check(`${fg} (large text) on ${bg}`,fg,bg,bg==='mod'?4.5:3);
+  // Rate labels are text, including the large figures and their hover state.
+  for(const fg of ['--color-rate-down-text','up'])check(`${fg} rate text on ${bg}`,fg,bg,4.5);
 }
 check('text on card','text','card',4.5);check('sub on card','sub','card',4.5);
 // the quota bar: text on the track and on every fill
