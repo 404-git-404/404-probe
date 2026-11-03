@@ -233,13 +233,15 @@ func (c *Checker) check(ctx context.Context) error {
 	next.Latest, next.CheckedAt = latest, c.now().UnixMilli()
 	c.lastSuccessAt = next.CheckedAt
 	c.mu.Unlock()
-	if err := c.persist(next); err != nil {
-		c.warn("could not persist result; retaining last successful cache")
-		return nil
-	}
+	err = c.persist(next)
 	c.mu.Lock()
-	c.state = next
+	// A valid HTTP result remains useful when the disk is unavailable. Settings
+	// still commit only after persistence in SetEnabled; never change Enabled here.
+	c.state.Latest, c.state.CheckedAt = next.Latest, next.CheckedAt
 	c.mu.Unlock()
+	if err != nil {
+		c.warn("could not persist result; using in-memory cache")
+	}
 	return nil
 }
 

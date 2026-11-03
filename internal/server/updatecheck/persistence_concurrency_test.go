@@ -78,15 +78,22 @@ func TestSnapshotDoesNotWaitForBlockedPersistence(t *testing.T) {
 	}
 }
 
-func TestPersistenceFailurePreservesStateAndSuccessfulRequestSpacing(t *testing.T) {
+func TestPersistenceFailureKeepsSettingButUpdatesHintAndRequestSpacing(t *testing.T) {
 	c, count := testChecker(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"tag_name":"v1.1.0"}`) })
 	before := c.Snapshot()
 	c.persist = func(State) error { return errors.New("disk unavailable") }
 	if _, err := c.SetEnabled(false); err == nil || c.Snapshot() != before {
 		t.Fatal("failed setting changed state", err)
 	}
-	if err := c.check(t.Context()); err != nil || c.Snapshot() != before {
-		t.Fatal("failed cache persistence changed state", err)
+	if err := c.check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after := c.Snapshot()
+	if after.Enabled != before.Enabled || after.Latest != "v1.1.0" || after.CheckedAt != c.now().UnixMilli() || !after.Newer {
+		t.Fatal("fresh hint not available after failed cache persistence", after)
+	}
+	if _, err := c.SetEnabled(false); err == nil || c.Snapshot() != after {
+		t.Fatal("failed setting changed fresh hint or enabled", err, c.Snapshot())
 	}
 	if err := c.check(t.Context()); err != nil || count.Load() != 1 {
 		t.Fatal("successful HTTP request repeated", err, count.Load())

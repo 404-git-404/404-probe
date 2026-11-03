@@ -53,13 +53,16 @@ func TestUpdateCheckSettingsPersistenceFailureKeepsState(t *testing.T) {
 	defer a.Shutdown()
 	path := filepath.Join(t.TempDir(), "update-check.json")
 	a.updateCheck.Close()
-	a.updateCheck = updatecheck.New(path, a.buildInfo, nil)
-	before := a.updateCheck.Snapshot()
 	// A directory at the destination makes atomic replacement fail on both OSes.
 	if err := os.Mkdir(path, 0700); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("PUT", "/api/v1/web/settings/update-check", strings.NewReader(`{"enabled":false}`))
+	a.updateCheck = updatecheck.New(path, a.buildInfo, nil)
+	before := a.updateCheck.Snapshot()
+	if before.Enabled {
+		t.Fatal("fixture must start disabled")
+	}
+	r := httptest.NewRequest("PUT", "/api/v1/web/settings/update-check", strings.NewReader(`{"enabled":true}`))
 	session := addTestWebSession(t, a, r)
 	r.Header.Set("Origin", "https://probe.test")
 	r.Header.Set("Sec-Fetch-Site", "same-origin")
