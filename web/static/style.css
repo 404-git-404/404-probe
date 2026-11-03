@@ -1,5 +1,4 @@
 html{background:#F7F4EF}html[data-theme=dark]{background:#0E1012}
-@view-transition{navigation:auto}
 :root{
   --theme-search-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236E655B' stroke-width='1.6'%3E%3Ccircle cx='10' cy='10' r='6'/%3E%3Cpath d='m15 15 5 5'/%3E%3C/svg%3E");
 

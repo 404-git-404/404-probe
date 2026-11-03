@@ -4,22 +4,6 @@
   const key='404-probe.theme.v1',modes=['light','dark','system'];
   const media=root.matchMedia('(prefers-color-scheme: dark)');
   const valid=value=>modes.includes(value)?value:'system';
-  // A browser may skip an optional document transition (for example a second
-  // navigation during its animation). Its ready rejection must be handled on
-  // that transition, while the document's resolved theme remains in force.
-  for(const name of ['pageswap','pagereveal'])root.addEventListener(name,event=>{
-    const transition=event.viewTransition;
-    if(transition)for(const promise of [transition.ready,transition.finished,transition.updateCallbackDone])promise.catch(()=>{});
-  });
-  // Login POST/redirect is a form submission, which cannot keep an outgoing
-  // document transition alive reliably. Opt out for that submission only;
-  // ordinary links into/out of the login page still use navigation:auto.
-  root.document.addEventListener('submit',event=>{
-    if(root.location.pathname!=='/login'||event.target.method?.toLowerCase()!=='post')return;
-    for(const sheet of root.document.styleSheets)if(sheet.href?.endsWith('/style.css')&&[...sheet.cssRules].some(rule=>rule.cssText.startsWith('@view-transition'))){
-      sheet.insertRule('@view-transition{navigation:none}',sheet.cssRules.length);
-    }
-  },true);
   let preference='system';
   try{preference=valid(root.localStorage.getItem(key));}catch{/* Storage may be disabled. */}
   function apply(){
