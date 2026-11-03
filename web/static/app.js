@@ -561,10 +561,11 @@ function togglePlanTrafficFields() {
   planTrafficFields.classList.toggle('hidden', !planTrafficEnabled.checked);
 }
 
-let planDialogMode='plan',quotaOffConfirmed=true;
+let planDialogMode='plan',quotaOffConfirmed=true,planOrigin=null;
 function openPlanDialog(agent, trigger = null, mode='plan') {
   if(planRenewal.unconfirmed(agent.agent_id))return;
   planRenewal.close();
+  planOrigin=trigger;
   planEditor.open(agent.agent_id,trigger,()=>{
   planDialogMode=mode;planDialog.dataset.mode=mode;document.querySelector('#plan-title').textContent=mode==='quota'?'流量配额':'套餐与续费';document.querySelector('#plan-information').hidden=mode==='quota';document.querySelector('#quota-information').hidden=mode!=='quota';document.querySelector('#plan-clear').hidden=mode==='quota';document.querySelector('#quota-decimal-note').hidden=mode!=='quota';quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;
   planEditGeneration++;
@@ -608,7 +609,7 @@ document.querySelector('#quota-keep-on').addEventListener('click',()=>{planTraff
 document.querySelector('#quota-confirm-off').addEventListener('click',()=>{quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;togglePlanTrafficFields();});
 function setMonthlyQuotaDay(){document.querySelector('#plan-cycle-anchor').value=Management.monthlyQuotaAnchor(document.querySelector('#quota-cycle-day').value,Date.now(),document.querySelector('#plan-timezone').value||'UTC');}
 document.querySelector('#quota-cycle-day').addEventListener('input',setMonthlyQuotaDay);
-document.querySelector('#plan-open-quota').addEventListener('click',()=>{const a=agents.get(pendingPlanAgentID);if(a)openPlanDialog(a,document.querySelector('[data-focus-key=plan]'),'quota');});
+document.querySelector('#plan-open-quota').addEventListener('click',()=>{const a=agents.get(pendingPlanAgentID);if(a)openPlanDialog(a,planOrigin,'quota');});
 document.querySelector('#plan-cycle-kind').addEventListener('change',()=>{if(document.querySelector('#plan-cycle-kind').value==='monthly')setMonthlyQuotaDay();syncQuotaPresentation();if(document.querySelector('#plan-cycle-kind').value!=='monthly'){document.querySelector('.quota-cycle-more').open=true;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded','true');}});
 document.querySelector('#quota-cycle-options').addEventListener('click',()=>{const more=document.querySelector('.quota-cycle-more');more.open=!more.open;document.querySelector('#quota-cycle-options').setAttribute('aria-expanded',String(more.open));if(more.open)document.querySelector('#plan-cycle-count').focus();});
 document.querySelector('#plan-currency').addEventListener('change',()=>{const input=document.querySelector('#plan-currency-custom'),custom=document.querySelector('#plan-currency').value==='__custom__';input.hidden=!custom;input.required=custom;if(custom)input.focus();});

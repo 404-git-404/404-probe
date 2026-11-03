@@ -133,7 +133,7 @@
       down:finite(down)?sig3(down):'—',up:finite(up)?sig3(up):'—',mark:mark.mark,markTitle:mark.title,
       bandwidth:bandwidthText(plan),oldMetrics:old,
     };
-    if(!cycle){const pending=pendingCycle(plan);return {...view,bar:{kind:'none',text:pending?pending+' · 配额 '+(quotaDisplay?.text|| (plan.quota_bytes==null?'不限流量':sig3(plan.quota_bytes))):'未设置流量配额 · 点此设置'}};}
+    if(!cycle){const pending=pendingCycle(plan);return {...view,bar:{kind:'none',text:pending?pending+' · 配额 '+((quotaDisplay?`${quotaDisplay.value} ${quotaDisplay.unit}`:null)|| (plan.quota_bytes==null?'不限流量':sig3(plan.quota_bytes))):'未设置流量配额 · 点此设置'}};}
     const days=cycleDays(plan,now),dayText=days?`第 ${days.day}/${days.total} 天`:'周期尚未开始',right=`${dayText} · ${view.bandwidth}`;
     if(plan.quota_bytes==null)return {...view,bar:{kind:'nocap',left:'不限流量',right,time:days?days.elapsed:null}};
     const used=Number(plan.usage_bytes||0),quota=Number(plan.quota_bytes),percent=quota>0?used/quota*100:0;
