@@ -76,8 +76,11 @@
     day=Number(day);if(!Number.isInteger(day)||day<1||day>31)return '';
     const parts=new Intl.DateTimeFormat('en-US',{timeZone:timezone,year:'numeric',month:'numeric',day:'numeric'}).formatToParts(new Date(now)),value=k=>Number(parts.find(p=>p.type===k).value);
     let year=value('year'),month=value('month');if(day>value('day')&&--month===0){month=12;year--;}
-    const date=new Date(0);date.setUTCFullYear(year,month,0);const last=date.getUTCDate();
-    return `${String(year).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(Math.min(day,last)).padStart(2,'0')}`;
+    const date=new Date(0);
+    // Preserve the original reset day: Server clamps each short month using
+    // this anchor's day, so the anchor itself must never be clamped.
+    for(;;){date.setUTCFullYear(year,month,0);if(date.getUTCDate()>=day)break;if(--month===0){month=12;year--;}}
+    return `${String(year).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
   }
   // Both presentations edit a disjoint subset of one full PUT contract.
   function planSectionPayload(plan={},section,fields={},options={}) {
