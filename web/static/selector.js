@@ -389,7 +389,7 @@
           const current=state.agents.get(id);if(reason(current,csrf())||state.blocked(id))return;
           ensure();if(activeID===id){hide();return;}if(activeID)hide();activeID=id;activeTrigger=button;
           for(const selector of current.outbounds.selectors||[])controller.group(id,selector.name).draft=null;
-          renderedPanel=null;controller.open(id);refresh(id);panel.showModal();
+          renderedPanel=null;controller.open(id);button.setAttribute('aria-expanded','true');refresh(id);panel.showModal();
           (panel.querySelector('select:not(:disabled)')||panel.querySelector('[data-selector-kind="close"]'))?.focus({preventScroll:true});onopen(id);
         });
       }

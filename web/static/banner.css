@@ -11,3 +11,5 @@
 .selector-compact{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:none;border:1px solid var(--color-line);border-radius:999px;color:var(--color-text);font:inherit;padding:.25rem .55rem;cursor:pointer}.selector-compact:disabled{color:var(--color-text-muted);cursor:default}.banner-youtube{border-radius:.3rem;padding:.2rem .4rem;background:var(--color-accent-soft);color:var(--color-accent-text);font-weight:700}.banner-youtube[data-tone=crit]{color:var(--color-danger-text);background:var(--color-surface-17)}.banner-youtube[data-tone=unknown]{color:var(--color-text-muted);background:var(--color-surface-hover)}.banner-cell small.due-soon{color:var(--color-warning-text);font-weight:650}.banner-upgrade{color:var(--color-accent-text);font-size:.65rem}.banner-row[data-lifecycle=offline] .banner-name,.banner-row[data-lifecycle=paused] .banner-name{color:var(--color-text-muted)}
 
 .banner-group-header>span{position:sticky;left:.55rem;display:inline-block}
+
+.banner-scroll.is-scrolled .banner-columns>.banner-cell:first-child{box-shadow:1px 0 var(--color-line-strong),.35rem 0 .6rem -.4rem var(--color-text-muted)}

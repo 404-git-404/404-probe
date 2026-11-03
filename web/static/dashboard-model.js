@@ -51,6 +51,7 @@
  }
  const collator=new Intl.Collator('zh-CN');
  const byName=(a,b)=>collator.compare(a.name||'',b.name||'')||a.agent_id.localeCompare(b.agent_id);
+ function resourcesOld(a,now=Date.now()){const r=a.resources;return !r?.known||r.stale||!!(r.max_age_ms&&r.collected_at&&now-r.collected_at>r.max_age_ms)||lifecycle(a)!=='online';}
  // Same monthly USD basis as estimateExpenses; keep decimal ordering exact.
  function monthlyUSD(plan,rates=[]){
   if(!plan)return null;
@@ -60,18 +61,18 @@
   const decimal=s=>{const [a,b='']=String(s).split('.');return {n:BigInt(a+b),d:10n**BigInt(b.length)};},v=decimal(price),r=decimal(rate);
   return {n:v.n*r.d,d:v.d*r.n*BigInt(months)};
  }
- function sortValue(a,key,p,server,catalog){
+ function sortValue(a,key,p,server,catalog,now){
   if(key==='system')return a.state?.os||null;
-  if(['cpu','memory','disk'].includes(key)){const field={cpu:'cpu_percent',memory:'ram_percent',disk:'disk_percent'}[key],r=a.resources;return r?.known&&!r.stale?(a.state?.collected_at>=r.collected_at&&Number.isFinite(a.state?.[field])?a.state[field]:r[field]):null;}
-  if(key==='rate')return typeof a.state?.rx_rate==='number'&&typeof a.state?.tx_rate==='number'?a.state.rx_rate+a.state.tx_rate:null;
-  if(key==='traffic')return a.dashboard_traffic?.quota_state==='current'&&a.plan?.quota_bytes>0?100*a.plan.usage_bytes/a.plan.quota_bytes:null;
-  if(key==='latency'){const s=a.network_slots?.find(s=>s.slot===(p.latencySlot||1));return ['ok','stale'].includes(s?.state)?s.latest_ms:null;}
+  if(['cpu','memory','disk'].includes(key)){const field={cpu:'cpu_percent',memory:'ram_percent',disk:'disk_percent'}[key],r=a.resources;return !resourcesOld(a,now)?(a.state?.collected_at>=r.collected_at&&Number.isFinite(a.state?.[field])?a.state[field]:r[field]):null;}
+  if(key==='rate')return !resourcesOld(a,now)&&typeof a.state?.rx_rate==='number'&&typeof a.state?.tx_rate==='number'?a.state.rx_rate+a.state.tx_rate:null;
+  if(key==='traffic')return a.dashboard_traffic?.known&&!a.dashboard_traffic.stale&&a.dashboard_traffic.quota_state==='current'&&a.plan?.quota_bytes>0?100*a.plan.usage_bytes/a.plan.quota_bytes:null;
+  if(key==='latency'){const s=a.network_slots?.find(s=>s.slot===(p.latencySlot||1));return s?.state==='ok'?s.latest_ms:null;}
   if(key==='price')return monthlyUSD(a.plan,catalog?.exchange_rates);
   if(key==='renewal')return a.renewal?.days??null;
   if(key==='upgrade')return flags(a,server).upgrade?1:0;
   return a.name||'';
  }
- function comparator(p,server,catalog){return (a,b)=>{const x=sortValue(a,p.sort,p,server,catalog),y=sortValue(b,p.sort,p,server,catalog),valid=v=>v!=null&&(typeof v!=='number'||Number.isFinite(v));if(!valid(x)||!valid(y))return valid(x)?-1:valid(y)?1:byName(a,b);const delta=p.sort==='price'?x.n*y.d-y.n*x.d:null,c=delta!==null?(delta<0n?-1:delta>0n?1:0):typeof x==='string'?collator.compare(x,y):x-y;return c*(p.sortDir==='desc'?-1:1)||byName(a,b);};}
+ function comparator(p,server,catalog,now=Date.now()){return (a,b)=>{const x=sortValue(a,p.sort,p,server,catalog,now),y=sortValue(b,p.sort,p,server,catalog,now),valid=v=>v!=null&&(typeof v!=='number'||Number.isFinite(v));if(!valid(x)||!valid(y))return valid(x)?-1:valid(y)?1:byName(a,b);const delta=p.sort==='price'?x.n*y.d-y.n*x.d:null,c=delta!==null?(delta<0n?-1:delta>0n?1:0):typeof x==='string'?collator.compare(x,y):x-y;return c*(p.sortDir==='desc'?-1:1)||byName(a,b);};}
  // Full reads, SSE and calibration contain no order signal. Keep ids, not DTOs.
  function createOrder(){let key='',order=new Map();return {apply(model,catalog,p){
   const next=JSON.stringify([p.sort,p.sortDir,p.sort==='latency'?p.latencySlot:null,p.search,p.groups,p.tags,p.countries,p.statuses,p.quick,catalog.groups.map(g=>[g.id,g.name,g.sort_order])]);
@@ -82,9 +83,9 @@
  function select(agents,catalog,p,server,now=Date.now()){
   const groupIDs=new Set(catalog.groups.map(g=>g.id));
   const list=[...agents.values()].map(a=>a.group_id&&!groupIDs.has(a.group_id)?{...a,group_id:null}:a).filter(a=>matches(a,p,server,now)),groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
-  list.sort(comparator(p,server,catalog));
+  list.sort(comparator(p,server,catalog,now));
   const sections=p.sort==='group'||p.viewMode==='list'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
   return {list,sections,summary:aggregate(agents,server,now)};
  }
- const api={KEY,QUICK,STATUS,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);

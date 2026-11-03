@@ -9,6 +9,8 @@
   function apply(){
     const theme=preference==='system'?(media.matches?'dark':'light'):preference;
     root.document.documentElement.dataset.theme=theme;
+    const meta=root.document.querySelector('meta[name="color-scheme"]');if(meta)meta.content=theme;
+    root.document.documentElement.style.colorScheme=theme;
     root.dispatchEvent(new CustomEvent('404-probe:themechange',{detail:{theme,preference}}));
   }
   function set(value){

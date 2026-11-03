@@ -16,7 +16,7 @@
   function change(){preferences.save();onchange();}
   function sortBy(key){p.sortDir=p.sort===key&&p.sortDir!=='desc'?'desc':'asc';p.sort=key;sort.value=key;showDirection();change();}
   function view(){for(const b of doc.querySelectorAll('[data-view]'))b.setAttribute('aria-pressed',String(b.dataset.view===p.viewMode));}
-  for(const b of doc.querySelectorAll('[data-view]'))b.addEventListener('click',()=>{p.viewMode=b.dataset.view;view();change();});view();
+  for(const b of doc.querySelectorAll('[data-view]'))b.addEventListener('click',()=>{if(p.viewMode!==b.dataset.view&&b.dataset.view==='list')order.reset();p.viewMode=b.dataset.view;view();change();});view();
   search.value=p.search;sort.value=p.sort;
   search.addEventListener('input',()=>{p.search=search.value;change();});
   sort.addEventListener('change',()=>{p.sort=sort.value;change();});
@@ -38,13 +38,13 @@
   let manualExpanded=false;
   function layout(){
    if(!phone.matches&&mobile.open)mobileShell.close();
-   const collapsed=!phone.matches&&(p.panelCollapsed||(narrow.matches&&!manualExpanded));
+   const collapsed=!phone.matches&&(narrow.matches?!manualExpanded:p.panelCollapsed);
    app.classList.toggle('panel-collapsed',collapsed);
    get('panel-collapse').textContent=collapsed?'»':'«';
    get('panel-collapse').setAttribute('aria-label',collapsed?'展开面板':'收起面板');get('panel-collapse').title=collapsed?'展开面板':'收起面板';
   }
   get('panel-collapse').addEventListener('click',()=>{
-   p.panelCollapsed=!app.classList.contains('panel-collapsed');manualExpanded=!p.panelCollapsed;preferences.save();layout();
+   if(narrow.matches)manualExpanded=app.classList.contains('panel-collapsed');else{p.panelCollapsed=!app.classList.contains('panel-collapsed');preferences.save();}layout();
   });
   const breakpoint=()=>{manualExpanded=false;layout();};
   narrow.addEventListener('change',breakpoint);phone.addEventListener('change',breakpoint);

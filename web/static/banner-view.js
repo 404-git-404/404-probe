@@ -15,7 +15,7 @@
   return {state,title:s?.target_name||'',text:state==='ok'||state==='stale'?`${finite(s.latest_ms)?Number(s.latest_ms.toFixed(1))+' ms':'—'}${state==='stale'?' · 过期':''}`:({no_target:'未设目标',unsupported:'不支持',no_data:'暂无数据'}[state]||'暂无数据')};
  }
  function projection(a,{slot=1,server,now=Date.now(),csrf='',blocked=false}={}){
-  const lifecycle=M.lifecycle(a),r=a.resources||{},old=!r.known||r.stale||!!(r.max_age_ms&&r.collected_at&&now-r.collected_at>r.max_age_ms)||lifecycle!=='online';
+  const lifecycle=M.lifecycle(a),r=a.resources||{},old=M.resourcesOld(a,now);
   const name=a.name||a.state?.hostname||'未命名 VPS',uptime=lifecycle==='paused'?'暂停':lifecycle==='offline'?'离线':finite(a.state?.uptime)?`${Math.floor(a.state.uptime/86400)} 天 ${Math.floor(a.state.uptime%86400/3600)} 时`:'等待上报';
   const os=a.state?.os||'',system=/debian/i.test(os)?'Deb':/alpine/i.test(os)?'Alp':/ubuntu/i.test(os)?'Ubu':os.split(' ')[0]||'—';
   const metrics=['cpu_percent','ram_percent','disk_percent'].map(k=>{const v=a.state?.collected_at>=r.collected_at&&finite(a.state[k])?a.state[k]:r[k],tone=C.ringTone(v,old);return {tone,fill:tone==='unknown'?0:Math.max(0,Math.min(100,v)),text:tone==='unknown'?'—':Number(v.toFixed(1))+'%'};});
@@ -33,17 +33,18 @@
   host.classList.add('banner-scroll');host.tabIndex=0;host.setAttribute('aria-label','设备列表，可横向滚动');
   const toolbar=doc.getElementById('dashboard-toolbar'),size=()=>host.style.setProperty('--toolbar-height',(toolbar?.getBoundingClientRect().height||64)+'px');
   const resize=new root.ResizeObserver(size);if(toolbar)resize.observe(toolbar);size();
-  const grid=el('div','banner-grid'),header=el('div','banner-header banner-columns');host.append(grid);grid.append(header);
+  host.addEventListener('scroll',()=>host.classList.toggle('is-scrolled',host.scrollLeft>0),{passive:true});
+  const grid=el('div','banner-grid'),header=el('div','banner-header banner-columns');grid.setAttribute('role','table');grid.setAttribute('aria-label','设备列表');header.setAttribute('role','row');host.append(grid);grid.append(header);
   const columns=[['name','设备'],['system','系统'],['cpu','CPU'],['memory','内存'],['disk','磁盘'],['rate','实时速率'],['traffic','周期流量'],['latency','延迟'],['outbound','出站'],['youtube','YouTube'],['price','价格 / 续费'],['upgrade','']];
-  for(const [key,label]of columns){const cell=el('div','banner-cell');cell.dataset.column=key;
+  for(const [key,label]of columns){const cell=el('div','banner-cell');cell.setAttribute('role','columnheader');cell.dataset.column=key;
    if(key==='latency'){const sort=el('button','banner-sort','延迟');sort.type='button';sort.dataset.sort=key;sort.addEventListener('click',()=>onSort(key));const picker=el('details','banner-slot-picker'),summary=el('summary','banner-slot','槽 1 ▾'),options=el('div','banner-slot-options');summary.setAttribute('aria-label','延迟槽');for(let i=1;i<=3;i++){const o=el('button','',`槽 ${i}`);o.type='button';o.dataset.slot=i;o.addEventListener('click',()=>{onSlot(i);picker.open=false;summary.focus();});options.append(o);}picker.addEventListener('keydown',e=>{if(e.key==='Escape'){picker.open=false;summary.focus();e.stopPropagation();}});picker.append(summary,options);cell.append(sort,picker);}
    else if(['name','system','cpu','memory','disk','rate','traffic','price','upgrade'].includes(key)){const b=el('button','banner-sort',label);b.type='button';b.dataset.sort=key;b.setAttribute('aria-label',label?label+'排序':'待升级排序');b.addEventListener('click',()=>onSort(key));cell.append(b);}
    else cell.textContent=label;header.append(cell);
   }
   function bar(){const box=el('div','banner-metric'),track=el('div','banner-track'),fill=el('i'),label=el('small');track.append(fill);box.append(track,label);return {box,fill,label};}
   function row(a){
-   const node=el('div','banner-row banner-columns');node.dataset.agentId=a.agent_id;
-   const cells=columns.map(([key])=>{const n=el('div','banner-cell');n.dataset.column=key;node.append(n);return n;}),identity=el('div','banner-identity'),dot=el('i','banner-dot'),flag=el('span','banner-flag'),names=el('div','banner-names'),name=el('button','banner-name'),uptime=el('small');name.type='button';name.addEventListener('click',()=>onOpen(a.agent_id,name));names.append(name,uptime);identity.append(dot,flag,names);cells[0].append(identity);
+   const node=el('div','banner-row banner-columns');node.dataset.agentId=a.agent_id;node.setAttribute('role','row');
+   const cells=columns.map(([key])=>{const n=el('div','banner-cell');n.dataset.column=key;n.setAttribute('role','cell');node.append(n);return n;}),identity=el('div','banner-identity'),dot=el('i','banner-dot'),flag=el('span','banner-flag'),names=el('div','banner-names'),name=el('button','banner-name'),uptime=el('small');name.type='button';name.addEventListener('click',()=>onOpen(a.agent_id,name));names.append(name,uptime);identity.append(dot,flag,names);cells[0].append(identity);
    const system=el('span','banner-os');cells[1].append(system);const metrics=[bar(),bar(),bar()];metrics.forEach((m,i)=>cells[2+i].append(m.box));const tx=el('span'),rx=el('small');cells[5].append(tx,rx);const traffic=bar();cells[6].append(traffic.box);const youtube=el('span','banner-youtube');cells[9].append(youtube);const cost=el('span'),renew=el('small');cells[10].append(cost,renew);
    node.addEventListener('click',e=>{if(e.target.closest('button,a,input,select')||root.getSelection?.()?.toString())return;onOpen(a.agent_id,name);});
    function update(v,agent){
@@ -60,7 +61,7 @@
    const hk=JSON.stringify([prefs.sort,prefs.sortDir,prefs.latencySlot]);if(hk!==headerKey){headerKey=hk;text(header.querySelector('.banner-slot'),`槽 ${prefs.latencySlot||1} ▾`);for(const b of header.querySelectorAll('[data-slot]'))b.setAttribute('aria-pressed',String(Number(b.dataset.slot)===(prefs.latencySlot||1)));for(const b of header.querySelectorAll('[data-sort]')){const active=b.dataset.sort===prefs.sort;b.dataset.direction=active?(prefs.sortDir||'asc'):'';b.setAttribute('aria-label',(columns.find(c=>c[0]===b.dataset.sort)?.[1]||'待升级')+'排序'+(active?(prefs.sortDir==='desc'?'，降序':'，升序'):''));}}
    const layout=JSON.stringify(model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])),changed=layout!==lastLayout;
    let position=header.nextElementSibling;
-   for(const group of model.sections){let gv=groups.get(group.id);if(!gv){const node=el('section','banner-group'),head=el('button','banner-group-header'),body=el('div','banner-group-body');head.type='button';const label=el('span');head.append(label);head.addEventListener('click',()=>onCollapse(group.id));node.append(head,body);gv={node,head,body,label};groups.set(group.id,gv);}const collapsed=prefs.collapsed.includes(group.id);text(gv.label,`${collapsed?'▸':'▾'} ${group.name} ${group.items.length} 台`);gv.head.setAttribute('aria-expanded',String(!collapsed));gv.body.hidden=collapsed;
+   for(const group of model.sections){let gv=groups.get(group.id);if(!gv){const node=el('section','banner-group'),head=el('button','banner-group-header'),body=el('div','banner-group-body');head.type='button';const label=el('span');head.append(label);head.addEventListener('click',()=>onCollapse(group.id));node.setAttribute('role','rowgroup');body.setAttribute('role','presentation');const heading=el('div'),cell=el('div');heading.setAttribute('role','row');cell.setAttribute('role','cell');cell.setAttribute('aria-colspan','12');cell.append(head);heading.append(cell);node.append(heading,body);gv={node,head,body,label};groups.set(group.id,gv);}const collapsed=prefs.collapsed.includes(group.id);text(gv.label,`${collapsed?'▸':'▾'} ${group.name} ${group.items.length} 台`);gv.head.setAttribute('aria-expanded',String(!collapsed));gv.body.hidden=collapsed;
     if(changed){if(gv.node!==position)grid.insertBefore(gv.node,position);position=gv.node.nextElementSibling;}if(collapsed)continue;
     let rowPosition=gv.body.firstElementChild;
     for(const a of group.items){const id=a.agent_id;visible.add(id);let rv=rows.get(id);if(!rv||dirty===null||dirty.has(id)){
