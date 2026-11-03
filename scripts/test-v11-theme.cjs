@@ -20,6 +20,16 @@ test('default system mode follows OS changes while explicit modes ignore them',(
  await p.evaluate(()=>ProbeTheme.set('light'));await p.emulateMedia({colorScheme:'light'});await p.emulateMedia({colorScheme:'dark'});assert.deepEqual(await theme(p),{mode:'light',resolved:'light'});
  await p.evaluate(()=>ProbeTheme.set('system'));await waitTheme(p,'dark');await p.emulateMedia({colorScheme:'light'});await waitTheme(p,'light');
 },{theme:null}));
+test('skipped cross-document transitions keep dark pages and produce no unhandled ready rejection',()=>ui(async({page:p})=>{
+ for(const path of ['/jobs.html','/schedules.html','/history.html','/']){
+  await Promise.all([p.waitForURL(new URL(path,p.url()).href,{waitUntil:'load'}),p.evaluate(path=>{const a=document.createElement('a');a.href=path;document.body.append(a);a.click();},path)]);
+  assert.equal(await p.evaluate(()=>document.documentElement.dataset.theme),'dark');
+ }
+ assert(await p.evaluate(()=>Number(localStorage.getItem('qa-transition-skips')))>0);
+ await p.waitForTimeout(100);
+},{theme:'dark',prepare:async p=>p.addInitScript(()=>{
+ for(const name of ['pageswap','pagereveal'])addEventListener(name,event=>{if(event.viewTransition){localStorage.setItem('qa-transition-skips',String(Number(localStorage.getItem('qa-transition-skips')||0)+1));event.viewTransition.skipTransition();}});
+})}));
 test('saved dark resolves while document is loading and the first styled frame is dark on a light OS',()=>ui(async({page:p})=>{
  const first=await p.evaluate(()=>({boot:window.__themeBoot,frame:window.__themeFrame}));
  assert.equal(first.boot.theme,'dark');assert.equal(first.boot.ready,'loading');assert.equal(first.boot.meta,'dark');assert.equal(first.boot.scheme,'dark');assert.equal(first.frame,'rgb(14, 16, 18)');
