@@ -8,7 +8,8 @@
   // navigation during its animation). Its ready rejection must be handled on
   // that transition, while the document's resolved theme remains in force.
   for(const name of ['pageswap','pagereveal'])root.addEventListener(name,event=>{
-    event.viewTransition?.ready.catch(()=>{});
+    const transition=event.viewTransition;
+    if(transition)for(const promise of [transition.ready,transition.finished,transition.updateCallbackDone])promise.catch(()=>{});
   });
   let preference='system';
   try{preference=valid(root.localStorage.getItem(key));}catch{/* Storage may be disabled. */}
