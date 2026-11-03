@@ -32,7 +32,7 @@ const (
 )
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="color-scheme" content="dark"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>404-probe · 登录</title><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"></head>
 <body><main class="login"><article class="login-card"><h1>404-probe</h1><p>管理员登录</p>
 {{if .Failed}}<div class="login-error" role="alert">登录失败，请稍后重试。</div>{{end}}
