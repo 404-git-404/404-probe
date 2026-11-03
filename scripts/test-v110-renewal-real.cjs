@@ -6,6 +6,7 @@ const exe=process.env.V110_SERVER;
 test('quarterly/semiannual real chain: editor → card → detail → preview → apply → undo',async()=>{
  assert(exe,'Set V110_SERVER to the locally built candidate');const parent=path.resolve(process.env.V110_TEMP_ROOT||os.tmpdir()),temp=fs.mkdtempSync(path.join(parent,'v110-renewal-')),db=path.join(temp,'isolated.sqlite'),hash=path.join(temp,'password.hash'),password=crypto.randomBytes(24).toString('hex');let server,browser;
  try{
+  fs.writeFileSync(path.join(temp,'update-check.json'),JSON.stringify({enabled:false,latest:'',checked_at:0}),{mode:0o600});
   fs.writeFileSync(hash,cp.execFileSync(exe,['web','password-hash'],{input:password+'\n',windowsHide:true}),{mode:0o600});
   const registration=cp.execFileSync(exe,['agent','add','套餐周期合成设备','--db',db],{encoding:'utf8',windowsHide:true}),id=registration.match(/Agent ID: (\w+)/)?.[1],token=registration.match(/Token: (\S+)/)?.[1];assert(id&&token,'synthetic registration must succeed');
   const listener=http.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));const base='http://127.0.0.1:'+port;

@@ -5,6 +5,7 @@ const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/code
 const root=process.env.M02_ROOT||'C:/Users/ufoli/.codex/visualizations/2026/10/08/01a119c8-5b16-7733-8bde-48955ee342a9/m02',variant=process.argv[2]||'before-real',out=path.join(root,variant);fs.mkdirSync(out,{recursive:true});
 const exe=process.env.M02_SERVER||path.join(root,'../m02-server-before.exe'),db=path.join(out,'isolated.sqlite'),hash=path.join(root,'password.hash');
 assert(!fs.existsSync(db),'use a new variant; never overwrite a previous database');
+fs.writeFileSync(path.join(out,'update-check.json'),JSON.stringify({enabled:false,latest:'',checked_at:0}),{mode:0o600});
 const trace=[],checks=[],errors=[];let server,browser,context,clash,current='A',reject=false,sequence=0,origin,agent,port;
 const record=(kind,value)=>trace.push({time:Date.now(),kind,...value});
 const json=async(url,method='GET',body,token)=>{const r=await fetch(url,{method,headers:{...(body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:'Bearer '+token}:{})},body:body?JSON.stringify(body):undefined});const text=await r.text();let data;try{data=JSON.parse(text)}catch{data=text}record('protocol',{method,url,status:r.status,data});return {status:r.status,data};};
