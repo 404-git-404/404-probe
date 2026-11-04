@@ -2,7 +2,7 @@
 
 ## 外联与关闭
 
-启用 Web 认证的 Server 默认在启动后随机延迟 1–10 分钟检查一次，之后每 12 小时向 `api.github.com` 发出 HTTPS 请求，读取固定仓库的最新正式版本号。失败会退避重试；页面只读缓存，不因刷新而访问 GitHub。请求不带 Server 版本、地址、实例标识、Cookie 或凭据（只带固定的 `User-Agent: 404-probe-update-check`）；与任何 HTTPS 请求一样，GitHub 能看到发出请求的出口 IP。
+Server 默认访问 `api.github.com`，只读取固定仓库最新正式版的版本号。启用 Web 登录且没有近期成功检查缓存时，Server 启动后随机等待 1–10 分钟首次检查，成功后每 12 小时检查一次；重启或重新开启仍遵守最近成功检查的间隔。失败会退避重试，页面刷新只读缓存，不触发访问。请求使用固定 User-Agent: 404-probe-update-check 和通用 HTTP 请求头，不携带 Server 版本、地址、实例标识、Cookie 或凭据；GitHub 能看到出口 IP。
 
 面板 ⚙ 的“检查新版本”开关可以关闭后续请求和版本提示。未启用 Web 认证的 Server 不启动检查器。
 
