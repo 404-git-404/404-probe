@@ -25,7 +25,7 @@
   const catalog=root.Management.countries();select.append(Object.assign(el('option','','使用自动识别'),{value:''}));for(const c of catalog)select.append(Object.assign(el('option','',c.zh+' '+c.code),{value:c.code}));
   select.addEventListener('change',()=>saveCountry(current,select.value));region.append(select,country);row(agentGroup,'出口地区','countryManage',region);
   const iprow=row(checks,'公网 IP 检测','egress',egress.controls),switchLabel=egress.controls.querySelector('.pe-switch');if(switchLabel){switchLabel.querySelector('span').textContent=' 公网 IP 检测';iprow.children[0].querySelector('strong').hidden=true;iprow.children[0].prepend(switchLabel);}row(checks,'设备累计流量','since',actions.reset);checks.n.append(actions.resetFeedback);
-  row(checks,'Google 检测','google',actions.google);checks.n.append(actions.googleFeedback);
+  row(checks,'YouTube 地区检测','google',actions.google);checks.n.append(actions.googleFeedback);
   row(danger,'暂停监控','pause',actions.pause);row(danger,'撤销 Agent','revoke',actions.remove);
   const more=el('details','details-more'),summary=el('summary','','更多');more.append(summary,actions.history);management.append(more);
   const time=(v,dateOnly=false)=>{if(!v)return '未知';const d=new Date(v),pad=n=>String(n).padStart(2,'0');return (d.getFullYear()!==new Date().getFullYear()?d.getFullYear()+'-':'')+pad(d.getMonth()+1)+'-'+pad(d.getDate())+(dateOnly?'':' '+pad(d.getHours())+':'+pad(d.getMinutes()));};
