@@ -1228,33 +1228,30 @@ function createPublicEgress(agentID) {
   const items=['ipv4','ipv6'].map((family,index)=>{
     const item=document.createElement('button');item.type='button';item.className='public-egress-item';item.dataset.family=family;
     item.textContent=index?'V6':'V4';
-    const tip=document.createElement('div');tip.className='public-egress-tip';tip.id=`egress-${agentID}-${family}`;tip.setAttribute('role','tooltip');
-    item.setAttribute('aria-describedby',tip.id);
+    
+    
     item.addEventListener('click',event=>event.stopPropagation());
     item.addEventListener('keydown',event=>{event.stopPropagation();if(event.key==='Escape'){item.blur();item.classList.add('tip-dismissed');}});
     item.addEventListener('blur',()=>item.classList.remove('tip-dismissed'));
     item.addEventListener('mouseleave',()=>item.classList.remove('tip-dismissed'));
     item.addEventListener('focus',()=>item.classList.remove('tip-dismissed'));
     item.addEventListener('mouseenter',()=>item.classList.remove('tip-dismissed'));
-    return {family,item,tip};
+    return {family,item};
   });
   let shownKey=null;
   function update(agent) {
     const p=agent.state?.public_egress;
     const lifecycle=Boolean(!agent.online||agent.disabled_at||agent.revoked||agent.state?.stale);
     const shown=[],families=[];
-    for(const {family,item,tip} of items) {
+    for(const {family,item} of items) {
       const raw=p?.[family],masked=agent.masked_egress?.[family],observation=raw?.checked_at?raw:masked,status=observation?.status||'unknown';
       const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
       const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
-      if(!available||stale)continue;
-      const at=new Date(observation.checked_at).toLocaleString();
-      const mask=observation===masked?masked.ip:PublicEgressCheck.maskIP(observation.ip);
-      const history=observation.last_success,historyIP=history&&(observation===masked?history.ip:PublicEgressCheck.maskIP(history.ip));
-      const full=`${family==='ipv4'?'IPv4':'IPv6'} · 可用 ${mask} · ${at}${observation.reason==='verified'?' · 已验证':''}${history?' · 最后成功 '+historyIP+'（'+new Date(history.checked_at).toLocaleString()+'）':''}；Agent 实际网络路径的出站观测`;
-      setCardText(tip,full);item.setAttribute('aria-label',full);
-      item.dataset.status=status;item.dataset.stale='false';
-      shown.push(item,tip);families.push(family);
+      const mask=available?(observation===masked?masked.ip:PublicEgressCheck.maskIP(observation.ip)):'未检测到';
+      const full=`${family==='ipv4'?'IPv4':'IPv6'}：${mask}${available&&stale?'（旧记录）':''}`;
+      item.setAttribute('aria-label',full);item.title=full;
+      item.dataset.status=status;item.dataset.stale=String(stale);
+      shown.push(item);families.push(family);
     }
     const key=families.join();
     if(key!==shownKey){shownKey=key;egress.replaceChildren(...shown);}
