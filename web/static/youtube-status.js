@@ -52,5 +52,11 @@
     const code=china?'CN':known?y.region:consent?'EU':null;
     return {label,code,tone,premium,state,description,reason,known,expired:expired||old};
   }
-  const api={view};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.YouTubeStatus=api;
+  // The manual region is shared by the card and list presentation only;
+  // keep automatic observation evidence unchanged.
+  function display(agent,now=Date.now()){
+    const observed=view(agent,now),manual=agent?.plan?.country_code_override;
+    return countryCodes.has(manual)?{...observed,code:manual,label:'地区 '+manual,tone:'manual',manual:true}:observed;
+  }
+  const api={view,display};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.YouTubeStatus=api;
 })(globalThis);

@@ -439,7 +439,7 @@ addEventListener('resize',positionYouTubeTooltip,{passive:true});
 addEventListener('scroll',positionYouTubeTooltip,{capture:true,passive:true});
 
 function googleCheckItems(agent) {
- const value=YouTubeStatus.view(agent);
+ const value=YouTubeStatus.display(agent);
  return [['YouTube',value.label,value.tone,value.premium]];
 }
 
