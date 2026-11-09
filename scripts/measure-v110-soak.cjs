@@ -1,7 +1,7 @@
 // Real SQLite/HTTP report soak. No external requests except an explicitly
 // supplied registered SSH test host; browser requests are restricted to base.
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),cp=require('node:child_process'),assert=require('node:assert/strict');
-const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})());
 const wait=ms=>new Promise(r=>setTimeout(r,ms)),q=(a,p)=>{const s=[...a].sort((a,b)=>a-b);return s[Math.max(0,Math.ceil(p*s.length)-1)]||0;},stats=a=>({count:a.length,p50:q(a,.5),p95:q(a,.95),max:Math.max(0,...a)});
 const output=path.resolve(process.env.V110_SOAK_OUTPUT||'v110-soak-results.json'),root=path.resolve(process.env.V110_SOAK_ROOT||fs.mkdtempSync(path.join(os.tmpdir(),'v110-soak-'))),exe=process.env.V110_SOAK_EXE;
 const mode=process.env.V110_VIEW||'cards',rowSelector=mode==='list'?'.banner-row':'.agent-card';assert(['cards','list'].includes(mode));
@@ -34,7 +34,7 @@ async function interactions(page){
  fs.mkdirSync(root,{recursive:true});fs.mkdirSync(path.dirname(output),{recursive:true});
  if(!exe&&!remoteHost)throw Error('V110_SOAK_EXE must name the precompiled server test executable');
  if(!remoteHost){child=cp.spawn(exe,['-test.run=^TestDashboardPerformanceFixture$','-test.v','-test.timeout=70m'],{cwd:path.resolve(__dirname,'..'),windowsHide:true,env:{...process.env,V110_DASHBOARD_PERF:'1',V110_SOAK_ROOT:root,V110_PERF_COUNT:counts.length===1?String(counts[0]):''},stdio:['ignore','pipe','pipe']});child.stdout.on('data',b=>log+=b);child.stderr.on('data',b=>log+=b);}
- browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe',args:['--js-flags=--expose-gc']});
+ browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})(),args:['--js-flags=--expose-gc']});
  for(const n of counts){const ready=await json(path.join(root,`ready-${n}.json`)),base=ready.base,context=await browser.newContext({viewport:{width:1440,height:1000},locale:'zh-CN'});let page=await context.newPage();const errors=[],requests=[],burstLong=[];let inBurst=false;
   // Node owns this cross-document collection: login navigation must not erase
   // restart tasks, and attaching the steady render wrapper must not clear them.

@@ -1,7 +1,7 @@
 // Loopback-only synthetic UI fixture. Every credential below is a test sentinel.
 const {start,ID}=require('./v110-dashboard-fixture.cjs');
-const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
-const launch=()=>chromium.launch({headless:true,ignoreDefaultArgs:['--hide-scrollbars'],executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe'});
+const {chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})());
+const launch=()=>chromium.launch({headless:true,ignoreDefaultArgs:['--hide-scrollbars'],executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()});
 async function open(browser,{width=1920,height=1080,theme='light',n=28,preferences=null,deviceScaleFactor=1,_navigationAttempts=0}={}){
  let settingsState;const f=await start({n,handle:({req,url,body,json,fail})=>{if(url.pathname!=='/api/v1/web/settings/update-check')return false;settingsState.writes.push({headers:req.headers,body});if(settingsState.failSettings||req.headers['x-csrf-token']!=='synthetic-csrf'||req.headers['sec-fetch-site']!=='same-origin'||req.headers.origin!==f.base)fail('forbidden',403);else{settingsState.update={...settingsState.update,enabled:body.enabled,newer:body.enabled};json(settingsState.update);}return true;}}),context=await browser.newContext({viewport:{width,height},deviceScaleFactor,locale:'zh-CN',permissions:['clipboard-read','clipboard-write']}),page=await context.newPage(),errors=[];
  const state={update:{enabled:true,newer:true,latest:'v1.1.1',checked_at:1},failSettings:false,enrollments:0,revokes:0,writes:[],token:'S'.repeat(43),manual:'synthetic-manual-credential'};

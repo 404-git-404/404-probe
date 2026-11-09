@@ -1,11 +1,11 @@
 // Invoked via V11_THEME=compare|screens scripts/capture-v110-dashboard-compare.cjs.
 const fs=require('node:fs'),path=require('node:path');
-const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})());
 const {open,scene}=require('./lib/v11-theme-fixture.cjs');
 const scenes=['Home-A','Home-B','Details-overview','Details-resources','Details-security','Details-management','Selector','Legacy-Selector','Confirm','Upgrade','Revoke','Plan','Quota','Renewal','Assign','Groups','Tags','Expense','Filter','Quality-Settings','Quality-Copy','Quality-History','Add-Choice','Add-OneClick','Add-Command','Add-Manual','Add-Created','Empty','History','Jobs','Schedules','Login'];
 (async()=>{
  const mode=process.env.V11_THEME||'compare',out=path.resolve(process.env.V11_OUTPUT||'../release-records/v1.1.0/v11-CX-深色-evidence/pixel'),baseline=path.resolve(process.env.V11_BASELINE||'../release-records/v1.1.0/v11-CX-深色-evidence/baseline');fs.mkdirSync(out,{recursive:true});
- const browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe'}),results=[];
+ const browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()}),results=[];
  try{
  for(const width of [1440,390])for(const name of scenes)for(const variant of mode==='compare'?['baseline','actual']:['light','dark']){
   if(mode!=='compare'&&width===390&&(variant!=='dark'||!['Home-A','Selector'].includes(name)))continue;

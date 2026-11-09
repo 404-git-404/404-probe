@@ -2,8 +2,8 @@
 const {test,before,after}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const {v5Card,load,C}=require('./lib/r07-harness.cjs');
-let chromium;try{({chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));}catch(_){/* optional local browser dependency */}
-const chromiumPath=process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe';
+let chromium;try{({chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})()));}catch(_){/* optional local browser dependency */}
+const chromiumPath=process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})();
 const available=Boolean(chromium&&fs.existsSync(chromiumPath)),browserOptions={skip:!available&&'Playwright/Chromium not available'};
 const root=path.join(__dirname,'../web/static'),ID='a'.repeat(32),M=60000,DAY=86400000;
 const dashboardFixture = a => ({items:[{...a,accumulated_traffic:a.traffic,traffic:{known:true,stale:false,quota_state:'current'},resources:{known:!!a.state,stale:false,cpu_percent:a.state?.cpu_percent,ram_percent:a.state?.ram_percent,disk_percent:a.state?.disk_percent,collected_at:a.state?.collected_at,max_age_ms:600000},network:{known:true,active:false,monitored:true},renewal:{type:'upcoming',days:40},search_fields:[a.name,a.state?.hostname||''],group_id:null,tag_ids:[]}],revision:1,groups:[],tags:[],exchange_rates:[{currency:'USD',units_per_usd:'1'}],expenses:{monthly_usd:'0.00',yearly_usd:'0.00'},server_now:Date.now()});

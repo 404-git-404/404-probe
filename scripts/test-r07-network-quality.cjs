@@ -810,3 +810,8 @@ test('B2: a pending removal takes the cached current judgement and the numbers o
  const reads=f.requests.filter(r=>r.url.includes('/v5/card')).length;
  f.ui.tick();await flush();assert.equal(f.requests.filter(r=>r.url.includes('/v5/card')).length,reads,'nothing is read for a device that is being removed');
 });
+
+test('A6 completed offline gaps stay grey after populated blocks without carrying the previous color',async()=>{
+ const f=setup({raw:load('v4-running'),card:base=>{for(const lane of base.lanes)if(lane.tcp.blocks)lane.tcp.blocks.forEach((b,i)=>Object.assign(b,i<10?{state:'red',judged:6,failed:6,in_progress:false}:{state:'gray',judged:0,failed:0,slow:0,in_progress:false}));return base;}});
+ f.ui.setVisible(AGENT,true);await flush();const cells=f.node.querySelector('.nq7-row').querySelector('.nq7-blocks').querySelectorAll('.nq7-b');assert.equal(cells.length,20);assert.match(cells[9].className,/nq7-b-red/);for(const cell of cells.slice(10))assert.match(cell.className,/nq7-b-gray/);
+});

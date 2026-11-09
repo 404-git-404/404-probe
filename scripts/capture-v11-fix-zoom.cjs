@@ -2,10 +2,10 @@
 // This changes chrome.tabs zoom, not CSS zoom, DPR emulation or root font size.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {open}=require('./lib/v11-panel-fixture.cjs');
-const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})());
 const out=path.resolve(process.argv[2]),evidence=path.resolve(process.argv[3]),ext=path.join(evidence,'zoom-extension'),profile=fs.mkdtempSync(path.join(evidence,'zoom-profile-'));
 fs.mkdirSync(ext,{recursive:true});fs.writeFileSync(path.join(ext,'manifest.json'),JSON.stringify({manifest_version:3,name:'Local native zoom QA',version:'1.0',permissions:['tabs'],background:{service_worker:'background.js'}}));fs.writeFileSync(path.join(ext,'background.js'),'chrome.runtime.onInstalled.addListener(()=>{});chrome.runtime.onStartup.addListener(()=>{});');
-(async()=>{const context=await chromium.launchPersistentContext(profile,{headless:false,executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe',viewport:{width:1920,height:1000},ignoreDefaultArgs:['--disable-extensions','--hide-scrollbars'],args:[`--disable-extensions-except=${ext}`,`--load-extension=${ext}`,'--window-size=1920,1100']}),facts=[];let fixture;
+(async()=>{const context=await chromium.launchPersistentContext(profile,{headless:false,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})(),viewport:{width:1920,height:1000},ignoreDefaultArgs:['--disable-extensions','--hide-scrollbars'],args:[`--disable-extensions-except=${ext}`,`--load-extension=${ext}`,'--window-size=1920,1100']}),facts=[];let fixture;
  try{const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker'),f=await open({newContext:async()=>context},{theme:'dark',preferences:{viewMode:'list'}}),p=f.page,baseline=await p.evaluate(()=>devicePixelRatio);
   fixture=f.f;for(const scale of [.5,2/3,.8,1.25,1.5]){
    const zoom=await worker.evaluate(async({scale,url})=>{const tab=(await chrome.tabs.query({})).find(t=>t.url===url);if(!tab)throw Error('QA tab not found');await chrome.tabs.setZoom(tab.id,scale);return chrome.tabs.getZoom(tab.id);},{scale,url:p.url()});

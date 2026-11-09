@@ -6,8 +6,8 @@ const {v5Card} = require('./lib/r07-harness.cjs');
 const {test, before, after} = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path');
 
-const playwrightPath = process.env.M02_PLAYWRIGHT || 'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright';
-const chromiumPath = process.env.M02_CHROMIUM || 'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe';
+const playwrightPath = process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})();
+const chromiumPath = process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})();
 let chromium = null;
 try { ({chromium} = require(playwrightPath)); } catch (_) { /* skipped below */ }
 const available = !!chromium && fs.existsSync(chromiumPath);

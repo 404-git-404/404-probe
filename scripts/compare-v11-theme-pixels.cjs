@@ -1,6 +1,6 @@
 // Exact RGBA comparison: no tolerance, no anti-alias exclusion.
 const fs=require('node:fs'),path=require('node:path');
-const {PNG}=require(process.env.M02_PNGJS||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/pngjs');
+const {PNG}=require(process.env.M02_PNGJS||(()=>{throw Error('Set M02_PNGJS to the required local dependency or artifact path');})());
 const dir=path.resolve(process.argv[2]||'../release-records/v1.1.0/v11-CX-深色-evidence/pixel'),results=[];
 for(const file of fs.readdirSync(dir).filter(n=>n.endsWith('-baseline.png'))){
  const actual=file.replace('-baseline.png','-actual.png'),a=PNG.sync.read(fs.readFileSync(path.join(dir,file))),b=PNG.sync.read(fs.readFileSync(path.join(dir,actual)));

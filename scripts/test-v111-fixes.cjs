@@ -15,12 +15,12 @@ test('B5 legacy Server errors use the shared YouTube detection name',()=>{
 });
 test('B3 checked updates, omission, summary not_reported and explicit no-address remain distinct',()=>{
  const s=State.create(),id='a',commit=patch=>s.commitRead(s.read(id),{agent_id:id,...patch});
- const ip='203.0.113.42';commit({state:{public_egress:{ipv4:{checked_at:1,status:'available',ip}}}});
- commit({state:null});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
+ const ip='203.0.113.42';commit({state:{hostname:'synthetic-host',cpu_percent:42,public_egress:{ipv4:{checked_at:1,status:'available',ip},ipv6:{checked_at:1,status:'available',ip:'2001:db8::42'}}}});
+ commit({state:null});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);assert.equal(s.agents.get(id).state.hostname,'synthetic-host');assert.equal(s.agents.get(id).state.cpu_percent,42);assert.equal(s.agents.get(id).state.stale,true);
  s.event({agent_id:id,state:{cpu_percent:11}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  commit({state:{public_egress:{ipv4:{checked_at:0,status:'unknown',reason:'not_reported'}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  commit({state:{public_egress:{ipv4:{checked_at:2,status:'unknown',reason:'timeout',ip:''}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
- commit({state:{public_egress:{ipv4:{checked_at:2,status:'available',ip:'203.0.113.43'}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,'203.0.113.43');
+ commit({state:{public_egress:{ipv4:{checked_at:2,status:'available',ip:'203.0.113.43'}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,'203.0.113.43');assert.equal(s.agents.get(id).state.public_egress.ipv6.ip,'2001:db8::42','mixed family update preserves omitted IPv6');
  commit({state:{public_egress:{ipv4:{checked_at:3,status:'unavailable',ip:''}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.status,'unavailable');assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,'');
  const first=State.create();first.commitRead(first.read('b'),{state:{cpu_percent:1}});first.event({agent_id:'b',state:{public_egress:{ipv4:{checked_at:4,status:'unknown',reason:'timeout'}}}});assert.equal(first.agents.get('b').state.public_egress.ipv4.checked_at,4);
 });

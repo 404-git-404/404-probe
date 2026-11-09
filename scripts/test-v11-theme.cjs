@@ -1,18 +1,18 @@
 const {test,before,after}=require('node:test'),assert=require('node:assert/strict');
-const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})());
 const {open,scene}=require('./lib/v11-theme-fixture.cjs');
 let browser;
-before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe'});});
+before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()});});
 after(async()=>browser?.close());
 async function ui(run,options){const f=await open(browser,{...(process.env.V111_THEME_SOURCE?{source:process.env.V111_THEME_SOURCE}:{}),...options});try{await run(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
 const theme=p=>p.evaluate(()=>({mode:ProbeTheme.get(),resolved:document.documentElement.dataset.theme}));
 const waitTheme=(p,value)=>p.waitForFunction(v=>document.documentElement.dataset.theme===v,value);
-test('three modes cycle in order and survive navigation/reload with accessible current labels',()=>ui(async({page:p})=>{
+test('cycles skip visually identical modes and survive navigation/reload with accessible current labels',()=>ui(async({page:p})=>{
  const button=p.locator('[data-theme-toggle]');
- for(const [mode,resolved,label] of [['light','light','浅色'],['dark','dark','深色'],['system','light','跟随系统'],['light','light','浅色']]){
+ for(const [mode,resolved,label] of [['light','light','浅色'],['dark','dark','深色'],['system','light','跟随系统'],['dark','dark','深色']]){
   assert.deepEqual(await theme(p),{mode,resolved});assert.equal(await button.getAttribute('aria-label'),'主题：'+label);assert.equal(await button.getAttribute('title'),'主题：'+label);await button.click();
  }
- assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});await p.reload();await waitTheme(p,'dark');assert.equal(await p.evaluate(()=>localStorage.getItem('404-probe.theme.v1')),'dark');
+ assert.deepEqual(await theme(p),{mode:'system',resolved:'light'});await p.evaluate(()=>ProbeTheme.set('dark'));await p.reload();await waitTheme(p,'dark');assert.equal(await p.evaluate(()=>localStorage.getItem('404-probe.theme.v1')),'dark');
  for(const path of ['/history.html?id='+'1'.padStart(32,'0'),'/jobs.html','/schedules.html','/']){await p.goto(new URL(path,p.url()).href);assert.equal(await p.locator('[data-theme-toggle]').count(),1);assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});assert.equal(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')))),false);}
 }));
 test('default system mode follows OS changes while explicit modes ignore them',()=>ui(async({page:p})=>{
@@ -20,6 +20,9 @@ test('default system mode follows OS changes while explicit modes ignore them',(
  await p.evaluate(()=>ProbeTheme.set('light'));await p.emulateMedia({colorScheme:'light'});await p.emulateMedia({colorScheme:'dark'});assert.deepEqual(await theme(p),{mode:'light',resolved:'light'});
  await p.evaluate(()=>ProbeTheme.set('system'));await waitTheme(p,'dark');await p.emulateMedia({colorScheme:'light'});await waitTheme(p,'light');
 },{theme:null}));
+// Detects explicit white/near-white backgrounds, but cannot detect removal of the
+// theme.js inline dark canvas write when the early sample is transparent. True
+// first-frame flashes still require compare-v11-theme-pixels.cjs pixel comparison.
 test('saved dark resolves while document is loading and the first styled frame is dark on a light OS',()=>ui(async({page:p})=>{
  const first=await p.evaluate(()=>({boot:window.__themeBoot,frame:window.__themeFrame,earliest:window.__themeEarliest,preStyle:window.__themePreStyle||[],oldBodyFrame:window.__themeOldBodyFrame}));
  const nearWhite=color=>{const v=String(color).match(/[\d.]+/g)?.map(Number);return v&&v.length>=3&&(v.length<4||v[3]>0)&&v.slice(0,3).every(n=>n>=235);};

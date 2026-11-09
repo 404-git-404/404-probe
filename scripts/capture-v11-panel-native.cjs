@@ -2,11 +2,11 @@
 // Run: node scripts/capture-v11-panel-native.cjs
 // In the named QA window use Chrome's own menu to select 125%, then 150%.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})());
 const {open}=require('./lib/v11-panel-fixture.cjs');
 const out=path.resolve(process.env.V11_PANEL_SCREENS||'../release-records/v1.1.0/v11-CX-面板-screens');
 (async()=>{
- const browser=await chromium.launch({headless:false,executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe',args:['--window-size=1920,1160']});
+ const browser=await chromium.launch({headless:false,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})(),args:['--window-size=1920,1160']});
  const f=await open(browser,{theme:'dark'}),p=f.page,seen=new Set();fs.mkdirSync(out,{recursive:true});
  await p.evaluate(()=>document.title='404-probe · Native Zoom QA');
  console.log('Use Chrome menu in Native Zoom QA: 125%, then 150%. Captures save automatically. Close the window to cancel.');
