@@ -141,7 +141,10 @@
           if(key === 'state' && value && current.state){
             const old=current.state.public_egress||{}, incoming=value.public_egress||{};
             const public_egress={...old,...incoming,ipv4:old.ipv4,ipv6:old.ipv6};
-            for(const family of ['ipv4','ipv6'])if(incoming[family]?.checked_at>0)public_egress[family]=incoming[family];
+            for(const family of ['ipv4','ipv6']){
+              const observation=incoming[family];
+              if(observation?.checked_at>0&&(observation.status==='unavailable'||(observation.status==='available'&&typeof observation.ip==='string'&&observation.ip.length>0)))public_egress[family]=observation;
+            }
             next.state={...current.state,...value,public_egress};
           }else next[key] = value;
           groups.add(group);
