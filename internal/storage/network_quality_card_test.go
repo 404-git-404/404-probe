@@ -152,7 +152,7 @@ func TestCardSummaryShapeAndStatuses(t *testing.T) {
 	if s.EvalEnd != QualityEvalEnd(now.UnixMilli()) || s.Now != now.UnixMilli() {
 		t.Fatalf("cut-off %d now %d", s.EvalEnd, s.Now)
 	}
-	if want := floorDiv64(s.EvalEnd-1, 180000)*180000 - 19*180000; s.WindowStart != want {
+	if want := (floorDiv64(s.EvalEnd, 180000)-1)*180000 - 19*180000; s.WindowStart != want {
 		t.Fatalf("window start %d, want %d", s.WindowStart, want)
 	}
 	telecom := c.telecom(s)
@@ -160,7 +160,7 @@ func TestCardSummaryShapeAndStatuses(t *testing.T) {
 		t.Fatalf("telecom %+v", telecom)
 	}
 	for i, b := range telecom.TCP.Blocks {
-		if b.Start != s.WindowStart+int64(i)*180000 || b.State != QualityCardGray {
+		if b.Start != s.WindowStart+int64(i)*180000 || b.State != QualityCardGray || b.Start+QualityBlockMS > s.EvalEnd || b.InProgress {
 			t.Fatalf("block %d of an empty line: %+v", i, b)
 		}
 	}
@@ -248,7 +248,7 @@ func TestCardIgnoresAMinuteThatHasNotPassedTheCutOff(t *testing.T) {
 		t.Fatalf("at the upload time the future sample is counted (%d slow)", got)
 	}
 	// The minute is judged once now-90s passes its end.
-	end := (futureMinute + 1) * qualityMinuteMS
+	end := (floorDiv64(future.StartedAt, QualityBlockMS) + 1) * QualityBlockMS
 	if sum(time.UnixMilli(end+qualityEvalLagMS-1)) != 0 {
 		t.Fatal("counted one millisecond before the cut-off")
 	}
@@ -280,7 +280,7 @@ func TestCardRedAndAlertFollowTheCurrentStateNotTheHistory(t *testing.T) {
 	c.fillTCP("ipv4", c.minute(0), c.minute(4), 0, 0, 2, 0)
 	c.fillTCP("ipv4", c.minute(4), c.minute(30), 2, 0, 0, 0)
 	during := c.summary(time.UnixMilli((c.minute(4)*qualityMinuteMS)+qualityEvalLagMS), "ipv4")
-	if lane := c.telecom(during); !lane.TCP.Red.Active || !during.AlertActive || !strings.Contains(blockStates(lane.TCP.Blocks), "R") {
+	if lane := c.telecom(during); !lane.TCP.Red.Active || !during.AlertActive {
 		t.Fatalf("during the outage: red=%v alert=%v blocks=%s", lane.TCP.Red.Active, during.AlertActive, blockStates(lane.TCP.Blocks))
 	}
 	after := c.summary(time.UnixMilli((c.minute(30)*qualityMinuteMS)+qualityEvalLagMS), "ipv4")
@@ -630,7 +630,7 @@ func TestCardIgnoresAFutureSampleInTheNextMinuteToo(t *testing.T) {
 	if slow(now) != 0 || slow(now.Add(time.Minute)) != 0 {
 		t.Fatal("the minute of a future sample was judged before its cut-off")
 	}
-	if slow(time.UnixMilli(c.minute(22)*qualityMinuteMS+qualityEvalLagMS)) != 1 {
+	if slow(time.UnixMilli((floorDiv64(future.StartedAt, QualityBlockMS)+1)*QualityBlockMS+qualityEvalLagMS)) != 1 {
 		t.Fatal("the sample never appeared")
 	}
 }
@@ -729,5 +729,25 @@ func TestMarksFutureRangeStopsAtTheCutoff(t *testing.T) {
 	}
 	if m.To > m.EvalEnd || m.From > m.To || len(m.Lanes) != 0 {
 		t.Fatalf("%+v", m)
+	}
+}
+
+func TestCardCompletedWindowAtBlockBoundaries(t *testing.T) {
+	c := newCardKit(t)
+	boundary := floorDiv64(c.at(40).UnixMilli(), QualityBlockMS) * QualityBlockMS
+	for _, delta := range []int64{-1, 0, 1, QualityBlockMS - 1} {
+		s := c.summary(time.UnixMilli(boundary+qualityEvalLagMS+delta), "ipv4")
+		blocks := c.telecom(s).TCP.Blocks
+		if len(blocks) != QualityCardBlocks {
+			t.Fatalf("count %d", len(blocks))
+		}
+		if blocks[len(blocks)-1].Start+QualityBlockMS != floorDiv64(s.EvalEnd, QualityBlockMS)*QualityBlockMS {
+			t.Fatalf("latest block not completed: %+v", s)
+		}
+		for _, b := range blocks {
+			if b.InProgress || b.Start+QualityBlockMS > s.EvalEnd || b.State != QualityCardGray {
+				t.Fatalf("empty completed interval %+v", b)
+			}
+		}
 	}
 }

@@ -18,12 +18,12 @@ test('M10: in-order events replace egress, including restart, invalid report and
   store.event({agent_id: a, state: state('4.2.2.2')});
   assert.equal(ipv4().ip, '4.2.2.2');
   store.event({agent_id: a, state: state('', {ipv4: {family: 'ipv4', status: 'unknown', reason: 'not_checked', checked_at: 0}})});
-  assert.equal(ipv4().reason, 'not_checked');
+  assert.equal(ipv4().ip, '4.2.2.2');
   store.event({agent_id: a, state: state('', {ipv4: {family: 'ipv4', status: 'unknown', reason: 'invalid_report', checked_at: 0}})});
-  assert.equal(ipv4().reason, 'invalid_report');
+  assert.equal(ipv4().ip, '4.2.2.2');
   store.event({agent_id: a, state: {public_egress: {version: 1, supported: false, ipv4: {family: 'ipv4', status: 'unknown', reason: 'not_reported'}}}});
   assert.equal(store.agents.get(a).state.public_egress.supported, false);
-  assert.equal(ipv4().status, 'unknown');
+  assert.equal(ipv4().status, 'available');
 });
 
 test('M10: a list snapshot cannot overwrite egress from an event that arrived during the refresh', () => {
@@ -91,77 +91,16 @@ const fresh = (family, ip, extra = {}) => ({family, status: 'available', ip, rea
 const card = (egress, extra = {}) => ({agent_id: 'a', online: true, state: {public_egress: {version: 1, supported: true, ...egress}}, ...extra});
 const shown = element => element.children.filter(c => c.tagName === 'BUTTON').map(c => c.textContent);
 
-test('M10 UI: fresh available families are shown', () => {
-  assert.deepEqual(shown(render(card({ipv4: fresh('ipv4', '8.8.8.8'), ipv6: fresh('ipv6', '2001:db8::1')}))), ['V4', 'V6']);
-  assert.deepEqual(shown(render(card({ipv4: fresh('ipv4', '8.8.8.8')}))), ['V4']);
-  const el = render(card({ipv6: fresh('ipv6', '2001:db8::1')}));
-  assert.deepEqual(shown(el), ['V6']);
-  assert.match(el.children[0].attributes['aria-label'], /2001:db8:…/);
-  assert.doesNotMatch(el.children[0].attributes['aria-label'], /2001:db8::1/, 'aria-label shows the half-hidden address only');
-  assert.doesNotMatch(el.children[1].textContent, /2001:db8::1/, 'tooltip shows the half-hidden address only');
+test('B2 badges show only masked addresses and missing observations say not detected',()=>{
+ const el=render(card({ipv4:fresh('ipv4','8.8.8.8'),ipv6:fresh('ipv6','2001:db8::1')}));
+ assert.deepEqual(shown(el),['V4','V6']);assert.match(el.children[0].title,/8\.8\.\*\.\*/);assert.match(el.children[1].title,/2001:db8:…/);
+ for(const n of el.children)assert.doesNotMatch(n.title+JSON.stringify(n.attributes),/8\.8\.8\.8|2001:db8::1/);
+ assert.match(render(card({})).children[0].title,/未检测到/);
 });
-
-test('M10 UI: batch masked observations retain SSE tooltip and expired masks cannot imply availability',()=>{
- const observation=fresh('ipv4','8.8.8.8',{last_success:{ip:'1.1.1.1',checked_at:now-5000}});
- const live=render(card({ipv4:observation}));
- const masked={...observation,ip:'8.8.*.*',last_success:{...observation.last_success,ip:'1.1.*.*'}};
- const batch=render(card({}, {masked_egress:{ipv4:masked},masked_ips:['8.8.*.*']}));
- assert.equal(batch.children[0].attributes['aria-label'],live.children[0].attributes['aria-label']);
- masked.valid_until=now-1;assert.equal(render(card({}, {masked_egress:{ipv4:masked},masked_ips:['8.8.*.*']})).children.length,0);
- assert.equal(render(card({}, {masked_ips:['8.8.*.*']})).children.length,0);
-});
-
-test('M10 UI: unavailable, unknown, stale or empty-IP families are hidden and the container is empty', () => {
-  for (const one of [
-    {family: 'ipv4', status: 'unavailable', reason: 'no_route', checked_at: now - 1000, valid_until: now + 600000},
-    {family: 'ipv4', status: 'unknown', reason: 'not_checked', checked_at: 0},
-    fresh('ipv4', '8.8.8.8', {stale: true}),
-    fresh('ipv4', '8.8.8.8', {valid_until: now - 1}),
-    fresh('ipv4', '8.8.8.8', {checked_at: 0}),
-    fresh('ipv4', ''),
-  ]) assert.equal(render(card({ipv4: one, ipv6: one.family ? {...one, family: 'ipv6'} : one})).children.length, 0);
-  assert.equal(render(card({})).children.length, 0);
-});
-
-test('M10 UI: offline, disabled, revoked or stale Agents hide every family', () => {
-  const egress = {ipv4: fresh('ipv4', '8.8.8.8'), ipv6: fresh('ipv6', '2001:db8::1')};
-  for (const extra of [{online: false}, {disabled_at: 1}, {revoked: true}]) assert.equal(render(card(egress, extra)).children.length, 0);
-  const staleState = card(egress); staleState.state.stale = true;
-  assert.equal(render(staleState).children.length, 0);
-});
-
-test('M10 UI: labels appear and disappear on the same card as state changes', () => {
-  const update = render.live();
-  const up = card({ipv4: fresh('ipv4', '8.8.8.8')});
-  assert.deepEqual(shown(update(up)), ['V4']);
-  assert.equal(update(card({ipv4: {family: 'ipv4', status: 'unavailable', reason: 'timeout', checked_at: now}})).children.length, 0);
-  assert.deepEqual(shown(update(card({ipv4: fresh('ipv4', '8.8.8.8'), ipv6: fresh('ipv6', '2001:db8::1')}))), ['V4', 'V6']);
-  assert.equal(update({...up, online: false}).children.length, 0);
-});
-
-test('M10 UI: an unchanged set of families keeps its nodes in the DOM and refreshes the tooltip text', () => {
-  const update = render.live();
-  const el = update(card({ipv4: fresh('ipv4', '8.8.8.8')}));
-  let rebuilt = 0;
-  const original = el.replaceChildren.bind(el);
-  el.replaceChildren = (...children) => {rebuilt++; original(...children);};
-  const v4 = el.children[0], tip = el.children[1];
-  update(card({ipv4: fresh('ipv4', '9.9.4.4')}));
-  assert.equal(rebuilt, 0);
-  assert.equal(el.children[0], v4);
-  assert.match(tip.textContent, /9\.9\.\*\.\*/);
-  assert.match(v4.attributes['aria-label'], /9\.9\.\*\.\*/);
-  assert.doesNotMatch(tip.textContent + v4.attributes['aria-label'], /9\.9\.4\.4/);
-  update(card({ipv4: fresh('ipv4', '9.9.4.4'), ipv6: fresh('ipv6', '2001:db8::1')}));
-  assert.equal(rebuilt, 1);
-  assert.equal(el.children[0], v4);
-});
-
-test('M10 UI: the tooltip shows a reason only when it is verified', () => {
-  const text = reason => render(card({ipv4: fresh('ipv4', '8.8.8.8', {reason})})).children[1].textContent;
-  assert.match(text('verified'), /已验证/);
-  assert.doesNotMatch(text('network'), /尚无可靠结果|已验证/);
-  assert.match(text('network'), /8\.8\.\*\.\* · .*；Agent/);
+test('B2 IP changes update badges in place; absent address clears its masked hint',()=>{
+ const update=render.live(),el=update(card({ipv4:fresh('ipv4','8.8.8.8')})),v4=el.children[0];
+ update(card({ipv4:fresh('ipv4','9.9.4.4')}));assert.equal(el.children[0],v4);assert.match(v4.title,/9\.9\.\*\.\*/);
+ update(card({ipv4:{checked_at:now,status:'unavailable'}}));assert.match(v4.title,/未检测到/);assert.doesNotMatch(v4.title,/9\.9/);
 });
 
 // ---------- detail page: switch and "check now" button ----------

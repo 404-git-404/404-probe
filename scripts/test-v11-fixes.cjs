@@ -43,15 +43,16 @@ test('cards and list freeze live ids; latency slot and explicit return to list r
  await p.locator('.banner-slot').click();await p.locator('[data-slot="3"]').click();await settle(p);assert.notDeepEqual(await ids(p),before);
  await p.locator('[data-view=cards]').click();await p.locator('#dashboard-sort').selectOption('cpu');await settle(p);const cardIDs=()=>p.locator('.agent-card').evaluateAll(ns=>ns.map(n=>n.dataset.agentId)),frozen=await cardIDs();
  await p.evaluate(()=>{let i=99;for(const a of agents.values()){a.state.cpu_percent=i--;a.resources.cpu_percent=a.state.cpu_percent;}render();});await settle(p);assert.deepEqual(await cardIDs(),frozen);
- await p.locator('[data-view=list]').click();await settle(p);assert.equal((await ids(p))[0],ID(2));
+ await p.locator('[data-view=list]').click();await settle(p);assert.equal((await ids(p))[0],ID(27));
 }));
-test('table semantics, unique named details buttons, keyboard access, sticky header and bounded two-axis scrolling',()=>ui(async({page:p})=>{
+test('table semantics, unique named details buttons, keyboard access, page-sticky header and horizontal scrolling',()=>ui(async({page:p})=>{
  assert.equal(await p.getByRole('table',{name:'设备列表',exact:true}).count(),1);assert.equal(await p.getByRole('columnheader').count(),12);
  const name=p.locator('.banner-name').first();assert.equal(await name.getAttribute('aria-label'),'查看 '+await name.textContent()+' 详情');assert.equal(await p.locator('.banner-row[tabindex],.banner-row[role=button]').count(),0);
  await name.focus();await p.keyboard.press('Enter');assert(await p.locator('#device-details').isVisible());await p.keyboard.press('Escape');assert(await name.evaluate(n=>n===document.activeElement));
- const host=p.locator('#agent-list');assert(await host.evaluate(n=>n.scrollHeight>n.clientHeight&&n.scrollWidth>n.clientWidth&&n.getBoundingClientRect().bottom<=innerHeight));
- assert.equal(await host.evaluate(n=>getComputedStyle(n.querySelector('.banner-cell')).boxShadow),'none');await host.evaluate(n=>{n.scrollTop=n.scrollHeight;n.scrollLeft=240;});await p.waitForFunction(()=>document.querySelector('#agent-list').classList.contains('is-scrolled'));
- const geometry=await host.evaluate(n=>({top:n.getBoundingClientRect().top,header:n.querySelector('.banner-header').getBoundingClientRect().top,bottom:n.getBoundingClientRect().bottom,shadow:getComputedStyle(n.querySelector('.banner-cell')).boxShadow}));assert(Math.abs(geometry.top-geometry.header)<2);assert(geometry.bottom<=900);assert.notEqual(geometry.shadow,'none');
+ const host=p.locator('#agent-list');assert(await host.evaluate(n=>n.scrollHeight===n.clientHeight&&n.scrollWidth>n.clientWidth));
+ assert.equal(await host.evaluate(n=>getComputedStyle(n.querySelector('.banner-cell')).boxShadow),'none');
+ await host.evaluate(n=>n.scrollLeft=240);await p.evaluate(()=>scrollTo(0,1000));await p.waitForFunction(()=>document.querySelector('#agent-list').classList.contains('is-scrolled'));
+ const geometry=await p.evaluate(()=>({header:document.querySelector('.banner-header').getBoundingClientRect().top,toolbar:document.querySelector('#dashboard-toolbar').getBoundingClientRect().bottom,shadow:getComputedStyle(document.querySelector('#agent-list .banner-cell')).boxShadow}));assert(Math.abs(geometry.toolbar-geometry.header)<2);assert.notEqual(geometry.shadow,'none');
 },{width:1100,height:900,n:200}));
 test('toolbar tags collapse +N, preserve OR/AND filtering and clear; list and cards share controls',()=>ui(async({page:p,f})=>{
  f.state.tags.push(...Array.from({length:16},(_,i)=>({id:ID(500+i),name:'长标签 '+i})));f.state.revision++;await p.evaluate(()=>dashboardData.reload());await settle(p);await p.waitForFunction(()=>!document.querySelector('#dashboard-tags-more').hidden);

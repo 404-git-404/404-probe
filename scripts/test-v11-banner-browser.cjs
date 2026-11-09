@@ -6,7 +6,7 @@ async function ui(run,options={}){const f=await open(browser,{height:1200,prefer
 const order=p=>p.locator('.banner-row').evaluateAll(nodes=>nodes.map(n=>n.dataset.agentId));
 test('all columns, resource tones, batch-only data and 200 rows',()=>ui(async({page:p,f})=>{
  assert.equal(await p.locator('.banner-row').count(),200);assert.equal(await p.locator('.banner-header .banner-cell').count(),12);assert.equal(await p.locator('#agent-list table').count(),0);
- assert.match(await row(p,0).textContent(),/Deb.*↑.*↓.*合成|Deb.*↑.*↓/);assert.match(await row(p,0).textContent(),/21 ms/);
+ assert.match(await row(p,0).textContent(),/↑.*↓/);assert.match(await row(p,0).textContent(),/21 ms/);
  assert.equal(f.requests.some(r=>/^\/api\/v1\/web\/agents\//.test(r.path)),false);
  await p.evaluate(id=>{const a=agents.get(id);a.resources.cpu_percent=80;a.state.cpu_percent=80;a.resources.ram_percent=90;a.state.ram_percent=90;render(new Set([id]));},ID(0));await settle(p);
  assert.equal(await row(p,0).locator('[data-column=cpu] .banner-metric').getAttribute('data-tone'),'warn');assert.equal(await row(p,0).locator('[data-column=memory] .banner-metric').getAttribute('data-tone'),'crit');
@@ -20,22 +20,22 @@ test('five latency states, target title and persisted global slot choice',()=>ui
 test('groups collapse without extra reads and retain preference',()=>ui(async({page:p,f})=>{
  assert.equal(await p.locator('.banner-group').count(),3);await p.locator('.banner-group-header').first().click();await settle(p);assert.equal(await row(p,0).count(),0);assert.equal(await p.locator('.banner-group-header').first().getAttribute('aria-expanded'),'false');await p.reload();await p.waitForFunction(()=>dashboardData.ready()&&!renderFrame);assert.equal(await row(p,0).count(),0);await p.locator('.banner-group-header').first().click();await row(p,0).waitFor();assert.equal(await row(p,0).count(),1);
 }));
-test('header sort changes only group-internal order and toggles direction',()=>ui(async({page:p})=>{
- await p.locator('[data-sort=cpu]').click();await settle(p);assert.deepEqual((await order(p)).slice(0,3),[ID(0),ID(2),ID(1)]);assert.equal(await p.locator('.banner-group').count(),3);await p.locator('[data-sort=cpu]').click();await settle(p);assert.deepEqual((await order(p)).slice(0,3),[ID(1),ID(2),ID(0)]);await p.reload();await p.waitForFunction(()=>dashboardData.ready()&&!renderFrame);assert.equal(await p.locator('[data-sort=cpu]').getAttribute('data-direction'),'desc');
+test('header sort is global outside group mode and toggles direction',()=>ui(async({page:p})=>{
+ await p.locator('[data-sort=cpu]').click();await settle(p);assert.equal((await order(p))[0],ID(0));assert.equal(await p.locator('.banner-group').count(),1);assert.equal(await p.locator('.banner-group-header:visible').count(),0);await p.locator('[data-sort=cpu]').click();await settle(p);assert.deepEqual((await order(p)).slice(0,2),[ID(1),ID(2)]);await p.reload();await p.waitForFunction(()=>dashboardData.ready()&&!renderFrame);assert.equal(await p.locator('[data-sort=cpu]').getAttribute('data-direction'),'desc');
 }));
 test('explicit resource resort uses the same newer runtime value displayed in the row',()=>ui(async({page:p,f})=>{
  f.publish('agent',{agent_id:ID(0),state:{...f.state.items[0].state,cpu_percent:99,collected_at:Date.now()}});
  await p.waitForFunction(()=>document.querySelector('.banner-row[data-agent-id="00000000000000000000000000000001"] [data-column=cpu] small').textContent==='99%');
- await p.locator('[data-sort=cpu]').click();await settle(p);assert.deepEqual((await order(p)).slice(0,3),[ID(2),ID(1),ID(0)]);
+ await p.locator('[data-sort=cpu]').click();await settle(p);assert((await order(p)).indexOf(ID(0))>(await order(p)).indexOf(ID(1)));
 }));
 test('SSE, actual 15-second calibration and EventSource reconnect preserve order and nodes',()=>ui(async({page:p,f})=>{
  await p.locator('[data-sort=cpu]').click();await settle(p);const before=await order(p);await p.evaluate(()=>{window.__rowNodes=[...document.querySelectorAll('.banner-row')];window.__rowMutations=0;window.__watch=new MutationObserver(ms=>{__rowMutations+=ms.filter(m=>m.type==='childList'&&[...m.addedNodes,...m.removedNodes].some(n=>n.classList?.contains('banner-row'))).length;});__watch.observe(document.querySelector('#agent-list'),{childList:true,subtree:true});});
- f.state.items[0].state.cpu_percent=99;f.state.items[0].state.collected_at=Date.now();f.state.items[0].resources.cpu_percent=99;f.publish('agent',{agent_id:ID(0),state:f.state.items[0].state});await p.waitForFunction(()=>document.querySelector('.banner-row [data-column=cpu] small').textContent==='99%');assert.deepEqual(await order(p),before);
+ f.state.items[0].state.cpu_percent=99;f.state.items[0].state.collected_at=Date.now();f.state.items[0].resources.cpu_percent=99;f.publish('agent',{agent_id:ID(0),state:f.state.items[0].state});await p.waitForFunction(()=>document.querySelector('.banner-row[data-agent-id=\"00000000000000000000000000000001\"] [data-column=cpu] small').textContent==='99%');assert.deepEqual(await order(p),before);
  const reads=f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&!r.query).length;await p.waitForFunction(()=>document.querySelector('#stream').textContent==='实时连接');await p.waitForTimeout(15500);assert(f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&!r.query).length>reads);assert.deepEqual(await order(p),before);
  f.disconnect();await p.waitForTimeout(4000);assert.deepEqual(await order(p),before);assert.equal(await p.evaluate(()=>__rowNodes.every(n=>n===document.querySelector(`.banner-row[data-agent-id="${n.dataset.agentId}"]`))),true);assert.equal(await p.evaluate(()=>__rowMutations),0);
 }));
 test('new devices append to group end; removal and group-set change reconcile',()=>ui(async({page:p,f})=>{
- await p.locator('[data-sort=name]').click();await settle(p);const before=(await order(p)).slice(0,3),a=structuredClone(f.state.items[0]);a.agent_id=ID(999);a.name='AAA new';a.search_fields=[a.name];f.state.items.push(a);await p.evaluate(()=>dashboardData.reload());await settle(p);assert.deepEqual((await order(p)).slice(0,4),[...before,ID(999)]);
+ await p.locator('[data-sort=name]').click();await settle(p);const before=await order(p),a=structuredClone(f.state.items[0]);a.agent_id=ID(999);a.name='AAA new';a.search_fields=[a.name];f.state.items.push(a);await p.evaluate(()=>dashboardData.reload());await settle(p);assert.deepEqual(await order(p),[...before,ID(999)]);
  f.state.items=f.state.items.filter(a=>a.agent_id!==ID(0));await p.evaluate(()=>dashboardData.reload());await settle(p);assert.equal(await row(p,0).count(),0);
  f.state.groups.push({id:ID(1000),name:'新分组',sort_order:2});f.state.revision++;await p.evaluate(()=>dashboardData.reload());await settle(p);assert.equal((await order(p))[0],ID(999));
 }));

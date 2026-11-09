@@ -98,7 +98,7 @@ test('K2 dialog: copy writes the command, shows brief feedback and restores the 
   await generate(h);
   await h.els.copy.fire('click');
   assert.deepEqual(h.copied, [COMMAND]);
-  assert.equal(h.els.copy.textContent, '✓ 已复制');
+  assert.equal(h.els.copy.textContent, '已复制');
   h.tick(1500);
   assert.equal(h.els.copy.textContent, '复制命令');
   const failing = harness({copyFails: true});

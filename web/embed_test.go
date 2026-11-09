@@ -343,12 +343,12 @@ func TestDashboardContinuousListAndTelemetryStatusContracts(t *testing.T) {
 	if flagErr != nil || len(flagBytes) == 0 || licenseErr != nil || !strings.Contains(string(licenseBytes), "MIT License") {
 		t.Errorf("bundled local flag asset/license missing: flag=%v license=%v", flagErr, licenseErr)
 	}
-	for _, marker := range []string{`status-legend`, `id="plan-country-code"`} {
+	for _, marker := range []string{`id="plan-country-code"`} {
 		if !strings.Contains(html, marker) {
 			t.Errorf("dashboard HTML missing %q", marker)
 		}
 	}
-	for _, forbidden := range []string{`agentsPerPage`, `currentAgentPage`, `list.slice(pageStart`, `id="agent-pagination"`} {
+	for _, forbidden := range []string{`status-legend`, `数据通过 Server 安全汇总`, `agentsPerPage`, `currentAgentPage`, `list.slice(pageStart`, `id="agent-pagination"`} {
 		if strings.Contains(app+html, forbidden) {
 			t.Errorf("dashboard still contains removed UI pagination %q", forbidden)
 		}
