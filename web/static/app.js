@@ -863,6 +863,8 @@ function setReadableText(element, value, accessibleValue = value) {
   element.setAttribute('aria-label', accessibleValue);
 }
 
+function setCardNameText(element,value){setCardText(element,value);element.title='';element.setAttribute('aria-label',value);}
+
 function systemLogo(os) {
   const logo=document.createElement('img'),system=CardMetrics.os(os);
   logo.src=`/vendor/card-icons/${system.icon}.svg`;logo.alt='';logo.setAttribute('aria-hidden','true');
@@ -1020,7 +1022,7 @@ function agentNameControl(agent, state) {
   if (!editingAgentNames.has(agent.agent_id)) {
     const group = document.createElement('span'); group.className = 'agent-name-display';
     const heading = document.createElement('h2');
-    setReadableText(heading, agent.name || state.hostname || '未命名 VPS'); heading.tabIndex=0;
+    setCardNameText(heading, agent.name || state.hostname || '未命名 VPS'); heading.tabIndex=0;
     const edit = document.createElement('button');
     edit.type = 'button'; edit.className = 'agent-name-edit'; edit.textContent = '✎'; edit.title = '编辑名称'; edit.setAttribute('aria-label', '编辑 Agent 名称');
     edit.dataset.focusKey='name-edit';
@@ -1457,7 +1459,7 @@ function createAgentCard(initialAgent) {
         input.setCustomValidity(agentNameErrors.get(agent.agent_id) || '');
         nameControl.querySelector('button').disabled = agentState.busy(agent.agent_id, 'name') || agentState.blocked(agent.agent_id);
       } else {
-        setReadableText(nameControl.querySelector('h2'), agent.name || state.hostname || '未命名 VPS');
+        setCardNameText(nameControl.querySelector('h2'), agent.name || state.hostname || '未命名 VPS');
         setCardText(nameControl.querySelector('.name-tooltip'), agent.name || state.hostname || '未命名 VPS');
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }

@@ -144,7 +144,7 @@
     function buildRow(card,key) {
       const node=el('div','nq7-row'),label=el('span','nq7-label'),mid=el('span','nq7-mid'),blocks=el('span','nq7-blocks'),text=el('span','nq7-text'),right=el('span','nq7-right');
       node.dataset.slot=key;
-      const cells=Array.from({length:20},(_,i)=>{const c=el('span','nq7-b');c.dataset.i=String(i);blocks.append(c);return c;});
+      const cells=Array.from({length:20},(_,i)=>{const c=el('span','nq7-b');c.title='';c.dataset.i=String(i);blocks.append(c);return c;});
       mid.append(blocks,text);node.append(label,mid,right);
       const view={node,label,blocks,text,right,cells,tcp:null,icmp:null};
       return view;
