@@ -267,7 +267,9 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 	}
 	defer tx.Rollback()
 	evalEnd := QualityEvalEnd(now.UnixMilli())
-	lastBlock := floorDiv64(evalEnd-1, QualityBlockMS) * QualityBlockMS
+	lastBlock := (floorDiv64(evalEnd, QualityBlockMS) - 1) * QualityBlockMS
+	// The card shows complete blocks; current alerts and ratios retain their live cut-off.
+	liveWindowStart := floorDiv64(evalEnd-1, QualityBlockMS)*QualityBlockMS - int64(QualityCardBlocks-1)*QualityBlockMS
 	windowStart := lastBlock - int64(QualityCardBlocks-1)*QualityBlockMS
 	r, err := s.newQualityJudgeReader(ctx, tx, budget, agentID, now, windowStart/qualityMinuteMS-qualityJudgePrefetchMinutes, evalEnd/qualityMinuteMS)
 	if err != nil {
@@ -301,9 +303,9 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 		}
 		switch {
 		case icmpActive:
-			lane.Right = qualityICMPRight(&icmp, windowStart, evalEnd)
+			lane.Right = qualityICMPRight(&icmp, liveWindowStart, evalEnd)
 		case tcpActive:
-			lane.Right = qualityTCPRight(&tcp, windowStart, evalEnd)
+			lane.Right = qualityTCPRight(&tcp, liveWindowStart, evalEnd)
 		}
 		out.Lanes = append(out.Lanes, lane)
 	}
