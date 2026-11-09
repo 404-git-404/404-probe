@@ -19,7 +19,15 @@
     try{root.localStorage.setItem(key,preference);}catch{/* Keep the in-memory choice. */}
     apply();
   }
-  root.ProbeTheme=Object.freeze({get:()=>preference,set,cycle:()=>set(modes[(modes.indexOf(preference)+1)%modes.length])});
+  // Skip a preference that resolves to the current palette: every click changes
+  // the visible theme, while system mode remains part of the cycle.
+  function cycle(){
+    const current=root.document.documentElement.dataset.theme;
+    let index=modes.indexOf(preference),next;
+    do{next=modes[index=(index+1)%modes.length];}while((next==='system'?(media.matches?'dark':'light'):next)===current);
+    set(next);
+  }
+  root.ProbeTheme=Object.freeze({get:()=>preference,set,cycle});
   media.addEventListener('change',()=>{if(preference==='system')apply();});
   root.addEventListener('storage',event=>{if(event.key===key||event.key===null){preference=valid(event.newValue);apply();}});
   apply();
