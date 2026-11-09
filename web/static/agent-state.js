@@ -146,8 +146,8 @@
               if(observation?.checked_at>0&&(observation.status==='unavailable'||(observation.status==='available'&&typeof observation.ip==='string'&&observation.ip.length>0)||(observation.status==='unknown'&&!old[family]?.ip)))public_egress[family]=observation;
             }
             next.state={...current.state,...value,public_egress};
-          }else if(key==='state'&&value===null&&current.state?.public_egress){
-            next.state={public_egress:current.state.public_egress,stale:true};
+          }else if(key==='state'&&value===null&&current.state){
+            next.state={...current.state,stale:true};
           }else next[key] = value;
           groups.add(group);
         }
