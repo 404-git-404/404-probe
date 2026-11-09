@@ -140,7 +140,7 @@
           // clears an address; an omitted/unchecked family preserves it.
           if(key === 'state' && value && current.state){
             const old=current.state.public_egress||{}, incoming=value.public_egress||{};
-            const public_egress={...old};
+            const public_egress={...old,...incoming,ipv4:old.ipv4,ipv6:old.ipv6};
             for(const family of ['ipv4','ipv6'])if(incoming[family]?.checked_at>0)public_egress[family]=incoming[family];
             next.state={...current.state,...value,public_egress};
           }else next[key] = value;
