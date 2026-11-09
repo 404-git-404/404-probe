@@ -372,7 +372,7 @@ func TestGoogleStatusUIShowsPageObservationStates(t *testing.T) {
 			t.Errorf("YouTube observation UI missing %q", marker)
 		}
 	}
-	if !strings.Contains(historyHTML, "YouTube 检测") || !strings.Contains(history, "YouTubeStatus.view(agent)") || !strings.Contains(app, "YouTubeStatus.view(agent)") || !strings.Contains(historyHTML, `src="/youtube-status.js"`) || strings.Contains(app+history+youtube+string(jobsBytes), "SENT TO CHINA") || strings.Contains(app+history+youtube, "CN · 送中") {
+	if !strings.Contains(historyHTML, "YouTube 地区检测") || !strings.Contains(history, "YouTubeStatus.view(agent)") || !strings.Contains(app, "YouTubeStatus.view(agent)") || !strings.Contains(historyHTML, `src="/youtube-status.js"`) || strings.Contains(app+history+youtube+string(jobsBytes), "SENT TO CHINA") || strings.Contains(app+history+youtube, "CN · 送中") {
 		t.Fatal("history detail is missing complete Google Status rendering")
 	}
 	for _, removed := range []string{"Gemini", "gemini", "result.search", "result.signin", "value.search", "value.signin", "Google Search", "Google Sign-in", "['Search'", "['登录'"} {

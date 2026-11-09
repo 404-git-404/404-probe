@@ -65,7 +65,7 @@ function jobTarget(job) {
     case 'singbox_selector_switch':
       return `${config.selector} → ${config.choice}`;
     case 'google_status':
-      return 'Google Status';
+      return 'YouTube 地区检测';
     default:
       return '未知配置';
   }

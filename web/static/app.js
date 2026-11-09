@@ -458,7 +458,7 @@ function googleStatusState(google) {
 function googleStatusPanel(agent) {
   const panel = document.createElement('section');
   panel.className = 'google-checks';
-  panel.setAttribute('aria-label', 'YouTube 检测结果');
+  panel.setAttribute('aria-label', 'YouTube 地区检测结果');
   for (const [label, value, tone, premium] of googleCheckItems(agent)) {
     const item = document.createElement('div');
     item.className = 'google-check';

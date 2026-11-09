@@ -333,7 +333,7 @@ async function load() {
     if (controller.signal.aborted || error.name === 'AbortError') return;
     empty.textContent = '加载失败';
     outboundStatus.textContent = '出站状态加载失败';
-    googleState.textContent = 'Google Status 加载失败';
+    googleState.textContent = 'YouTube 地区检测加载失败';
 	securityState.textContent = 'Security 数据加载失败';
   }
 }
