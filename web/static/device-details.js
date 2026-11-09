@@ -19,7 +19,7 @@
   const system=section('系统');fact(system,'主机名','hostname');fact(system,'配置','config');values.config.className='details-config';fact(system,'Agent','version');fact(system,'最近上报','seen');
   const agentGroup=section('Agent',groups),checks=section('检测与统计',groups),danger=section('危险操作',management);danger.n.classList.add('details-danger');
   function row(box,title,key,control){const n=el('div','details-action-row'),left=el('div');left.append(el('strong','',title));value(key,left).className='details-note';n.append(left);if(control)n.append(control);box.n.append(n);return n;}
-  row(agentGroup,'升级','upgrade',actions.upgrade);row(agentGroup,'系统信息','sample');
+  row(agentGroup,'升级','upgrade',actions.upgrade).dataset.upgradeRegion='';row(agentGroup,'系统信息','sample');
   const organizationButton=button('分组和标签…',n=>organization(current,n),'detail-organization');row(agentGroup,'分组和标签','organization',organizationButton);
   const region=el('div','details-region'),select=el('select');select.setAttribute('aria-label','出口地区手动覆盖');select.dataset.focusKey='detail-country';
   const catalog=root.Management.countries();select.append(Object.assign(el('option','','使用自动识别'),{value:''}));for(const c of catalog)select.append(Object.assign(el('option','',c.zh+' '+c.code),{value:c.code}));

@@ -238,6 +238,7 @@
     if(minutes<1)return '刚刚';if(minutes<60)return `${minutes} 分钟前`;
     const hours=Math.floor(minutes/60);return hours<48?`${hours} 小时前`:`${Math.floor(hours/24)} 天前`;
   }
-  const api={agoText,HINT,MODULES,parseFaces,flipAll,createFaceStore,sig3,ringTone,ringDash,machineView,trafficView,trafficDetail,resetText,hasCycle,cycleDays,basisMark,ipRow,attachFlip,createModule,machineFaces,trafficFaces,INTERACTIVE};
+  const statusHint=a=>'状态：'+(a.revoked?'未知（已撤销）':a.disabled_at?'未知（暂停）':a.online?'正常（在线）':a.state?'异常（离线）':'未知');
+  const api={statusHint,agoText,HINT,MODULES,parseFaces,flipAll,createFaceStore,sig3,ringTone,ringDash,machineView,trafficView,trafficDetail,resetText,hasCycle,cycleDays,basisMark,ipRow,attachFlip,createModule,machineFaces,trafficFaces,INTERACTIVE};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.Card=api;
 })(globalThis);

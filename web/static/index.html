@@ -57,7 +57,7 @@
   <main id="dashboard-main">
     <div id="dashboard-toolbar" class="dashboard-toolbar"><button id="panel-mobile-open" type="button" aria-label="打开控制面板" title="控制面板">☰</button><div id="dashboard-search-slot"><label class="sr-only" for="dashboard-search">搜索设备</label><input id="dashboard-search" type="search" placeholder="搜索名称、主机名、地址…" autocomplete="off"></div><div id="dashboard-chips" class="dashboard-chips"></div><button id="dashboard-clear" type="button" hidden>清空</button><span id="dashboard-count"></span><label class="sr-only" for="dashboard-sort">排序</label><select id="dashboard-sort"><option value="group">排序：分组</option><option value="name">排序：名称</option><option value="renewal">排序：续费</option></select><span id="phone-view-note" hidden>手机上以卡片显示</span><div id="dashboard-tags" class="dashboard-tagbar" aria-label="标签筛选"><span data-filter-label>标签 · 匹配任一</span><div class="dashboard-options"></div><details id="dashboard-tags-more"><summary aria-label="更多标签">+0</summary><div class="dashboard-tag-overflow"></div></details><button id="dashboard-tags-clear" type="button" hidden>清空</button></div></div>
     <section id="network-placeholder" hidden><h2>网络状态</h2><p>这个视图将在后续版本提供</p></section>
-    <div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="dashboard-groups" aria-live="polite"></section><p class="status-legend"><span class="tone-dot healthy"></span>正常 <span class="tone-dot warning"></span>注意 / 接近阈值 <span class="tone-dot critical"></span>异常 / 已到期 <span class="tone-dot unknown"></span>未知 / 旧结果</p></main>
+    <div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="dashboard-groups" aria-live="polite"></section></main>
   </div>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <ol class="enrollment-steps" aria-label="安装步骤"><li data-step="1" aria-current="step"><span class="step-circle">1</span>选择方式</li><li data-step="2"><span class="step-circle">2</span>运行命令</li><li data-step="3"><span class="step-circle">3</span>等待接入</li></ol>
@@ -179,7 +179,6 @@
     <div class="drawer-actions"><button id="renewal-dismiss" type="button">取消</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认登记已续费</button></div>
   </dialog>
   <dialog id="panel-mobile-dialog" aria-label="控制面板"><button id="panel-mobile-close" type="button" aria-label="关闭控制面板">×</button><div id="panel-mobile-body"></div></dialog>
-  <footer>数据通过 Server 安全汇总</footer>
   <dialog id="network-quality-history" class="nq-history" aria-labelledby="nq-history-title"></dialog>
   <dialog id="device-details" class="device-details" aria-labelledby="device-details-title"></dialog>
   <script src="/agent-state.js" defer></script>

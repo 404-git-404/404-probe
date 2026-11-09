@@ -8,8 +8,8 @@
 #agents[hidden],.status-legend[hidden],#network-placeholder[hidden]{display:none}
 .sr-only{position:fixed;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 body{background:var(--color-page);color:var(--color-text)}
-.dashboard-app{--panel-width:17.5rem;display:grid;grid-template-columns:var(--panel-width) minmax(0,1fr);min-height:100dvh}
-.dashboard-panel{position:sticky;top:0;height:100dvh;min-width:0;border-right:1px solid var(--color-line);display:flex;flex-direction:column;background:var(--color-page);padding:.75rem;gap:.6rem;font-size:.875rem}
+.dashboard-app{align-items:start;--panel-width:17.5rem;display:grid;grid-template-columns:var(--panel-width) minmax(0,1fr);min-height:100dvh}
+.dashboard-panel{position:sticky;top:0;align-self:start;overflow-y:auto;height:100dvh;min-width:0;border-right:1px solid var(--color-line);display:flex;flex-direction:column;background:var(--color-page);padding:.75rem;gap:.6rem;font-size:.875rem}
 .panel-brand{display:flex;align-items:center;gap:.45rem;min-height:2rem;white-space:nowrap}.panel-brand h1{font-size:1.3rem}.panel-brand small{font-size:.65rem;color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis}.panel-brand button{margin-left:auto}
 .dashboard-panel button,.dashboard-toolbar button,.dashboard-toolbar select{font:inherit;border:1px solid var(--color-line);border-radius:999px;background:var(--color-clear);color:var(--color-text);padding:.4rem .65rem;cursor:pointer}
 .dashboard-panel button:hover,.dashboard-panel button:focus-visible{background:var(--color-surface-hover)}
@@ -92,3 +92,6 @@ body #dashboard-main{width:100%;max-width:none;margin:0;min-width:0;padding:0 1.
 #dashboard-tags-more{flex:none}#dashboard-tags-more summary{cursor:pointer;list-style:none;white-space:nowrap;padding:.25rem}#dashboard-tags-more summary::-webkit-details-marker{display:none}
 .dashboard-tag-overflow{position:absolute;right:0;top:100%;z-index:110;display:flex;flex-wrap:wrap;gap:.4rem;width:min(28rem,100%);padding:.8rem;border:1px solid var(--color-line);border-radius:.6rem;background:var(--color-card);box-shadow:0 .4rem 1rem var(--color-shadow-11)}
 #dashboard-tags-more[hidden],#dashboard-tags-clear[hidden],#phone-view-note[hidden]{display:none}#phone-view-note{font-size:.7rem;color:var(--color-text-muted);flex-basis:100%;order:4}
+
+/* Native popup menus inherit the active theme, including dialogs. */
+select{color-scheme:var(--theme-color-scheme)}

@@ -865,6 +865,13 @@ function setReadableText(element, value, accessibleValue = value) {
   element.setAttribute('aria-label', accessibleValue);
 }
 
+function systemLogo(os) {
+  const logo=document.createElement('img'),system=CardMetrics.os(os);
+  logo.src=`/vendor/card-icons/${system.icon}.svg`;logo.alt='';logo.setAttribute('aria-hidden','true');
+  logo.addEventListener('error',()=>{if(!logo.src.endsWith('/generic.svg'))logo.src='/vendor/card-icons/generic.svg';},{once:true});
+  return logo;
+}
+
 function countryMark(code, source) {
   const mark = document.createElement('span');
   mark.className = 'country-mark';
@@ -1135,14 +1142,14 @@ let renderAll=false;
 const renderDirty=new Set();
 const groupViews=new Map();
 let bannerHost=null,bannerView=null;
-function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('section');bannerHost.id='agent-list';container.after(bannerHost);bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger)=>{planRenewal.close();deviceDetails.open(id,'overview',trigger);},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot)});}
+function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('section');bannerHost.id='agent-list';container.after(bannerHost);bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger,tab='overview')=>{planRenewal.close();deviceDetails.open(id,tab,trigger);if(tab==='management')requestAnimationFrame(()=>document.querySelector('[data-upgrade-region]')?.scrollIntoView({block:'center'}));},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot)});}
 function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs={...dashboardUI.preferences.value,viewMode:dashboardUI.effectiveView()};
   document.querySelector('#phone-view-note').hidden=!(dashboardUI.preferences.value.viewMode==='list'&&prefs.viewMode==='cards');
   document.querySelector('#network-placeholder').hidden=prefs.viewMode!=='network';
-  container.hidden=prefs.viewMode==='network';document.querySelector('.status-legend').hidden=prefs.viewMode==='network';
+  container.hidden=prefs.viewMode==='network';
   const cards=prefs.viewMode==='cards';container.hidden=!cards;if(prefs.viewMode==='list')ensureBanner();if(bannerHost)bannerHost.hidden=prefs.viewMode!=='list';
   overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild});
   const allIds=[...agents.keys()],mounted=new Set();
@@ -1298,8 +1305,7 @@ function createAgentCard(initialAgent) {
     // Online shows nothing and offline is the dimmed card; the other states are named in front of the system line.
     status.hidden = stateName === 'online' || stateName === 'offline';
     const system = CardMetrics.os(state.os);
-    const logo = document.createElement('img');
-    logo.src = `/vendor/card-icons/${system.icon}.svg`;
+    const logo = systemLogo(state.os);
     logo.alt = '';
     logo.setAttribute('aria-hidden', 'true');
     const systemText = document.createElement('span');
@@ -1315,7 +1321,7 @@ function createAgentCard(initialAgent) {
     let nameControl = agentNameControl(agent, state);
     const mark = countryMark(agent.country_code, agent.country_source);
     identity.append(nameControl, sub);
-    head.append(mark, identity);
+    const statusDot=document.createElement('i');statusDot.className='banner-dot';statusDot.dataset.state=stateName;statusDot.title=Card.statusHint(agent);head.append(statusDot,mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
     const tags=document.createElement('div');tags.className='dashboard-card-tags';
@@ -1439,7 +1445,7 @@ function createAgentCard(initialAgent) {
       const stateName = cardLifecycle(agent);
       card.className = `card agent-card c7 state-${stateName}`;
       card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
-      status.className = `status ${stateName}`; status.dataset.agentState = stateName;
+      statusDot.dataset.state=stateName;statusDot.title=Card.statusHint(agent);status.className = `status ${stateName}`; status.dataset.agentState = stateName;
       setCardText(status, lifecycleLabels[stateName]);
       status.hidden = stateName === 'online' || stateName === 'offline';
       const system = CardMetrics.os(state.os);

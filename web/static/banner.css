@@ -1,5 +1,5 @@
-.banner-scroll{overflow:auto;max-height:calc(100dvh - var(--toolbar-height,4rem) - 1rem);overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--color-text-muted) var(--color-surface-hover);scrollbar-gutter:stable;max-width:100%;padding-bottom:.7rem;font-size:.75rem}
-.banner-scroll[hidden]{display:none}.banner-grid{--device-width:14em;--cols:var(--device-width) 3.5rem repeat(3,6.25rem) 7rem 11.5rem 9rem 10rem 6rem 8rem 4.5rem;width:max-content;min-width:100%}
+.banner-scroll{overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--color-text-muted) var(--color-surface-hover);max-width:100%;padding-bottom:.7rem;font-size:.75rem}
+.banner-scroll[hidden]{display:none}.banner-grid{--device-width:14em;--cols:var(--device-width) 3.5rem repeat(3,6.25rem) 7rem 11.5rem 9rem 10rem 6rem 8rem 4.5rem;width:max(100%,calc(var(--device-width,14em) + 78.25rem));min-width:100%}
 .banner-columns{display:grid;grid-template-columns:var(--cols);align-items:center;justify-content:space-between}.banner-header{position:sticky;top:0;z-index:10;background:var(--color-page);min-height:3rem;color:var(--color-text-muted);border-bottom:1px solid var(--color-line);font-weight:650}
 .banner-cell{min-width:0;padding:.55rem .55rem;overflow:hidden}.banner-cell small{display:block;color:var(--color-text-muted);font-size:.65rem;margin-top:.2rem;white-space:nowrap}.banner-cell span{white-space:nowrap}.banner-sort,.banner-slot{font:inherit;color:inherit;border:0;background:transparent;padding:0;cursor:pointer}.banner-slot{max-width:4.3rem;color:var(--color-accent-text);margin-left:.3rem}.banner-slot option{background:var(--color-card);color:var(--color-text)}.banner-sort[data-direction=asc]::after{content:' ▴'}.banner-sort[data-direction=desc]::after{content:' ▾'}
 .banner-group-header{display:block;width:100%;border:0;border-bottom:1px solid var(--color-line);color:var(--color-text);background:var(--color-page);font:600 .8rem system-ui;text-align:left;min-height:2.5rem;padding:.4rem .55rem;cursor:pointer}.banner-group-body[hidden]{display:none}
@@ -19,3 +19,8 @@
 .banner-row[data-lifecycle=paused] .banner-dot{background:var(--color-text-muted)}
 .banner-cell:is([data-column=cpu],[data-column=memory],[data-column=disk]) .banner-metric{max-width:5.2rem}
 .banner-youtube[data-tone=crit]{border:1px solid var(--color-danger)}
+
+.banner-table{min-width:0}.banner-table:has(.banner-scroll[hidden]){display:none}.banner-sticky{font-size:.75rem;position:sticky;top:var(--toolbar-height,4rem);z-index:90;background:var(--color-page)}
+.banner-head-scroll{overflow:hidden}.banner-head-scroll .banner-header{position:relative;width:max(100%,calc(var(--device-width,14em) + 78.25rem));min-width:100%;--cols:var(--device-width,14em) 3.5rem repeat(3,6.25rem) 7rem 11.5rem 9rem 10rem 6rem 8rem 4.5rem}
+.banner-sticky:has(+.banner-scroll[hidden]){display:none}.banner-sticky.is-scrolled .banner-cell:first-child{box-shadow:1px 0 var(--color-line-strong)}
+.banner-flag{background:none;padding:0}.banner-flag .country-flag{width:1.2rem;height:.9rem}.banner-os{border:0;padding:0}.banner-os img{width:1.3rem;height:1.3rem}.banner-upgrade-link{border:0;background:none;color:inherit;font:inherit;padding:0;cursor:pointer}
