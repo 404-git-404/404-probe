@@ -136,7 +136,15 @@
         if (key === 'agent_id' || key === 'detail_loaded') continue;
         const group = resource(key);
         if (allowed(group)) {
-          next[key] = value; groups.add(group);
+          // Summaries omit sensitive observations. A checked unavailable observation
+          // clears an address; an omitted/unchecked family preserves it.
+          if(key === 'state' && value && current.state){
+            const old=current.state.public_egress||{}, incoming=value.public_egress||{};
+            const public_egress={...old};
+            for(const family of ['ipv4','ipv6'])if(incoming[family]?.checked_at>0)public_egress[family]=incoming[family];
+            next.state={...current.state,...value,public_egress};
+          }else next[key] = value;
+          groups.add(group);
         }
       }
       if (!groups.size) return false;
