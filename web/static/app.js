@@ -520,11 +520,9 @@ for (const button of document.querySelectorAll('[data-copy-target]')) {
     const label = button.textContent;
     try {
       await navigator.clipboard.writeText(target===createdEnrollment?manualCredential:target.textContent);
-      button.textContent = '已复制';
-      setTimeout(() => { button.textContent = label; }, 1200);
+      PublicEgressCheck.copyFeedback(button,true);
     } catch (error) {
-      button.textContent = '复制失败';
-      setTimeout(() => { button.textContent = label; }, 1200);
+      PublicEgressCheck.copyFeedback(button,false);
     }
   });
 }

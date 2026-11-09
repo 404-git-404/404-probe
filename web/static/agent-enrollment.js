@@ -4,6 +4,7 @@
    dropped when the dialog closes or resets, and it is never stored in the page or the browser. */
 (function(root){
   'use strict';
+  const Copy=root.PublicEgressCheck||(typeof require==='function'?require('./public-egress-check.js'):null);
 
   const pad=n=>String(n).padStart(2,'0');
   function countdownText(ms){
@@ -155,10 +156,9 @@
       const label='复制命令';
       try{
         render();if(state.ended)return false;await clipboard().writeText(state.command);
-        els.copy.textContent='✓ 已复制';
-      }catch(error){els.copy.textContent='复制失败';}
-      if(copyReset!==null)clearTimer(copyReset);
-      copyReset=setTimer(()=>{els.copy.textContent=label;clearTimer(copyReset);copyReset=null;},1200);
+        Copy.copyFeedback(els.copy,true,{setTimer,clearTimer});
+      }catch(error){Copy.copyFeedback(els.copy,false,{setTimer,clearTimer});}
+
       return true;
     }
 

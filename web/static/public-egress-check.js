@@ -153,8 +153,7 @@
     for(const key of Object.keys(rowNodes)){
       rowNodes[key].copy.addEventListener('click',async()=>{
         const ip=rowNodes[key].ip;if(!ip)return;
-        try{await clipboard().writeText(ip);say('已复制');}catch(error){say('复制失败，请手动选择');}
-        if(copyTimer!==null)clearTimer(copyTimer);copyTimer=setTimer(()=>{copyTimer=null;say('');},1500);
+        try{await clipboard().writeText(ip);copyFeedback(rowNodes[key].copy,true,{setTimer,clearTimer,onStatus:say});}catch(error){copyFeedback(rowNodes[key].copy,false,{setTimer,clearTimer,onStatus:say});}
       });
     }
     async function post(path,body){
@@ -192,6 +191,14 @@
     return {node,update,conceal,split,elements:{toggle,check,eye,note,feedback,rows:rowNodes,times,status},get revealed(){return revealed;}};
   }
 
-  const api={view,maskIP,createPanel};
+  const copyHints=new WeakMap();
+  function copyFeedback(button,success,{setTimer=setTimeout,clearTimer=clearTimeout,onStatus=()=>{}}={}){
+    const prior=copyHints.get(button),label=prior?.label||button.textContent;
+    if(prior)clearTimer(prior.timer);
+    button.textContent=success?'已复制':'复制失败';onStatus(button.textContent);
+    const timer=setTimer(()=>{button.textContent=label;onStatus('');copyHints.delete(button);},1500);
+    copyHints.set(button,{label,timer});
+  }
+  const api={copyFeedback,view,maskIP,createPanel};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.PublicEgressCheck=api;
 })(globalThis);

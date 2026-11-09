@@ -1,6 +1,7 @@
 /* Date-only renewal UI. Server owns calendar math, revisions and receipts. */
 (function(root){
  'use strict';
+  const Copy=root.PublicEgressCheck||(typeof require==='function'?require('./public-egress-check.js'):null);
  const hex=v=>typeof v==='string'&&/^[a-f0-9]{32}$/.test(v);
  const date=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v);
  const fields=['renewal_date','expiry_date'];
@@ -109,7 +110,7 @@
   // A same-value external PUT is fenced by the server's undo revision CAS.
   get('undo').addEventListener('click',()=>{const r=id&&record(id);if(r&&undoAvailable(r)&&!r.unknown&&!r.owner&&canWrite(id)){previewController?.abort();previewController=null;generation++;loading=false;preview=null;undoAsk=true;draw();}else if(r){r.message='撤销窗口已结束或资格已改变；以服务器最终裁定为准。';draw();}});
   get('verify').addEventListener('click',()=>{const p=id&&record(id).unknown;if(p)return submit(p.kind,p.dto);});
-  get('copy').addEventListener('click',async()=>{const key=id,serial=generation,p=key&&record(key).unknown;if(!p)return;try{await win.navigator.clipboard.writeText(p.dto.request_id);}catch(_){if(live(key,serial)){record(key).error='复制失败，请展开核实信息后手动复制。';draw();}}});
+  get('copy').addEventListener('click',async()=>{const key=id,serial=generation,p=key&&record(key).unknown;if(!p)return;try{await win.navigator.clipboard.writeText(p.dto.request_id);Copy.copyFeedback(get('copy'),true);}catch(_){Copy.copyFeedback(get('copy'),false);if(live(key,serial)){record(key).error='复制失败，请展开核实信息后手动复制。';draw();}}});
   get('edit').addEventListener('click',()=>{const key=id,trigger=origin;if(!key||record(key).unknown||record(key).owner)return;close();edit(key,trigger);});
   for(const name of ['cancel','dismiss'])get(name).addEventListener('click',close);
   // Native close events are queued: an earlier close must not end a reopened modal.
