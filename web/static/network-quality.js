@@ -113,6 +113,8 @@
       card.family=value;card.generation++;card.summary=null;card.summaryError='';card.summaryLoading=false;queue.release(card.historyOwner);
       if(history?.card===card)closeHistory();renderCard(card);refreshCard(card);onFamily?.(card.id,value);
     }
+    const hideTips=()=>{for(const card of cards.values())if(card.tip)card.tip.hidden=true;};
+    root.addEventListener?.('scroll',hideTips,{capture:true,passive:true});
     // ---- face A ----------------------------------------------------------------------------------
     function showTip(card,cell) {
       const text=cell?.tipText;
@@ -134,7 +136,7 @@
       const content=el('div','nq7-rows');card.rows=new Map();
       const tip=el('div','nq7-tip');tip.hidden=true;tip.setAttribute('role','tooltip');
       content.addEventListener('pointerover',event=>{const cell=event.target?.closest?.('.nq7-b[data-i]');if(cell)showTip(card,cell);});
-      content.addEventListener('pointerleave',()=>{tip.hidden=true;});
+      content.addEventListener('pointerout',event=>{if(!event.relatedTarget?.closest?.('.nq7-b[data-i]'))tip.hidden=true;});content.addEventListener('pointerleave',()=>{tip.hidden=true;});
       faceA.append(head,content,tip);
       Object.assign(card,{faceA,head,sub,tabs,content,tip});
       card.node.append(faceA);
@@ -154,6 +156,7 @@
       return {slot:key,tcp:{...notice('tcp'),blocks:null,red:false,dns_failing:false},icmp:notice('icmp'),right:{kind:'none',percent:null,numerator:0,denominator:0,samples:'none'}};
     }
     function renderCard(card) {
+      if(card.tip)card.tip.hidden=true;
       if(!card.head)buildFaceA(card);
       const device=!!(card.agent.revoked||card.agent.disabled_at||card.agent.removal),summary=device?null:card.summary;
       for(const b of card.tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
@@ -182,7 +185,7 @@
           shown.blocks.forEach((block,i)=>{
             const cell=view.cells[i],cls=`nq7-b nq7-b-${block.state}${block.in_progress?' is-live':''}`;
             if(cell.className!==cls)cell.className=cls;
-            cell.tipText=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms}).text;cell.title=cell.tipText;counts[block.state]++;
+            cell.tipText=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms}).text;cell.setAttribute('aria-label',cell.tipText);counts[block.state]++;
           });
           view.text.title='';
           view.node.setAttribute('aria-label',`${label}，TCP 最近 1 小时：正常 ${counts.green} 格，偶发慢或失败 ${counts.yellow} 格，持续告警 ${counts.red} 格，无数据 ${counts.gray} 格；${right.text}`);
@@ -442,7 +445,7 @@
       openSettings(id,trigger){const c=cards.get(id);if(c)openPanel(c,trigger);},
       historyTargets(id){const c=cards.get(id);return (c?.config?.targets||[]).filter(t=>t.id).map(t=>({...t,label:`${C.slotLabel(c.config,t.slot)} · ${t.protocol.toUpperCase()} · ${t.family==='ipv4'?'V4':'V6'}${t.status==='active'?'':' · 当前未检测'}`}));},
       ensureHistoryTargets(id){const c=cards.get(id);return c&&!c.config?loadConfig(c,true):Promise.resolve();},
-      close(){closed=true;if(timer)clear(timer);observer?.disconnect();closePanel(true);closeHistory();for(const c of [...cards.values()])retire(c);queue.release(dialogOwner);if(!coordinator)queue.close();
+      close(){root.removeEventListener?.('scroll',hideTips,true);closed=true;if(timer)clear(timer);observer?.disconnect();closePanel(true);closeHistory();for(const c of [...cards.values()])retire(c);queue.release(dialogOwner);if(!coordinator)queue.close();
       doc.removeEventListener('keydown',keydown);root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);
       if(!observer){root.removeEventListener?.('scroll',fallbackVisibility);root.removeEventListener?.('resize',fallbackVisibility);}
       dialog.removeEventListener('cancel',cancelDialog);dialog.removeEventListener('close',dialogClosed);dialog.removeEventListener('click',backdrop);},
