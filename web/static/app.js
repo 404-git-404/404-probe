@@ -1226,8 +1226,8 @@ function createPublicEgress(agentID) {
   const items=['ipv4','ipv6'].map((family,index)=>{
     const item=document.createElement('button');item.type='button';item.className='public-egress-item';item.dataset.family=family;
     item.textContent=index?'V6':'V4';
-    
-    
+
+
     item.addEventListener('click',event=>event.stopPropagation());
     item.addEventListener('keydown',event=>{event.stopPropagation();if(event.key==='Escape'){item.blur();item.classList.add('tip-dismissed');}});
     item.addEventListener('blur',()=>item.classList.remove('tip-dismissed'));
