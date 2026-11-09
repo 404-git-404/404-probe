@@ -25,7 +25,7 @@
    get('unknown').textContent=s.insufficient?(s.health?`${s.insufficient} 台暂无最新数据（离线或尚未检测）`:`其余 ${s.insufficient} 台暂无最新数据（离线或尚未检测）`) : '';
    if(doc.createElement){
     let count=get('renewal').querySelector?.('strong');
-    if(!count){count=doc.createElement('strong');const label=doc.createElement('span');label.textContent='7 天内续费';get('renewal').append(count,label);}
+    if(!count){count=doc.createElement('strong');const label=doc.createElement('span');label.textContent='7 天内续费';get('renewal').textContent='';get('renewal').append(count,label);}
     if(count.textContent!==s.renewal+' 台')count.textContent=s.renewal+' 台';
    }else get('renewal').textContent=`${s.renewal} 台 7 天内续费`;
    get('renewal').classList.toggle('attention',s.renewal>0);get('renewal').disabled=!s.renewal;get('overdue').textContent=`已到期 ${s.overdue}`;
