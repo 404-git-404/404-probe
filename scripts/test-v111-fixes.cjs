@@ -13,11 +13,13 @@ module.exports={seed};
 test('B3 checked updates, omission, summary not_reported and explicit no-address remain distinct',()=>{
  const s=State.create(),id='a',commit=patch=>s.commitRead(s.read(id),{agent_id:id,...patch});
  const ip='203.0.113.42';commit({state:{public_egress:{ipv4:{checked_at:1,status:'available',ip}}}});
+ commit({state:null});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  s.event({agent_id:id,state:{cpu_percent:11}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  commit({state:{public_egress:{ipv4:{checked_at:0,status:'unknown',reason:'not_reported'}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  commit({state:{public_egress:{ipv4:{checked_at:2,status:'unknown',reason:'timeout',ip:''}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  commit({state:{public_egress:{ipv4:{checked_at:2,status:'available',ip:'203.0.113.43'}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,'203.0.113.43');
  commit({state:{public_egress:{ipv4:{checked_at:3,status:'unavailable',ip:''}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.status,'unavailable');assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,'');
+ const first=State.create();first.commitRead(first.read('b'),{state:{cpu_percent:1}});first.event({agent_id:'b',state:{public_egress:{ipv4:{checked_at:4,status:'unknown',reason:'timeout'}}}});assert.equal(first.agents.get('b').state.public_egress.ipv4.checked_at,4);
 });
 test('A1 A2 sidebar stays at bottom; one vertical scroll; aligned sticky header and horizontal separator',()=>ui(async({page:p})=>{
  await p.locator('[data-view=list]').click();await settle(p);await p.evaluate(()=>scrollTo(0,document.documentElement.scrollHeight));await p.waitForTimeout(80);
