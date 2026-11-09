@@ -23,8 +23,11 @@
    get('health').classList.toggle('attention',s.health>0);get('health').disabled=!s.health;
    get('health-note').textContent=`网络异常 ${s.quick.network} · 资源吃紧 ${s.quick.resources} · 流量将满 ${s.quick.traffic}`;
    get('unknown').textContent=s.insufficient?(s.health?`${s.insufficient} 台暂无最新数据（离线或尚未检测）`:`其余 ${s.insufficient} 台暂无最新数据（离线或尚未检测）`) : '';
-   get('renewal').replaceChildren?.();
-   if(doc.createElement){const count=doc.createElement('strong'),label=doc.createElement('span');count.textContent=s.renewal+' 台';label.textContent='7 天内续费';get('renewal').append(count,label);}else get('renewal').textContent=`${s.renewal} 台 7 天内续费`;
+   if(doc.createElement){
+    let count=get('renewal').querySelector?.('strong');
+    if(!count){count=doc.createElement('strong');const label=doc.createElement('span');label.textContent='7 天内续费';get('renewal').append(count,label);}
+    if(count.textContent!==s.renewal+' 台')count.textContent=s.renewal+' 台';
+   }else get('renewal').textContent=`${s.renewal} 台 7 天内续费`;
    get('renewal').classList.toggle('attention',s.renewal>0);get('renewal').disabled=!s.renewal;get('overdue').textContent=`已到期 ${s.overdue}`;
    get('nearest').textContent=s.nearest?`最近：${s.nearest.name} · ${s.nearest.renewal.date}（${s.nearest.renewal.days===0?'今天':s.nearest.renewal.days+' 天后'}）`:s.renewalInvalid?'续费日期或时区需要检查':'尚未设置待续费日期';
    doc.getElementById('panel-online').textContent=`${s.online}/${s.registered}`;doc.getElementById('panel-health').textContent='⚠ '+s.health;doc.getElementById('panel-renewal').textContent='↻ '+s.renewal;
