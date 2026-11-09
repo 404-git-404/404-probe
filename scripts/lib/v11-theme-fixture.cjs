@@ -8,13 +8,13 @@ function resources(id,hours=24){
  const length=Math.min(121,Math.floor((end-from)/interval)+1),points=Array.from({length},(_,i)=>({timestamp:end-(length-1-i)*interval,cpu:10+(i%30),ram_percent:40+i%15,swap_percent:0,disk_percent:30,load1:.1,load5:.2,load15:.3,rx_rate:20000+i%17*2000,tx_rate:10000+i%13*1000}));
  return {agent_id:id,server_now:NOW,from,to:end,bucket_from:from,bucket_to:end,interval_ms:interval,source:hours>24?'hourly_metrics':'minute_metrics',aggregation:'arithmetic_mean',retention_days:30,coverage:'partial',point_limit:1441,oldest_timestamp:points[0]?.timestamp,last_timestamp:points.at(-1)?.timestamp,points};
 }
-async function open(browser,{source=repo,width=1440,height=1100,theme='light',n=8,prepare=null}={}){
+async function open(browser,{source=repo,width=1440,height=1100,theme='light',n=8,prepare=null,colorScheme='light'}={}){
  const previous=Date.now;Date.now=()=>NOW;const f=await start({n});Date.now=previous;
  f.state.items[0].outbounds.selectors.push({name:'Global',current:'出口 B',choices:['出口 A','出口 B']});
  if(f.state.items[6]){f.state.items[6].plan=null;f.state.items[6].renewal={type:'unset'};}
  const raw=load('v4-running');raw.slots.forEach((s,i)=>{s.kind='custom';s.region=['上海','广州','北京'][i];s.isp=['电信','联通','移动'][i];});
  const adapted=C.adapt(raw),targets=adapted.targets;
- const context=await browser.newContext({viewport:{width,height},deviceScaleFactor:1,locale:'zh-CN',timezoneId:'America/Los_Angeles',colorScheme:'light'}),page=await context.newPage(),errors=[];
+ const context=await browser.newContext({viewport:{width,height},deviceScaleFactor:1,locale:'zh-CN',timezoneId:'America/Los_Angeles',colorScheme}),page=await context.newPage(),errors=[];
  page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));
  await page.clock.setFixedTime(NOW);
  if(theme)await page.addInitScript(theme=>{if(localStorage.getItem('404-probe.theme.v1')===null)localStorage.setItem('404-probe.theme.v1',theme);},theme);

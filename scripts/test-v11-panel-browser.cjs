@@ -42,7 +42,7 @@ test('settings opens on disabled/corrupt state, saves explicit boolean with sess
  state.failSettings=false;await p.locator('#update-check-save').click();await p.waitForFunction(()=>!document.querySelector('#panel-settings-dialog').open);assert.equal(state.update.enabled,true);
 }));
 test('theme control works inside the panel in both expanded and icon modes',()=>ui(async({page:p})=>{
- await p.locator('[data-theme-toggle]').click();assert.equal(await p.locator('html').getAttribute('data-theme'),'dark');await p.locator('#panel-collapse').click();await p.locator('[data-theme-toggle]').click();assert.equal(await p.evaluate(()=>ProbeTheme.get()),'system');
+ await p.locator('[data-theme-toggle]').click();assert.equal(await p.locator('html').getAttribute('data-theme'),'dark');await p.locator('#panel-collapse').click();await p.locator('[data-theme-toggle]').click();assert.equal(await p.evaluate(()=>ProbeTheme.get()),'light');
 }));
 async function command(p){await p.locator('#add-agent').click();await p.locator('#add-agent-choice-name').fill('单次名称 · 测试');await p.locator('#add-agent-next').click();await p.waitForSelector('#oneclick-result:not(.hidden)');}
 test('one-click has one name input, visible address, masked multiline command and exact clipboard, then revoke',()=>ui(async({page:p,state})=>{
