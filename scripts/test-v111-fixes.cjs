@@ -15,6 +15,7 @@ test('B3 checked updates, omission, summary not_reported and explicit no-address
  const ip='203.0.113.42';commit({state:{public_egress:{ipv4:{checked_at:1,status:'available',ip}}}});
  s.event({agent_id:id,state:{cpu_percent:11}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  commit({state:{public_egress:{ipv4:{checked_at:0,status:'unknown',reason:'not_reported'}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
+ commit({state:{public_egress:{ipv4:{checked_at:2,status:'unknown',reason:'timeout',ip:''}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,ip);
  commit({state:{public_egress:{ipv4:{checked_at:2,status:'available',ip:'203.0.113.43'}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,'203.0.113.43');
  commit({state:{public_egress:{ipv4:{checked_at:3,status:'unavailable',ip:''}}}});assert.equal(s.agents.get(id).state.public_egress.ipv4.status,'unavailable');assert.equal(s.agents.get(id).state.public_egress.ipv4.ip,'');
 });

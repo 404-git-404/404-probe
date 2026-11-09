@@ -4,7 +4,7 @@ const {open,scene}=require('./lib/v11-theme-fixture.cjs');
 let browser;
 before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe'});});
 after(async()=>browser?.close());
-async function ui(run,options){const f=await open(browser,options);try{await run(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
+async function ui(run,options){const f=await open(browser,{...(process.env.V111_THEME_SOURCE?{source:process.env.V111_THEME_SOURCE}:{}),...options});try{await run(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
 const theme=p=>p.evaluate(()=>({mode:ProbeTheme.get(),resolved:document.documentElement.dataset.theme}));
 const waitTheme=(p,value)=>p.waitForFunction(v=>document.documentElement.dataset.theme===v,value);
 test('three modes cycle in order and survive navigation/reload with accessible current labels',()=>ui(async({page:p})=>{
@@ -21,14 +21,30 @@ test('default system mode follows OS changes while explicit modes ignore them',(
  await p.evaluate(()=>ProbeTheme.set('system'));await waitTheme(p,'dark');await p.emulateMedia({colorScheme:'light'});await waitTheme(p,'light');
 },{theme:null}));
 test('saved dark resolves while document is loading and the first styled frame is dark on a light OS',()=>ui(async({page:p})=>{
- const first=await p.evaluate(()=>({boot:window.__themeBoot,frame:window.__themeFrame}));
+ const first=await p.evaluate(()=>({boot:window.__themeBoot,frame:window.__themeFrame,earliest:window.__themeEarliest,preStyle:window.__themePreStyle||[],oldBodyFrame:window.__themeOldBodyFrame}));
+ const nearWhite=color=>{const v=String(color).match(/[\d.]+/g)?.map(Number);return v&&v.length>=3&&(v.length<4||v[3]>.8)&&v.slice(0,3).every(n=>n>=235);};
+ assert(first.earliest,'earliest actual animation frame sampled');
+ for(const sample of [first.earliest,...first.preStyle])for(const key of ['html','body'])assert(!nearWhite(sample[key]),`white or near-white ${key} in earliest/pre-style frame: ${JSON.stringify(sample)}`);
+ console.log('THEME_FRAME_EVIDENCE '+JSON.stringify({earliest:first.earliest,preStyleFrames:first.preStyle.length,oldBodyFrame:first.oldBodyFrame,styled:first.frame}));
  assert.equal(first.boot.theme,'dark');assert.equal(first.boot.ready,'loading');assert.equal(first.boot.meta,'dark');assert.equal(first.boot.scheme,'dark');assert.equal(first.frame,'rgb(14, 16, 18)');
  assert.equal(await p.evaluate(()=>getComputedStyle(document.documentElement).colorScheme),'dark');
  await scene(p,'Login');assert.equal(await p.locator('[data-theme-toggle]').count(),0);assert.equal(await p.evaluate(()=>document.documentElement.dataset.theme),'dark');
  assert.equal(await p.evaluate(()=>getComputedStyle(document.body).backgroundColor),'rgb(14, 16, 18)');assert.equal(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')))),false);
 },{theme:'dark',prepare:async p=>p.addInitScript(()=>{
  const observer=new MutationObserver(()=>{if(document.documentElement?.dataset.theme&&!window.__themeBoot){window.__themeBoot={theme:document.documentElement.dataset.theme,ready:document.readyState,meta:document.querySelector('meta[name="color-scheme"]')?.content,scheme:document.documentElement.style.colorScheme};observer.disconnect();}});observer.observe(document,{subtree:true,attributes:true,attributeFilter:['data-theme']});
- const frame=()=>{if(document.body){window.__themeFrame=getComputedStyle(document.body).backgroundColor;}else requestAnimationFrame(frame);};requestAnimationFrame(frame);
+ const frame=()=>{
+  const html=document.documentElement,body=document.body;
+  if(html){
+   const sheet=[...document.styleSheets].find(s=>s.href?.endsWith('/style.css'));
+   let styled=false;try{styled=!!sheet?.cssRules?.length;}catch{}
+   const sample={html:getComputedStyle(html).backgroundColor,body:body?getComputedStyle(body).backgroundColor:'rgba(0, 0, 0, 0)',styled};
+   if(!window.__themeEarliest)window.__themeEarliest=sample;
+   if(!styled)(window.__themePreStyle||(window.__themePreStyle=[])).push(sample);
+   if(body&&!window.__themeOldBodyFrame)window.__themeOldBodyFrame=sample;
+   if(body&&styled){window.__themeFrame=sample.body;return;}
+  }
+  requestAnimationFrame(frame);
+ };requestAnimationFrame(frame);
 })}));
 test('resource uPlots redraw using the new palette without refetching history or losing the active tab',()=>ui(async({page:p})=>{
  await scene(p,'Details-resources');const canvas=p.locator('.resource-canvas canvas').first();const before=await canvas.evaluate(n=>n.toDataURL());
