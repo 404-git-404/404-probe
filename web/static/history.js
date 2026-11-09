@@ -182,15 +182,15 @@ googleRerun.addEventListener('click', async () => {
     });
     if (response.status === 401) { location.assign('/login'); return; }
     if (!response.ok) {
-      let message = '检测请求失败';
-      try { message = (await response.json()).error?.message || message; } catch (error) { /* keep fallback */ }
+      let message = 'YouTube 地区检测请求失败';
+      try { message = YouTubeStatus.errorText((await response.json()).error); } catch (error) { /* keep fallback */ }
       throw new Error(message);
     }
     agentState.finishMutation(mutation, {google_status: {...agentState.agents.get(id)?.google_status, pending: true}});
     currentAgent = agentState.agents.get(id);
     renderGoogleStatus(currentAgent);
   } catch (error) {
-    googleFeedback.textContent = error.message || '检测请求失败';
+    googleFeedback.textContent = YouTubeStatus.errorText(error);
     renderGoogleStatus(currentAgent);
   } finally {
     agentState.finishMutation(mutation);

@@ -495,8 +495,8 @@ async function rerunGoogleStatus(agent, button, feedback) {
     });
     if (response.status === 401) { location.assign('/login'); return; }
     if (!response.ok) {
-      let message = '检测请求失败';
-      try { message = (await response.json()).error?.message || message; } catch (error) { /* use safe fallback */ }
+      let message = 'YouTube 地区检测请求失败';
+      try { message = YouTubeStatus.errorText((await response.json()).error); } catch (error) { /* use safe fallback */ }
       throw Object.assign(new Error(message),{status:response.status});
     }
     finishResource(mutation, {google_status: {...agents.get(agent.agent_id)?.google_status, pending: true}});
@@ -506,7 +506,7 @@ async function rerunGoogleStatus(agent, button, feedback) {
     button.disabled = false;
     const uncertain=!error.status||error.status>=500;
     button.disabled=uncertain;
-    feedback.textContent = uncertain?'提交结果未确认，正在核实；不会自动重发':error.message||'检测请求失败';
+    feedback.textContent = uncertain?'提交结果未确认，正在核实；不会自动重发':YouTubeStatus.errorText(error);
     agentActionErrors.set(`${agent.agent_id}/google`, feedback.textContent);
   } finally {
     finishResource(mutation);
