@@ -56,7 +56,7 @@
   // keep automatic observation evidence unchanged.
   function display(agent,now=Date.now()){
     const observed=view(agent,now),manual=agent?.plan?.country_code_override;
-    return countryCodes.has(manual)?{...observed,code:manual,label:'地区 '+manual,tone:'manual',manual:true}:observed;
+    return countryCodes.has(manual)?{...observed,code:manual,label:'地区 '+manual,tone:'manual',premium:null,manual:true}:observed;
   }
   function errorText(error){
     const messages={google_status_pending:'YouTube 地区检测正在进行，请等待结果',google_status_unsupported:'当前 Agent 不支持 YouTube 地区检测',agent_offline:'设备离线，无法进行 YouTube 地区检测',agent_disabled:'设备暂停，无法进行 YouTube 地区检测',agent_revoked:'设备已撤销，无法进行 YouTube 地区检测',queue_full:'任务队列已满，暂时无法进行 YouTube 地区检测'};

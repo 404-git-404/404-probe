@@ -274,7 +274,7 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
 .c7 .c7-quota[data-kind=nocap]{background:var(--color-clear)}
 
 .c7.state-offline .status.offline,.c7 .c7-offline-pill{color:var(--color-danger-text);border-color:var(--color-danger)}
-.c7 .c7-foot1 .check-result[data-premium=unavailable]{background:var(--color-surface-12);color:var(--color-danger-text);border:1px solid var(--color-danger)}
+.c7 .c7-foot1 .check-result:is([data-premium=unavailable],.manual){background:var(--color-surface-12);color:var(--color-danger-text);border:1px solid var(--color-danger)}
 
 .c7 button.c7-quota{width:100%;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer}.c7 button.c7-quota:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
 
