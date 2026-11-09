@@ -1220,7 +1220,8 @@ function resourceFactsFor(agent) {
     ['DISK',`${prefix}${CardMetrics.size(s.disk_used,false,true)} / ${CardMetrics.size(s.disk_total,false,true)} · 最忙 I/O ${CardMetrics.pct(s.disk_busy_percent)} · 读 ${CardMetrics.size(s.disk_read_rate,true,true)} · 写 ${CardMetrics.size(s.disk_write_rate,true,true)}${suffix(2)}`]];
 }
 
-// Only address families that are currently usable are rendered; hidden ones leave no focusable element behind.
+// Match v1.1.0: render only usable, fresh IP families while online and active.
+// Hidden families leave no focusable nodes; visible hints contain only masked IPs.
 function createPublicEgress(agentID) {
   const egress=document.createElement('div');
   egress.className='public-egress';
@@ -1247,8 +1248,9 @@ function createPublicEgress(agentID) {
       const raw=p?.[family],masked=agent.masked_egress?.[family],observation=raw?.checked_at?raw:masked,status=observation?.status||'unknown';
       const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
       const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
-      const mask=available?(observation===masked?masked.ip:PublicEgressCheck.maskIP(observation.ip)):'未检测到';
-      const full=`${family==='ipv4'?'IPv4':'IPv6'}：${mask}${available&&stale?'（旧记录）':''}`;
+      if(!available||stale)continue;
+      const mask=observation===masked?masked.ip:PublicEgressCheck.maskIP(observation.ip);
+      const full=`${family==='ipv4'?'IPv4':'IPv6'}：${mask}`;
       item.setAttribute('aria-label',full);item.title=full;
       item.dataset.status=status;item.dataset.stale=String(stale);
       shown.push(item);families.push(family);
