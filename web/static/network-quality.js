@@ -113,7 +113,7 @@
       card.family=value;card.generation++;card.summary=null;card.summaryError='';card.summaryLoading=false;queue.release(card.historyOwner);
       if(history?.card===card)closeHistory();renderCard(card);refreshCard(card);onFamily?.(card.id,value);
     }
-    const hideTips=()=>{for(const card of cards.values())if(card.tip)card.tip.hidden=true;};
+    const hideTips=()=>{for(const card of cards.values())if(card.tip&&!card.tip.hidden)card.tip.hidden=true;};
     root.addEventListener?.('scroll',hideTips,{capture:true,passive:true});
     // ---- face A ----------------------------------------------------------------------------------
     function showTip(card,cell) {
@@ -156,7 +156,7 @@
       return {slot:key,tcp:{...notice('tcp'),blocks:null,red:false,dns_failing:false},icmp:notice('icmp'),right:{kind:'none',percent:null,numerator:0,denominator:0,samples:'none'}};
     }
     function renderCard(card) {
-      if(card.tip)card.tip.hidden=true;
+      if(card.tip&&!card.tip.hidden)card.tip.hidden=true;
       if(!card.head)buildFaceA(card);
       const device=!!(card.agent.revoked||card.agent.disabled_at||card.agent.removal),summary=device?null:card.summary;
       for(const b of card.tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
