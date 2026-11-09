@@ -22,7 +22,7 @@ test('default system mode follows OS changes while explicit modes ignore them',(
 },{theme:null}));
 test('saved dark resolves while document is loading and the first styled frame is dark on a light OS',()=>ui(async({page:p})=>{
  const first=await p.evaluate(()=>({boot:window.__themeBoot,frame:window.__themeFrame,earliest:window.__themeEarliest,preStyle:window.__themePreStyle||[],oldBodyFrame:window.__themeOldBodyFrame}));
- const nearWhite=color=>{const v=String(color).match(/[\d.]+/g)?.map(Number);return v&&v.length>=3&&(v.length<4||v[3]>.8)&&v.slice(0,3).every(n=>n>=235);};
+ const nearWhite=color=>{const v=String(color).match(/[\d.]+/g)?.map(Number);return v&&v.length>=3&&(v.length<4||v[3]>0)&&v.slice(0,3).every(n=>n>=235);};
  assert(first.earliest,'earliest actual animation frame sampled');
  for(const sample of [first.earliest,...first.preStyle])for(const key of ['html','body'])assert(!nearWhite(sample[key]),`white or near-white ${key} in earliest/pre-style frame: ${JSON.stringify(sample)}`);
  console.log('THEME_FRAME_EVIDENCE '+JSON.stringify({earliest:first.earliest,preStyleFrames:first.preStyle.length,oldBodyFrame:first.oldBodyFrame,styled:first.frame}));
