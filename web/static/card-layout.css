@@ -21,7 +21,7 @@ body>header,body>main,body>footer{width:calc(100% - 56px);max-width:2100px}body>
 /* M11: keep one YouTube row; diagnostic detail never participates in layout. */
 .agent-card .google-checks { position: relative; }
 .agent-card .google-check .check-result.observed { color: var(--color-text-04); }
-.agent-card .google-check .check-result[data-premium] { padding: 0 6px; border-radius: 4px; color: var(--color-text-02); }
+.agent-card .google-check .check-result:is([data-premium],.manual) { padding: 0 6px; border-radius: 4px; color: var(--color-text-02); }
 .agent-card .google-check .check-result[data-premium="available"] { background: var(--color-surface-02); }
 .agent-card .google-check .check-result[data-premium="unavailable"] { background: var(--color-surface-04); }
 .agent-card .google-check .check-result[data-premium="undetermined"] { background: var(--color-surface-05); }
