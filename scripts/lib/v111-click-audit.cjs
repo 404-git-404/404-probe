@@ -18,7 +18,8 @@ async function audit({source=path.resolve(__dirname,'../..'),onResult=()=>{}}={}
    await n.scrollIntoViewIfNeeded();const r=await n.boundingBox(),before=await p.evaluate(()=>({hits:__clickAudit.hits,theme:document.documentElement.dataset.theme,quick:JSON.stringify(dashboardUI.preferences.value.quick)}));
    // Alternate center and padded area to cover the button, not just its glyph.
    await p.mouse.move(r.x+r.width*(i%2?.5:.25),r.y+r.height*.5);await p.mouse.down();await p.waitForTimeout(50+(i%3)*50);await p.mouse.up();
-   const after=await p.evaluate(()=>({hits:__clickAudit.hits,theme:document.documentElement.dataset.theme,quick:JSON.stringify(dashboardUI.preferences.value.quick)}));hits+=after.hits-before.hits;effects+=kind==='theme'?after.theme!==before.theme:kind==='quick'?after.quick!==before.quick:0;
+   const after=await p.evaluate(()=>({hits:__clickAudit.hits,theme:document.documentElement.dataset.theme,quick:JSON.stringify(dashboardUI.preferences.value.quick)}));hits+=after.hits-before.hits;effects+=kind==='theme'?after.theme!==before.theme:(kind==='quick'||kind==='renewal')?after.quick!==before.quick:0;
+   if(kind==='renewal'){await p.evaluate(()=>dashboardUI.clear());await p.waitForFunction(()=>!renderFrame);}
    if(selector==='#dashboard-sort')await p.keyboard.press('Escape');
   }
   await n.evaluate(n=>delete n.dataset.audit);const result={name,selector,attempts:50,hits,...(kind!=='delivery'?{effects}:{})};results.push(result);onResult(result);
@@ -28,8 +29,8 @@ async function audit({source=path.resolve(__dirname,'../..'),onResult=()=>{}}={}
  // Audit every other enabled sidebar button as well, including the collapsed
  // panel, more filters, health/renewal summaries, expenses and management entry points.
  const known='[data-theme-toggle],#panel-settings,#logout,#add-agent,[data-view=cards],[data-view=list],#dashboard-groups .dashboard-option,#dashboard-tags .dashboard-option,#dashboard-quick [data-quick=network]';
- const extras=await p.locator('#dashboard-panel button').evaluateAll((nodes,known)=>nodes.filter(n=>!n.matches(known)&&!n.disabled&&n.getClientRects().length).map((n,i)=>{n.dataset.extraAudit=String(i);return {selector:`[data-extra-audit="${i}"]`,name:'panel: '+(n.getAttribute('aria-label')||n.getAttribute('title')||n.textContent).trim()};}),known);
- for(const extra of extras)await run(extra.name,extra.selector);
+ const extras=await p.locator('#dashboard-panel button').evaluateAll((nodes,known)=>nodes.filter(n=>!n.matches(known)&&!n.disabled&&n.getClientRects().length).map((n,i)=>{n.dataset.extraAudit=String(i);return {selector:`[data-extra-audit="${i}"]`,kind:n.id==='overview-renewal'?'renewal':'delivery',name:'panel: '+(n.getAttribute('aria-label')||n.getAttribute('title')||n.textContent).trim()};}),known);
+ for(const extra of extras)await run(extra.name,extra.selector,extra.kind);
  await p.locator('[data-view=list]').click();await p.waitForFunction(()=>!renderFrame);
  for(const [name,selector]of [['row name','.banner-name'],['row outbound','.selector-compact'],['row upgrade','.banner-upgrade-link']])await run(name,selector);
  // Select a tag to create the removable toolbar chip.
