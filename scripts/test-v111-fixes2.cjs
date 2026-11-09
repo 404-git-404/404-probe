@@ -11,7 +11,7 @@ test('S1 manual region matches CN red card style in both palettes; S3 native opt
  const lum=c=>{const rgb=c.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;};
  for(const [color,bg]of colors){assert(!bg.startsWith('rgba('),'option must be opaque: '+bg);assert((Math.max(lum(color),lum(bg))+.05)/(Math.min(lum(color),lum(bg))+.05)>=4.5);}
  console.log('OPTION_COLORS '+theme+' '+JSON.stringify([...new Set(colors.map(JSON.stringify))]));
- await p.locator('[data-view=list]').click();await p.waitForFunction(()=>!renderFrame);const listColor=await p.locator(`.banner-row[data-agent-id="${ID(0)}"] .banner-youtube`).evaluate(n=>getComputedStyle(n).color);for(const color of [(await styles(manual)).color,listColor]){const [r,g,b]=color.match(/\d+/g).map(Number);assert(r>g&&r>b,'manual region must stay in the red family: '+color);}await p.locator('[data-view=cards]').click();await p.waitForFunction(()=>!renderFrame);
+ const cardColor=(await styles(manual)).color;await p.locator('[data-view=list]').click();await p.waitForFunction(()=>!renderFrame);const listColor=await p.locator(`.banner-row[data-agent-id="${ID(0)}"] .banner-youtube`).evaluate(n=>getComputedStyle(n).color);for(const color of [cardColor,listColor]){const [r,g,b]=color.match(/\d+/g).map(Number);assert(r>g&&r>b,'manual region must stay in the red family: '+color);}await p.locator('[data-view=cards]').click();await p.waitForFunction(()=>!renderFrame);
  }
  assert.equal(await p.locator('.agent-card .banner-dot').count(),0);
 }));
