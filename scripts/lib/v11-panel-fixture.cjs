@@ -2,7 +2,7 @@
 const {start,ID}=require('./v110-dashboard-fixture.cjs');
 const {chromium}=require(process.env.M02_PLAYWRIGHT||'C:/Users/ufoli/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const launch=()=>chromium.launch({headless:true,ignoreDefaultArgs:['--hide-scrollbars'],executablePath:process.env.M02_CHROMIUM||'C:/Users/ufoli/AppData/Local/ms-playwright/chromium-1228/chrome-win64/chrome.exe'});
-async function open(browser,{width=1920,height=1080,theme='light',n=28,preferences=null,deviceScaleFactor=1}={}){
+async function open(browser,{width=1920,height=1080,theme='light',n=28,preferences=null,deviceScaleFactor=1,_navigationAttempts=0}={}){
  let settingsState;const f=await start({n,handle:({req,url,body,json,fail})=>{if(url.pathname!=='/api/v1/web/settings/update-check')return false;settingsState.writes.push({headers:req.headers,body});if(settingsState.failSettings||req.headers['x-csrf-token']!=='synthetic-csrf'||req.headers['sec-fetch-site']!=='same-origin'||req.headers.origin!==f.base)fail('forbidden',403);else{settingsState.update={...settingsState.update,enabled:body.enabled,newer:body.enabled};json(settingsState.update);}return true;}}),context=await browser.newContext({viewport:{width,height},deviceScaleFactor,locale:'zh-CN',permissions:['clipboard-read','clipboard-write']}),page=await context.newPage(),errors=[];
  const state={update:{enabled:true,newer:true,latest:'v1.1.1',checked_at:1},failSettings:false,enrollments:0,revokes:0,writes:[],token:'S'.repeat(43),manual:'synthetic-manual-credential'};
  settingsState=state;page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
@@ -19,8 +19,16 @@ async function open(browser,{width=1920,height=1080,theme='light',n=28,preferenc
   if(u.pathname==='/api/v1/web/agents'&&method==='POST')return r.fulfill({json:{agent_id:ID(999),enrollment_value:state.manual,install_available:true,install_command:`curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.10/install.sh | bash`}});
   return r.continue();
  });
- await page.goto(f.base);await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n&&!renderFrame&&document.querySelector('#dashboard-count').textContent.includes(' / '),n);
- await page.waitForFunction(()=>!document.querySelector('#add-agent').disabled);
+ try{
+  await page.goto(f.base);await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n&&!renderFrame&&document.querySelector('#dashboard-count').textContent.includes(' / '),n);
+  await page.waitForFunction(()=>!document.querySelector('#add-agent').disabled);
+ }catch(error){
+  await context.close();f.close();
+  // OS-assigned port 0 can land on a browser-blocked port (observed: 6697).
+  // Rebind only for that transport setup failure; never retry app assertions.
+  if(error.message.includes('ERR_UNSAFE_PORT')&&_navigationAttempts<4){console.log('FIXTURE_UNSAFE_PORT_RETRY '+f.base);return open(browser,{width,height,theme,n,preferences,deviceScaleFactor,_navigationAttempts:_navigationAttempts+1});}
+  throw error;
+ }
  return {page,context,f,state,errors,async close(){await context.close();f.close();}};
 }
 module.exports={launch,open,ID};
