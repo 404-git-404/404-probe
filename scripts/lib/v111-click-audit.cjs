@@ -7,11 +7,13 @@ async function audit({source=path.resolve(__dirname,'../..'),onResult=()=>{}}={}
  try{
  f=await open(b,{n:60,width:2048,height:1152});const p=f.page;
  const now=Date.now();for(const a of f.f.state.items){a.name='Synthetic-'+a.agent_id.slice(-3);a.public_egress_check.enabled=true;a.state.public_egress={ipv4:{status:'available',ip:'203.0.113.42',checked_at:now,valid_until:now+86400000},ipv6:{status:'available',ip:'2001:db8::42',checked_at:now,valid_until:now+86400000}};}
+ // Keep one genuinely offline device so the offline filter stays enabled.
+ f.f.state.items[58].online=false;
  await p.evaluate(()=>dashboardData.reload());await p.waitForFunction(()=>!renderFrame);
- let seq=0;timer=setInterval(()=>{for(let j=0;j<3;j++){const i=(seq++)%60;f.f.publish('agent',{agent_id:ID(i),online:true,state:{...f.f.state.items[i].state,cpu_percent:seq%99,collected_at:Date.now()}});}f.f.publish('agent',{agent_id:ID(59),online:seq%2===0,state:f.f.state.items[59].state});},70);
+ let seq=0;timer=setInterval(()=>{for(let j=0;j<3;j++){const i=(seq++)%60;f.f.publish('agent',{agent_id:ID(i),online:i!==58,state:{...f.f.state.items[i].state,cpu_percent:seq%99,collected_at:Date.now()}});}f.f.publish('agent',{agent_id:ID(59),online:seq%2===0,state:f.f.state.items[59].state});},70);
  await p.evaluate(()=>{window.__clickAudit={hits:0};document.addEventListener('click',e=>{const n=e.target.closest('[data-audit]');if(!n)return;__clickAudit.hits++;if(n.dataset.audit==='delivery'){e.preventDefault();e.stopImmediatePropagation();}},true);});
  async function run(name,selector,kind='delivery'){
-  if(process.env.V111_CLICK_ONLY&&!(process.env.V111_CLICK_ONLY==='panel extras'&&name.startsWith('panel:'))&&!process.env.V111_CLICK_ONLY.split(',').includes(name))return;
+  if(process.env.V111_CLICK_ONLY&&!((process.env.V111_CLICK_ONLY==='panel extras'&&name.startsWith('panel:'))||(process.env.V111_CLICK_ONLY==='offline'&&name.includes('离线')))&&!process.env.V111_CLICK_ONLY.split(',').includes(name))return;
   const n=p.locator(selector).first();if(!await n.count()||!await n.isVisible())throw Error('missing audit control: '+name+' '+selector);
   await n.evaluate((n,kind)=>n.dataset.audit=kind,kind);let hits=0,effects=0;
   for(let i=0;i<50;i++){
