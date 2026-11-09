@@ -1320,7 +1320,7 @@ function createAgentCard(initialAgent) {
     let nameControl = agentNameControl(agent, state);
     const mark = countryMark(agent.country_code, agent.country_source);
     identity.append(nameControl, sub);
-    const statusDot=document.createElement('i');statusDot.className='banner-dot';statusDot.dataset.state=stateName;statusDot.title=Card.statusHint(agent);head.append(statusDot,mark, identity);
+    head.append(mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
     const tags=document.createElement('div');tags.className='dashboard-card-tags';
@@ -1444,7 +1444,7 @@ function createAgentCard(initialAgent) {
       const stateName = cardLifecycle(agent);
       card.className = `card agent-card c7 state-${stateName}`;
       card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
-      statusDot.dataset.state=stateName;statusDot.title=Card.statusHint(agent);status.className = `status ${stateName}`; status.dataset.agentState = stateName;
+      status.className = `status ${stateName}`; status.dataset.agentState = stateName;
       setCardText(status, lifecycleLabels[stateName]);
       status.hidden = stateName === 'online' || stateName === 'offline';
       const system = CardMetrics.os(state.os);
