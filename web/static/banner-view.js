@@ -9,7 +9,7 @@
   const symbol={CNY:'¥',USD:'$',EUR:'€',GBP:'£',JPY:'¥',HKD:'HK$'}[plan.currency]||((plan.currency||'')+' ');
   return symbol+value+({monthly:' / 月',quarterly:' / 季',semiannual:' / 半年',yearly:' / 年',once:' / 一次'}[period]||'');
  }
- function renewal(a){const r=a.renewal;if(!a.plan)return '—';if(r?.type==='overdue')return `逾期 ${Math.abs(r.days||0)} 天`;if(finite(r?.days))return `余 ${r.days} 天`;if(r?.type==='invalid')return '日期无效';return !a.plan.renewal_date&&!a.plan.expiry_date?'长期':'未设日期';}
+ function renewal(a){const r=M.renewal(a);if(!a.plan)return '—';if(r?.type==='overdue')return `逾期 ${Math.abs(r.days||0)} 天`;if(finite(r?.days))return `余 ${r.days} 天`;if(r?.type==='invalid')return '日期无效';return !a.plan.renewal_date&&!a.plan.expiry_date?'长期':'未设日期';}
  function latency(a,slot){
   const s=a.network_slots?.find(s=>s.slot===slot),state=s?.state||'no_data';
   return {state,title:s?.target_name||'',text:state==='ok'||state==='stale'?`${finite(s.latest_ms)?Number(s.latest_ms.toFixed(1))+' ms':'—'}${state==='stale'?' · 过期':''}`:({no_target:'未设目标',unsupported:'不支持',no_data:'暂无数据'}[state]||'暂无数据')};
@@ -25,7 +25,7 @@
    traffic={text:trafficOld?'数据陈旧':t.quota_state==='pending'?'周期尚未开始':quota==null?`${C.sig3(used)} / 不限流量`:!finite(used)?'暂无用量':`${C.sig3(used)} / ${C.sig3(quota)} · ${percent==null?'—':Number(percent.toFixed(1))+'%'}`,fill:trafficOld?0:Math.max(0,Math.min(100,percent||0)),tone:trafficOld?'unknown':C.ringTone(percent)};
   }
   const youtube=root.YouTubeStatus.display(a,now);
-  return {name,uptime,lifecycle,country:a.country_code||'',countrySource:a.country_source||'',system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),youtube:{text:youtube.code||'—',tone:youtube.manual?'crit':youtube.premium==='unavailable'?'crit':youtube.tone==='observed'?'ok':'unknown',title:youtube.description},price:price(p),renewal:renewal(a),soon:a.renewal?.type==='due_soon'||a.renewal?.type==='overdue',upgrade:M.flags(a,server,now).upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
+  return {name,uptime,lifecycle,country:a.country_code||'',countrySource:a.country_source||'',system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),youtube:{text:youtube.code||'—',tone:youtube.manual?'crit':youtube.premium==='unavailable'?'crit':youtube.tone==='observed'?'ok':'unknown',title:youtube.description},price:price(p),renewal:renewal(a),soon:M.renewal(a).type==='due_soon'||M.renewal(a).type==='overdue',upgrade:M.flags(a,server,now).upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
  }
  function create({host,document:doc=root.document,selector,onOpen=()=>{},onCollapse=()=>{},onSort=()=>{},onSlot=()=>{},csrf=()=>'',blocked=()=>false}={}){
   const groups=new Map(),rows=new Map();let lastLayout='',headerKey='',namesKey='';

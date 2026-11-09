@@ -683,6 +683,8 @@ async function clearPlan() {
 }
 
 function finishPlanResource(token,patch={}) {
+  if(patch.plan)DashboardModel.savedPlan(patch.plan);
+  if(patch.plan?.country_code_override&&token?.groups.includes('country'))patch={...patch,country_code:patch.plan.country_code_override,country_source:'manual'};
   return suspended ? agentState.finishMutation(token,patch) : finishResource(token,patch);
 }
 
@@ -1136,7 +1138,7 @@ function setCardText(node, value) {
 
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
-function cardRenderKey(a){return JSON.stringify([a.name,a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1273,7 +1275,9 @@ async function loadDetailUpgradeTargets(id){
 async function saveDetailCountry(agent,code){
  const id=agent.agent_id;if(planActionBlocked(agent)||planDialog.open||planRenewal.unconfirmed(id))return;
  const mutation=agentState.beginMutation(id,['plan','country']);if(!mutation)return;
- try{const plan=await savePlanPayload(id,Management.planPayload(agents.get(id)?.plan,{country_code_override:code}));planRenewal.invalidate(id);finishPlanResource(mutation,{plan});}
+ try{const plan=await savePlanPayload(id,Management.planPayload(agents.get(id)?.plan,{country_code_override:code}));planRenewal.invalidate(id);
+  let country={};if(!plan.country_code_override){try{const data=await readJSON('/api/v1/web/dashboard?ids='+encodeURIComponent(id)),row=data.items.find(a=>a.agent_id===id);if(row)country={country_code:row.country_code,country_source:row.country_source};}catch{/* Reconciliation retains responsibility if the canonical read is unavailable. */}}
+  finishPlanResource(mutation,{plan,...country});}
  catch(error){agentActionErrors.set(`${id}/country`,error.message||'地区保存失败');}
  finally{finishPlanResource(mutation);reconciliation.notify(id);render();}
 }
@@ -1609,7 +1613,12 @@ async function resetAccumulatedTraffic(id) {
 
 function finishResource(token, patch = {}) {
   const committed = agentState.finishMutation(token, patch);
-  if (committed) { reconciliation.notify(token.id); render(); }
+  if (committed) {
+    reconciliation.notify(token.id);
+    // A successful write publishes its mounted view before the editor closes.
+    // SSE still uses the scheduled, budgeted dirty-id renderer.
+    if(!suspended)renderDashboard(new Set([token.id]));
+  }
   return committed;
 }
 
@@ -1682,7 +1691,7 @@ const reconciliation={
 };
 function refresh(){return dashboardData.refresh();}
 const organizationAPI=OrganizationAPI.create({csrf:()=>mutationCSRFToken,read:readJSON});
-organizationDialogs=OrganizationDialogs.create({api:organizationAPI,read:readJSON,agents,state:agentState,refresh:()=>dashboardData.reload()});
+organizationDialogs=OrganizationDialogs.create({api:organizationAPI,read:readJSON,agents,state:agentState,refresh:async id=>{await dashboardData.reload();if(id&&!suspended)renderDashboard(new Set([id]));}});
 expenseDialog=ExpenseDialog.create({api:organizationAPI,visibleIDs:()=>DashboardModel.select(agents,dashboardData.catalog(),dashboardUI.preferences.value,serverBuild).list.map(a=>a.agent_id),refresh:()=>dashboardData.reload()});
 
 

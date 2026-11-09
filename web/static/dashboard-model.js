@@ -17,6 +17,21 @@
   return {value,save,validate(catalog){let changed=false;for(const [key,allowed]of [['groups',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['tags',new Set(catalog.tags.map(t=>t.id))],['collapsed',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['statuses',new Set(Object.keys(STATUS))],['quick',new Set(Object.keys(QUICK))]]){const filtered=value[key].filter(id=>allowed.has(id));if(filtered.length!==value[key].length){value[key]=filtered;changed=true;}}if(changed)save();}};
  }
  function lifecycle(a){return a.revoked?'revoked':a.disabled_at!=null?'paused':a.online?'online':a.state||a.last_seen?'offline':'unknown';}
+ const savedPlans=new WeakSet();
+ function savedPlan(plan){if(plan&&typeof plan==='object')savedPlans.add(plan);}
+ // A local plan write arrives before its next summary. Until the matching
+ // summary arrives, project the saved date rather than the preceding date's days.
+ function renewal(a,now=Date.now()){
+  const p=a.plan,r=a.renewal||{};if(!p||!savedPlans.has(p))return r;
+  const date=p.renewal_date||p.expiry_date||'',timezone=p.timezone||'UTC';
+  if(r.date===date&&(r.timezone||'UTC')===timezone)return r;
+  const value={date,timezone,field:p.renewal_date?'renewal_date':p.expiry_date?'expiry_date':''};
+  if(!date)return {...value,type:'missing'};
+  const management=root.Management||(typeof require==='function'?require('./management.js'):null),today=management?.planDate(now,timezone);
+  if(timezone==='Local'||!today||!management.validPlanDate(date))return {...value,type:'invalid'};
+  const days=Math.round((Date.parse(date)-Date.parse(today))/86400000);
+  return {...value,days,type:days<0?'overdue':days<=7?'due_soon':'upcoming'};
+ }
  function flags(a,server,now=Date.now()){
   const r=a.resources,t=a.dashboard_traffic||{},p=a.plan,n=a.network;
   const fresh=!!r?.known&&!r.stale&&(!r.max_age_ms||!r.collected_at||now-r.collected_at<=r.max_age_ms);
@@ -27,7 +42,7 @@
   const network=networkKnown&&n.active===true;
   const order=State.compareStableVersions(a.version,server?.version);
   const nonformal=order===null&&/^v\d+\.\d+\.\d+-(?:beta|rc)\.[1-9]\d*$/.test(a.version||'')&&State.compareReleaseVersions(a.version,a.version)===0;
-  return {offline:lifecycle(a)==='offline',network,resources:resource,traffic,renewal:a.renewal?.type==='due_soon',health:network||resource||traffic,upgrade:order===-1,versionNonformal:nonformal,versionUnknown:order===null&&!nonformal,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
+  return {offline:lifecycle(a)==='offline',network,resources:resource,traffic,renewal:renewal(a,now).type==='due_soon',health:network||resource||traffic,upgrade:order===-1,versionNonformal:nonformal,versionUnknown:order===null&&!nonformal,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
  }
  function aggregate(agents,server,now=Date.now()){
   const s={registered:0,online:0,offline:0,paused:0,unknown:0,health:0,insufficient:0,upgrade:0,versionUnknown:0,versionNonformal:0,renewal:0,overdue:0,renewalInvalid:0,nearest:null,quick:Object.fromEntries(Object.keys(QUICK).map(k=>[k,0]))};
@@ -35,8 +50,8 @@
    if(a.revoked)continue;s.registered++;s[lifecycle(a)]++;
    const f=flags(a,server,now);for(const k of Object.keys(QUICK))if(f[k])s.quick[k]++;
    for(const k of ['health','insufficient','upgrade','versionUnknown','versionNonformal','renewal'])if(f[k])s[k]++;
-   if(a.renewal?.type==='overdue')s.overdue++;if(a.renewal?.type==='invalid')s.renewalInvalid++;
-   const days=a.renewal?.days;if(Number.isInteger(days)&&days>=0&&(!s.nearest||days<s.nearest.renewal.days||(days===s.nearest.renewal.days&&a.agent_id<s.nearest.agent_id)))s.nearest=a;
+   const due=renewal(a,now);if(due.type==='overdue')s.overdue++;if(due.type==='invalid')s.renewalInvalid++;
+   const days=due.days;if(Number.isInteger(days)&&days>=0&&(!s.nearest||days<s.nearest.renewal.days||(days===s.nearest.renewal.days&&a.agent_id<s.nearest.agent_id)))s.nearest={...a,renewal:due};
   }return s;
  }
  function active(p){return !!(p.search.trim()||['groups','tags','countries','statuses','quick'].some(k=>p[k].length));}
@@ -68,7 +83,7 @@
   if(key==='traffic')return a.dashboard_traffic?.known&&!a.dashboard_traffic.stale&&a.dashboard_traffic.quota_state==='current'&&a.plan?.quota_bytes>0?100*a.plan.usage_bytes/a.plan.quota_bytes:null;
   if(key==='latency'){const s=a.network_slots?.find(s=>s.slot===(p.latencySlot||1));return s?.state==='ok'?s.latest_ms:null;}
   if(key==='price')return monthlyUSD(a.plan,catalog?.exchange_rates);
-  if(key==='renewal')return a.renewal?.days??null;
+  if(key==='renewal')return renewal(a,now).days??null;
   if(key==='upgrade')return flags(a,server).upgrade?1:0;
   return a.name||'';
  }
@@ -91,5 +106,5 @@
   const sections=p.sort==='group'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
   return {list,sections,summary:aggregate(agents,server,now)};
  }
- const api={KEY,QUICK,STATUS,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,savedPlan,renewal,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);

@@ -110,7 +110,7 @@
     return payload;
   }
   const matchesDeviceName=(input,name)=>typeof name==='string'&&!!name.trim()&&typeof input==='string'&&input.trim()===name.trim();
-  const api = {planDate,monthlyQuotaAnchor,planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
+  const api = {validPlanDate,planDate,monthlyQuotaAnchor,planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Management = api;
 })(globalThis);

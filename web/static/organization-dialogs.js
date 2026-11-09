@@ -29,7 +29,7 @@
    if(assignmentBusy||!catalog||!current)return;if(tagInput.value.trim()&&!addTag(tagInput.value))return;
    const creating=!newGroup.hidden;if(creating&&(!N.valid(newGroup.value,40)||N.normalize(newGroup.value)==='未分组')){showError(assignment,'分组名称需为 1–40 个字，不能使用“未分组”或不可见控制字符。');return;}
    assignmentBusy=true;save.disabled=true;const serial=assignmentSerial,mutation=state.beginMutation(current,['organization']);
-   try{const body={expected_revision:catalog.revision,group_id:creating?null:group.value||null,tag_ids:chosen.filter(t=>t.id).map(t=>t.id),new_tags:chosen.filter(t=>!t.id).map(t=>t.name)};if(creating)body.new_group=N.normalize(newGroup.value);await api.request('PUT','agents/'+current+'/organization',body);state.finishMutation(mutation);await refresh();if(serial===assignmentSerial)assignment.shell.close();}
+   try{const body={expected_revision:catalog.revision,group_id:creating?null:group.value||null,tag_ids:chosen.filter(t=>t.id).map(t=>t.id),new_tags:chosen.filter(t=>!t.id).map(t=>t.name)};if(creating)body.new_group=N.normalize(newGroup.value);await api.request('PUT','agents/'+current+'/organization',body);state.finishMutation(mutation);await refresh(current);if(serial===assignmentSerial)assignment.shell.close();}
    catch(error){state.finishMutation(mutation);if(serial===assignmentSerial){if(error.status===409){await refresh();await loadAssignment(serial,error.message);}else showError(assignment,error.message);}}
    finally{state.finishMutation(mutation);assignmentBusy=false;save.disabled=false;}
   }
