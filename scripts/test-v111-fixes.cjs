@@ -5,11 +5,14 @@ let browser;before(async()=>browser=await launch());after(async()=>browser?.clos
 const settle=p=>p.waitForFunction(()=>!renderFrame);
 async function ui(fn,opts={}){const f=await open(browser,{width:2048,height:1152,deviceScaleFactor:1.25,...opts});try{await fn(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
 async function seed(f){
- const a=f.f.state.items[0],now=Date.now();a.name='Synthetic-001';a.version='v1.0.9';a.plan.country_code_override='MO';
+ const a=f.f.state.items[0],now=Date.now();a.name='Synthetic-001';a.version='v1.0.9';a.plan.country_code_override='MO';a.country_code='MO';a.country_source='manual';
  a.public_egress_check={supported:true,enabled:true,next_check_at:now+86400000};a.state.public_egress={version:1,supported:true,ipv4:{status:'available',ip:'203.0.113.42',checked_at:now,valid_until:now+86400000},ipv6:{status:'available',ip:'2001:db8::42',checked_at:now,valid_until:now+86400000}};
  await f.page.evaluate(()=>dashboardData.reload());await settle(f.page);
 }
 module.exports={seed};
+test('B5 legacy Server errors use the shared YouTube detection name',()=>{
+ const Y=require('../web/static/youtube-status.js');assert.equal(Y.errorText({code:'google_status_pending',message:'Google Status is already pending'}),'YouTube 地区检测正在进行，请等待结果');assert.doesNotMatch(Y.errorText(new Error('could not create Google Status check')),/Google Status/);assert.equal(Y.errorText(null),'YouTube 地区检测请求失败');
+});
 test('B3 checked updates, omission, summary not_reported and explicit no-address remain distinct',()=>{
  const s=State.create(),id='a',commit=patch=>s.commitRead(s.read(id),{agent_id:id,...patch});
  const ip='203.0.113.42';commit({state:{public_egress:{ipv4:{checked_at:1,status:'available',ip}}}});
@@ -33,7 +36,7 @@ test('A1 A2 sidebar stays at bottom; one vertical scroll; aligned sticky header 
 test('A3 A4 A5 A7 B7 B8 upgrade target, native theme, shared icons, status meaning and manual region',()=>ui(async f=>{
  await seed(f);const p=f.page;await p.locator('[data-view=list]').click();await settle(p);const row=p.locator(`[data-agent-id="${ID(0)}"]`);
  assert.equal(await row.locator('.banner-youtube').textContent(),'MO');assert.equal(await row.locator('.banner-youtube').getAttribute('data-tone'),'crit');assert.equal(await row.locator('.banner-youtube').getAttribute('title'),null);
- assert.match(await row.locator('.country-flag').getAttribute('src'),/us.svg$/);assert.match(await row.locator('.banner-os img').getAttribute('src'),/debian.svg$/);assert.match(await row.locator('.banner-dot').getAttribute('title'),/状态：正常/);
+ assert.match(await row.locator('.country-flag').getAttribute('src'),/mo.svg$/);assert.match(await row.locator('.banner-os img').getAttribute('src'),/debian.svg$/);assert.match(await row.locator('.banner-dot').getAttribute('title'),/状态：正常/);
  assert.equal(await p.locator('.status-legend,body>footer').count(),0);assert.equal(await p.locator('#dashboard-sort').evaluate(n=>getComputedStyle(n).colorScheme),'dark');
  await row.locator('.banner-upgrade-link').click();assert.equal(await p.locator('#details-tab-management').getAttribute('aria-selected'),'true');assert(await p.locator('[data-upgrade-region]').isVisible());assert((await p.locator('#details-pane-management').textContent()).includes('YouTube 地区检测'));
 },{theme:'dark'}));
@@ -51,7 +54,8 @@ test('B2 B3 B4 masked badges, no raw card attributes, detail survives ten second
  await p.evaluate(()=>{navigator.clipboard.writeText=()=>Promise.reject(Error('synthetic failure'));});await copy.click();await p.waitForFunction(()=>document.querySelector('#device-details .pe-copy')?.textContent==='复制失败');assert.equal(await copy.textContent(),'复制失败');
 }));
 test('B9 one custom hint, leave, scroll and telemetry dismiss it',()=>ui(async f=>{
- const p=f.page,cell=p.locator('.nq7-b[data-i="10"]').first();await cell.scrollIntoViewIfNeeded();await cell.hover();assert(await p.locator('.nq7-tip:visible').count());assert.equal(await cell.getAttribute('title'),null);assert(await cell.getAttribute('aria-label'));
+ const p=f.page,name=p.locator('.agent-card h2').first();await name.hover();assert.equal(await name.getAttribute('title'),'');assert.equal(await name.getAttribute('aria-label'),await name.textContent());assert.equal(await p.locator('.name-tooltip:visible').count(),1);await p.mouse.move(0,0);
+ const cell=p.locator('.nq7-b[data-i="10"]').first();await cell.scrollIntoViewIfNeeded();await cell.hover();assert(await p.locator('.nq7-tip:visible').count());assert.equal(await cell.getAttribute('title'),'');assert.equal(await cell.evaluate(n=>{for(let at=n;at;at=at.parentElement){const title=at.getAttribute('title');if(title!==null)return title;}return null;}),'','empty title suppresses inherited module hint');assert(await cell.getAttribute('aria-label'));
  await p.mouse.move(0,0);assert.equal(await p.locator('.nq7-tip:visible').count(),0);await cell.hover();await p.evaluate(()=>window.dispatchEvent(new Event('scroll')));assert.equal(await p.locator('.nq7-tip:visible').count(),0);
  await cell.hover();f.f.publish('agent',{agent_id:ID(0),online:true,state:{collected_at:Date.now(),cpu_percent:23}});await p.waitForFunction(()=>document.querySelectorAll('.nq7-tip:not([hidden])').length===0);
 }));
