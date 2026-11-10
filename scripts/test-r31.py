@@ -380,8 +380,8 @@ class RegisteredReleaseTests(unittest.TestCase):
 
     def test_unknown_start_and_unregistered_target_schema(self):
         with self.assertRaisesRegex(ValueError,'unregistered'):
-            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.1.1')
-        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.1.1')
+            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.1.2')
+        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.1.2')
         self.assertEqual(releases.expected_schema('v1.0.10',36),36)
         self.assertEqual(releases.expected_schema('v1.0.8',35),35)
         with self.assertRaises(ValueError): releases.expected_schema('v1.0.8',36)
@@ -414,7 +414,7 @@ class RegisteredReleaseTests(unittest.TestCase):
 
     def test_v109_registration_and_numeric_9_10_chain(self):
         row=releases.registered('v1.0.9')
-        self.assertEqual(row,dict(commit='42c5eeb798f679e49ea81f9480b7bcab46aac2df',schema=35,previous_version='v1.0.8',added_tables=[],removed_tables=[]))
+        self.assertEqual(row,dict(commit='42c5eeb798f679e49ea81f9480b7bcab46aac2df',schema=35,previous_version='v1.0.8',added_tables=[],removed_tables=[],generation_chain=['v1.0.9']))
         document=releases.registry()
         # Insert 10 first: registry validation must sort numerically, not by JSON order.
         document['versions']={'v1.0.10':document['versions'].pop('v1.0.10'),**document['versions']}
@@ -434,7 +434,7 @@ class RegisteredReleaseTests(unittest.TestCase):
     def test_schema36_fixture_and_exact_registration_chain(self):
         added=['organization_meta','groups','tags','agent_organization','agent_tags','expense_exchange_rates']
         document=releases.registry()
-        self.assertEqual(document['versions']['v1.0.10'],dict(commit='271c67d029d1fa1d5e8347a40f66f4a78648ff82',schema=36,previous_version='v1.0.9',added_tables=added,removed_tables=[]))
+        self.assertEqual(document['versions']['v1.0.10'],dict(commit='271c67d029d1fa1d5e8347a40f66f4a78648ff82',schema=36,previous_version='v1.0.9',added_tables=added,removed_tables=[],generation_chain=['v1.0.10']))
         registry=self.root/'schema36-registry.json';registry.write_text(json.dumps(document),encoding='utf-8')
         with sqlite3.connect(':memory:') as conn:
             conn.executescript('CREATE TABLE agents(id TEXT PRIMARY KEY);CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);')
@@ -469,6 +469,74 @@ class RegisteredReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError): releases.check_counts(before,bad,'v1.0.6','v1.0.8')
 
 
+class BridgeGenerationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.base=fake_assets(self.root/'base','v1.0.6')
+        self.bridge=fake_assets(self.root/'bridge','v1.0.10')
+        self.start=fake_assets(self.root/'start','v1.1.1')
+        self.server=self.start/'404-probe-server-linux-amd64'
+        self.out=self.root/'output.db'
+        def identity(args):
+            meta=json.loads(Path(args[0]).parent.joinpath('RELEASE-METADATA.json').read_text())
+            return json.dumps(dict(version=meta['version'],commit=meta['commit'],dirty=False)).encode()
+        self.patch=mock.patch.object(gen.releases.subprocess,'check_output',side_effect=identity)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+
+    def generate(self, bridges=None):
+        return gen.generate(self.server,self.out,'tiny',start_version='v1.1.1',
+                            base_assets=self.base,bridge_assets=bridges)
+
+    def test_missing_bridge_rejected_before_database_creation(self):
+        with self.assertRaisesRegex(ValueError,'required official bridge releases: v1.0.10'):
+            self.generate()
+        self.assertFalse(self.out.exists())
+        (self.bridge/'SHA256SUMS').unlink()
+        with self.assertRaisesRegex(ValueError,'invalid official bridge assets'):
+            self.generate({'v1.0.10':self.bridge})
+        self.assertFalse(self.out.exists())
+
+    def test_bridge_checksum_and_complete_identity_are_enforced(self):
+        binary=self.bridge/'404-probe-server-linux-amd64'
+        binary.write_bytes(b'tampered')
+        with self.assertRaisesRegex(ValueError,'checksum mismatch'):
+            self.generate({'v1.0.10':self.bridge})
+        refresh_manifest(self.bridge)
+        meta=json.loads((self.bridge/'RELEASE-METADATA.json').read_text())
+        meta['commit']='a'*40
+        (self.bridge/'RELEASE-METADATA.json').write_text(json.dumps(meta));refresh_manifest(self.bridge)
+        with self.assertRaisesRegex(ValueError,'commit differs from registry'):
+            self.generate({'v1.0.10':self.bridge})
+        self.assertFalse(self.out.exists())
+
+    def test_each_hop_rejects_wrong_schema_and_verify_failure(self):
+        def base(*args):
+            self.out.touch()
+            Path(str(self.out)+'.json').write_text('{}')
+            return dict(rows={},verify=dict(integrity='ok',schema_version=34))
+        with mock.patch.object(gen,'generate_base',side_effect=base):
+            with mock.patch.object(gen,'run',return_value='{"integrity":"ok","schema_version":35}'):
+                with self.assertRaisesRegex(ValueError,'registered schema: v1.0.10'):
+                    self.generate({'v1.0.10':self.bridge})
+        self.out.unlink();Path(str(self.out)+'.schema34.json').unlink()
+        responses=['{"integrity":"ok","schema_version":36}',
+                   '{"integrity":"ok","schema_version":35}']
+        with mock.patch.object(gen,'generate_base',side_effect=base),mock.patch.object(gen,'run',side_effect=responses):
+            with self.assertRaisesRegex(ValueError,'verification differs from registered schema: v1.0.10'):
+                self.generate({'v1.0.10':self.bridge})
+
+    def test_chain_and_bridge_arguments_cannot_be_ambiguous(self):
+        self.assertEqual(releases.registered('v1.1.0')['generation_chain'],['v1.0.10','v1.1.0'])
+        self.assertEqual(releases.registered('v1.1.1')['generation_chain'],['v1.0.10','v1.1.1'])
+        for values in (['v1.0.10=x','v1.0.10=y'],['v1.0.10'],['v01.0.10=x']):
+            with self.assertRaises(ValueError):releases.parse_bridge_assets(values)
+        document=releases.registry();document['versions']['v1.1.1']['generation_chain']=['v1.1.1','v1.0.10']
+        registry=self.root/'bad-registry.json';registry.write_text(json.dumps(document))
+        with mock.patch.object(releases,'REGISTRY',registry):
+            with self.assertRaisesRegex(ValueError,'generation chain'):releases.registry()
+
+
 class StartingVersionIntegrationTests(unittest.TestCase):
     def test_registered_start_official_migration_and_post_audit(self):
         server=os.environ.get('R31_PREVIOUS_SERVER');version=os.environ.get('R31_START_VERSION')
@@ -476,11 +544,12 @@ class StartingVersionIntegrationTests(unittest.TestCase):
         base=os.environ.get('R31_BASE_SERVER',server)
         with tempfile.TemporaryDirectory() as directory:
             db=Path(directory)/'fixture.db'
-            result=gen.generate(Path(server),db,'tiny',start_version=version,base_assets=Path(base).parent)
+            bridges={'v1.0.10':Path(os.environ['R31_BRIDGE_ASSETS'])} if os.environ.get('R31_BRIDGE_ASSETS') else {}
+            result=gen.generate(Path(server),db,'tiny',start_version=version,base_assets=Path(base).parent,bridge_assets=bridges)
             self.assertEqual(result['verify']['schema_version'],releases.registered(version)['schema'])
             self.assertEqual(result['base_version'],'v1.0.6');self.assertEqual(result['starting_version'],version)
             self.assertTrue(result['rows_checked']);self.assertEqual(result['rows']['agents'],71)
-            self.assertEqual(len(result['official_migrations']),int(version!='v1.0.6'))
+            self.assertEqual([s['to_version'] for s in result['official_migrations']],releases.registered(version)['generation_chain'])
             if version!='v1.0.6': self.assertNotIn('tcp_mini_state',result['rows'])
             with sqlite3.connect(db) as c:c.execute('DELETE FROM agent_google_status WHERE agent_id=(SELECT agent_id FROM agent_google_status LIMIT 1)')
             after=gen.audit(db,releases.registered(version)['schema'])

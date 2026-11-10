@@ -69,9 +69,11 @@ func TestInstallerDownloadsAreBoundedResumableAndAuthenticated(t *testing.T) {
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
 	for _, required := range []string{
 		`DOWNLOAD_CONNECT_TIMEOUT_SECONDS=10`,
-		`DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS=60`,
-		`DOWNLOAD_RETRY_MAX_SECONDS=180`,
-		`--retry-all-errors`,
+		`DOWNLOAD_STALL_SECONDS=60`,
+		`DOWNLOAD_SPEED_LIMIT=1024`,
+		`DOWNLOAD_RETRY_MAX_SECONDS=1800`,
+		`--speed-limit "${DOWNLOAD_SPEED_LIMIT}" --speed-time "${DOWNLOAD_STALL_SECONDS}"`,
+		`--max-time "${remaining}"`,
 		`--continue-at -`,
 		`"${destination}.partial"`,
 		`https://api.github.com/repos/${REPOSITORY}/releases/tags/${version}`,
