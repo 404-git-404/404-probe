@@ -1,8 +1,8 @@
 // Headless-only screenshots: authentic page pixels plus a clearly marked zoomed crop.
 const fs=require('node:fs'),path=require('node:path');
 const {launch,open}=require('./lib/v11-panel-fixture.cjs');
-const out=process.env.V113_SCREENS,evidence=process.env.V113_EVIDENCE;
-if(!out||!evidence)throw Error('Set V113_SCREENS and V113_EVIDENCE');
+const out=process.env.V111_SCREENS,evidence=process.env.V111_EVIDENCE;
+if(!out||!evidence)throw Error('Set V111_SCREENS and V111_EVIDENCE');
 (async()=>{fs.mkdirSync(out,{recursive:true});const b=await launch(),records=[];
  try{for(const theme of ['dark','light']){
  const f=await open(b,{width:2048,height:1152,deviceScaleFactor:1.25,n:3,theme});
