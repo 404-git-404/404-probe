@@ -44,7 +44,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantErr := error(nil)
-			if version == 34 {
+			if version == 34 || version == 35 {
 				wantErr = ErrSchemaTooOld
 			}
 			if version == 37 {

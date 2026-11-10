@@ -59,7 +59,7 @@ for identity in unknown v1.0.8; do
 done
 
 # Real product transaction must reject before creating locks, candidates or backups.
-for identity in v1.0.8 unknown; do
+for identity in v1.0.8 v1.0.9 unknown; do
   if [[ "${identity}" == unknown ]]; then
     printf '#!/bin/bash\nexit 1\n' >"${SERVER_BINARY}"
   else
@@ -81,7 +81,7 @@ for identity in v1.0.8 unknown; do
   printf 'PASS Server upgrade %s rejected without file changes\n' "${identity}"
 done
 # The real identify function runs before and after locking. Stop only at download.
-for identity in v1.0.9 v1.0.10; do
+for identity in v1.0.10 v1.1.0; do
   cat >"${SERVER_BINARY}" <<EOF
 #!/bin/bash
 [[ "\$1" == version && "\$2" == --json ]] || exit 99
@@ -97,12 +97,12 @@ EOF
     # Simulate another installer completing immediately before this lock.
     flock() {
       command flock "$@" || return
-      if [[ "${identity}" == v1.0.9 ]]; then sed -i 's/v1.0.9/v1.0.10/' "${SERVER_BINARY}"; fi
+      if [[ "${identity}" == v1.0.10 ]]; then sed -i 's/v1.0.10/v1.1.0/' "${SERVER_BINARY}"; fi
     }
     download_server_upgrade_candidate() { printf '%s\n' "${current}" >"${temporary}/download-current"; exit 88; }
     upgrade_existing_server
   ) >"${temporary}/allowed" 2>&1 || status=$?
-  [[ "${status}" == 88 && "$(<"${temporary}/download-current")" == v1.0.10 ]]
+  [[ "${status}" == 88 && "$(<"${temporary}/download-current")" == v1.1.0 ]]
   [[ "$(wc -l <"${temporary}/identify.log")" == 2 ]]
   rm -rf -- "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_LOCK_DIRECTORY}"
   rm -f -- "${temporary}/download-current"
@@ -110,12 +110,12 @@ EOF
 done
 
 # Untrusted JSON identities use the same stable, actionable error code.
-for identity in '{"version":"dev","dirty":false}' '{"version":"v1.0.9","dirty":true}'; do
+for identity in '{"version":"dev","dirty":false}' '{"version":"v1.1.0","dirty":true}'; do
   printf '#!/bin/bash\nprintf '\''%%s\n'\'' '\''%s'\''\n' "${identity}" >"${SERVER_BINARY}"
   chmod 0755 "${SERVER_BINARY}"
   if upgrade_existing_server >"${temporary}/identity-rejection" 2>&1; then exit 1; fi
   grep -Fq server_version_unrecognized "${temporary}/identity-rejection"
-  grep -Fq 'PROBE_404_VERSION=v1.0.9' "${temporary}/identity-rejection"
+  grep -Fq 'PROBE_404_VERSION=v1.0.10' "${temporary}/identity-rejection"
   grep -Fq 'no files were changed' "${temporary}/identity-rejection"
 done
 printf 'PASS untrusted identities have stable code and pinned installer guidance\n'

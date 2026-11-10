@@ -11,7 +11,7 @@ func TestInstallerTwoDigitUpgradeAndNonUpgradePreserveInstallation(t *testing.T)
 	for _, row := range []struct {
 		from, to         string
 		success, changed bool
-	}{{"v1.0.9", "v1.0.10", true, true}, {"v1.0.10", "v1.0.9", false, false}, {"v1.0.10", "v1.0.10", true, false}} {
+	}{{"v1.0.10", "v1.1.0", true, true}, {"v1.1.0", "v1.0.10", false, false}, {"v1.1.0", "v1.1.0", true, false}} {
 		t.Run(row.from+"-"+row.to, func(t *testing.T) {
 			rootNative := t.TempDir()
 			root := shellTestPath(rootNative)
@@ -81,9 +81,9 @@ server_upgrade_trap(){ :; }
 verify_server_stable_readiness(){ :; }
 status=0
 (upgrade_existing_server) || status=$?
-if [[ "$CURRENT" == v1.0.9 ]]; then
+if [[ "$CURRENT" == v1.0.10 ]]; then
  [[ "$status" == 0 ]]
- grep -Fq '"version":"v1.0.10"' "$SERVER_BINARY"
+ grep -Fq '"version":"v1.1.0"' "$SERVER_BINARY"
  [[ "$(cat "$SERVER_DATABASE")" == migrated ]]
  grep -Fq 'stop 404-probe-server.service' "$task_root/events"
  grep -Fq committed "$task_root/events"
@@ -91,7 +91,7 @@ if [[ "$CURRENT" == v1.0.9 ]]; then
 else
  sha256sum -c "$task_root/before"
  [[ ! -e "$task_root/events" ]]
- if [[ "$PROBE_404_VERSION" == v1.0.9 ]]; then [[ "$status" != 0 ]]; else [[ "$status" == 0 ]]; fi
+ if [[ "$PROBE_404_VERSION" == v1.0.10 ]]; then [[ "$status" != 0 ]]; else [[ "$status" == 0 ]]; fi
 fi
 `
 			path := filepath.Join(rootNative, "digits.sh")
@@ -102,7 +102,7 @@ fi
 			if err != nil {
 				t.Fatalf("installer boundary: %v\n%s", err, output)
 			}
-			if row.to == "v1.0.9" && !strings.Contains(string(output), "refusing to downgrade Server") {
+			if row.to == "v1.0.10" && !strings.Contains(string(output), "refusing to downgrade Server") {
 				t.Fatalf("downgrade rejected for wrong reason: %s", output)
 			}
 		})

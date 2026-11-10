@@ -22,15 +22,15 @@ import (
 
 const currentSchemaVersion = 36
 
-// 每个版本发布前按升级支持策略更新。v1.0.9/v1.0.10 use schema 35/36.
-const minimumUpgradeSchemaVersion = 35
+// 每个版本发布前按升级支持策略更新。v1.0.10/v1.1.0 use schema 36.
+const minimumUpgradeSchemaVersion = 36
 
 var (
 	ErrUnauthorized             = errors.New("unauthorized")
 	ErrAgentRevoked             = fmt.Errorf("agent revoked: %w", ErrUnauthorized)
 	ErrAgentDisabled            = fmt.Errorf("agent disabled: %w", ErrUnauthorized)
 	ErrUnsupportedSchemaVersion = errors.New("unsupported newer schema version")
-	ErrSchemaTooOld             = errors.New("database_schema_too_old: database version is too old; first upgrade with install.sh from release v1.0.9 (PROBE_404_VERSION=v1.0.9) or v1.0.10 (PROBE_404_VERSION=v1.0.10), then upgrade to this release; no database migrations were run")
+	ErrSchemaTooOld             = errors.New("database_schema_too_old: database version is too old; first upgrade with install.sh from release v1.0.10 (PROBE_404_VERSION=v1.0.10) or v1.1.0 (PROBE_404_VERSION=v1.1.0), then upgrade to this release; no database migrations were run")
 	ErrUpgradeNotFound          = errors.New("upgrade operation not found")
 	ErrUpgradeConflict          = errors.New("agent already has an active upgrade")
 	ErrUpgradeTransition        = errors.New("invalid upgrade status transition")

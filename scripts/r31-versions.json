@@ -46,6 +46,13 @@
         "expense_exchange_rates"
       ],
       "removed_tables": []
+    },
+    "v1.1.0": {
+      "commit": "b1c58f962a377797f7f790cfe55a65c9051ba792",
+      "schema": 36,
+      "previous_version": "v1.0.10",
+      "added_tables": [],
+      "removed_tables": []
     }
   }
 }

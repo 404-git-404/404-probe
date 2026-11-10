@@ -380,8 +380,8 @@ class RegisteredReleaseTests(unittest.TestCase):
 
     def test_unknown_start_and_unregistered_target_schema(self):
         with self.assertRaisesRegex(ValueError,'unregistered'):
-            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.1.0')
-        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.1.0')
+            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.1.1')
+        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.1.1')
         self.assertEqual(releases.expected_schema('v1.0.10',36),36)
         self.assertEqual(releases.expected_schema('v1.0.8',35),35)
         with self.assertRaises(ValueError): releases.expected_schema('v1.0.8',36)
