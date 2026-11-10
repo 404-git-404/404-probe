@@ -949,6 +949,7 @@ async function refreshCountryCodeLookup(agent, button, feedback, newAfterVerific
   if (!agent || !mutationCSRFToken || !agent.management?.country_code_lookup || !agent.online
     || agent.disabled_at || agent.revoked || (uncertainCountryRequests.has(agent.agent_id) && !newAfterVerification)
     || ['requested', 'delivered'].includes(agent.country_code_lookup_operation?.status)) return;
+  agentActionErrors.delete(`${agent.agent_id}/country`);render(new Set([agent.agent_id]));
   if (!await DialogShell.confirm({title:'重新识别出口地区',device:agent.name,trigger:button,message:newAfterVerification
     ? '前请求结果仍不确定，服务器未见新的操作记录；是否明确发起一个新的单次识别？这不是原请求重试，前请求可能仍执行；服务器会拒绝已有待执行操作。取消可继续核实。'
     : 'Agent 将向 ipwho.is 查询国家/地区，只回传两字母代码；查询失败时保留当前值。是否继续？',confirmText:'重新识别'})) return;
@@ -1295,6 +1296,7 @@ async function saveDetailCountry(agent,code){
  const mutation=agentState.beginMutation(id,['plan','country']);if(!mutation)return;
  try{const plan=await savePlanPayload(id,Management.planPayload(agents.get(id)?.plan,{country_code_override:code}));planRenewal.invalidate(id);
   let country={};if(!plan.country_code_override){try{const data=await readJSON('/api/v1/web/dashboard?ids='+encodeURIComponent(id)),row=data.items.find(a=>a.agent_id===id);if(row)country={country_code:row.country_code,country_source:row.country_source};}catch{/* Reconciliation retains responsibility if the canonical read is unavailable. */}}
+  agentActionErrors.delete(`${id}/country`);
   finishPlanResource(mutation,{plan,...country});}
  catch(error){agentActionErrors.set(`${id}/country`,error.message||'地区保存失败');}
  finally{finishPlanResource(mutation);reconciliation.notify(id);render();}
