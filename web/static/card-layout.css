@@ -25,9 +25,8 @@ body>header,body>main,body>footer{width:calc(100% - 56px);max-width:2100px}body>
 .agent-card .google-check .check-result[data-premium="available"] { background: var(--color-surface-02); }
 .agent-card .google-check .check-result[data-premium="unavailable"] { background: var(--color-surface-04); }
 .agent-card .google-check .check-result[data-premium="undetermined"] { background: var(--color-surface-05); }
-.agent-card .google-check .youtube-status-tip { display: none; position: fixed; z-index: 60; left: 8px; top: 8px; width: min(300px,calc(100vw - 68px)); box-sizing: border-box; padding: 9px; border: 1px solid var(--color-line-02); border-radius: 8px; background: var(--color-surface-03); box-shadow: 0 4px 12px var(--color-shadow-01); font: 12px/1.6 system-ui; color: var(--color-text-03); white-space: normal; overflow-wrap: anywhere; }
-.agent-card .google-check .check-result:is(:hover,:focus) + .youtube-status-tip,
-.agent-card .google-check .youtube-status-tip:hover { display: block; }
+.youtube-status-tip { display: none; position: fixed; z-index: 120; left: 8px; top: 8px; width: min(300px,calc(100vw - 68px)); box-sizing: border-box; padding: 9px; border: 1px solid var(--color-line-02); border-radius: 8px; background: var(--color-surface-03); box-shadow: 0 4px 12px var(--color-shadow-01); font: 12px/1.6 system-ui; color: var(--color-text-03); white-space: normal; overflow-wrap: anywhere; }
+.youtube-status-tip[data-open=true] { display: block; }
 
 /* Missing or old address observations must not look like fresh usable IPs. */
 .agent-card .name .public-egress-item:is([data-status=unknown],[data-status=unavailable],[data-stale=true]){background:var(--color-surface-hover);color:var(--color-text-muted)}

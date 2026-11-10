@@ -421,11 +421,18 @@ async function setAgentDisabled(agent, disabled, button) {
 }
 
 let activeYouTubeTooltip = null;
+let youtubeTooltipObserver=null;
+function closeYouTubeTooltip(){
+ const active=activeYouTubeTooltip;if(!active)return;
+ activeYouTubeTooltip=null;youtubeTooltipObserver.disconnect();
+ active.tip.removeAttribute('data-open');
+ if(active.anchor.isConnected)active.anchor.parentElement.append(active.tip);
+ else active.tip.remove();
+}
 function positionYouTubeTooltip() {
- const anchor=activeYouTubeTooltip;
- if(!anchor?.isConnected){activeYouTubeTooltip=null;return;}
- const tip=anchor.nextElementSibling;
- if(!tip||!(document.activeElement===anchor||anchor.matches(':hover')||tip.matches(':hover')))return;
+ const active=activeYouTubeTooltip;if(!active)return;
+ const {anchor,tip}=active;
+ if(!anchor.isConnected){closeYouTubeTooltip();return;}
  const margin=8,width=Math.min(300,document.documentElement.clientWidth-margin*2);
  tip.style.width=`${width}px`;tip.style.maxHeight=`${innerHeight-margin*2}px`;tip.style.overflowY='auto';
  const rect=anchor.getBoundingClientRect(),height=tip.getBoundingClientRect().height;
@@ -434,9 +441,16 @@ function positionYouTubeTooltip() {
  tip.style.left=`${Math.max(margin,Math.min(rect.left,document.documentElement.clientWidth-width-margin))}px`;
  tip.style.top=`${top}px`;
 }
-function openYouTubeTooltip(anchor){activeYouTubeTooltip=anchor;positionYouTubeTooltip();}
+function openYouTubeTooltip(anchor){
+ if(activeYouTubeTooltip?.anchor===anchor){positionYouTubeTooltip();return;}
+ closeYouTubeTooltip();
+ const tip=anchor.nextElementSibling;if(!tip?.classList.contains('youtube-status-tip'))return;
+ if(!youtubeTooltipObserver)youtubeTooltipObserver=new MutationObserver(()=>{if(activeYouTubeTooltip&&!activeYouTubeTooltip.anchor.isConnected)closeYouTubeTooltip();});
+ activeYouTubeTooltip={anchor,tip};document.body.append(tip);tip.dataset.open='true';
+ positionYouTubeTooltip();youtubeTooltipObserver.observe(document.body,{childList:true,subtree:true});
+}
 addEventListener('resize',positionYouTubeTooltip,{passive:true});
-addEventListener('scroll',positionYouTubeTooltip,{capture:true,passive:true});
+addEventListener('scroll',closeYouTubeTooltip,{capture:true,passive:true});
 
 function googleCheckItems(agent) {
  const value=YouTubeStatus.display(agent);
@@ -472,6 +486,7 @@ function googleStatusPanel(agent) {
     const detail=YouTubeStatus.view(agent).description;
     result.tabIndex=0;result.setAttribute('aria-label',detail);
     result.addEventListener('mouseenter',()=>openYouTubeTooltip(result));result.addEventListener('focus',()=>openYouTubeTooltip(result));result.addEventListener('click',()=>{result.focus();openYouTubeTooltip(result);});
+    result.addEventListener('mouseleave',()=>{if(activeYouTubeTooltip?.anchor===result)closeYouTubeTooltip();});result.addEventListener('blur',()=>{if(activeYouTubeTooltip?.anchor===result)closeYouTubeTooltip();});
     const tip=document.createElement('span');tip.className='youtube-status-tip';tip.setAttribute('role','tooltip');tip.textContent=detail;
     tip.id=`youtube-observation-${agent.agent_id||'preview'}`;result.setAttribute('aria-describedby',tip.id);
     item.append(name, brand, result,tip);
@@ -1149,6 +1164,7 @@ let bannerHost=null,bannerView=null;
 function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('section');bannerHost.id='agent-list';container.after(bannerHost);bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger,tab='overview')=>{planRenewal.close();deviceDetails.open(id,tab,trigger);if(tab==='management')requestAnimationFrame(()=>document.querySelector('[data-upgrade-region]')?.scrollIntoView({block:'center'}));},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot)});}
 function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
 function renderDashboard(dirty=null) {
+  closeYouTubeTooltip();
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs={...dashboardUI.preferences.value,viewMode:dashboardUI.effectiveView()};
   document.querySelector('#phone-view-note').hidden=!(dashboardUI.preferences.value.viewMode==='list'&&prefs.viewMode==='cards');
@@ -1716,7 +1732,7 @@ refresh();
 let suspended = false;
 setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); dashboardUI.refreshVersion(); if (!agentState.refreshing()) refresh(); }, 15000);
 document.addEventListener('visibilitychange',()=>{if(!suspended&&!document.hidden)dashboardData.reload();});
-addEventListener('pagehide', () => { suspended = true; clearInterval(detailCheckTimer); planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
+addEventListener('pagehide', () => { suspended = true; closeYouTubeTooltip(); clearInterval(detailCheckTimer); planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 
