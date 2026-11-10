@@ -35,7 +35,7 @@ test('A1 A2 sidebar stays at bottom; one vertical scroll; aligned sticky header 
 },{n:60}));
 test('A3 A4 A5 A7 B7 B8 upgrade target, native theme, shared icons, status meaning and manual region',()=>ui(async f=>{
  await seed(f);const p=f.page;await p.locator('[data-view=list]').click();await settle(p);const row=p.locator(`[data-agent-id="${ID(0)}"]`);
- assert.equal(await row.locator('.banner-youtube').textContent(),'MO');assert.equal(await row.locator('.banner-youtube').getAttribute('data-tone'),'crit');assert.equal(await row.locator('.banner-youtube').getAttribute('title'),null);
+ assert.equal(await row.locator('.banner-youtube').textContent(),'US');assert.equal(await row.locator('.banner-youtube').getAttribute('data-tone'),'ok');assert.equal(await row.locator('.banner-youtube').getAttribute('title'),null);
  assert.match(await row.locator('.country-flag').getAttribute('src'),/mo.svg$/);assert.match(await row.locator('.banner-os img').getAttribute('src'),/debian.svg$/);assert.match(await row.locator('.banner-dot').getAttribute('title'),/状态：正常/);
  assert.equal(await p.locator('.status-legend,body>footer').count(),0);assert.equal(await p.locator('#dashboard-sort').evaluate(n=>getComputedStyle(n).colorScheme),'dark');
  await row.locator('.banner-upgrade-link').click();assert.equal(await p.locator('#details-tab-management').getAttribute('aria-selected'),'true');assert(await p.locator('[data-upgrade-region]').isVisible());assert((await p.locator('#details-pane-management').textContent()).includes('YouTube 地区检测'));

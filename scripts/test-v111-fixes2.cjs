@@ -2,16 +2,16 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {launch,open,ID}=require('./lib/v11-panel-fixture.cjs');
 const {audit}=require('./lib/v111-click-audit.cjs');
 async function ui(fn){const b=await launch(),f=await open(b,{n:60,width:2048,height:1152});try{await fn(f);assert.deepEqual(f.errors,[]);}finally{await f.close();await b.close();}}
-test('S1 manual region matches CN red card style in both palettes; S3 native options are opaque and readable',()=>ui(async f=>{
+test('S1 YouTube observation ignores egress override and keeps CN red in both palettes; S3 native options are opaque and readable',()=>ui(async f=>{
  const p=f.page,now=Date.now(),[a,b]=f.f.state.items;a.plan.country_code_override='MO';a.google_status={supported:true,checked_at:now,result:{youtube:{status:'not_cn',region:'US',premium:'available'}}};b.plan.country_code_override='';b.google_status={supported:true,checked_at:now,result:{youtube:{status:'cn',region:'CN',premium:'unavailable'}}};
  await p.evaluate(()=>dashboardData.reload());await p.waitForFunction(()=>!renderFrame);
  const card=i=>p.locator(`.agent-card[data-agent-id="${ID(i)}"]`),styles=n=>n.evaluate(n=>{const s=getComputedStyle(n);return {color:s.color,border:s.borderTopColor,background:s.backgroundColor,padding:s.padding,borderWidth:s.borderTopWidth,radius:s.borderRadius};});
- for(const theme of ['light','dark']){await p.evaluate(t=>ProbeTheme.set(t),theme);const manual=card(0).locator('.check-result'),cn=card(1).locator('.check-result');assert.equal(await manual.textContent(),'地区 MO');assert.equal(await manual.getAttribute('data-premium'),null);assert.equal(await cn.getAttribute('data-premium'),'unavailable');assert.deepEqual(await styles(manual),await styles(cn));
+ for(const theme of ['light','dark']){await p.evaluate(t=>ProbeTheme.set(t),theme);const manual=card(0).locator('.check-result'),cn=card(1).locator('.check-result');assert.equal(await manual.textContent(),'地区 US');assert.equal(await manual.getAttribute('data-premium'),'available');assert.equal(await cn.getAttribute('data-premium'),'unavailable');assert.notDeepEqual(await styles(manual),await styles(cn));
  const colors=await p.locator('select option').evaluateAll(nodes=>nodes.map(n=>{const s=getComputedStyle(n);return [s.color,s.backgroundColor];}));assert(colors.length>0);
  const lum=c=>{const rgb=c.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;};
  for(const [color,bg]of colors){assert(!bg.startsWith('rgba('),'option must be opaque: '+bg);assert((Math.max(lum(color),lum(bg))+.05)/(Math.min(lum(color),lum(bg))+.05)>=4.5);}
  console.log('OPTION_COLORS '+theme+' '+JSON.stringify([...new Set(colors.map(JSON.stringify))]));
- const cardColor=(await styles(manual)).color;await p.locator('[data-view=list]').click();await p.waitForFunction(()=>!renderFrame);const listColor=await p.locator(`.banner-row[data-agent-id="${ID(0)}"] .banner-youtube`).evaluate(n=>getComputedStyle(n).color);for(const color of [cardColor,listColor]){const [r,g,b]=color.match(/\d+/g).map(Number);assert(r>g&&r>b,'manual region must stay in the red family: '+color);}await p.locator('[data-view=cards]').click();await p.waitForFunction(()=>!renderFrame);
+ const cardColor=(await styles(manual)).background;await p.locator('[data-view=list]').click();await p.waitForFunction(()=>!renderFrame);const listColor=await p.locator(`.banner-row[data-agent-id="${ID(0)}"] .banner-youtube`).evaluate(n=>getComputedStyle(n).color);for(const color of [cardColor,listColor]){const [r,g,b]=color.match(/\d+/g).map(Number);assert(g>r&&g>b,'available YouTube region stays green: '+color);}await p.locator('[data-view=cards]').click();await p.waitForFunction(()=>!renderFrame);
  }
  assert.equal(await p.locator('.agent-card .banner-dot').count(),0);
 }));
