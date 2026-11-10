@@ -22,6 +22,20 @@ Server 新装需输入公开 HTTPS 地址并设置 Web 管理员密码（默认�
 
 **现有 Agent，且 Updater 正常：**先升级 Server，再登录 Web，打开设备管理中的升级操作。唯一目标与当前 Server 的版本及构建完全相同；只有更低版本的 Agent 可以升级，同版本显示“已是最新版本”，更高版本禁止回退，回退需重新安装。Server 为 RC/Beta 时仍需在当前单台 Agent 操作中显式确认，并保留原有能力门禁。仅在线、未暂停/撤销、具有所需 updater 能力的受支持 Agent 可执行；逐台核对健康版本上报，失败由 updater 恢复升级前安装。打开对话框不再连接 GitHub；实际升级仍需 Updater 下载并验证对应的正式发布资产。Web 路径只替换 Agent 二进制，不安装新的 root helper。v1.1.0 不再提供 v1.0.1 时代的本地迁移入口 `upgrade-agent`。对于 v1.0.1 及更早、未具备 V2 升级能力的 Agent，若面板因升级服务或升级协议条件禁用升级，会提示在机器上重新安装；其他情况以面板具体提示为准。旧 Agent 的监控上报仍兼容，本版不做最低 Agent 版本拒绝。当 Agent 明确报告当前系统不支持面板升级时（例如本次验证的 Alpine v1.0.10），详情只显示“不支持从面板升级”的说明；更早且未报告升级服务健康的 Agent 可能显示含 Alpine/OpenRC 提醒的通用排查文案，监控上报不受影响。
 
+### 网络慢时的升级办法
+
+GitHub 下载较慢时，可先准备本地资产，再在目标主机运行安装器：
+
+1. 从同一个官方 GitHub release 下载 `install.sh`、`SHA256SUMS` 和对应架构（amd64 或 arm64）的 Server / Agent 文件，放进同一目录。**现有 Server 升级还必须下载 `RELEASE-METADATA.json`**；只需准备要安装的角色和架构，不必下载其他二进制。
+2. 先计算 `SHA256SUMS` 自身的 SHA-256，与该 release 说明公布的值核对；然后在该目录执行 `sha256sum --check --strict --ignore-missing SHA256SUMS`，只检查已下载的文件。确认 `install.sh`、所选二进制，以及 Server 升级所需的 `RELEASE-METADATA.json` 均显示 `OK`；任一不符都不要继续。不要从其他版本混用文件。
+3. 将下面的版本和目录换成实际值，保留原来的参数；现有 Server 升级使用无参数入口，不追加 `server`：
+
+   ```bash
+   sudo PROBE_404_VERSION=vX.Y.Z PROBE_404_LOCAL_ASSET_DIRECTORY=/absolute/path/to/assets bash /absolute/path/to/assets/install.sh
+   ```
+
+`PROBE_404_LOCAL_ASSET_DIRECTORY` 会跳过在线 installer 引导，从本地目录复制所需文件，仍校验二进制哈希；Server 升级还会严格核对 metadata、版本和提交，保留原有升级门槛、备份和失败恢复。它不会把已有 Agent 变成可本地升级的安装；已有 Agent 仍按上文先升级 Server、再从面板升级，Alpine 的限制也相同。安装器运行时不再替你在线核对本地 `install.sh`，因此第 2 步不能省略。
+
 ### Alpine
 
 已有正常 Stable Updater 的 Agent 使用 Web 升级。Alpine 自动升级尚未提供，未确定发布版本，不要在现有 Alpine Agent 上把新装命令当作升级命令。
