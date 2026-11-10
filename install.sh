@@ -36,8 +36,9 @@ readonly SERVER_UPGRADE_HELPER_CANDIDATE="${INSTALL_HELPER}.candidate"
 readonly SERVER_UPGRADE_LOCK_DIRECTORY="/run/404-probe-upgrade"
 readonly SERVER_UPGRADE_LOCK="${SERVER_UPGRADE_LOCK_DIRECTORY}/server.lock"
 readonly DOWNLOAD_CONNECT_TIMEOUT_SECONDS=10
-readonly DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS=60
-readonly DOWNLOAD_RETRY_MAX_SECONDS=180
+readonly DOWNLOAD_STALL_SECONDS=60
+readonly DOWNLOAD_SPEED_LIMIT=1024
+readonly DOWNLOAD_RETRY_MAX_SECONDS=1800
 readonly DOWNLOAD_RETRIES=4
 
 INSTALL_TRANSACTION_ACTIVE=0
@@ -66,11 +67,50 @@ note() {
 }
 
 curl_with_retry() {
-  curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-    --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT_SECONDS}" \
-    --max-time "${DOWNLOAD_ATTEMPT_TIMEOUT_SECONDS}" \
-    --retry "${DOWNLOAD_RETRIES}" --retry-all-errors \
-    --retry-max-time "${DOWNLOAD_RETRY_MAX_SECONDS}" "$@"
+  local deadline="${DOWNLOAD_DEADLINE_SECONDS:-$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))}"
+  local remaining attempt=0 delay=1 status errors error_text
+  errors="$(mktemp)" || return 1
+  while :; do
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2
+      rm -f -- "${errors}"
+      return 28
+    fi
+    # --max-time is the remaining shared budget, never a fixed per-attempt cap.
+    # Own the retry loop: curl --retry-max-time alone can overrun that budget.
+    if LC_ALL=C curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+      --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT_SECONDS}" \
+      --speed-limit "${DOWNLOAD_SPEED_LIMIT}" --speed-time "${DOWNLOAD_STALL_SECONDS}" \
+      --max-time "${remaining}" "$@" 2>"${errors}"; then
+      cat -- "${errors}" >&2
+      rm -f -- "${errors}"
+      return 0
+    else
+      status=$?
+    fi
+    error_text="$(<"${errors}")"
+    cat -- "${errors}" >&2
+    if (( SECONDS >= deadline )); then
+      printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2
+      rm -f -- "${errors}"
+      return 28
+    fi
+    if [[ "${status}" == 28 && "${error_text}" == *'Operation too slow'* ]]; then
+      printf '404-probe installer: 下载卡住（60 秒低于 1 KB/s）；请参阅 README“网络慢时的升级办法”。\n' >&2
+    elif [[ "${status}" == 5 || "${status}" == 6 || "${status}" == 7 || "${status}" == 28 ]]; then
+      printf '404-probe installer: 连接失败；请参阅 README“网络慢时的升级办法”。\n' >&2
+    fi
+    if (( attempt >= DOWNLOAD_RETRIES )); then
+      rm -f -- "${errors}"
+      return "${status}"
+    fi
+    attempt=$((attempt + 1))
+    remaining=$((deadline - SECONDS))
+    (( delay <= remaining )) || delay="${remaining}"
+    sleep "${delay}"
+    (( delay >= 16 )) || delay=$((delay * 2))
+  done
 }
 
 # Download to a sibling partial file so curl can resume bytes received before a
@@ -89,7 +129,7 @@ download_to_file() (
   for url in "$@"; do
 	remaining=$((deadline - SECONDS))
 	(( remaining > 0 )) || break
-    if curl_with_retry --retry-max-time "${remaining}" "${extra_args[@]}" --continue-at - --output "${partial}" "${url}"; then
+    if DOWNLOAD_DEADLINE_SECONDS="${deadline}" curl_with_retry "${extra_args[@]}" --continue-at - --output "${partial}" "${url}"; then
       [[ -f "${partial}" && ! -L "${partial}" ]] || die "download did not create a regular file"
       mv -f -- "${partial}" "${destination}"
       return 0
@@ -119,8 +159,8 @@ download_release_asset() {
 	  "https://github.com/${REPOSITORY}/releases/download/${version}/${name}" && return 0
 	api_document="${destination}.release-api.json"
 	remaining=$((deadline - SECONDS))
-	(( remaining > 0 )) || { rm -f -- "${destination}.partial"; return 1; }
-	curl_with_retry --retry-max-time "${remaining}" --header 'Accept: application/vnd.github+json' \
+	(( remaining > 0 )) || { printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2; rm -f -- "${destination}.partial"; return 1; }
+	DOWNLOAD_DEADLINE_SECONDS="${deadline}" curl_with_retry --header 'Accept: application/vnd.github+json' \
 	  --output "${api_document}" "https://api.github.com/repos/${REPOSITORY}/releases/tags/${version}" \
 	  || { rm -f -- "${destination}.partial" "${api_document}"; return 1; }
 	tag="$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' "${api_document}")"
