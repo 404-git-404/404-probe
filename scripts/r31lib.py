@@ -41,6 +41,17 @@ def registry():
         previous, schema = version, row['schema']
     if 'v1.0.6' not in versions:
         raise ValueError('missing schema34 base')
+    for version, row in versions.items():
+        chain = row.get('generation_chain')
+        if not isinstance(chain, list) or (chain != [] if version == 'v1.0.6' else not chain or chain[-1] != version):
+            raise ValueError('invalid registered generation chain')
+        prior = 'v1.0.6'
+        for index, step in enumerate(chain):
+            if step not in versions or not version_tuple(prior) < version_tuple(step) <= version_tuple(version):
+                raise ValueError('invalid registered generation transition')
+            if versions[step]['schema'] < versions[prior]['schema'] or versions[step]['generation_chain'] != chain[:index+1]:
+                raise ValueError('inconsistent registered generation transition')
+            prior = step
     return doc
 
 
@@ -62,6 +73,36 @@ def expected_schema(version, explicit=None):
     if row is not None and explicit is not None and explicit != row['schema']:
         raise ValueError('expected schema differs from registry')
     return row['schema'] if row else explicit
+
+
+def parse_bridge_assets(values):
+    result = {}
+    for value in values:
+        version, separator, directory = value.partition('=')
+        version_tuple(version)
+        if not separator or not directory or version in result:
+            raise ValueError('bridge assets require unique VERSION=DIRECTORY entries')
+        result[version] = Path(directory)
+    return result
+
+
+def generation_assets(directory, version, arch, base_directory, bridge_assets=None):
+    """Authenticate every hop before creating or freezing any database."""
+    chain = registered(version)['generation_chain']
+    bridges = bridge_assets or {}
+    if not isinstance(bridges, dict) or set(bridges) != set(chain[:-1]):
+        raise ValueError('bridge_assets must name exactly the required official bridge releases: '
+                         + ', '.join(chain[:-1]))
+    base = assets(base_directory, 'v1.0.6', arch, True)
+    selected = assets(directory, version, arch, True)
+    steps = []
+    for step in chain:
+        try:
+            item = selected if step == version else assets(bridges[step], step, arch, True)
+        except (OSError, ValueError) as error:
+            raise ValueError('invalid official bridge assets for '+step+': '+str(error)) from error
+        steps.append((step, *item))
+    return base, selected, steps
 
 
 def digest(path):

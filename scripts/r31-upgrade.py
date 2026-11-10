@@ -294,6 +294,8 @@ def rehearse(args):
     if base_assets is None:
         raise ValueError('--base-assets required for later starting versions')
     assets(base_assets,'v1.0.6',arch)
+    bridge_assets=releases.parse_bridge_assets(args.bridge_assets)
+    releases.generation_assets(old,args.from_version,arch,base_assets,bridge_assets)
     if not BINARY.is_file() or not DB.is_file():
         raise ValueError('requires an existing Server installation to restore')
     for p in PATHS+CANDIDATES:
@@ -310,7 +312,7 @@ def rehearse(args):
     out=Path(args.out).resolve()
     work=Path('/var/lib')/('404-probe-r31-'+str(time.time_ns()))
     # Output/assets must be outside the paths that are moved/restored.
-    for p in [out,old,new]:
+    for p in [out,old,new,base_assets,*bridge_assets.values()]:
         if any(p==r or r in p.parents for r in PATHS):
             raise ValueError('output/assets overlap installation')
     if shutil.disk_usage('/var/lib').free < 8*1024**3:
@@ -354,7 +356,7 @@ def rehearse(args):
         spec=importlib.util.spec_from_file_location('r31_generate',generator)
         module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         result['fixture']=module.generate(old_server,work/'fixture.db',args.scale,anchor_ms=int(time.time()//60)*60000,
-                                          start_version=args.from_version,base_assets=base_assets)
+                                          start_version=args.from_version,base_assets=base_assets,bridge_assets=bridge_assets)
         if install(old,args.from_version)!=0:
             raise RuntimeError('starting-version local installation failed/cancelled')
         call('systemctl','stop',SERVICE)
@@ -456,6 +458,7 @@ def main():
     p.add_argument('--confirm-test-host',required=True,help='type this test machine hostname exactly; never use on production')
     p.add_argument('--expected-schema',type=int,help='registered target schema, or required explicit schema for a new target')
     p.add_argument('--base-assets',help='official v1.0.6 assets for the schema34 fixture base')
+    p.add_argument('--bridge-assets',action='append',default=[],metavar='VERSION=DIRECTORY',help='official intermediate release assets')
     return rehearse(p.parse_args())
 
 if __name__=='__main__':

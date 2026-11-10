@@ -35,7 +35,7 @@ def private_directory(path, fresh=False):
 def configuration(filename):
     doc = json.loads(Path(filename).read_text(encoding='utf-8'))
     required = {'from_version','to_version','from_assets','to_assets','base_assets','work_dir','scale'}
-    if not required <= set(doc) or set(doc)-required-{'expected_schema'}:
+    if not required <= set(doc) or set(doc)-required-{'expected_schema','bridge_assets'}:
         raise ValueError('configuration keys differ from documented format')
     releases.registered(doc['from_version'])
     if releases.version_tuple(doc['from_version']) >= releases.version_tuple(doc['to_version']):
@@ -51,6 +51,15 @@ def configuration(filename):
             raise ValueError('absolute non-symlink paths required')
         doc[key] = path.resolve(strict=True)
     private_directory(doc['work_dir'])
+    bridges = doc.setdefault('bridge_assets', {})
+    if not isinstance(bridges, dict):
+        raise ValueError('bridge_assets must be a release-to-directory object')
+    for version, value in bridges.items():
+        releases.registered(version)
+        path = Path(value)
+        if not path.is_absolute() or '\n' in str(path) or '\r' in str(path) or path.is_symlink():
+            raise ValueError('absolute non-symlink bridge paths required')
+        bridges[version] = path.resolve(strict=True)
     return doc
 
 
@@ -60,10 +69,11 @@ def check(doc, module=None):
     if arch is None:
         raise ValueError('only Linux amd64/arm64 supported')
     old, server, identity = releases.assets(doc['from_assets'], doc['from_version'], arch, True)
-    releases.assets(doc['base_assets'], 'v1.0.6', arch, True)
+    releases.generation_assets(doc['from_assets'], doc['from_version'], arch,
+                               doc['base_assets'], doc.get('bridge_assets'))
     new, _, target = releases.assets(doc['to_assets'], doc['to_version'], arch)
     work = doc['work_dir']
-    for path in (work, old, new, doc['base_assets']):
+    for path in (work, old, new, doc['base_assets'], *doc.get('bridge_assets', {}).values()):
         if any(path == root or root in path.parents for root in module.PATHS):
             raise ValueError('workspace/assets overlap installation')
     if any((parent/'.git').exists() for parent in (work, *work.parents)):
@@ -118,6 +128,8 @@ def operator_run(doc):
                str(doc['from_assets']),str(doc['to_assets']),doc['scale'],
                '--base-assets',str(doc['base_assets']),'--expected-schema',str(doc['expected_schema']),
                '--out',str(work/'results'),'--confirm-test-host',socket.gethostname()]
+    for version, directory in doc.get('bridge_assets', {}).items():
+        command.extend(['--bridge-assets', version+'='+str(directory)])
     rc = 1
     try:
         rc = subprocess.run(command).returncode  # inherited terminal, never capture installer output

@@ -7,7 +7,8 @@
       "schema": 34,
       "previous_version": null,
       "added_tables": [],
-      "removed_tables": []
+      "removed_tables": [],
+      "generation_chain": []
     },
     "v1.0.7": {
       "commit": "bba70f798a470e41d6173ecb0bbc766c2b5123e0",
@@ -17,6 +18,9 @@
       "removed_tables": [
         "tcp_mini_high",
         "tcp_mini_state"
+      ],
+      "generation_chain": [
+        "v1.0.7"
       ]
     },
     "v1.0.8": {
@@ -24,14 +28,20 @@
       "schema": 35,
       "previous_version": "v1.0.7",
       "added_tables": [],
-      "removed_tables": []
+      "removed_tables": [],
+      "generation_chain": [
+        "v1.0.8"
+      ]
     },
     "v1.0.9": {
       "commit": "42c5eeb798f679e49ea81f9480b7bcab46aac2df",
       "schema": 35,
       "previous_version": "v1.0.8",
       "added_tables": [],
-      "removed_tables": []
+      "removed_tables": [],
+      "generation_chain": [
+        "v1.0.9"
+      ]
     },
     "v1.0.10": {
       "commit": "271c67d029d1fa1d5e8347a40f66f4a78648ff82",
@@ -45,14 +55,32 @@
         "agent_tags",
         "expense_exchange_rates"
       ],
-      "removed_tables": []
+      "removed_tables": [],
+      "generation_chain": [
+        "v1.0.10"
+      ]
     },
     "v1.1.0": {
       "commit": "b1c58f962a377797f7f790cfe55a65c9051ba792",
       "schema": 36,
       "previous_version": "v1.0.10",
       "added_tables": [],
-      "removed_tables": []
+      "removed_tables": [],
+      "generation_chain": [
+        "v1.0.10",
+        "v1.1.0"
+      ]
+    },
+    "v1.1.1": {
+      "commit": "f6b631f5d98d28bdf1cb593fcaac41b484c62f74",
+      "schema": 36,
+      "previous_version": "v1.1.0",
+      "added_tables": [],
+      "removed_tables": [],
+      "generation_chain": [
+        "v1.0.10",
+        "v1.1.1"
+      ]
     }
   }
 }

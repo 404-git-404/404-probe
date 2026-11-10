@@ -307,18 +307,18 @@ def audit(path, schema):
                     freelist_count=c.execute('PRAGMA freelist_count').fetchone()[0])
 
 
-def generate(server, output, scale, seed=31, anchor_ms=NOW, start_version='v1.0.6', base_assets=None):
+def generate(server, output, scale, seed=31, anchor_ms=NOW, start_version='v1.0.6', base_assets=None, bridge_assets=None):
     started = time.monotonic()
     entry = releases.registered(start_version)  # reject unknown versions before any write
     server, output = Path(server).resolve(strict=True), Path(output).absolute()
     arch = server.name.removeprefix('404-probe-server-linux-')
-    _, official, identity = releases.assets(server.parent, start_version, arch, True)
-    if official != server:
-        raise ValueError('Server must be the named official asset')
     base_directory = server.parent if start_version == 'v1.0.6' else base_assets
     if base_directory is None:
         raise ValueError('--base-assets (official v1.0.6) required for later starting versions')
-    _, base_server, _ = releases.assets(base_directory, 'v1.0.6', arch, True)
+    (_, base_server, _), (_, official, identity), migration_assets = releases.generation_assets(
+        server.parent, start_version, arch, base_directory, bridge_assets)
+    if official != server:
+        raise ValueError('Server must be the named official asset')
     for sidecar in (Path(str(output)+'.json'), Path(str(output)+'.schema34.json')):
         if sidecar.exists() or sidecar.is_symlink():
             raise ValueError('fixture evidence must not exist')
@@ -326,20 +326,29 @@ def generate(server, output, scale, seed=31, anchor_ms=NOW, start_version='v1.0.
     # The schema34 generator above is retained unchanged; only official binaries migrate it.
     Path(str(output)+'.json').rename(Path(str(output)+'.schema34.json'))
     steps = []
-    if start_version != 'v1.0.6':
+    prior_version = 'v1.0.6'
+    prior_rows = base['rows']
+    verified = base['verify']
+    for step_version, _, step_server, step_identity in migration_assets:
+        step_schema = releases.registered(step_version)['schema']
         begin = time.monotonic()
-        migrated = json.loads(run(official, 'database', 'migrate-protected', '--db', output))
+        migrated = json.loads(run(step_server, 'database', 'migrate-protected', '--db', output))
         migration_seconds = time.monotonic()-begin
-        if migrated.get('integrity') != 'ok' or migrated.get('schema_version') != entry['schema']:
-            raise ValueError('official migration did not reach registered schema')
+        if migrated.get('integrity') != 'ok' or migrated.get('schema_version') != step_schema:
+            raise ValueError('official migration did not reach registered schema: '+step_version)
         begin = time.monotonic()
-        verified = json.loads(run(official, 'database', 'verify', '--db', output))
+        verified = json.loads(run(step_server, 'database', 'verify', '--db', output))
         verify_seconds = time.monotonic()-begin
-        steps.append(dict(from_version='v1.0.6', to_version=start_version, server=identity,
+        if verified.get('integrity') != 'ok' or verified.get('schema_version') != step_schema:
+            raise ValueError('official verification differs from registered schema: '+step_version)
+        step_audit = audit(output, step_schema)
+        releases.check_counts(prior_rows, step_audit['rows'], prior_version, step_version)
+        steps.append(dict(from_version=prior_version, to_version=step_version, server=step_identity,
+                          asset_sha256=releases.digest(step_server), schema=step_schema,
+                          audit=step_audit, rows_checked=True,
                           migration=migrated, migration_seconds=round(migration_seconds,3),
                           verification=verified, verify_seconds=round(verify_seconds,3)))
-    else:
-        verified = base['verify']
+        prior_version, prior_rows = step_version, step_audit['rows']
     if verified.get('integrity') != 'ok' or verified.get('schema_version') != entry['schema']:
         raise ValueError('official verification differs from registered schema')
     with sqlite3.connect(output) as c:
@@ -364,12 +373,14 @@ def main():
     p.add_argument('--server',required=True,type=Path)
     p.add_argument('--start-version',default='v1.0.6',help='registered starting release')
     p.add_argument('--base-assets',type=Path,help='official v1.0.6 assets for the unchanged schema34 base')
+    p.add_argument('--bridge-assets',action='append',default=[],metavar='VERSION=DIRECTORY',help='official intermediate release assets; repeat per required bridge')
     p.add_argument('--out',required=True,type=Path)
     p.add_argument('--scale',choices=['tiny','snapshot','full','compact'],required=True)
     p.add_argument('--seed',type=int,default=31)
     p.add_argument('--anchor-ms',type=int,default=NOW,help='UTC window end; fixed by default, use current minute for live upgrade rehearsal')
     a=p.parse_args()
-    print(json.dumps(generate(a.server.absolute(),a.out,a.scale,a.seed,a.anchor_ms,a.start_version,a.base_assets),indent=2))
+    bridges = releases.parse_bridge_assets(a.bridge_assets)
+    print(json.dumps(generate(a.server.absolute(),a.out,a.scale,a.seed,a.anchor_ms,a.start_version,a.base_assets,bridges),indent=2))
 
 if __name__ == '__main__':
     main()
