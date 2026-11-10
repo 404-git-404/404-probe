@@ -1069,6 +1069,7 @@ function countryCodeLookupControls(agent) {
   const button = document.createElement('button');
   button.type = 'button';
   const status = document.createElement('span');
+  status.className = 'details-note';
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   function update(next) {
@@ -1090,14 +1091,15 @@ function countryCodeLookupControls(agent) {
   else if (!agent.online) statusText = '设备离线，不能触发识别。';
   else if (operation?.status === 'requested') statusText = '已排队，等待 Agent 领取。';
   else if (operation?.status === 'delivered') statusText = 'Agent 已领取，等待一次性查询结果。';
-  else if (operation?.status === 'unknown') statusText = '上次结果待核实；当前显示值未变。重新触发会创建新的单次请求。';
+  else if (operation?.status === 'unknown') statusText = '识别等待超时，结果待核实；当前显示值未变。重新触发会创建新的单次请求。';
   else if (operation?.status === 'failed') statusText = '上次识别失败，已保留此前国家/地区。';
   else if (operation?.status === 'succeeded') statusText = `上次识别成功${operation.result_code ? `：${operation.result_code}` : ''}。`;
   else statusText = '不会自动查询；只有手动触发时才发起一次识别。';
   if (agent.plan?.country_code_override) statusText += ' 当前启用了手动覆盖，识别结果不会改变当前显示。';
   if (agentActionErrors.has(`${agent.agent_id}/country`)) statusText = agentActionErrors.get(`${agent.agent_id}/country`);
   if (uncertainCountryRequests.has(agent.agent_id)) statusText += ' 提交结果不确定，不会自动重试；请刷新状态核实，当前值保留。';
-    setCardText(status, statusText);status.title=statusText;controls.title=statusText;button.title=statusText;status.dataset.attention=String(operation?.status==='failed'||agentActionErrors.has(`${agent.agent_id}/country`));
+    status.dataset.result=String(['succeeded','failed','unknown'].includes(operation?.status)||agentActionErrors.has(`${agent.agent_id}/country`));
+    setCardText(status, statusText);status.title=statusText;controls.title=statusText;button.title=statusText;status.dataset.attention=String(['failed','unknown'].includes(operation?.status)||agentActionErrors.has(`${agent.agent_id}/country`));
   }
   update(agent);
   button.addEventListener('click', () => uncertainCountryRequests.has(agent.agent_id)
@@ -1678,10 +1680,16 @@ async function readAgentUpgrade(id, context, signal) {
 const pendingTelemetry = new Map();
 const detailJobs=new Map();
 function hydrateActiveDetail(id){
- if(!agents.has(id)||detailJobs.has(id)||suspended)return detailJobs.get(id)?.task;
+ if(!agents.has(id)||suspended)return;
+ if(detailJobs.has(id)){detailJobs.get(id).again=true;return detailJobs.get(id).task;}
  const controller=new AbortController();
- const task=Promise.allSettled([readAgentDetail(id,controller.signal),readAgentUpgrade(id,null,controller.signal)]).finally(()=>detailJobs.delete(id));
- detailJobs.set(id,{controller,task});return task;
+ const task=Promise.allSettled([readAgentDetail(id,controller.signal),readAgentUpgrade(id,null,controller.signal)]).finally(()=>{
+  const job=detailJobs.get(id);if(job?.controller!==controller)return;
+  detailJobs.delete(id);
+  const active=deviceDetails.snapshot();
+  if(job.again&&active.open&&active.id===id&&!suspended)hydrateActiveDetail(id);
+ });
+ detailJobs.set(id,{controller,task,again:false});return task;
 }
 const dashboardData=DashboardData.create({state:agentState,read:readJSON,onchange:ids=>{overviewReady=true;render(ids);},onsuccess:()=>{if(events.readyState===EventSource.OPEN){stream.textContent='实时连接';stream.classList.add('live');}},onerror:()=>{stream.textContent='部分资料读取失败';stream.classList.remove('live');}});
 const reconciliation={
@@ -1690,6 +1698,14 @@ const reconciliation={
  close(){for(const id of detailJobs.keys())this.cancel(id);dashboardData.close();}
 };
 function refresh(){return dashboardData.refresh();}
+// Operation state is detail-only: dashboard summaries and telemetry cannot finish it.
+// Poll just the open device while a check is pending; never resubmit an operation.
+const detailCheckTimer=setInterval(()=>{
+ if(suspended||document.hidden)return;
+ const active=deviceDetails.snapshot(),agent=active.open&&agents.get(active.id);
+ if(agent&&(['requested','delivered'].includes(agent.country_code_lookup_operation?.status)||agent.google_status?.pending))hydrateActiveDetail(active.id);
+},2000);
+
 const organizationAPI=OrganizationAPI.create({csrf:()=>mutationCSRFToken,read:readJSON});
 organizationDialogs=OrganizationDialogs.create({api:organizationAPI,read:readJSON,agents,state:agentState,refresh:async id=>{await dashboardData.reload();if(id&&!suspended)renderDashboard(new Set([id]));}});
 expenseDialog=ExpenseDialog.create({api:organizationAPI,visibleIDs:()=>DashboardModel.select(agents,dashboardData.catalog(),dashboardUI.preferences.value,serverBuild).list.map(a=>a.agent_id),refresh:()=>dashboardData.reload()});
@@ -1700,7 +1716,7 @@ refresh();
 let suspended = false;
 setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); dashboardUI.refreshVersion(); if (!agentState.refreshing()) refresh(); }, 15000);
 document.addEventListener('visibilitychange',()=>{if(!suspended&&!document.hidden)dashboardData.reload();});
-addEventListener('pagehide', () => { suspended = true; planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
+addEventListener('pagehide', () => { suspended = true; clearInterval(detailCheckTimer); planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 

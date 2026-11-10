@@ -83,3 +83,7 @@ html { scrollbar-gutter: stable; }
 /* Preserve action contrast in both palettes for every interaction state. */
 #device-details .details-action-row .upgrade-agent:is(:hover,:focus-visible,:disabled){background:var(--color-accent);color:var(--color-text-02);border-color:var(--color-accent);opacity:1}
 #device-details .details-danger .remove-agent:is(:hover,:focus-visible,:disabled){background:var(--color-danger);color:var(--color-text-02);border-color:var(--color-danger);opacity:1}
+
+/* Keep the select/button row, and give completed lookup feedback a full line. */
+.details-region .country-lookup-controls{display:contents}
+.details-region .country-lookup-controls>span[data-result=true]{display:block;grid-column:1/-1;font-size:12px;margin-top:0}
