@@ -181,7 +181,7 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
 .c7 .nq7-key .nq7-b-red::after{width:2px;height:2px;margin:-1px 0 0 -1px}
 .c7 .nq7-note{margin-left:auto;flex:none;white-space:nowrap}
 .c7 .nq7-note[data-alert=true]{color:var(--c7-crit-text)}
-.c7 .nq7-tip,.c7 .lm7-tip{position:absolute;z-index:6;box-sizing:border-box;padding:8px 10px;border-radius:8px;background:var(--color-surface-01);color:var(--color-text-02);font-size:11px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 4px 12px var(--color-shadow-03);pointer-events:none}
+.c7 .nq7-tip,.c7 .lm7-tip{position:absolute;z-index:6;box-sizing:border-box;padding:8px 10px;border-radius:8px;background:var(--color-surface-03);color:var(--color-text-03);font-size:11px;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 4px 12px var(--color-shadow-03);pointer-events:none}
 .c7 .nq7-tip[hidden],.c7 .lm7-tip[hidden]{display:none}
 
 /* network, face B (the curves) */

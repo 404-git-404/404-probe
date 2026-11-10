@@ -5,7 +5,7 @@ body>header,body>main,body>footer{width:calc(100% - 56px);max-width:2100px}body>
 @media(max-width:760px){body>header,body>main,body>footer{width:calc(100% - 28px)}body>header{align-items:start;flex-direction:column;gap:8px}.header-actions{flex-direction:row}}
 .agent-card.state-paused{border-style:dashed}.agent-card.state-unknown{border-color:var(--color-line-01)}
 .agent-card .country-mark,.agent-card .country-flag{width:48px;min-width:48px;height:36px;border-radius:5px}.agent-card .country-mark{display:grid;place-items:center;font-size:27px;overflow:hidden}.agent-card .country-flag{object-fit:cover}
-.agent-card .name-tooltip{display:none;position:absolute;top:100%;left:0;z-index:60;width:max-content;max-width:min(270px,calc(100vw - 90px));padding:7px 9px;border-radius:8px;background:var(--color-surface-01);color:var(--color-text-01);font-size:12px;line-height:1.5;overflow-wrap:anywhere;pointer-events:none}.agent-name-display h2:hover~.name-tooltip,.agent-name-display h2:focus~.name-tooltip{display:block}
+.agent-card .name-tooltip{display:none;position:absolute;top:100%;left:0;z-index:60;width:max-content;max-width:min(270px,calc(100vw - 90px));padding:7px 9px;border-radius:8px;background:var(--color-surface-03);color:var(--color-text-03);font-size:12px;line-height:1.5;overflow-wrap:anywhere;pointer-events:none}.agent-name-display h2:hover~.name-tooltip,.agent-name-display h2:focus~.name-tooltip{display:block}
 .agent-card .name { padding-right: 145px; gap: .5px; }
 .agent-card .name > img { flex-shrink: 0; }
 .agent-card .name > span { flex: 0 1 auto; }
