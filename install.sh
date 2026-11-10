@@ -69,6 +69,10 @@ note() {
 curl_with_retry() {
   local deadline="${DOWNLOAD_DEADLINE_SECONDS:-$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))}"
   local remaining attempt=0 delay=1 status errors error_text
+  local -a display_args=(--silent --show-error)
+  if [[ -t 1 && -t 2 ]]; then
+    display_args=(--progress-bar --show-error)
+  fi
   errors="$(mktemp)" || return 1
   while :; do
     remaining=$((deadline - SECONDS))
@@ -79,18 +83,23 @@ curl_with_retry() {
     fi
     # --max-time is the remaining shared budget, never a fixed per-attempt cap.
     # Own the retry loop: curl --retry-max-time alone can overrun that budget.
-    if LC_ALL=C curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-      --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT_SECONDS}" \
-      --speed-limit "${DOWNLOAD_SPEED_LIMIT}" --speed-time "${DOWNLOAD_STALL_SECONDS}" \
-      --max-time "${remaining}" "$@" 2>"${errors}"; then
-      cat -- "${errors}" >&2
+    # tee forwards progress immediately while retaining curl's failure reason.
+    # Non-TTY callers keep the same silent curl flags and stderr bytes.
+    {
+      if LC_ALL=C curl --fail "${display_args[@]}" --location --proto '=https' --tlsv1.2 \
+        --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT_SECONDS}" \
+        --speed-limit "${DOWNLOAD_SPEED_LIMIT}" --speed-time "${DOWNLOAD_STALL_SECONDS}" \
+        --max-time "${remaining}" "$@" 2>&1 >&3 | tee "${errors}" >&2; then
+        status=0
+      else
+        status="${PIPESTATUS[0]}"
+      fi
+    } 3>&1
+    if (( status == 0 )); then
       rm -f -- "${errors}"
       return 0
-    else
-      status=$?
     fi
     error_text="$(<"${errors}")"
-    cat -- "${errors}" >&2
     if (( SECONDS >= deadline )); then
       printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2
       rm -f -- "${errors}"
