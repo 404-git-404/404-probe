@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -14,6 +15,55 @@ func validProtocolReport() Report {
 		AgentID: "agent", Epoch: 1, SessionID: "session", Sequence: 1, CollectedAt: time.Now().UnixMilli(),
 		Hostname: "host", OS: "linux", Arch: "amd64", BootID: "boot",
 		RAMTotal: 1, DiskTotal: 1,
+	}
+}
+
+func TestOptionalHostHealthReport(t *testing.T) {
+	legacy := validProtocolReport()
+	data, err := json.Marshal(legacy)
+	if err != nil || bytes.Contains(data, []byte(`"host_health"`)) || legacy.Validate() != nil {
+		t.Fatalf("legacy report: %s, %v", data, err)
+	}
+	r := legacy
+	r.OS = ""
+	if r.Validate() == nil {
+		t.Fatal("legacy reports still require a system name")
+	}
+	r.HostHealth = &HostHealth{OSReadFailed: true, Disk: DiskHealth{
+		Status: DiskError, Reasons: []DiskHealthReason{DiskStalled}, StartedAt: r.CollectedAt, StalledSince: r.CollectedAt,
+	}}
+	data, err = json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Report
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&decoded); err != nil || decoded.Validate() != nil {
+		t.Fatalf("host health report: %s, %v, %v", data, err, decoded.Validate())
+	}
+	for name, change := range map[string]func(*DiskHealth){
+		"enum":             func(d *DiskHealth) { d.Status = "green" },
+		"reason":           func(d *DiskHealth) { d.Reasons = []DiskHealthReason{DiskStalled, "other"} },
+		"duplicates":       func(d *DiskHealth) { d.Reasons = []DiskHealthReason{DiskStalled, DiskStalled} },
+		"timestamp":        func(d *DiskHealth) { d.StartedAt = -1 },
+		"duration":         func(d *DiskHealth) { d.ProbeMS = -1 },
+		"stall":            func(d *DiskHealth) { d.StalledSince = 0 },
+		"filesystem limit": func(d *DiskHealth) { d.Filesystems = make([]DiskFilesystem, 3) },
+		"counter limit": func(d *DiskHealth) {
+			count := ^uint64(0)
+			d.Filesystems = []DiskFilesystem{{Scope: "root", Ext4Errors: &count}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := r
+			disk := r.HostHealth.Disk
+			change(&disk)
+			r.HostHealth = &HostHealth{OSReadFailed: true, Disk: disk}
+			if r.Validate() == nil {
+				t.Fatal("accepted invalid host health")
+			}
+		})
 	}
 }
 

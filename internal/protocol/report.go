@@ -53,6 +53,7 @@ type Report struct {
 	RXBytes              uint64                       `json:"rx_bytes"`
 	TXBytes              uint64                       `json:"tx_bytes"`
 	NetworkCounters      *NetworkCounterSet           `json:"network_counters,omitempty"`
+	HostHealth           *HostHealth                  `json:"host_health,omitempty"`
 }
 
 // NetworkCounterSet carries per-interface cumulative counters. Version zero
@@ -96,7 +97,13 @@ func (r Report) Validate() error {
 	if r.CollectedAt <= 0 || time.UnixMilli(r.CollectedAt).After(time.Now().Add(24*time.Hour)) {
 		return errors.New("collected_at is invalid")
 	}
-	if !validText(r.Hostname, 255) || !validText(r.OS, 128) || !validText(r.Arch, 64) {
+	if r.HostHealth != nil {
+		if err := r.HostHealth.Validate(); err != nil {
+			return err
+		}
+	}
+	missingOS := r.OS == "" && r.HostHealth != nil && r.HostHealth.OSReadFailed
+	if !validText(r.Hostname, 255) || (!missingOS && !validText(r.OS, 128)) || !validText(r.Arch, 64) {
 		return errors.New("hostname, os and arch are required and must be reasonably sized")
 	}
 	if r.AgentVersion != "" && (!validText(r.AgentVersion, 64) || strings.TrimSpace(r.AgentVersion) != r.AgentVersion) {
@@ -210,6 +217,7 @@ type ReportCapabilities struct {
 	Security              bool `json:"security,omitempty"`
 	ManagementReport      bool `json:"management_capabilities_report,omitempty"`
 	NetworkCountersReport bool `json:"network_counters_report,omitempty"`
+	HostHealthReport      bool `json:"host_health_report,omitempty"`
 
 	// GoogleStatusChinaSignal: the Server accepts a YouTube cn result that keeps the page region and
 	// the premium_unavailable_notice field. Without it an Agent reports the older Region=CN shape.
