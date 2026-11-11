@@ -65,6 +65,12 @@ sudo systemctl restart 404-probe-agent-updater
 
 ## 维护者备注
 
+### 下载时限
+
+Updater 为一次升级的发布元数据、SHA256SUMS、Agent 二进制、官方备用入口和重试共用 30 分钟。每次请求的连接与响应头合计最多等 30 秒。收到响应头后，若响应正文连续 60 秒平均速度低于 1 KiB/s（1024 字节/秒），Updater 会终止本次请求并在预算内重试，支持时从已下载的位置续传。
+
+`download_stalled` 表示下载因持续低速失败，`download_deadline_exceeded` 表示用尽共享总时限，`download_header_timeout` 表示连接或响应头超时。健康检查有独立的 2 分钟时限。下载期间重启导致升级失败，需重新发起。
+
 新版修复需要通过可用的旧升级通道或手动安装生效。旧服务已经不可达时，不能依赖面板升级自动修好旧通道；应先按本文确认安全并恢复通道。
 
 启动时已有遗留 socket：升级服务有意拒绝启动并保留原对象（fail-closed）。正常 systemd 单元由 RuntimeDirectory 生命周期清理旧目录；手动启动等绕开该生命周期的方式不能抢占遗留 socket。不要删除来源不明的对象。

@@ -43,25 +43,28 @@ type Inspector func(string) (CandidateBuildInfo, error)
 type ServiceCommand func(context.Context, string) error
 
 type EngineConfig struct {
-	CurrentVersion   string
-	GOOS             string
-	GOARCH           string
-	StateDirectory   string
-	LiveBinary       string
-	StagedBinary     string
-	PreviousBinary   string
-	HTTPClient       *http.Client
-	ReleaseBase      string
-	Inspect          Inspector
-	ServiceCommand   ServiceCommand
-	HealthTimeout    time.Duration
-	DownloadTimeout  time.Duration
-	RetryBaseDelay   time.Duration
-	DownloadAttempts int
-	Now              func() time.Time
-	OnCommitted      func()
-	OnRolledBack     func()
-	AgentRemoval     AgentRemovalLauncher
+	CurrentVersion            string
+	GOOS                      string
+	GOARCH                    string
+	StateDirectory            string
+	LiveBinary                string
+	StagedBinary              string
+	PreviousBinary            string
+	HTTPClient                *http.Client
+	ReleaseBase               string
+	Inspect                   Inspector
+	ServiceCommand            ServiceCommand
+	HealthTimeout             time.Duration
+	DownloadTimeout           time.Duration
+	DownloadHeaderTimeout     time.Duration
+	DownloadStallWindow       time.Duration
+	DownloadMinBytesPerSecond int64
+	RetryBaseDelay            time.Duration
+	DownloadAttempts          int
+	Now                       func() time.Time
+	OnCommitted               func()
+	OnRolledBack              func()
+	AgentRemoval              AgentRemovalLauncher
 }
 
 type Engine struct {
@@ -82,7 +85,11 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		config.GOARCH = runtime.GOARCH
 	}
 	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: 2 * time.Minute}
+		config.HTTPClient = &http.Client{}
+	} else {
+		client := *config.HTTPClient
+		client.Timeout = 0
+		config.HTTPClient = &client
 	}
 	if config.ReleaseBase == "" {
 		config.ReleaseBase = officialReleaseBase
@@ -91,7 +98,16 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 		config.HealthTimeout = 2 * time.Minute
 	}
 	if config.DownloadTimeout <= 0 {
-		config.DownloadTimeout = 3 * time.Minute
+		config.DownloadTimeout = 30 * time.Minute
+	}
+	if config.DownloadHeaderTimeout <= 0 {
+		config.DownloadHeaderTimeout = 30 * time.Second
+	}
+	if config.DownloadStallWindow <= 0 {
+		config.DownloadStallWindow = 60 * time.Second
+	}
+	if config.DownloadMinBytesPerSecond <= 0 {
+		config.DownloadMinBytesPerSecond = 1024
 	}
 	if config.RetryBaseDelay <= 0 {
 		config.RetryBaseDelay = time.Second
@@ -264,7 +280,7 @@ func (e *Engine) run(request Request) {
 	if err := e.setStatus("downloading", "", ""); err != nil {
 		failureCode = "stage_failed"
 	} else if err := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), e.config.DownloadTimeout)
+		ctx, cancel := context.WithTimeoutCause(context.Background(), e.config.DownloadTimeout, errDownloadDeadline)
 		defer cancel()
 		return e.downloadAndVerify(ctx, request.TargetVersion)
 	}(); err != nil {
@@ -416,7 +432,12 @@ func (e *Engine) setReleaseCommit(commit string) error {
 	return e.persistLocked()
 }
 
-func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
+func (e *Engine) fetch(ctx context.Context, url string, limit int64) (result []byte, err error) {
+	defer func() {
+		if cause := context.Cause(ctx); cause != nil {
+			result, err = nil, cause
+		}
+	}()
 	type endpoint struct {
 		url    string
 		accept string
@@ -447,7 +468,7 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 				request.Header.Set("If-Range", entityTag)
 			}
 		}
-		response, err := e.config.HTTPClient.Do(request)
+		response, requestContext, cancel, err := e.openDownload(request)
 		if err != nil {
 			lastErr = err
 		} else {
@@ -465,6 +486,7 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 					start, end, total, rangeErr := parseContentRange(response.Header.Get("Content-Range"))
 					if rangeErr != nil || start != int64(len(data)) || (expectedTotal >= 0 && total != expectedTotal) {
 						_ = response.Body.Close()
+						cancel(nil)
 						data = nil
 						expectedTotal = -1
 						entityTag = ""
@@ -477,8 +499,9 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 				if tag := response.Header.Get("ETag"); tag != "" {
 					entityTag = tag
 				}
-				chunk, readErr := io.ReadAll(io.LimitReader(response.Body, limit-int64(len(data))+1))
+				chunk, readErr := e.readDownloadBody(requestContext, cancel, response.Body, limit-int64(len(data))+1)
 				closeErr := response.Body.Close()
+				cancel(nil)
 				data = append(data, chunk...)
 				if int64(len(data)) > limit {
 					return nil, errors.New("response is too large")
@@ -498,12 +521,14 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 				lastErr = readErr
 			} else if status == http.StatusRequestedRangeNotSatisfiable && len(data) > 0 {
 				_ = response.Body.Close()
+				cancel(nil)
 				data = nil
 				expectedTotal = -1
 				entityTag = ""
 				lastErr = errors.New("server rejected resume range")
 			} else {
 				_ = response.Body.Close()
+				cancel(nil)
 				lastErr = fmt.Errorf("HTTP %d", status)
 				if !retryableHTTPStatus(status) && !official {
 					return nil, lastErr
@@ -511,17 +536,22 @@ func (e *Engine) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 			}
 		}
 	retry:
+		if attempt+1 == e.config.DownloadAttempts || ctx.Err() != nil {
+			break
+		}
 		if official && !apiResolved {
-			apiResolved = true
 			if apiURL, resolveErr := e.resolveOfficialAPIAsset(ctx, url); resolveErr == nil {
+				apiResolved = true
 				endpoints = append(endpoints, endpoint{url: apiURL, accept: "application/octet-stream"})
 				endpointIndex = len(endpoints) - 1
-			} else if lastErr == nil {
-				lastErr = resolveErr
+			} else {
+				// A stalled or header-timed-out API lookup can be retried
+				// within the same attempt count and overall deadline.
+				apiResolved = !errors.Is(resolveErr, errDownloadStalled) && !errors.Is(resolveErr, errDownloadHeaders)
+				if !apiResolved {
+					lastErr = resolveErr
+				}
 			}
-		}
-		if attempt+1 == e.config.DownloadAttempts {
-			break
 		}
 		delay := e.config.RetryBaseDelay << attempt
 		timer := time.NewTimer(delay)
@@ -576,16 +606,20 @@ func (e *Engine) resolveOfficialAPIAsset(ctx context.Context, directURL string) 
 		return "", err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	response, err := e.config.HTTPClient.Do(request)
+	response, requestContext, cancel, err := e.openDownload(request)
 	if err != nil {
 		return "", err
 	}
+	defer cancel(nil)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("release API returned HTTP %d", response.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
-	if err != nil || len(body) > 1<<20 {
+	body, err := e.readDownloadBody(requestContext, cancel, response.Body, 1<<20+1)
+	if err != nil {
+		return "", err
+	}
+	if len(body) > 1<<20 {
 		return "", errors.New("release API response is invalid")
 	}
 	var release struct {
@@ -963,6 +997,14 @@ func (e *Engine) cleanupCommittedFiles() {
 }
 
 func classifyDownloadFailure(err error) string {
+	switch {
+	case errors.Is(err, errDownloadDeadline):
+		return "download_deadline_exceeded"
+	case errors.Is(err, errDownloadStalled):
+		return "download_stalled"
+	case errors.Is(err, errDownloadHeaders):
+		return "download_header_timeout"
+	}
 	if strings.Contains(err.Error(), "candidate_version_mismatch") {
 		return "candidate_version_mismatch"
 	}
@@ -986,6 +1028,12 @@ func safeFailureMessage(code string) string {
 		return "upgrade release metadata and checksum manifest did not match"
 	case "checksum_mismatch":
 		return "upgrade candidate checksum did not match"
+	case "download_deadline_exceeded":
+		return "upgrade downloads exceeded the shared time limit"
+	case "download_stalled":
+		return "upgrade download stalled because the transfer speed stayed too low"
+	case "download_header_timeout":
+		return "upgrade connection or response headers timed out"
 	case "candidate_buildinfo_invalid", "candidate_revision_mismatch", "candidate_dirty", "candidate_platform_mismatch", "candidate_version_mismatch":
 		return "upgrade candidate build metadata is invalid"
 	case "restart_failed":
