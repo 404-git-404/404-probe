@@ -40,8 +40,48 @@ go test ./... -count=1
 
 **升级支持策略**：每个版本只支持从前 1–2 个正式版升级；v1.1.2 支持从 v1.1.0、v1.1.1 升级（两者 schema 都是 36，`minimumUpgradeSchemaVersion` 保持 36）。发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。版本窗口只由安装器保证；手动替换二进制不保证（数据库层另有 schema 门槛：schema 35 及更早的库会在打开时被拒绝，但这不等于窗口内的测试保证），发布说明也必须写明这一限制。
 
+### 发布分档（v1.2.0 起，维护者 2026-11-11 确认）
+
+版本号：加功能的版本升中间位（v1.2.0 → v1.3.0），只修 bug 的版本升末位（v1.2.1）。
+
+发布流程按“本版相对上一个正式版的全部改动”分三档，就高不就低，拿不准按高一档。这里的档只管发布流程；施工和评审的风险档仍按“开发方式”第 6 条。下面第 1–7 步写的是“发布-全套”的做法，另外两档只能减免本小节写明可以不做的项目。
+
+| 档 | 判定 | 流程 |
+|---|---|---|
+| 发布-轻量 | 只改 `web/static/`、文档、测试脚本；Go 产品代码、`install.sh` 的逻辑、schema 都没变 | 施工 → 评审 → 一个发布会话（准备和发布合并，不设独立评审 B 段） |
+| 发布-中 | 改了 Go 产品代码或 `install.sh` 的逻辑；没有新的数据库迁移，`minimumUpgradeSchemaVersion` 数值不变 | A 准备 → C 发布；改动涉及 `install.sh`、`internal/updater`、Agent 升级路径、认证 / 会话 / token、网络连接与地址安全时，加独立评审 B 段 |
+| 发布-全套 | 有新的数据库迁移，或 `minimumUpgradeSchemaVersion` 数值变化，或升级门槛的判断逻辑变化 | A 准备 → B 独立评审 → C 发布 |
+
+发布准备提交里例行的版本号和版本窗口更新（`DEFAULT_VERSION`、`require_supported_server_version` 的版本、三处提示文字及对应测试）不影响分档。
+
+三档都必须做：
+
+- Linux 全仓 `go vet ./...`、`go test ./... -count=1`，以及相关 Node / 浏览器测试；
+- 在主仓库或干净克隆里构建 7 个文件，逐个核对 `vcs.revision`、`vcs.modified=false`、SHA256 和 LF；
+- 测试 Server 用本地产物从上一个正式版升级；
+- 推送、打 tag、建 release（先 `--latest=false`），把 7 个文件下载回来核对，并核对 `SHA256SUMS` 摘要；
+- 至少一台 Debian 测试 Agent 做面板升级，升级前后做 R05 快照对比；
+- 成功后标 latest，失败改回草稿；然后文档提交、`main` 快进、roadmap 整理。
+
+可以减免的项目：
+
+| 项目 | 发布-轻量 | 发布-中 | 发布-全套 |
+|---|---|---|---|
+| 独立评审 B 段 | 不做 | 涉及上表所列范围时做 | 做 |
+| R31 大库升级演练 | 不做 | 不做；`install.sh` 的升级事务、备份或回滚逻辑有改动时做 | 做 |
+| root 安装器 harness（经 `scripts/installer-fixture.py`） | 不做 | 做 | 做 |
+| 相关用例 `-count=20 -timeout=60m` | 不做 | 做 | 做 |
+| Agent 升级 systemd 演练 | 不做 | 改了 Agent、Updater 或 `install.sh` 时做 | 做 |
+| 面板升级的测试 Agent | 一台 Debian | 两台 Debian | 两台 Debian |
+| 200 台性能 | 不做（改了首页渲染或 SSE 路径时，施工阶段已测） | 改了首页数据或渲染路径时做 | 做 |
+| 界面截图 | 只截本版改动处 | 只截本版改动处 | 全套 |
+
+定档与复核：每个版本开工前由策划定档，写进第一份任务书。发布会话开始时先执行 `git diff --name-only <上一个正式 tag> <待发布提交>`，对照本档的判定；发现超出本档范围的文件就停下报告，改按高一档做。
+
+理由：Agent 以 root 运行，版本不能降级，安装器出错可能连修复版都装不上，所以涉及 Go、安装器、schema 的版本不能靠“发出去有问题再修”。
+
 1. **发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。发布准备提交还必须“按升级支持策略更新版本窗口”：`internal/storage` 的 `minimumUpgradeSchemaVersion`、`install.sh` 的 `require_supported_server_version` 版本、三处提示（`database_schema_too_old`、`server_version_too_old`、`server_version_unrecognized`）里的版本号、`internal/storage/upgrade_floor_test.go`、`scripts/test-upgrade-floor.sh`。README 的升级说明、迁移链描述和 v1.0.1 桥接节在发布 A 段统一改写。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
-2. **发布前做独立 High 评审**，并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20 -timeout=60m`。
+2. **发布前做独立 High 评审**（发布-轻量不设，发布-中按‘发布分档’），并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20 -timeout=60m`。
 3. **从精确的、干净的发布提交构建产物，输出目录放在仓库外：**
 
    ```bash
@@ -57,7 +97,7 @@ go test ./... -count=1
 
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
-   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 发布门槛的演练矩阵仅包含本版支持的前两个正式版（v1.1.2：v1.1.0、v1.1.1 → v1.1.2，expected_schema: 36；本版只演练 v1.1.1 起点，v1.1.0 起点由升级门槛测试覆盖）；更早起点可演练，但不属于发布门槛。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。发布时对照目标版 `install.sh` 复核 r31-usage.md 里的提示清单，不一致就先更新清单。
+   - 发布-全套（以及‘发布分档’写明需要做 R31 的情况）：发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 发布门槛的演练矩阵仅包含本版支持的前两个正式版（v1.1.2：v1.1.0、v1.1.1 → v1.1.2，expected_schema: 36；本版只演练 v1.1.1 起点，v1.1.0 起点由升级门槛测试覆盖）；更早起点可演练，但不属于发布门槛。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。发布时对照目标版 `install.sh` 复核 r31-usage.md 里的提示清单，不一致就先更新清单。
    - 每个版本正式发布后，在下一版准备工作里把该版补入 R31 登记表：版本、正式 tag 提交、schema、相对上一版的表增删。
 5. **推送顺序：** 推送和 gh 操作需要维护者授权，可以在任务书里一次性授权。任务书必须写明哪些情况一定要停下来问，至少包括：结果与预期不符、升级失败、需要维护者操作面板或输入密码。
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
@@ -119,7 +159,7 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
 9. 修复攒成一批再提交评审，不逐条来回。
 10. 只有真正复杂的任务才分阶段授权和验收。
 11. 会话命名：每个施工或评审会话都有名字，格式“v<版本无点>-<CC 或 CX>-<用途>”，例如 v107-CC-后端、v107-CX-评审。报告和评审记录保存在 `D:\Claude-Github\release-records\<版本>\`，文件名以会话名开头。
-12. 发布由施工方完成到打 tag 之前；发布前的独立评审由另一方开新会话完成；评审通过后，再由施工方推送、打 tag、建 release，并完成后续步骤。
+12. 发布由施工方完成到打 tag 之前；发布前的独立评审由另一方开新会话完成；评审通过后，再由施工方推送、打 tag、建 release，并完成后续步骤。发布-轻量不设独立评审，见‘发布分档’。
 13. 模型强度：Codex（gpt-6.1-sol）施工严格档 high、轻量档 medium；Claude Code（Sonnet 5.5）评审严格档 high、轻量档 medium。
 
 ## 对维护者的回复格式
