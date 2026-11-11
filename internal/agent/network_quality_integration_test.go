@@ -17,7 +17,8 @@ import (
 
 func n2bRunner(t *testing.T, url, id, token string) *Runner {
 	t.Helper()
-	r, err := NewWithExecutor(Config{ServerURL: url, AllowInsecureHTTP: true, AgentID: id, Token: token, Interval: 10 * time.Second, Timeout: 5 * time.Second, StatePath: filepath.Join(t.TempDir(), "epoch")}, slog.New(slog.NewTextHandler(io.Discard, nil)), UnsupportedExecutor{})
+	// The quality worker is exercised directly on a supported platform.
+	r, err := newRunner(Config{ServerURL: url, AllowInsecureHTTP: true, AgentID: id, Token: token, Interval: 10 * time.Second, Timeout: 5 * time.Second, StatePath: filepath.Join(t.TempDir(), "epoch")}, slog.New(slog.NewTextHandler(io.Discard, nil)), UnsupportedExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

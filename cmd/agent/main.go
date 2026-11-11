@@ -35,7 +35,7 @@ func main() {
 		}
 		return
 	}
-	if err := checkPlatformCommand(os.Args[1:], platformsupport.Host()); err != nil {
+	if err := checkPlatformCommand(os.Args[1:], platformsupport.Host); err != nil {
 		slog.Error("unsupported Agent command", "error", err)
 		os.Exit(1)
 	}
@@ -141,11 +141,11 @@ func runSelectorOrder(arguments []string) error {
 	return agent.ExtractSelectorOrder(*config, *output)
 }
 
-func checkPlatformCommand(args []string, policy platformsupport.Policy) error {
-	if len(args) == 0 {
+func checkPlatformCommand(args []string, policy func() platformsupport.Policy) error {
+	if len(args) == 0 || (args[0] != "updater" && args[0] != "security-collect") {
 		return nil
 	}
-	return policy.CheckCommand(args[0])
+	return policy().CheckCommand(args[0])
 }
 
 func run() error {

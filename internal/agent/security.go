@@ -46,7 +46,7 @@ func (r *Runner) uploadSecurity(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	if r.deferredUnsupported {
+	if r.platformUnsupported() {
 		if err := r.postSecurity(ctx, protocol.SecuritySubmission{ProtocolVersion: protocol.SecurityProtocolVersion, AgentEpoch: r.epoch, SessionID: r.sessionID, Status: protocol.SecurityStatusUnavailable, Reason: "platform_unsupported"}); err != nil && ctx.Err() == nil {
 			r.logger.Warn("publish platform security status failed", "error", err)
 		}

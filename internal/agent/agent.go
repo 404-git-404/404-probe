@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 
 	"404-probe/internal/collector"
 	"404-probe/internal/geoip"
+	"404-probe/internal/hosthealth"
 	"404-probe/internal/platformsupport"
 	"404-probe/internal/protocol"
 	"404-probe/internal/updater"
@@ -104,11 +106,17 @@ func (c Config) Validate() error {
 }
 
 type Runner struct {
-	updaterHealthMu              sync.Mutex
-	updaterHealthCached          protocol.UpdaterHealth
-	updaterHealthExpires         time.Time
-	updaterHealthProbe           func(context.Context) protocol.UpdaterHealth
-	deferredUnsupported          bool
+	updaterHealthMu      sync.Mutex
+	updaterHealthCached  protocol.UpdaterHealth
+	updaterHealthExpires time.Time
+	updaterHealthProbe   func(context.Context) protocol.UpdaterHealth
+	deferredUnsupported  bool
+	platform             *platformMonitor
+	diskHealth           interface {
+		Run(context.Context)
+		Snapshot() protocol.DiskHealth
+	}
+	updaterReport                atomic.Pointer[updaterReportSample]
 	config                       Config
 	client                       *http.Client
 	collector                    reportCollector
@@ -122,6 +130,7 @@ type Runner struct {
 	reportCountryCode            bool
 	reportManagementCapabilities bool
 	reportNetworkCounters        bool
+	reportHostHealth             bool
 	versionReportAccepted        atomic.Bool
 	upgradeAPISupported          atomic.Bool
 	upgradeV2ServerSupported     atomic.Bool
@@ -187,10 +196,27 @@ func NewWithReportCollector(config Config, logger *slog.Logger, measurements int
 // executor. New uses the production HTTP, TCP, and conditionally available
 // ICMP executor.
 func NewWithExecutor(config Config, logger *slog.Logger, executor Executor) (*Runner, error) {
-	return newWithPlatform(config, logger, executor, platformsupport.Host())
+	r, err := newRunner(config, logger, executor)
+	if err != nil {
+		return nil, err
+	}
+	if runtime.GOOS == "linux" {
+		r.platform = &platformMonitor{read: platformsupport.ReadIdentity, timeout: 3 * time.Second}
+	}
+	r.diskHealth = hosthealth.New(filepath.Dir(config.StatePath))
+	return r, nil
 }
 
 func newWithPlatform(config Config, logger *slog.Logger, executor Executor, platform platformsupport.Policy) (*Runner, error) {
+	r, err := newRunner(config, logger, executor)
+	if err == nil {
+		r.deferredUnsupported = platform.DeferredUnsupported
+		r.quality.excludedReason = platformsupport.QualityHost().Reason
+	}
+	return r, err
+}
+
+func newRunner(config Config, logger *slog.Logger, executor Executor) (*Runner, error) {
 	if config.JobInterval == 0 {
 		config.JobInterval = DefaultJobInterval
 	}
@@ -226,12 +252,8 @@ func newWithPlatform(config Config, logger *slog.Logger, executor Executor, plat
 	if logger == nil {
 		logger = slog.Default()
 	}
-	quality := newQualityControl()
-	policy := platformsupport.QualityHost()
-	quality.excludedReason = policy.Reason
 	return &Runner{
-		deferredUnsupported: platform.DeferredUnsupported,
-		config:              config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
+		config: config, client: &http.Client{Timeout: config.Timeout}, logger: logger, epoch: epoch, sessionID: session,
 		collector: &collector.Collector{Includes: config.NetworkIncludes, Excludes: config.NetworkExcludes},
 		executor:  executor, interactiveControlReady: make(chan struct{}), securityReady: make(chan struct{}),
 		outboundHeartbeatInterval: outboundHeartbeatInterval,
@@ -240,7 +262,7 @@ func newWithPlatform(config Config, logger *slog.Logger, executor Executor, plat
 		countryCodeLookup: func(ctx context.Context) (string, error) {
 			return geoip.LookupCountryCode(ctx, geoip.Client(geoip.DefaultTimeout), geoip.Endpoint)
 		},
-		quality: quality,
+		quality: newQualityControl(),
 		googleStatusAvailable: func() bool {
 			capable, ok := executor.(googleStatusCapability)
 			return ok && capable.SupportsGoogleStatus()
@@ -256,12 +278,24 @@ func (r *Runner) Run(ctx context.Context) error {
 	parent := ctx
 	ctx, cancelAuthentication := withAgentAuthentication(parent)
 	defer cancelAuthentication(nil)
+	if c, ok := r.collector.(*collector.Collector); ok {
+		go c.RunDiskUsage(ctx, r.config.Interval)
+	}
+	if r.diskHealth != nil {
+		go r.diskHealth.Run(ctx)
+	}
+	if r.platform != nil {
+		go r.platform.run(ctx, r.quality.signal)
+		if r.config.UpdaterSocket != "" {
+			go r.runUpdaterReportSampling(ctx)
+		}
+	}
 	var sequence uint64
 	immediate := true
 	for {
 		workerContext, stopWorker := context.WithCancel(ctx)
 		var workers sync.WaitGroup
-		if r.quality == nil || r.quality.excludedReason == "" {
+		if r.quality == nil || r.platform != nil || r.qualityExclusion() == "" {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
@@ -283,7 +317,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			defer workers.Done()
 			r.runCountryCodeLookupWorker(workerContext)
 		}()
-		if !r.deferredUnsupported && r.config.UpdaterSocket != "" {
+		if (r.platform != nil || !r.platformUnsupported()) && r.config.UpdaterSocket != "" {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
@@ -412,12 +446,36 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	(*sequence)++
 	measurement.AgentID = r.config.AgentID
+	osReadFailed := false
+	if _, production := r.collector.(*collector.Collector); production {
+		if r.platform != nil {
+			identity := r.platform.snapshot()
+			measurement.OS = identity.lastOS
+			osReadFailed = identity.identity.OS == ""
+		} else {
+			measurement.OS = runtime.GOOS
+		}
+	}
+	measurement.HostHealth = nil
+	if r.reportHostHealth {
+		disk := protocol.DiskHealth{Status: protocol.DiskUnknown}
+		if r.diskHealth != nil {
+			disk = r.diskHealth.Snapshot()
+		}
+		measurement.HostHealth = &protocol.HostHealth{Disk: disk, OSReadFailed: osReadFailed}
+	} else if measurement.OS == "" {
+		measurement.OS = protocol.UnavailableSystemName
+	}
 	if r.config.CountryCode != "" {
 		measurement.CountryCode = r.config.CountryCode
 	}
+	var updaterSample updaterReportSample
+	if r.reportManagementCapabilities || r.reportAgentVersion {
+		updaterSample = r.reportUpdaterSample(ctx)
+	}
 	if r.reportManagementCapabilities {
 		measurement.Management = &protocol.AgentManagementCapabilities{
-			RemoteRemoval:     r.remoteRemovalCapability(ctx),
+			RemoteRemoval:     updaterSample.removal,
 			CountryCodeLookup: true,
 		}
 	}
@@ -436,19 +494,19 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	}
 	if r.reportAgentVersion {
 		measurement.AgentVersion = r.config.AgentVersion
-		health := r.updaterHealth(ctx)
+		health := updaterSample.health
 		measurement.AgentUpgradeCapable = health.Status == "healthy"
 		if r.reportUpdaterHealth {
 			measurement.AgentUpdaterHealth = &health
 		}
-		measurement.AgentUpgradeV2 = r.upgradeV2ServerSupported.Load() && r.upgradeV2UpdaterSupported.Load()
+		measurement.AgentUpgradeV2 = !r.platformUnsupported() && r.upgradeV2ServerSupported.Load() && r.upgradeV2UpdaterSupported.Load()
 	}
 	measurement.Epoch = r.epoch
 	measurement.NetworkQuality = r.qualitySupported.Load()
 	if r.qualityV2Supported.Load() {
 		measurement.NetworkQualityV2 = r.qualityCapabilities()
 	}
-	if r.quality != nil && r.quality.excludedReason != "" {
+	if r.qualityExclusion() != "" {
 		measurement.NetworkQuality = false
 	}
 	measurement.SessionID = r.sessionID
@@ -523,8 +581,9 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	r.setQualityUserTargets(response.Capabilities.NetworkQualityUserTargets && response.Capabilities.NetworkQualityV2)
 	r.observeQualityReport(measurement.NetworkQuality, response)
 	r.reportNetworkCounters = response.Capabilities.NetworkCountersReport
+	r.reportHostHealth = response.Capabilities.HostHealthReport
 	r.managementAPISupported.Store(response.Capabilities.ManagementReport)
-	if !r.deferredUnsupported && response.Capabilities.AgentUpgrade {
+	if !r.platformUnsupported() && response.Capabilities.AgentUpgrade {
 		r.upgradeAPISupported.Store(true)
 	}
 	r.interactiveControlSupported.Store(response.Capabilities.InteractiveControl)
@@ -550,7 +609,7 @@ func (r *Runner) updaterAvailable() bool {
 }
 
 func (r *Runner) updaterHealth(ctx context.Context) protocol.UpdaterHealth {
-	if r.deferredUnsupported || r.config.UpdaterSocket == "" {
+	if r.platformUnsupported() || r.config.UpdaterSocket == "" {
 		return protocol.UpdaterHealth{Status: "unsupported", Reason: "system_unsupported"}
 	}
 	r.updaterHealthMu.Lock()

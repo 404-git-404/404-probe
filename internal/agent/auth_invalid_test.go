@@ -33,7 +33,8 @@ func (b *f1Log) text() string { b.mu.Lock(); defer b.mu.Unlock(); return b.Buffe
 
 func f1Runner(t *testing.T, token string, logs *f1Log) *Runner {
 	t.Helper()
-	r, err := NewWithExecutor(Config{ServerURL: "https://server.test", AgentID: "agent", Token: token, Interval: 10 * time.Second, JobInterval: 10 * time.Second, Timeout: 5 * time.Second, StatePath: filepath.Join(t.TempDir(), "epoch")}, slog.New(slog.NewTextHandler(logs, nil)), UnsupportedExecutor{})
+	// Authentication uses a synthetic clock and a platform that supports quality.
+	r, err := newRunner(Config{ServerURL: "https://server.test", AgentID: "agent", Token: token, Interval: 10 * time.Second, JobInterval: 10 * time.Second, Timeout: 5 * time.Second, StatePath: filepath.Join(t.TempDir(), "epoch")}, slog.New(slog.NewTextHandler(logs, nil)), UnsupportedExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,9 +11,7 @@ func (r *Runner) qualityCapabilities() *protocol.QualityCapabilities {
 	if r.qualityStagedSupported.Load() {
 		c.Semantics = protocol.QualityStagedSemantics
 	}
-	if r.quality != nil {
-		c.ExcludedReason = r.quality.excludedReason
-	}
+	c.ExcludedReason = r.qualityExclusion()
 	// Step two of the negotiation: only after the Server answered the header (design 4.2).
 	if r.qualityUserTargets.Load() {
 		c.Targets = protocol.QualityTargetsUserV1

@@ -21,7 +21,7 @@ type agentRemovalHTTPClient struct {
 }
 
 func (r *Runner) updaterSupportsRemoteRemoval(ctx context.Context) bool {
-	if r.deferredUnsupported || r.config.UpdaterSocket == "" {
+	if r.platformUnsupported() || r.config.UpdaterSocket == "" {
 		return false
 	}
 	response, err := (updater.Client{Socket: r.config.UpdaterSocket, Timeout: 5 * time.Second}).Call(ctx, updater.Request{
@@ -107,7 +107,7 @@ func (c agentRemovalHTTPClient) markUninstalling(ctx context.Context, operationI
 }
 
 func (r *Runner) runRemovalWorker(ctx context.Context) {
-	if r.deferredUnsupported {
+	if r.platform == nil && r.platformUnsupported() {
 		return
 	}
 	server := agentRemovalHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: r.client}

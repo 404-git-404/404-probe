@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"404-probe/internal/protocol"
@@ -35,6 +36,27 @@ type Collector struct {
 	diskstatPath string
 	sysBlockPath string
 	now          func() time.Time
+	rootUsage    atomic.Pointer[disk.UsageStat]
+}
+
+// RunDiskUsage isolates statfs from live CPU, memory, and network sampling. A
+// stuck call occupies this worker only and never starts a second statfs call.
+func (c *Collector) RunDiskUsage(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for ctx.Err() == nil {
+		probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+		root, err := disk.UsageWithContext(probe, "/")
+		if err == nil && probe.Err() == nil {
+			c.rootUsage.Store(root)
+		}
+		cancel()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *Collector) Collect(ctx context.Context) (protocol.Report, error) {
@@ -42,9 +64,9 @@ func (c *Collector) Collect(ctx context.Context) (protocol.Report, error) {
 	if err != nil {
 		return protocol.Report{}, fmt.Errorf("hostname: %w", err)
 	}
-	info, err := host.InfoWithContext(ctx)
+	uptime, err := host.UptimeWithContext(ctx)
 	if err != nil {
-		return protocol.Report{}, fmt.Errorf("host info: %w", err)
+		return protocol.Report{}, fmt.Errorf("uptime: %w", err)
 	}
 	loads, err := load.AvgWithContext(ctx)
 	if err != nil {
@@ -58,9 +80,9 @@ func (c *Collector) Collect(ctx context.Context) (protocol.Report, error) {
 	if err != nil {
 		return protocol.Report{}, fmt.Errorf("swap: %w", err)
 	}
-	root, err := disk.UsageWithContext(ctx, "/")
-	if err != nil {
-		return protocol.Report{}, fmt.Errorf("root disk: %w", err)
+	root := c.rootUsage.Load()
+	if root == nil {
+		root = &disk.UsageStat{}
 	}
 	percent, err := cpu.PercentWithContext(ctx, 0, false)
 	if err != nil || len(percent) == 0 {
@@ -87,13 +109,9 @@ func (c *Collector) Collect(ctx context.Context) (protocol.Report, error) {
 	if err != nil {
 		return protocol.Report{}, fmt.Errorf("boot ID: %w", err)
 	}
-	osName := strings.TrimSpace(strings.Join([]string{info.Platform, info.PlatformVersion}, " "))
-	if osName == "" {
-		osName = runtime.GOOS
-	}
 	linux := c.collectLinuxSample()
 	return protocol.Report{
-		Hostname: hostname, OS: osName, Arch: runtime.GOARCH, BootID: bootID, Uptime: info.Uptime,
+		Hostname: hostname, Arch: runtime.GOARCH, BootID: bootID, Uptime: uptime,
 		CPUPercent: percent[0], CPUCores: uint32(cores), Load1: loads.Load1, Load5: loads.Load5, Load15: loads.Load15,
 		RAMUsed: vm.Used, RAMTotal: vm.Total, RAMPercent: vm.UsedPercent,
 		SwapUsed: swap.Used, SwapTotal: swap.Total, SwapPercent: swap.UsedPercent,

@@ -211,8 +211,9 @@ func TestVersionReportWaitsForServerCapability(t *testing.T) {
 		_, _ = io.WriteString(w, `{"accepted":true,"capabilities":{"agent_version_report":true,"agent_upgrade":true}}`)
 	}))
 	defer server.Close()
-	runner, err := New(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second,
-		AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"), AgentVersion: "v0.8.0"}, nil)
+	// This fixture drives individual reports with a known platform and no Run loop.
+	runner, err := newRunner(Config{ServerURL: server.URL, AgentID: "agent", Token: "token", Interval: time.Second, Timeout: time.Second,
+		AllowInsecureHTTP: true, StatePath: filepath.Join(t.TempDir(), "epoch"), AgentVersion: "v0.8.0"}, nil, NewProbeExecutor())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -140,7 +140,7 @@ func qualityBackoff(failures int, base time.Duration, random func() float64) tim
 }
 
 func (r *Runner) runQualityWorker(ctx context.Context) {
-	if r.quality == nil || r.quality.excludedReason != "" {
+	if r.quality == nil || (r.platform == nil && r.qualityExclusion() != "") {
 		return
 	}
 	control := r.quality
@@ -225,6 +225,10 @@ func (r *Runner) runQualityWorker(ctx context.Context) {
 		cfg := control.config
 		stopSerial := control.stopSerial
 		control.mu.Unlock()
+		if reason := r.qualityExclusion(); reason != "" && (currentAllowed || wantFetch) {
+			r.stopQuality(reason)
+			continue
+		}
 		now := clock()
 		if stopSerial != auth || (!currentAllowed && allowed) {
 			auth = stopSerial

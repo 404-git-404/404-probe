@@ -202,8 +202,8 @@ func (r *Runner) observeQualityReport(optIn bool, response protocol.ReportRespon
 	if r.quality == nil {
 		return
 	}
-	if r.quality.excludedReason != "" {
-		r.stopQuality(r.quality.excludedReason)
+	if reason := r.qualityExclusion(); reason != "" {
+		r.stopQuality(reason)
 		return
 	}
 	if !response.Capabilities.NetworkQuality {

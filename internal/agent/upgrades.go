@@ -89,7 +89,7 @@ func (c upgradeHTTPClient) post(ctx context.Context, path string, value any) (in
 }
 
 func (r *Runner) runUpgradeWorker(ctx context.Context) {
-	if r.deferredUnsupported {
+	if r.platform == nil && r.platformUnsupported() {
 		return
 	}
 	server := upgradeHTTPClient{baseURL: strings.TrimRight(r.config.ServerURL, "/"), token: r.config.Token, client: r.client}
@@ -118,7 +118,7 @@ func (r *Runner) runUpgradeWorker(ctx context.Context) {
 }
 
 func (r *Runner) runUpgradeCycle(ctx context.Context, server upgradeHTTPClient, local updater.Client) bool {
-	if r.deferredUnsupported {
+	if r.platformUnsupported() {
 		return false
 	}
 	if r.upgradeV2ServerSupported.Load() {

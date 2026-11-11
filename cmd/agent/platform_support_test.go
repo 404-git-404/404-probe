@@ -9,16 +9,21 @@ import (
 )
 
 func TestAlpineCommandGate(t *testing.T) {
+	unsupported := func() platformsupport.Policy { return platformsupport.Policy{DeferredUnsupported: true} }
+	supported := func() platformsupport.Policy { return platformsupport.Policy{} }
 	for _, args := range [][]string{{"updater"}, {"updater", "removal-worker"}, {"updater", "removal-finalize"}, {"security-collect"}} {
-		if checkPlatformCommand(args, platformsupport.Policy{DeferredUnsupported: true}) == nil {
+		if checkPlatformCommand(args, unsupported) == nil {
 			t.Fatalf("allowed %v", args)
 		}
-		if err := checkPlatformCommand(args, platformsupport.Policy{}); err != nil {
+		if err := checkPlatformCommand(args, supported); err != nil {
 			t.Fatalf("changed nonAlpine %v", args)
 		}
 	}
 	for _, args := range [][]string{nil, {"licenses"}, {"version"}, {"country-code", "lookup"}, {"selector-order", "extract"}, {"--server", "https://example.test"}} {
-		if err := checkPlatformCommand(args, platformsupport.Policy{DeferredUnsupported: true}); err != nil {
+		if err := checkPlatformCommand(args, func() platformsupport.Policy {
+			t.Fatalf("basic command read platform files: %v", args)
+			return platformsupport.Policy{}
+		}); err != nil {
 			t.Fatalf("basic blocked %v", args)
 		}
 	}

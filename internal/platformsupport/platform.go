@@ -15,6 +15,60 @@ type Policy struct{ DeferredUnsupported bool }
 
 func Host() Policy { return detect(runtime.GOOS, readRelease) }
 
+type Identity struct {
+	OS       string
+	Deferred Policy
+	Quality  QualityPolicy
+}
+
+func UnknownIdentity() Identity {
+	return Identity{Deferred: Policy{DeferredUnsupported: true}, Quality: QualityPolicy{true, "platform_identity_unknown"}}
+}
+
+// ReadIdentity uses one set of file reads for both independently gated features
+// and the reported OS name. Callers that need a deadline run it off their hot path.
+func ReadIdentity() Identity { return identify(runtime.GOOS, readRelease) }
+
+func identify(goos string, read func(string) ([]byte, error)) Identity {
+	if goos != "linux" {
+		return Identity{OS: goos}
+	}
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	files := make(map[string]readResult, 2)
+	readOnce := func(path string) ([]byte, error) {
+		if result, ok := files[path]; ok {
+			return result.data, result.err
+		}
+		data, err := read(path)
+		if path == "/etc/os-release" && os.IsNotExist(err) {
+			data, err = read("/usr/lib/os-release")
+		}
+		files[path] = readResult{data, err}
+		return data, err
+	}
+	deferred := detect(goos, readOnce)
+	quality := detectQuality(goos, readOnce)
+	raw, err := readOnce("/etc/os-release")
+	id, valid := releaseID(string(raw))
+	var name string
+	if err == nil && valid && len(id) <= 128 {
+		name = id
+		for _, line := range strings.Split(string(raw), "\n") {
+			if version, ok := strings.CutPrefix(strings.TrimSpace(line), "VERSION_ID="); ok {
+				version = strings.Trim(version, `"'`)
+				if version != "" && len(name)+len(version)+1 <= 128 && !strings.ContainsAny(version, "\x00\r\n") {
+					name += " " + version
+				}
+				break
+			}
+		}
+	}
+	return Identity{OS: name, Deferred: deferred, Quality: quality}
+}
+
 func (p Policy) CheckCommand(command string) error {
 	if p.DeferredUnsupported && (command == "updater" || command == "security-collect") {
 		return fmt.Errorf("%s is not supported yet on this platform (暂不支持)", command)
