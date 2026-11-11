@@ -270,6 +270,28 @@ def write_results(out,result):
     (out/'summary.md').write_text('\n'.join(lines)+'\n')
 
 
+def resolve_generation_directory(path):
+    path = Path(path)
+    if path.is_symlink():
+        raise ValueError(f'unsupported asset directory symlink: {path}')
+    return path.resolve(strict=True)
+
+
+def rehearsal_asset_paths(args, old, new):
+    base = args.base_assets or (old if args.from_version == 'v1.0.6' else None)
+    if base is None:
+        raise ValueError('--base-assets required for later starting versions')
+    base = resolve_generation_directory(base)
+    bridges = {version: resolve_generation_directory(path)
+               for version, path in releases.parse_bridge_assets(args.bridge_assets).items()}
+    out = Path(args.out).resolve()
+    # Output/assets must be outside the paths that are moved/restored.
+    for path in (out, old, new, base, *bridges.values()):
+        if any(path == installed or installed in path.parents for installed in PATHS):
+            raise ValueError('output/assets overlap installation')
+    return out, base, bridges
+
+
 def rehearse(args):
     if sys.platform!='linux' or os.geteuid()!=0:
         raise ValueError('requires Linux root and an exclusive test slot')
@@ -290,11 +312,8 @@ def rehearse(args):
         raise ValueError('only linux amd64/arm64 supported')
     old,old_server,old_identity=assets(args.from_assets,args.from_version,arch)
     new,new_server,new_identity=assets(args.to_assets,args.to_version,arch)
-    base_assets=Path(args.base_assets) if args.base_assets else old if args.from_version=='v1.0.6' else None
-    if base_assets is None:
-        raise ValueError('--base-assets required for later starting versions')
+    out,base_assets,bridge_assets=rehearsal_asset_paths(args,old,new)
     assets(base_assets,'v1.0.6',arch)
-    bridge_assets=releases.parse_bridge_assets(args.bridge_assets)
     releases.generation_assets(old,args.from_version,arch,base_assets,bridge_assets)
     if not BINARY.is_file() or not DB.is_file():
         raise ValueError('requires an existing Server installation to restore')
@@ -309,12 +328,7 @@ def rehearse(args):
         raise ValueError('mixed Agent installation or pending candidate; no changes made')
     if Path('/var/lib/404-probe-upgrade/pending').exists():
         raise ValueError('pending upgrade requires recovery before rehearsal')
-    out=Path(args.out).resolve()
     work=Path('/var/lib')/('404-probe-r31-'+str(time.time_ns()))
-    # Output/assets must be outside the paths that are moved/restored.
-    for p in [out,old,new,base_assets,*bridge_assets.values()]:
-        if any(p==r or r in p.parents for r in PATHS):
-            raise ValueError('output/assets overlap installation')
     if shutil.disk_usage('/var/lib').free < 8*1024**3:
         raise ValueError('at least 8 GiB free in /var/lib required')
     # Check timing/failure anchors before stopping or moving the existing install.

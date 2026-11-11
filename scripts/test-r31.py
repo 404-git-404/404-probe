@@ -559,6 +559,48 @@ class StartingVersionIntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'quality_totals'):gen.audit(db,releases.registered(version)['schema'])
 
 
+class RehearsalAssetPathTests(unittest.TestCase):
+    def setUp(self):
+        from types import SimpleNamespace
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(self.root)
+        for name in ('base', 'bridge', 'old', 'new'):
+            (self.root / name).mkdir()
+        self.old, self.new = self.root / 'old', self.root / 'new'
+        self.args = SimpleNamespace(from_version='v1.1.1', base_assets='base',
+                                    bridge_assets=['v1.0.10=bridge'], out='result')
+
+    def test_relative_generation_paths_resolve_to_absolute_paths(self):
+        self.assertEqual(upgrade.rehearsal_asset_paths(self.args, self.old, self.new),
+                         (self.root / 'result', self.root / 'base', {'v1.0.10': self.root / 'bridge'}))
+
+    def test_base_and_bridge_symlinks_are_rejected(self):
+        try:
+            (self.root / 'alias').symlink_to(self.root / 'base', target_is_directory=True)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f'symlink creation unavailable: {error}')
+        for base, bridge in (('alias', 'bridge'), ('base', 'alias')):
+            with self.subTest(base=base, bridge=bridge):
+                self.args.base_assets = base
+                self.args.bridge_assets = [f'v1.0.10={bridge}']
+                with self.assertRaisesRegex(ValueError, 'asset directory symlink'):
+                    upgrade.rehearsal_asset_paths(self.args, self.old, self.new)
+
+    def test_resolved_relative_assets_cannot_overlap_installation(self):
+        installed = self.root / 'installed'
+        (installed / 'nested').mkdir(parents=True)
+        with mock.patch.object(upgrade, 'PATHS', [installed]):
+            for base, bridge in (('base/../installed', 'bridge'), ('base', 'bridge/../installed/nested')):
+                with self.subTest(base=base, bridge=bridge):
+                    self.args.base_assets = base
+                    self.args.bridge_assets = [f'v1.0.10={bridge}']
+                    with self.assertRaisesRegex(ValueError, 'assets overlap installation'):
+                        upgrade.rehearsal_asset_paths(self.args, self.old, self.new)
+
+
 class PreflightTests(unittest.TestCase):
     def setUp(self):
         import types
