@@ -43,6 +43,18 @@ validate_service_user() { :; }
 validate_removable_service_user() { :; }
 openrc_role_residue() { return 1; }
 mountpoint() { return 1; }
+rm() {
+  # The general fixture wrapper rejects symlink operands. Permit only this
+  # fixture's literal cache leaf to be unlinked, with its parent still checked.
+  if [[ $# == 3 && "$1" == -f && "$2" == -- && -L "$3" ]] &&
+     [[ "$3" == "$STATE_DIRECTORY/update-check.json" || "$3" == "$STATE_DIRECTORY"/.update-check-*.tmp ]] &&
+     [[ "${3%/*}" == "$STATE_DIRECTORY" ]]; then
+    fixture_path "$STATE_DIRECTORY" || return
+    command rm "$@"
+  else
+    fixture_mutate rm "$@"
+  fi
+}
 stat() {
   if [[ "$1" == -c && "$2" == %U ]]; then
     # The fixture uses synthetic account records, so model the corresponding
@@ -75,24 +87,61 @@ write_cache() {
   printf '{"enabled":false}\n' >"$STATE_DIRECTORY/update-check.json"
   chmod 0600 "$STATE_DIRECTORY/update-check.json"
   touch "$STATE_DIRECTORY/.update-check-x.tmp"
+  case "$1" in
+    directories)
+      rm -- "$STATE_DIRECTORY/update-check.json"
+      mkdir -- "$STATE_DIRECTORY/update-check.json" "$STATE_DIRECTORY/.update-check-directory.tmp"
+      printf preserve >"$STATE_DIRECTORY/update-check.json/unknown"
+      ;;
+    symlinks)
+      printf preserve >"$task_root/link-target"
+      mkdir -p "$task_root/linked-directory"
+      printf preserve >"$task_root/linked-directory/unknown"
+      rm -- "$STATE_DIRECTORY/update-check.json"
+      ln -s -- "$task_root/link-target" "$STATE_DIRECTORY/update-check.json"
+      ln -s -- "$task_root/linked-directory" "$STATE_DIRECTORY/.update-check-link.tmp"
+      ln -s -- "$task_root/absent" "$STATE_DIRECTORY/.update-check-dangling.tmp"
+      ;;
+  esac
 }
 verify_cache_removed() {
-  [[ ! -e "$STATE_DIRECTORY/update-check.json" && ! -e "$STATE_DIRECTORY/.update-check-x.tmp" ]]
+  [[ ! -e "$STATE_DIRECTORY/.update-check-x.tmp" ]]
+  if [[ "$1" == directories ]]; then
+    [[ "$(cat "$STATE_DIRECTORY/update-check.json/unknown")" == preserve && -d "$STATE_DIRECTORY/.update-check-directory.tmp" ]]
+    rm -- "$STATE_DIRECTORY/update-check.json/unknown"
+    rmdir -- "$STATE_DIRECTORY/update-check.json" "$STATE_DIRECTORY/.update-check-directory.tmp"
+  else
+    for path in update-check.json .update-check-link.tmp .update-check-dangling.tmp; do
+      [[ ! -e "$STATE_DIRECTORY/$path" && ! -L "$STATE_DIRECTORY/$path" ]]
+    done
+  fi
+  if [[ "$1" == symlinks ]]; then
+    [[ "$(cat "$task_root/link-target")" == preserve && "$(cat "$task_root/linked-directory/unknown")" == preserve ]]
+  fi
 }
 if [[ "$mode" == fresh-rollback ]]; then
   for INSTALL_INIT in systemd openrc; do
-    write_cache
-    openrc_stop() { return 0; }
-    status=0
-    (
-      INSTALL_TRANSACTION_ACTIVE=1
-      INSTALL_TRANSACTION_ROLE=server
-      INSTALL_TRANSACTION_UNIT=404-probe-server
-      INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=1
-      rollback_install_transaction 42
-    ) || status=$?
-    [[ "$status" == 42 && ! -e "$STATE_DIRECTORY" ]]
-    verify_cache_removed
+    for layout in clean directories symlinks; do
+      write_cache "$layout"
+      openrc_stop() { return 0; }
+      touch "$task_root/tracked-file"
+      set +e
+      (
+        set -e
+        INSTALL_TRANSACTION_ACTIVE=1
+        INSTALL_TRANSACTION_ROLE=server
+        INSTALL_TRANSACTION_UNIT=404-probe-server
+        INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=1
+        INSTALL_TRANSACTION_PATHS=("$task_root/tracked-file")
+        rollback_install_transaction 42
+      )
+      status=$?
+      set -e
+      [[ "$status" == 42 && ! -e "$task_root/tracked-file" ]]
+      if [[ "$layout" == directories ]]; then [[ -d "$STATE_DIRECTORY" ]]; else [[ ! -e "$STATE_DIRECTORY" ]]; fi
+      verify_cache_removed "$layout"
+      if [[ "$layout" == directories ]]; then rmdir -- "$STATE_DIRECTORY"; fi
+    done
   done
   exit 0
 fi
@@ -108,8 +157,8 @@ uninstall_server() {
     uninstall_role server --confirm-delete-data
   fi
 }
-for layout in clean unknown legacy; do
-  write_cache
+for layout in clean unknown legacy directories symlinks; do
+  write_cache "$layout"
   touch "$task_root/account" "$task_root/group"
   if [[ "$layout" == legacy ]]; then
     if server_residue_exists; then exit 98; fi
@@ -125,9 +174,11 @@ for layout in clean unknown legacy; do
   fi
   if [[ "$layout" == unknown ]]; then printf preserve >"$STATE_DIRECTORY/unknown"; fi
   uninstall_server
-  verify_cache_removed
+  verify_cache_removed "$layout"
   [[ ! -e "$SERVER_DATABASE" && ! -e "$SERVER_DATABASE-wal" && ! -e "$SERVER_DATABASE-shm" ]]
-  if [[ "$layout" == unknown ]]; then
+  if [[ "$layout" == directories ]]; then
+    [[ -d "$STATE_DIRECTORY" && -e "$task_root/account" && -e "$task_root/group" ]]
+  elif [[ "$layout" == unknown ]]; then
     [[ "$(cat "$STATE_DIRECTORY/unknown")" == preserve && -e "$task_root/account" && -e "$task_root/group" ]]
     rm -- "$STATE_DIRECTORY/unknown"
   else

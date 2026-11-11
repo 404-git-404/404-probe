@@ -672,6 +672,13 @@ install_openrc_business() {
   openrc_wait "${role}"
 }
 
+remove_update_check_cache() {
+  local path
+  for path in "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp; do
+    if [[ -L "${path}" || -f "${path}" ]]; then rm -f -- "${path}"; fi
+  done
+}
+
 openrc_uninstall() {
   local role="$1" binary="/usr/local/bin/404-probe-$1" path owner permissions
   confirm_uninstall "${role}" "${2:-}"
@@ -724,7 +731,7 @@ openrc_uninstall() {
   rm -f -- "$(openrc_unit "${role}")" "$(openrc_wrapper "${role}")" "${binary}" "${CONFIG_DIRECTORY}/${role}.env" "/run/404-probe-${role}-openrc/supervisor.pid" "/var/log/404-probe/${role}.log" "/var/log/404-probe/${role}.log.1" "/var/log/404-probe/${role}.log.lock"
   if [[ "${role}" == server ]]; then
     rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash"
-    rm -f -- "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp
+    remove_update_check_cache
   else
     rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${SELECTOR_ORDER_FILE}"
   fi
@@ -916,7 +923,7 @@ rollback_install_transaction() {
     for (( index=${#INSTALL_TRANSACTION_PATHS[@]}-1; index>=0; index-- )); do rm -f -- "${INSTALL_TRANSACTION_PATHS[index]}"; done
     if [[ "${INSTALL_TRANSACTION_ROLE}" == server ]]; then
       rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
-      [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || rm -f -- "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp
+      [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || remove_update_check_cache
     else
       rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
     fi
@@ -941,7 +948,7 @@ rollback_install_transaction() {
   fi
   if [[ "${INSTALL_TRANSACTION_ROLE}" == "server" ]]; then
     rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
-    [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || rm -f -- "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp
+    [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || remove_update_check_cache
   elif [[ "${INSTALL_TRANSACTION_ROLE}" == "agent" ]]; then
 	 systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true
 	 systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
@@ -1472,6 +1479,12 @@ preflight_uninstall_trees() {
     for path in "${SERVER_UPGRADE_DIRECTORY}" "${SERVER_UPGRADE_LOCK_DIRECTORY}"; do validate_owned_tree "${path}"; done
   fi
 }
+remove_update_check_cache() {
+  local path
+  for path in "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp; do
+    if [[ -L "${path}" || -f "${path}" ]]; then rm -f -- "${path}"; fi
+  done
+}
 uninstall() {
   [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
     || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
@@ -1533,9 +1546,9 @@ uninstall() {
   else
     rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
       "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
-      "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp \
       /usr/local/bin/.404-probe-server.candidate /usr/local/bin/.404-probe-server.previous \
       /usr/local/sbin/404-probe-install.candidate
+    remove_update_check_cache
     remove_owned_tree "${SERVER_UPGRADE_DIRECTORY}"
     remove_owned_tree "${SERVER_UPGRADE_LOCK_DIRECTORY}"
   fi
@@ -3189,9 +3202,9 @@ uninstall_role() {
   else
     rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
       "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
-      "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp \
       "${SERVER_UPGRADE_CANDIDATE}" /usr/local/bin/.404-probe-server.previous \
       "${SERVER_UPGRADE_HELPER_CANDIDATE}"
+    remove_update_check_cache
     remove_owned_tree "${SERVER_UPGRADE_DIRECTORY}"
     remove_owned_tree "${SERVER_UPGRADE_LOCK_DIRECTORY}"
   fi

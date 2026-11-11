@@ -315,9 +315,13 @@ func TestInstallerUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 	}
 	checkCache := func(signature string, want int) {
 		t.Helper()
-		for _, fragment := range strings.Split(script, "\n"+signature+"() {\n")[1:] {
+		fragments := strings.Split(script, "\n"+signature+"() {\n")[1:]
+		if len(fragments) == 0 {
+			t.Fatalf("missing installer function %s", signature)
+		}
+		for _, fragment := range fragments {
 			body, _, ok := strings.Cut(fragment, "\n}\n")
-			if !ok || strings.Count(body, `"${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp`) != want {
+			if !ok || strings.Count(body, "remove_update_check_cache") != want {
 				t.Fatalf("%s cache cleanup must appear %d times", signature, want)
 			}
 			if signature == "server_residue_exists" && strings.Contains(body, "/update-check.json") {
@@ -330,6 +334,15 @@ func TestInstallerUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 	}
 	checkCache("rollback_install_transaction", 2)
 	checkCache("server_residue_exists", 0)
+	implementations := strings.Split(script, "\nremove_update_check_cache() {\n")[1:]
+	if len(implementations) != 2 {
+		t.Fatalf("want two cache cleanup implementations, got %d", len(implementations))
+	}
+	outer, _, _ := strings.Cut(implementations[0], "\n}\n")
+	helper, _, _ := strings.Cut(implementations[1], "\n}\n")
+	if outer != helper {
+		t.Fatal("installer and generated helper must use identical cache cleanup")
+	}
 }
 
 func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
