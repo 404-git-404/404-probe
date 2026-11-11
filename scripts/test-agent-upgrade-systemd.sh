@@ -35,9 +35,11 @@ readonly agent_unit="/etc/systemd/system/${agent_service}"
 readonly assets_unit="/etc/systemd/system/${assets_service}"
 readonly server_port="${PROBE_404_AGENT_REHEARSAL_SERVER_PORT:-33545}"
 readonly assets_port="${PROBE_404_AGENT_REHEARSAL_ASSETS_PORT:-33546}"
+readonly -a bind_state_targets=(/var/lib/404-probe-updater /var/lib/404-probe-security)
 
 created_user=0
 created_runtime_target=0
+absent_bind_state_targets=()
 production_before=""
 production_after=""
 
@@ -79,7 +81,7 @@ production_snapshot() {
   done
   # A running production Server writes SQLite continuously. Check its identity
   # and protection, not mutable size/mtime/content; never open it for rehearsal.
-  for path in /var/lib/404-probe /var/lib/404-probe/404-probe.db; do
+  for path in /var/lib/404-probe /var/lib/404-probe/404-probe.db "${bind_state_targets[@]}"; do
     if [[ -e "${path}" || -L "${path}" ]]; then
       stat -c '%n|%F|%U:%G:%a|%d:%i' -- "${path}"
     else
@@ -95,7 +97,7 @@ production_snapshot() {
 }
 
 cleanup() {
-  local status=$?
+  local status=$? path
   trap - EXIT HUP INT TERM
   systemctl stop "${agent_service}" "${updater_service}" "${server_service}" "${assets_service}" >/dev/null 2>&1 || true
   systemctl disable "${agent_service}" "${updater_service}" "${server_service}" "${assets_service}" >/dev/null 2>&1 || true
@@ -105,6 +107,13 @@ cleanup() {
   if (( created_runtime_target != 0 )); then
     rmdir -- /run/404-probe >/dev/null 2>&1 || true
   fi
+  # systemd may create a bind destination on the host. rmdir only removes
+  # empty directories. The snapshot below catches any destination left behind.
+  for path in "${absent_bind_state_targets[@]}"; do
+    if [[ -d "${path}" && ! -L "${path}" ]] && ! mountpoint -q -- "${path}"; then
+      rmdir -- "${path}" >/dev/null 2>&1 || true
+    fi
+  done
   if (( created_user != 0 )); then
     userdel "${test_user}" >/dev/null 2>&1 || status=1
     getent group "${test_user}" >/dev/null 2>&1 && groupdel "${test_user}" >/dev/null 2>&1 || true
@@ -141,6 +150,8 @@ done
 for path in "${source_assets}" "${asset_directory}" "${source_repository}" "${go_binary}"; do
   [[ "${path}" =~ ^/[A-Za-z0-9_./-]+$ ]] || fail "inputs require absolute paths without spaces or shell metacharacters"
 done
+source_repository="$(realpath -e -- "${source_repository}")"
+readonly -a source_git=(git -c "safe.directory=${source_repository}" -C "${source_repository}")
 for port in "${server_port}" "${assets_port}"; do
   [[ "${port}" =~ ^[1-9][0-9]{0,4}$ ]] && (( port <= 65535 )) || fail "invalid rehearsal port"
 done
@@ -148,7 +159,7 @@ done
 commits="$(python3 "${script_directory}/agent-upgrade-assets.py" "${source_version}" "${target_version}" \
   "${source_assets}" "${asset_directory}" "${go_binary}")" || fail "release assets rejected; no rehearsal resources created"
 read -r old_commit target_commit <<<"${commits}"
-[[ "$(git -C "${source_repository}" rev-parse --verify "${old_commit}^{commit}")" == "${old_commit}" ]] \
+[[ "$("${source_git[@]}" rev-parse --verify "${old_commit}^{commit}")" == "${old_commit}" ]] \
   || fail "source repository does not contain the metadata commit"
 case "$(uname -m)" in
   x86_64) architecture=amd64 ;;
@@ -173,6 +184,11 @@ check_version "${candidate_agent}" "${target_version}" "${target_commit}"
 printf 'RELEASE_PREFLIGHT=PASS FROM=%s TO=%s\n' "${source_version}" "${target_version}"
 
 production_before="$(production_snapshot)"
+for path in "${bind_state_targets[@]}"; do
+  if [[ ! -e "${path}" && ! -L "${path}" ]]; then
+    absent_bind_state_targets+=("${path}")
+  fi
+done
 for path in "${test_root}" "${agent_unit}" "${updater_unit}" "${server_unit}" "${assets_unit}"; do
   [[ ! -e "${path}" && ! -L "${path}" ]] || fail "isolated rehearsal path already exists: ${path}"
 done
@@ -213,7 +229,7 @@ chmod 0755 "${test_root}/assets/${target_version}/404-probe-agent-linux-${archit
 
 # Extract the exact metadata commit, ignoring dirty/ignored files and the
 # repository's current branch. Transform only this disposable source copy.
-git -c core.autocrlf=false -C "${source_repository}" archive "${old_commit}" \
+"${source_git[@]}" -c core.autocrlf=false archive "${old_commit}" \
   | tar -xf - -C "${test_root}/controlled-source"
 python3 - "${test_root}/controlled-source/internal/updater/paths_linux.go" "${test_user}" "${agent_service}" <<'PY'
 from pathlib import Path
