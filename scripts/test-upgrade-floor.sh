@@ -71,6 +71,7 @@ for identity in v1.0.8 v1.0.9 v1.0.10 unknown; do
     printf 'FAIL accepted %s\n' "${identity}"; exit 1
   fi
   grep -Fq 'no files were changed' "${temporary}/rejection"
+  grep -Fq 'if that installer also reports that your version is too old, follow its instructions to upgrade step by step' "${temporary}/rejection"
   if [[ "${identity}" == unknown ]]; then
     grep -Fq server_version_unrecognized "${temporary}/rejection"
   else
@@ -117,6 +118,7 @@ for identity in '{"version":"dev","dirty":false}' '{"version":"v1.1.1","dirty":t
   grep -Fq server_version_unrecognized "${temporary}/identity-rejection"
   grep -Fq 'PROBE_404_VERSION=v1.1.0' "${temporary}/identity-rejection"
   grep -Fq 'no files were changed' "${temporary}/identity-rejection"
+  grep -Fq 'if that installer also reports that your version is too old, follow its instructions to upgrade step by step' "${temporary}/identity-rejection"
 done
 printf 'PASS untrusted identities have stable code and pinned installer guidance\n'
 

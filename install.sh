@@ -66,53 +66,92 @@ note() {
   printf '\n%s\n' "$*"
 }
 
+report_download_failure() {
+  local status="$1" diagnostic="$2"
+  if [[ -n "${diagnostic}" ]]; then printf '%s\n' "${diagnostic}" >&2; fi
+  if (( status == 124 )); then
+    printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2
+  fi
+}
+
+forward_curl_progress() {
+  local segment
+  # The progress bar emits CR-delimited updates. Its final segment can end
+  # with a newline and a curl diagnostic. Forward the progress bytes only.
+  while IFS= read -r -d $'\r' segment; do
+    printf '%s\r' "${segment}"
+  done
+  case "${segment}" in
+    curl:\ \(*) ;;
+    *$'\n'curl:\ \(*) printf '%s\n' "${segment%%$'\n'curl: (*}" ;;
+    *) printf '%s' "${segment}" ;;
+  esac
+}
+
 curl_with_retry() {
   local deadline="${DOWNLOAD_DEADLINE_SECONDS:-$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))}"
-  local remaining attempt=0 delay=1 status errors error_text
+  local remaining attempt=0 delay=1 status error_text=""
+  local show_progress=0
   local -a display_args=(--silent --show-error)
   if [[ -t 1 && -t 2 ]]; then
+    show_progress=1
     display_args=(--progress-bar --show-error)
   fi
-  errors="$(mktemp)" || return 1
   while :; do
     remaining=$((deadline - SECONDS))
     if (( remaining <= 0 )); then
-      printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2
-      rm -f -- "${errors}"
-      return 28
+      status=124
+      break
     fi
-    # --max-time is the remaining shared budget, never a fixed per-attempt cap.
-    # Own the retry loop: curl --retry-max-time alone can overrun that budget.
-    # tee forwards progress immediately while retaining curl's failure reason.
-    # Non-TTY callers keep the same silent curl flags and stderr bytes.
-    {
+    # Keep curl's stdout on the caller's stdout and capture stderr in memory.
+    # When interactive, tee also streams the original progress bytes.
+    if { error_text="$(
+      progress_output=()
+      if (( show_progress )); then
+        exec {progress_fd}> >(forward_curl_progress >&2)
+        progress_pid=$!
+        progress_output=("/dev/fd/${progress_fd}")
+      fi
       if LC_ALL=C curl --fail "${display_args[@]}" --location --proto '=https' --tlsv1.2 \
         --connect-timeout "${DOWNLOAD_CONNECT_TIMEOUT_SECONDS}" \
         --speed-limit "${DOWNLOAD_SPEED_LIMIT}" --speed-time "${DOWNLOAD_STALL_SECONDS}" \
-        --max-time "${remaining}" "$@" 2>&1 >&3 | tee "${errors}" >&2; then
-        status=0
+        --max-time "${remaining}" "$@" 2>&1 >&3 | tee "${progress_output[@]}"; then
+        exit_status=0
       else
-        status="${PIPESTATUS[0]}"
+        exit_status="${PIPESTATUS[0]}"
       fi
-    } 3>&1
-    if (( status == 0 )); then
-      rm -f -- "${errors}"
+      if (( show_progress )); then
+        exec {progress_fd}>&-
+        wait "${progress_pid}"
+      fi
+      exit "${exit_status}"
+    )"; } 3>&1; then
       return 0
+    else
+      status=$?
     fi
-    error_text="$(<"${errors}")"
+    if (( show_progress )); then
+      error_text="${error_text##*$'\r'}"
+      case "${error_text}" in
+        curl:\ \(*) ;;
+        *$'\n'curl:\ \(*) error_text="curl: (${error_text##*$'\n'curl: (}" ;;
+        *) error_text="" ;;
+      esac
+    fi
     if (( SECONDS >= deadline )); then
-      printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2
-      rm -f -- "${errors}"
-      return 28
+      status=124
+      break
     fi
-    if [[ "${status}" == 28 && "${error_text}" == *'Operation too slow'* ]]; then
+    if [[ "${status}" == 33 && -n "${DOWNLOAD_PARTIAL_FILE:-}" ]]; then
+      # The endpoint rejected Range. Retry the full object.
+      rm -f -- "${DOWNLOAD_PARTIAL_FILE}" || break
+    elif [[ "${status}" == 28 && "${error_text}" == *'Operation too slow'* ]]; then
       printf '404-probe installer: 下载卡住（60 秒低于 1 KB/s）；请参阅 README“网络慢时的升级办法”。\n' >&2
     elif [[ "${status}" == 5 || "${status}" == 6 || "${status}" == 7 || "${status}" == 28 ]]; then
       printf '404-probe installer: 连接失败；请参阅 README“网络慢时的升级办法”。\n' >&2
     fi
     if (( attempt >= DOWNLOAD_RETRIES )); then
-      rm -f -- "${errors}"
-      return "${status}"
+      break
     fi
     attempt=$((attempt + 1))
     remaining=$((deadline - SECONDS))
@@ -120,34 +159,50 @@ curl_with_retry() {
     sleep "${delay}"
     (( delay >= 16 )) || delay=$((delay * 2))
   done
+  # 124 is reserved here for expiration of the shared deadline.
+  if [[ "${DOWNLOAD_DEFER_ERRORS:-0}" == 1 ]]; then
+    curl_diagnostic="${error_text}"
+  else
+    report_download_failure "${status}" "${error_text}"
+  fi
+  return "${status}"
 }
 
 # Download to a sibling partial file so curl can resume bytes received before a
 # transient timeout. The rename is atomic and callers authenticate the finished
-# file before use. Alternate URLs are fixed official entry points for the same
-# versioned asset; they never weaken the release identity checks.
-download_to_file() (
-  local destination="$1" url partial deadline remaining
+# file before use. Multiple URLs here are different sources. The validated API
+# fallback for the same release asset is a separate call that keeps the partial.
+download_to_file() {
+  local destination="$1" url partial deadline status=1 previous_url="" curl_diagnostic=""
   local -a extra_args=()
   shift
   partial="${destination}.partial"
-	deadline="${DOWNLOAD_DEADLINE_SECONDS:-$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))}"
-	[[ -z "${DOWNLOAD_ACCEPT_HEADER:-}" ]] || extra_args+=(--header "Accept: ${DOWNLOAD_ACCEPT_HEADER}")
-  [[ ! -e "${partial}" || ( -f "${partial}" && ! -L "${partial}" ) ]] \
+  deadline="${DOWNLOAD_DEADLINE_SECONDS:-$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))}"
+  [[ -z "${DOWNLOAD_ACCEPT_HEADER:-}" ]] || extra_args+=(--header "Accept: ${DOWNLOAD_ACCEPT_HEADER}")
+  [[ ! -L "${partial}" && ( ! -e "${partial}" || -f "${partial}" ) ]] \
     || die "unsafe partial download path: ${partial}"
   for url in "$@"; do
-	remaining=$((deadline - SECONDS))
-	(( remaining > 0 )) || break
-    if DOWNLOAD_DEADLINE_SECONDS="${deadline}" curl_with_retry "${extra_args[@]}" --continue-at - --output "${partial}" "${url}"; then
+    [[ -z "${previous_url}" || "${previous_url}" == "${url}" ]] || rm -f -- "${partial}" || return 1
+    previous_url="${url}"
+    if DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_DEFER_ERRORS=1 DOWNLOAD_PARTIAL_FILE="${partial}" \
+      curl_with_retry "${extra_args[@]}" --continue-at - --output "${partial}" "${url}"; then
       [[ -f "${partial}" && ! -L "${partial}" ]] || die "download did not create a regular file"
       mv -f -- "${partial}" "${destination}"
       return 0
+    else
+      status=$?
     fi
     note "Download entry failed; trying the next official entry for the same asset."
+    (( status != 124 )) || break
   done
-	[[ "${DOWNLOAD_PRESERVE_PARTIAL:-0}" == 1 ]] || rm -f -- "${partial}"
-  return 1
-)
+  [[ "${DOWNLOAD_PRESERVE_PARTIAL:-0}" == 1 ]] || rm -f -- "${partial}"
+  if [[ "${DOWNLOAD_DEFER_ERRORS:-0}" == 1 ]]; then
+    download_error="${curl_diagnostic}"
+  else
+    report_download_failure "${status}" "${curl_diagnostic}"
+  fi
+  return "${status}"
+}
 
 release_version() {
   local version="$1" part
@@ -160,20 +215,28 @@ release_version() {
 }
 
 download_release_asset() {
-  local version="$1" name="$2" destination="$3" api_document api_url tag deadline remaining
+  local version="$1" name="$2" destination="$3" api_document api_url tag deadline status
+  local download_error="" curl_diagnostic=""
   release_version "${version}" || die "release asset version must be stable or explicit beta.N/rc.N"
   [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "release asset name is invalid"
-	deadline=$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))
-	DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_PRESERVE_PARTIAL=1 download_to_file "${destination}" \
-	  "https://github.com/${REPOSITORY}/releases/download/${version}/${name}" && return 0
-	api_document="${destination}.release-api.json"
-	remaining=$((deadline - SECONDS))
-	(( remaining > 0 )) || { printf '404-probe installer: 超过总上限 30 分钟；请参阅 README“网络慢时的升级办法”。\n' >&2; rm -f -- "${destination}.partial"; return 1; }
-	DOWNLOAD_DEADLINE_SECONDS="${deadline}" curl_with_retry --header 'Accept: application/vnd.github+json' \
-	  --output "${api_document}" "https://api.github.com/repos/${REPOSITORY}/releases/tags/${version}" \
-	  || { rm -f -- "${destination}.partial" "${api_document}"; return 1; }
+  deadline=$((SECONDS + DOWNLOAD_RETRY_MAX_SECONDS))
+  if DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_PRESERVE_PARTIAL=1 DOWNLOAD_DEFER_ERRORS=1 \
+    download_to_file "${destination}" "https://github.com/${REPOSITORY}/releases/download/${version}/${name}"; then
+    return 0
+  else
+    status=$?
+  fi
+  if (( status == 124 || SECONDS >= deadline )); then
+    rm -f -- "${destination}.partial"
+    report_download_failure 124 "${download_error}"
+    return 1
+  fi
+  api_document="${destination}.release-api.json"
+  DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_DEFER_ERRORS=1 curl_with_retry --header 'Accept: application/vnd.github+json' \
+    --output "${api_document}" "https://api.github.com/repos/${REPOSITORY}/releases/tags/${version}" \
+    || { status=$?; rm -f -- "${destination}.partial" "${api_document}"; report_download_failure "${status}" "${curl_diagnostic:-${download_error}}"; return 1; }
 	tag="$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' "${api_document}")"
-	[[ "${tag}" == "${version}" ]] || { rm -f -- "${destination}.partial" "${api_document}"; return 1; }
+	[[ "${tag}" == "${version}" ]] || { rm -f -- "${destination}.partial" "${api_document}"; report_download_failure 1 "${download_error}"; return 1; }
 	api_url="$(awk -v wanted="${name}" '
 	  /^[[:space:]]*"url":[[:space:]]*"https:\/\/api\.github\.com\/repos\/404-git-404\/404-probe\/releases\/assets\/[0-9]+"/ {
 	    candidate=$0; sub(/^[^"]*"url":[[:space:]]*"/, "", candidate); sub(/".*/, "", candidate)
@@ -186,7 +249,7 @@ download_release_asset() {
 	' "${api_document}")"
 	rm -f -- "${api_document}"
 	[[ "${api_url}" =~ ^https://api\.github\.com/repos/404-git-404/404-probe/releases/assets/[0-9]+$ ]] \
-	  || { rm -f -- "${destination}.partial"; return 1; }
+	  || { rm -f -- "${destination}.partial"; report_download_failure 1 "${download_error}"; return 1; }
 	DOWNLOAD_DEADLINE_SECONDS="${deadline}" DOWNLOAD_ACCEPT_HEADER='application/octet-stream' \
 	  download_to_file "${destination}" "${api_url}"
 }
@@ -221,6 +284,8 @@ bootstrap_latest_installer() (
   release_base="https://github.com/${REPOSITORY}/releases/download/${latest}"
   temporary_directory="$(mktemp -d)"
   trap 'rm -rf -- "${temporary_directory}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   installer="${temporary_directory}/install.sh"
   download_to_file "${installer}" \
     "${release_base}/install.sh" \
@@ -299,7 +364,7 @@ detect_install_platform() {
 require_openrc_tools() {
   local command_name
   (( BASH_VERSINFO[0] >= 4 )) || die "Bash 4 or newer is required"
-  for command_name in bash awk base64 basename cmp cp curl df dirname find flock getent grep head id install mktemp mountpoint readlink rm rmdir runuser sed sha256sum sort stat sync tar tr useradd userdel groupdel; do
+  for command_name in bash awk base64 basename cmp cp curl df dirname find flock getent grep head id install mktemp mountpoint readlink rm rmdir runuser sed sha256sum sort stat sync tar tee tr useradd userdel groupdel; do
     command -v "${command_name}" >/dev/null || die "missing ${command_name}; install bash, coreutils, util-linux, shadow, curl, ca-certificates and GNU tar in the isolated Alpine guest first"
   done
   for command_name in cp stat sync sha256sum install readlink; do
@@ -693,7 +758,7 @@ require_root_linux_systemd() {
   if [[ "${INSTALL_INIT}" == openrc ]]; then require_openrc_tools; return; fi
   command -v systemctl >/dev/null 2>&1 || die "systemd is required"
   [[ -d /run/systemd/system ]] || die "systemd is not running"
-  for command_name in awk base64 basename cmp curl df dirname flock getent install mktemp readlink runuser sha256sum sort stat sync tar; do
+  for command_name in awk base64 basename cmp curl df dirname flock getent install mktemp readlink runuser sha256sum sort stat sync tar tee; do
     command -v "${command_name}" >/dev/null 2>&1 || die "required command not found: ${command_name}"
   done
 }
@@ -934,6 +999,8 @@ download_binary() (
   asset="404-probe-${role}-linux-${architecture}"
   temporary_directory="$(mktemp -d)"
   trap 'rm -rf -- "${temporary_directory}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   note "Downloading ${asset} (${version})..."
   if [[ -n "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" ]]; then
@@ -3177,6 +3244,8 @@ download_server_upgrade_candidate() (
   asset="404-probe-server-linux-${architecture}"
   temporary_directory="$(mktemp -d)"
   trap 'rm -rf -- "${temporary_directory}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   if [[ -n "${PROBE_404_LOCAL_ASSET_DIRECTORY:-}" ]]; then
     for name in "${asset}" SHA256SUMS RELEASE-METADATA.json; do
       [[ -f "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" && ! -L "${PROBE_404_LOCAL_ASSET_DIRECTORY}/${name}" ]] \
@@ -3212,20 +3281,20 @@ identify_installed_server_version() {
   if version_json="$("${SERVER_BINARY}" version --json 2>/dev/null)"; then
     version="$(json_string_field "${version_json}" version)"
     release_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
-      || die "server_version_unrecognized: installed Server returned an untrusted build identity; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1), then upgrade to this release; no files were changed"
+      || die "server_version_unrecognized: installed Server returned an untrusted build identity; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
     printf '%s\n' "${version}"
     return
   fi
-  die "server_version_unrecognized: installed Server build cannot be identified safely; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1), then upgrade to this release; no files were changed"
+  die "server_version_unrecognized: installed Server build cannot be identified safely; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
 }
 
 # Update before each release according to the supported upgrade window.
 require_supported_server_version() {
   local comparison
   comparison="$(compare_versions "$1" v1.1.0)" \
-    || die "server_version_unrecognized: installed Server version is invalid; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1), then upgrade to this release; no files were changed"
+    || die "server_version_unrecognized: installed Server version is invalid; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
   [[ "${comparison}" != -1 ]] \
-    || die "server_version_too_old: installed Server $1 is older than the supported window; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1), then upgrade to this release; no files were changed"
+    || die "server_version_too_old: installed Server $1 is older than the supported window; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
 }
 
 write_server_upgrade_state() {

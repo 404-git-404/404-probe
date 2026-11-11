@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import pty
 import shutil
+import signal
 import ssl
 import subprocess
 import tempfile
@@ -35,13 +36,21 @@ def main():
                         '-subj','/CN=127.0.0.1','-config',str(config),'-keyout',str(root/'key'),
                         '-out',str(root/'cert')],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         source = (ROOT/'install.sh').read_text()
-        functions = source[:source.index('\ncanonical_version() {')]
+        functions = source[:source.index('\nusage() {')]
         # Test-only source copies shorten thresholds; the real run keeps 60/1024.
-        functions = functions.replace('readonly DOWNLOAD_RETRIES=4', 'DOWNLOAD_RETRIES=2')
-        functions = functions.replace('readonly DOWNLOAD_RETRY_MAX_SECONDS=1800', 'DOWNLOAD_RETRY_MAX_SECONDS=1800')
-        functions = functions.replace('readonly DOWNLOAD_STALL_SECONDS=60', 'DOWNLOAD_STALL_SECONDS=60')
+        for old, new in (
+            ('readonly DOWNLOAD_RETRIES=4', 'DOWNLOAD_RETRIES=2'),
+            ('readonly DOWNLOAD_RETRY_MAX_SECONDS=1800', 'DOWNLOAD_RETRY_MAX_SECONDS=1800'),
+            ('readonly DOWNLOAD_STALL_SECONDS=60', 'DOWNLOAD_STALL_SECONDS=60'),
+        ):
+            assert functions.count(old) == 1, f'expected one threshold anchor: {old}'
+            replaced = functions.replace(old, new)
+            assert replaced != functions and old not in replaced
+            functions = replaced
         (root/'functions.sh').write_text(functions)
         payload = b'loopback fixture\n'*4096
+        alternate_payload = b'alternate entry\n'*4096
+        request_started = threading.Event()
         state = dict(mode='',requests=[],ranges=[])
 
         class Handler(BaseHTTPRequestHandler):
@@ -53,6 +62,7 @@ def main():
                 state['requests'].append(self.path)
                 offset = int(self.headers.get('Range','bytes=0-')[6:].split('-')[0])
                 state['ranges'].append(offset)
+                request_number = len(state['requests'])
                 data = b'x'*(205*2048) if mode == 'slow-real' else payload
                 if mode == 'deadline':
                     time.sleep(2)
@@ -60,6 +70,30 @@ def main():
                         self.send_error(503)
                     except OSError:
                         pass  # the shared deadline closes this request
+                    return
+                if mode == 'errors':
+                    self.send_error(410 if request_number == 3 else 404)
+                    return
+                if mode == 'same-asset' and '/releases/tags/' in self.path:
+                    data = b'''{
+  "tag_name": "v1.2.3",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/404-git-404/404-probe/releases/assets/42",
+      "name": "asset"
+    }
+  ]
+}'''
+                if mode == 'different-source' and self.path.endswith('/raw'):
+                    data = alternate_payload
+                if mode == 'no-range' and offset:
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    try:
+                        self.wfile.write(data)
+                    except OSError:
+                        pass
                     return
                 self.send_response(206 if offset else 200)
                 self.send_header('Content-Length',str(len(data)-offset))
@@ -72,7 +106,14 @@ def main():
                         for begin in range(offset,len(data),2048):
                             self.wfile.write(data[begin:begin+2048]); self.wfile.flush()
                             time.sleep(interval)
-                    elif mode == 'stuck' or mode == 'resume' and len(state['requests']) == 1:
+                    elif mode in ('no-range', 'same-asset', 'different-source') and request_number == 1:
+                        self.wfile.write(data[:8192]); self.wfile.flush()
+                        self.close_connection = True
+                    elif mode == 'signal':
+                        self.wfile.flush()
+                        request_started.set()
+                        time.sleep(15)
+                    elif mode == 'stuck' or mode == 'resume' and request_number == 1:
                         if mode == 'resume':
                             self.wfile.write(data[:8192]); self.wfile.flush()
                         time.sleep(75 if args.real_thresholds and mode == 'resume' else 10)
@@ -143,12 +184,14 @@ DOWNLOAD_STALL_SECONDS={60 if real else 2}
             assert rc == 0 and (root/'asset').read_bytes() == payload,(rc,err)
             assert len(state['requests']) == 2 and state['ranges'][1] == 8192,state
             assert '下载卡住（60 秒低于 1 KB/s）'.encode() in err,err
+            assert b'curl:' not in err,err
             if args.real_thresholds:assert elapsed >= 60,elapsed
             print(f'PASS stalled download resumed at byte 8192: {elapsed:.2f}s',flush=True)
 
             rc,out,err,elapsed=run('stuck',download)
             assert rc != 0 and len(state['requests']) == 3,(rc,state,err)
             assert '下载卡住（60 秒低于 1 KB/s）'.encode() in err and b'README' in err
+            assert err.count(b'curl: (28)') == 1,err
             assert not (root/'asset').exists() and not (root/'asset.partial').exists()
             print(f'PASS exhausted retries: {elapsed:.2f}s',flush=True)
 
@@ -156,7 +199,7 @@ DOWNLOAD_STALL_SECONDS={60 if real else 2}
                                   f'download_release_asset v1.2.3 asset "{root}/asset"')
             assert rc != 0 and elapsed < 5,(rc,elapsed,err)
             assert any('/releases/tags/' in path for path in state['requests']),state
-            assert '超过总上限 30 分钟'.encode() in err and b'README' in err,err
+            assert err.count('超过总上限 30 分钟'.encode()) == 1 and b'README' in err,err
             assert not (root/'asset').exists() and not (root/'asset.partial').exists()
             print(f'PASS shared direct/API deadline: {elapsed:.2f}s',flush=True)
 
@@ -165,6 +208,54 @@ DOWNLOAD_STALL_SECONDS={60 if real else 2}
             rc,out,err,_=run('slow',download)
             assert rc == 0 and out == b'' and err == b'',(rc,out,err)
             print('PASS TTY progress and byte-empty non-TTY output',flush=True)
+
+            rc,out,err,_=run('no-range',download)
+            assert rc == 0 and (root/'asset').read_bytes() == payload and not err,(rc,err,state)
+            assert state['ranges'] == [0,8192,0],state
+            print('PASS curl 33 restarts at byte zero',flush=True)
+
+            release = f'download_release_asset v1.2.3 asset "{root}/asset"'
+            rc,out,err,_=run('same-asset','DOWNLOAD_RETRIES=0; '+release)
+            assert rc == 0 and (root/'asset').read_bytes() == payload and not err,(rc,err,state)
+            assert state['ranges'] == [0,0,8192] and state['requests'][-1].endswith('/assets/42'),state
+            print('PASS same release asset resumes across the API entry',flush=True)
+
+            rc,out,err,_=run('different-source','DOWNLOAD_RETRIES=0; '+download+
+                             ' https://raw.githubusercontent.com/404-git-404/404-probe/v1.2.3/raw')
+            assert rc == 0 and (root/'asset').read_bytes() == alternate_payload and not err,(rc,err,state)
+            assert state['ranges'] == [0,0],state
+            print('PASS different source restarts at byte zero',flush=True)
+
+            for tty in (False, True):
+                rc,out,err,_=run('errors',download,tty=tty)
+                assert rc != 0 and err.count(b'curl: (22)') == 1 and b'410' in err and b'404' not in err,(rc,err)
+            print('PASS only the final raw curl error reaches stderr',flush=True)
+
+            scratch = root/'signal-tmp'
+            scratch.mkdir()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                request_started.clear()
+                state.update(mode='signal', requests=[], ranges=[])
+                wrapper = f"""source '{root}/functions.sh'
+export PATH='{root}':"$PATH" TMPDIR='{scratch}' PROBE_404_VERSION=v1.2.3
+bootstrap_latest_installer
+"""
+                with subprocess.Popen(['bash','-c',wrapper], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                      start_new_session=True) as process:
+                    try:
+                        assert request_started.wait(5), f'bootstrap did not start for {sig.name}'
+                        assert list(scratch.iterdir()), 'test must interrupt an active download'
+                        os.killpg(process.pid, sig)
+                        assert process.wait(timeout=5) != 0, sig.name
+                        # The process-group leader may exit before the installer subshell's EXIT trap.
+                        deadline = time.monotonic() + 5
+                        while list(scratch.iterdir()) and time.monotonic() < deadline:
+                            time.sleep(.05)
+                        assert not list(scratch.iterdir()), (sig.name, list(scratch.iterdir()))
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+            print('PASS SIGINT and SIGTERM remove bootstrap temporary files',flush=True)
 
             # Exercise the unchanged installer's checksum gate after actual HTTPS.
             binary_section=source[source.index('download_binary() ('):source.index('\nrender_local_helper() {')]

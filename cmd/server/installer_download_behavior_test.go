@@ -31,7 +31,7 @@ func TestInstallerDownloadResumesAcrossOfficialAPIAssetFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := strings.ReplaceAll(string(content), "\r\n", "\n")
-	start := strings.Index(script, "curl_with_retry() {")
+	start := strings.Index(script, "report_download_failure() {")
 	end := strings.Index(script[start:], "\ncanonical_version() {")
 	if start < 0 || end < 0 {
 		t.Fatal("could not extract installer download implementation")

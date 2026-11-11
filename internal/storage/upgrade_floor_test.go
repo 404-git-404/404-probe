@@ -9,10 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestUpgradeSchemaFloor(t *testing.T) {
+	if !strings.Contains(ErrSchemaTooOld.Error(), "if that installer also reports that your version is too old, follow its instructions to upgrade step by step") {
+		t.Fatal("schema floor rejection is missing step-by-step upgrade guidance")
+	}
 	ctx := context.Background()
 	for _, version := range []int{34, 35, 36, 37} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
