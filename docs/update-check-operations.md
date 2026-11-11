@@ -12,7 +12,7 @@ Server 默认访问 `api.github.com`，只读取固定仓库最新正式版的�
 
 ## 卸载时的保留与手动清理
 
-v1.1.0 / v1.1.1 的安装器（卸载逻辑相同）只删除明确登记的托管文件，会将 `update-check.json` 当作“未识别文件”保留。在隔离的安装器夹具里实测（用 `uninstall server --confirm-delete-data`）：
+v1.1.0 / v1.1.1 / v1.1.2 的安装器（卸载逻辑相同）只删除明确登记的托管文件，会将 `update-check.json` 当作“未识别文件”保留。在隔离的安装器夹具里实测（用 `uninstall server --confirm-delete-data`）：
 
 - 第一次卸载：服务、二进制、配置、数据库（含 WAL / SHM）和已安装的 `404-probe-install` 辅助脚本都被删除；`/var/lib/404-probe` 目录因为还有 `update-check.json` 而保留，服务账户 `404-probe` 也因此保留。
 - 只要该文件还在，再运行卸载不会改变上述结果。
@@ -22,7 +22,7 @@ v1.1.0 / v1.1.1 的安装器（卸载逻辑相同）只删除明确登记的托�
 
 ```bash
 sudo rm /var/lib/404-probe/update-check.json
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.1.1/install.sh | sudo PROBE_404_VERSION=v1.1.1 bash -s -- uninstall server --confirm-delete-data
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.1.2/install.sh | sudo PROBE_404_VERSION=v1.1.2 bash -s -- uninstall server --confirm-delete-data
 ```
 
 第一次卸载已经删除了本机的 `404-probe-install`，所以第二步要用上面这条官方固定版本入口。交互运行时也可以不带 `--confirm-delete-data`，按提示输入 `DELETE 404-probe server`；没有终端的自动化场景必须带这个参数。数据库不在默认位置时，文件在实际数据库所在目录。其他未识别文件也必须先由你确认处理；不要为删除更新检查缓存而删除数据库或整个状态目录。仅删除 JSON 文件本身不会自动删除目录或账户。

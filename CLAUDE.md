@@ -38,7 +38,7 @@ go test ./... -count=1
 
 ## 发布流程（v1.0.2、v1.0.3 的做法）
 
-**升级支持策略**：每个版本只支持从前 1–2 个正式版升级；v1.1.1 支持从 v1.0.10、v1.1.0 升级。发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。版本窗口只由安装器保证；手动替换二进制不保证（数据库层另有 schema 门槛：schema 35 及更早的库会在打开时被拒绝，但这不等于窗口内的测试保证），发布说明也必须写明这一限制。
+**升级支持策略**：每个版本只支持从前 1–2 个正式版升级；v1.1.2 支持从 v1.1.0、v1.1.1 升级（两者 schema 都是 36，`minimumUpgradeSchemaVersion` 保持 36）。发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。版本窗口只由安装器保证；手动替换二进制不保证（数据库层另有 schema 门槛：schema 35 及更早的库会在打开时被拒绝，但这不等于窗口内的测试保证），发布说明也必须写明这一限制。
 
 1. **发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。发布准备提交还必须“按升级支持策略更新版本窗口”：`internal/storage` 的 `minimumUpgradeSchemaVersion`、`install.sh` 的 `require_supported_server_version` 版本、三处提示（`database_schema_too_old`、`server_version_too_old`、`server_version_unrecognized`）里的版本号、`internal/storage/upgrade_floor_test.go`、`scripts/test-upgrade-floor.sh`。README 的升级说明、迁移链描述和 v1.0.1 桥接节在发布 A 段统一改写。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
 2. **发布前做独立 High 评审**，并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20 -timeout=60m`。
@@ -53,20 +53,21 @@ go test ./... -count=1
 
    **构建必须在主仓库，或 `core.autocrlf=false` 的干净克隆中进行，不能在 git worktree 里构建**（在 Windows 上用 go1.26.8 实测：worktree 的 `.git` 是一个文件，构建出的产物的 `vcs.revision`/`vcs.modified` 会缺失或错误；Linux 上没有实测。所以“发布构建一律用主仓库或干净克隆”是操作约束，不对其他环境作推断）。克隆用 `git -c core.autocrlf=false clone --no-hardlinks`，检出 detached 的发布提交，`git status` 必须干净。
 
-   共 7 个文件：4 个 ELF（linux amd64/arm64 × server/agent）、`install.sh`、`RELEASE-METADATA.json`、`SHA256SUMS`。逐个核对 `vcs.revision`、`vcs.modified=false` 和 SHA256，并按字节确认三个文本文件都是 LF。
+   共 7 个文件：4 个 ELF（linux amd64/arm64 × server/agent）、`install.sh`、`RELEASE-METADATA.json`、`SHA256SUMS`。逐个核对 `vcs.revision`、`vcs.modified=false` 和 SHA256，并按字节确认三个文本文件都是 LF；另记录 `SHA256SUMS` 文件自身的 SHA-256。
 
    **不要设置 `GOTOOLCHAIN=local`。** `.tools/go` 自带的是 go1.26.5，只用来引导；保持 `GOTOOLCHAIN` 默认（auto），go 会自动切到 `go.mod` 里 `toolchain` 行指定的版本（目前 go1.26.8，已缓存在本机的模块缓存里，`GOPROXY=off` 也能用）。换了电脑、模块缓存里没有这个工具链时，第一次构建需要联网让 go 下载它，之后才能用 `GOPROXY=off`。构建脚本会强制检查：构建前 `go version` 必须等于 `go.mod` 的 toolchain 版本，每个 ELF 构建后 `go version -m` 的第一行必须是同一个版本、`vcs.revision` 必须等于发布提交、`vcs.modified` 必须是 `false`，任何一项不符就报错并清掉这次的输出。
 4. **真机验证用本地产物**，不从 GitHub 下载：`PROBE_404_LOCAL_ASSET_DIRECTORY=<目录> PROBE_404_VERSION=vX.Y.Z bash install.sh`。安装器拒绝用同版本不同提交覆盖；要重测就先装上一版再升级。
-   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 发布门槛的演练矩阵仅包含本版支持的前两个正式版（v1.1.1：v1.0.10、v1.1.0 → v1.1.1，expected_schema: 36）；更早起点可演练，但不属于发布门槛。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。发布时对照目标版 `install.sh` 复核 r31-usage.md 里的提示清单，不一致就先更新清单。
+   - 发布前真机验证必须包含一次接近生产规模数据库（约 500 MB 以上，由 ROADMAP R31 的工具生成，不含真实数据）的升级测试，分别记录升级前检查、迁移、回滚恢复的耗时和结果，写入评审记录。R31 发布门槛的演练矩阵仅包含本版支持的前两个正式版（v1.1.2：v1.1.0、v1.1.1 → v1.1.2，expected_schema: 36；本版只演练 v1.1.1 起点，v1.1.0 起点由升级门槛测试覆盖）；更早起点可演练，但不属于发布门槛。R31 支持登记表 `scripts/r31-versions.json` 中任意起始版本，维护者一行入口为 `scripts/r31-rehearse.sh`，用法和提示清单见 [scripts/r31-usage.md](scripts/r31-usage.md)；生成器沿用 v1.0.6 底座并由所选正式 Server 迁移，冻结证据入口为 scripts/r31-run-with-evidence.py。发布时对照目标版 `install.sh` 复核 r31-usage.md 里的提示清单，不一致就先更新清单。
    - 每个版本正式发布后，在下一版准备工作里把该版补入 R31 登记表：版本、正式 tag 提交、schema、相对上一版的表增删。
 5. **推送顺序：** 推送和 gh 操作需要维护者授权，可以在任务书里一次性授权。任务书必须写明哪些情况一定要停下来问，至少包括：结果与预期不符、升级失败、需要维护者操作面板或输入密码。
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
    2. 对发布提交打**带注释**的 tag `vX.Y.Z`，只推这个 tag。
-   3. `gh release create vX.Y.Z --verify-tag --title "404-probe vX.Y.Z Stable" --notes-file RELEASE_NOTES_vX.Y.Z.md --latest=false`，附上这 7 个文件。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
-   4. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。**升级前后各记录一次状态快照并对比（R05）**：升级前 `python3 -I scripts/agent-state-snapshot.py collect --label before --out <仓库外目录> <测试 Agent 的 SSH 别名…>`，升级后 `--label after`，再 `python3 -I scripts/agent-state-snapshot.py compare <目录> before after`。快照只读采集版本、二进制哈希、`agent.env` 的各项设置（密钥只记“已设置/为空”）、每个 systemd 单元（含 drop-in）或 OpenRC 脚本的哈希、实际生效的沙箱选项、服务状态；版本、二进制哈希、进程是升级预期会变的，其他任何差异（单元文件、沙箱、设置、权限、服务不再运行）都要查清，命令退出码为 1。快照放在仓库外（例如 `release-records` 的版本目录），不提交。
-   5. 成功后 `gh release edit vX.Y.Z --latest`；失败则改回草稿（`--draft=true`），不删除 release 或 tag，也不重新上传不同字节。
-   6. 说明文件的后续修改在 tag 之后单独提交并推送。
-   7. **最后一步**才把 `main` 快进到该发布分支（发布完成后 `main` 才前进）。
+   3. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file <说明文件> --latest=false`，附上这 7 个文件。说明文件 = `RELEASE_NOTES_vX.Y.Z.md` 全文 + 一行 `SHA256SUMS` 的 SHA-256（从最终产物计算，不手抄；摘要不能提前写进发布准备提交里的文件，因为 `SHA256SUMS` 来自这个提交的构建）。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
+   4. **核对清单：GitHub release 说明里公布的 `SHA256SUMS` 摘要 = 最终上传的 `SHA256SUMS` 文件的 SHA-256**：把 7 件资产下载回来逐个比对 SHA256，并用下载回来的 `SHA256SUMS` 重新计算摘要，与说明里公布的值逐字符比对；不符就按失败处理（见本条第 6 点）。
+   5. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。**升级前后各记录一次状态快照并对比（R05）**：升级前 `python3 -I scripts/agent-state-snapshot.py collect --label before --out <仓库外目录> <测试 Agent 的 SSH 别名…>`，升级后 `--label after`，再 `python3 -I scripts/agent-state-snapshot.py compare <目录> before after`。快照只读采集版本、二进制哈希、`agent.env` 的各项设置（密钥只记“已设置/为空”）、每个 systemd 单元（含 drop-in）或 OpenRC 脚本的哈希、实际生效的沙箱选项、服务状态；版本、二进制哈希、进程是升级预期会变的，其他任何差异（单元文件、沙箱、设置、权限、服务不再运行）都要查清，命令退出码为 1。快照放在仓库外（例如 `release-records` 的版本目录），不提交。
+   6. 成功后 `gh release edit vX.Y.Z --latest`；失败则改回草稿（`--draft=true`），不删除 release 或 tag，也不重新上传不同字节。
+   7. 说明文件的后续修改在 tag 之后单独提交并推送（包括把 `SHA256SUMS` 摘要补进 `RELEASE_NOTES_vX.Y.Z.md`；只改 main，不影响 tag）。
+   8. **最后一步**才把 `main` 快进到该发布分支（发布完成后 `main` 才前进）。
 6. 默认分支是 `main`，发布不通过合并进 `main` 完成，而是先在 `release/vX.Y.Z` 上完成，最后快进 `main`；tag 指向的提交必须在远端某个分支上可见。
 7. 评审记录统一保存在 `D:\Claude-Github\release-records\<版本>\`。
 
