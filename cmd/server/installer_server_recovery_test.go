@@ -94,6 +94,11 @@ SERVER_UPGRADE_CANDIDATE="${task_root}/bin/candidate"
 SERVER_UPGRADE_HELPER_CANDIDATE="${task_root}/bin/helper.candidate"
 INSTALL_HELPER="${task_root}/bin/helper"
 mkdir -p "${task_root}/bin" "${STATE_DIRECTORY}" "${SERVER_UPGRADE_BACKUP}/database"
+update_check="$STATE_DIRECTORY/update-check.json"
+printf '{"enabled":false}\n' >"$update_check"
+chmod 0600 "$update_check"
+update_check_before="$(stat -c '%u:%g:%a:%i' "$update_check")"
+sha256sum "$update_check" >"$task_root/update-check.sha256"
 reject_openrc_deferred() { :; }
 release_version() { [[ "$1" == v1.0.3 ]]; }
 server_upgrade_state_value() { sed -n "s/^$1=//p" "${SERVER_UPGRADE_STATE}"; }
@@ -184,6 +189,8 @@ if verify_restored_server_files "${SERVER_UPGRADE_BACKUP}"; then exit 92; fi
 cp "${SERVER_UPGRADE_BACKUP}/database/404-probe.db-shm" "${SERVER_DATABASE}-shm"
 printf wrong >>"${SERVER_BINARY}"
 if verify_restored_server_files "${SERVER_UPGRADE_BACKUP}"; then exit 93; fi
+sha256sum -c "$task_root/update-check.sha256"
+[[ "$(stat -c '%u:%g:%a:%i' "$update_check")" == "$update_check_before" ]]
 printf 'PASS: four state combinations, failed recovery pending, retry, full sidecar verification\n'
 `
 	path := filepath.Join(rootNative, "harness.sh")

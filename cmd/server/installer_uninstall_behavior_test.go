@@ -15,6 +15,139 @@ func TestInstallerAgentUninstallExecutionIsCompleteIdempotentAndPreservesSharedH
 	}
 }
 
+func TestInstallerServerUpdateCheckCleanup(t *testing.T) {
+	for _, role := range []string{"installer", "generated-helper", "openrc", "fresh-rollback"} {
+		t.Run(role, func(t *testing.T) {
+			rootNative := t.TempDir()
+			root := shellTestPath(rootNative)
+			source := m12InstallerSource(t)
+			source = strings.TrimSuffix(strings.TrimSpace(source), `main "$@"`)
+			if role == "generated-helper" {
+				start := strings.Index(source, "cat <<'HELPER'\n")
+				end := strings.Index(source, "\nreject_deferred_command_on_host \"${1:-}\"\nrequire_root\n")
+				if start < 0 || end <= start {
+					t.Fatal("could not locate generated helper definitions")
+				}
+				source = source[start+len("cat <<'HELPER'\n") : end]
+			}
+			path := filepath.Join(rootNative, "installer-source.sh")
+			if err := os.WriteFile(path, []byte(installerFixtureSource(source, root)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			harness := `set -Eeuo pipefail
+task_root='` + root + `'
+mode='` + role + `'
+source "$task_root/installer-source.sh"
+require_root_linux_systemd() { :; }
+validate_service_user() { :; }
+validate_removable_service_user() { :; }
+openrc_role_residue() { return 1; }
+mountpoint() { return 1; }
+stat() {
+  if [[ "$1" == -c && "$2" == %U ]]; then
+    # The fixture uses synthetic account records, so model the corresponding
+    # owner names while leaving the actual mode and other stat calls intact.
+    if [[ "${*: -1}" == "$SERVER_DATABASE"* ]]; then
+      printf '%s\n' "$SERVICE_USER"
+    else
+      printf 'root\n'
+    fi
+  else
+    command stat "$@"
+  fi
+}
+systemctl() {
+  case "$1" in is-active) return 1;; stop|disable|daemon-reload) return 0;; *) return 98;; esac
+}
+id() { [[ -f "$task_root/account" ]]; }
+getent() {
+  case "$1:${2:-}" in
+    passwd:404-probe) id && printf '404-probe:x:451:451::%s:/usr/sbin/nologin\n' "$STATE_DIRECTORY" ;;
+    group:404-probe) [[ -f "$task_root/group" ]] && printf '404-probe:x:451:\n' ;;
+    passwd:) return 0 ;;
+    *) return 2 ;;
+  esac
+}
+userdel() { rm -- "$task_root/account"; }
+groupdel() { rm -- "$task_root/group"; }
+write_cache() {
+  mkdir -p "$STATE_DIRECTORY"
+  printf '{"enabled":false}\n' >"$STATE_DIRECTORY/update-check.json"
+  chmod 0600 "$STATE_DIRECTORY/update-check.json"
+  touch "$STATE_DIRECTORY/.update-check-x.tmp"
+}
+verify_cache_removed() {
+  [[ ! -e "$STATE_DIRECTORY/update-check.json" && ! -e "$STATE_DIRECTORY/.update-check-x.tmp" ]]
+}
+if [[ "$mode" == fresh-rollback ]]; then
+  for INSTALL_INIT in systemd openrc; do
+    write_cache
+    openrc_stop() { return 0; }
+    status=0
+    (
+      INSTALL_TRANSACTION_ACTIVE=1
+      INSTALL_TRANSACTION_ROLE=server
+      INSTALL_TRANSACTION_UNIT=404-probe-server
+      INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=1
+      rollback_install_transaction 42
+    ) || status=$?
+    [[ "$status" == 42 && ! -e "$STATE_DIRECTORY" ]]
+    verify_cache_removed
+  done
+  exit 0
+fi
+if [[ "$mode" == openrc ]]; then
+  INSTALL_INIT=openrc
+  openrc_stop() { return 0; }
+  openrc_safe_parents() { return 0; }
+fi
+uninstall_server() {
+  if [[ "$mode" == generated-helper ]]; then
+    uninstall server --confirm-delete-data
+  else
+    uninstall_role server --confirm-delete-data
+  fi
+}
+for layout in clean unknown legacy; do
+  write_cache
+  touch "$task_root/account" "$task_root/group"
+  if [[ "$layout" == legacy ]]; then
+    if server_residue_exists; then exit 98; fi
+    if [[ "$mode" == installer ]]; then
+      interactive_install() { touch "$task_root/fresh-path"; }
+      upgrade_existing_server() { return 99; }
+      install_or_upgrade
+      [[ -f "$task_root/fresh-path" ]]
+    fi
+  else
+    touch "$SERVER_DATABASE" "$SERVER_DATABASE-wal" "$SERVER_DATABASE-shm"
+    server_residue_exists
+  fi
+  if [[ "$layout" == unknown ]]; then printf preserve >"$STATE_DIRECTORY/unknown"; fi
+  uninstall_server
+  verify_cache_removed
+  [[ ! -e "$SERVER_DATABASE" && ! -e "$SERVER_DATABASE-wal" && ! -e "$SERVER_DATABASE-shm" ]]
+  if [[ "$layout" == unknown ]]; then
+    [[ "$(cat "$STATE_DIRECTORY/unknown")" == preserve && -e "$task_root/account" && -e "$task_root/group" ]]
+    rm -- "$STATE_DIRECTORY/unknown"
+  else
+    [[ ! -e "$STATE_DIRECTORY" && ! -e "$task_root/account" && ! -e "$task_root/group" ]]
+  fi
+  uninstall_server
+  [[ ! -e "$STATE_DIRECTORY" && ! -e "$task_root/account" && ! -e "$task_root/group" ]]
+done
+`
+			harnessPath := filepath.Join(rootNative, "update-check-cleanup.sh")
+			if err := os.WriteFile(harnessPath, []byte(harness), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if output, err := installerFixtureCommand(t, "bash", shellTestPath(harnessPath)).CombinedOutput(); err != nil {
+				t.Fatalf("Server update-check cleanup: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
 func runInstallerAgentUninstallFixture(t *testing.T, early bool) {
 	bash := "bash"
 	if runtime.GOOS == "windows" {

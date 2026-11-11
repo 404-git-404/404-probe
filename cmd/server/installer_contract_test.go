@@ -313,6 +313,23 @@ func TestInstallerUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 			t.Fatalf("installer uninstall violates preservation or idempotency through %q", forbidden)
 		}
 	}
+	checkCache := func(signature string, want int) {
+		t.Helper()
+		for _, fragment := range strings.Split(script, "\n"+signature+"() {\n")[1:] {
+			body, _, ok := strings.Cut(fragment, "\n}\n")
+			if !ok || strings.Count(body, `"${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp`) != want {
+				t.Fatalf("%s cache cleanup must appear %d times", signature, want)
+			}
+			if signature == "server_residue_exists" && strings.Contains(body, "/update-check.json") {
+				t.Fatal("an update-check cache must not identify a Server installation")
+			}
+		}
+	}
+	for _, function := range []string{"openrc_uninstall", "uninstall", "uninstall_role"} {
+		checkCache(function, 1)
+	}
+	checkCache("rollback_install_transaction", 2)
+	checkCache("server_residue_exists", 0)
 }
 
 func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {

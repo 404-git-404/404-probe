@@ -33,6 +33,11 @@ mkdir -p "$(dirname "$SERVER_BINARY")" "$(dirname "$INSTALL_HELPER")" "$(dirname
 printf original-binary >"$SERVER_BINARY"; chmod 755 "$SERVER_BINARY"
 printf original-helper >"$INSTALL_HELPER"; chmod 755 "$INSTALL_HELPER"
 printf original-database >"$SERVER_DATABASE"
+update_check="$STATE_DIRECTORY/update-check.json"
+printf '{"enabled":false}\n' >"$update_check"
+chmod 0600 "$update_check"
+update_check_before="$(command stat -c '%u:%g:%a:%i' "$update_check")"
+sha256sum "$update_check" >"$task_root/update-check.sha256"
 printf private-config >"$CONFIG_DIRECTORY/server.env"
 printf '[Service]\nUser=%s\nExecStart=%s serve --listen 127.0.0.1:8080 --db %s\n' "$SERVICE_USER" "$SERVER_BINARY" "$SERVER_DATABASE" >"$SERVER_UNIT"
 chmod 644 "$SERVER_UNIT"
@@ -81,6 +86,8 @@ server_upgrade_trap(){ :; }
 verify_server_stable_readiness(){ :; }
 status=0
 (upgrade_existing_server) || status=$?
+sha256sum -c "$task_root/update-check.sha256"
+[[ "$(command stat -c '%u:%g:%a:%i' "$update_check")" == "$update_check_before" ]]
 if [[ "$CURRENT" == v1.1.0 ]]; then
  [[ "$status" == 0 ]]
  grep -Fq '"version":"v1.1.1"' "$SERVER_BINARY"

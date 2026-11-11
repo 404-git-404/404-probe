@@ -659,6 +659,7 @@ openrc_uninstall() {
   rm -f -- "$(openrc_unit "${role}")" "$(openrc_wrapper "${role}")" "${binary}" "${CONFIG_DIRECTORY}/${role}.env" "/run/404-probe-${role}-openrc/supervisor.pid" "/var/log/404-probe/${role}.log" "/var/log/404-probe/${role}.log.1" "/var/log/404-probe/${role}.log.lock"
   if [[ "${role}" == server ]]; then
     rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash"
+    rm -f -- "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp
   else
     rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${SELECTOR_ORDER_FILE}"
   fi
@@ -848,8 +849,12 @@ rollback_install_transaction() {
   if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then
     if [[ -n "${INSTALL_TRANSACTION_UNIT}" ]]; then openrc_stop "${INSTALL_TRANSACTION_ROLE}"; fi
     for (( index=${#INSTALL_TRANSACTION_PATHS[@]}-1; index>=0; index-- )); do rm -f -- "${INSTALL_TRANSACTION_PATHS[index]}"; done
-    if [[ "${INSTALL_TRANSACTION_ROLE}" == server ]]; then rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
-    else rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"; fi
+    if [[ "${INSTALL_TRANSACTION_ROLE}" == server ]]; then
+      rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
+      [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || rm -f -- "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp
+    else
+      rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
+    fi
     rm -f -- "/run/404-probe-${INSTALL_TRANSACTION_ROLE}-openrc/supervisor.pid"
     rmdir --ignore-fail-on-non-empty "/run/404-probe-${INSTALL_TRANSACTION_ROLE}-openrc" /var/log/404-probe 2>/dev/null || true
     (( INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED == 0 )) || rmdir -- "${CONFIG_DIRECTORY}" 2>/dev/null || true
@@ -871,6 +876,7 @@ rollback_install_transaction() {
   fi
   if [[ "${INSTALL_TRANSACTION_ROLE}" == "server" ]]; then
     rm -f -- "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm"
+    [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || rm -f -- "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp
   elif [[ "${INSTALL_TRANSACTION_ROLE}" == "agent" ]]; then
 	 systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true
 	 systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
@@ -994,6 +1000,7 @@ readonly ENROLLMENT_PREFIX="404p1_"
 
 die() { printf '404-probe helper: %s\n' "$*" >&2; exit 1; }
 server_residue_exists() {
+  # An update-check cache left by an older uninstall does not indicate an installation.
   openrc_role_residue server && return 0
   local path
   for path in "${SERVER_UNIT}" "${SERVER_BINARY}" "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
@@ -1459,6 +1466,7 @@ uninstall() {
   else
     rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
       "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
+      "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp \
       /usr/local/bin/.404-probe-server.candidate /usr/local/bin/.404-probe-server.previous \
       /usr/local/sbin/404-probe-install.candidate
     remove_owned_tree "${SERVER_UPGRADE_DIRECTORY}"
@@ -1761,6 +1769,7 @@ wait_for_server_readiness() {
 }
 
 server_residue_exists() {
+  # An update-check cache left by an older uninstall does not indicate an installation.
   openrc_role_residue server && return 0
   local path
   for path in "${SERVER_UNIT}" "${SERVER_BINARY}" "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
@@ -3113,6 +3122,7 @@ uninstall_role() {
   else
     rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
       "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
+      "${STATE_DIRECTORY}/update-check.json" "${STATE_DIRECTORY}"/.update-check-*.tmp \
       "${SERVER_UPGRADE_CANDIDATE}" /usr/local/bin/.404-probe-server.previous \
       "${SERVER_UPGRADE_HELPER_CANDIDATE}"
     remove_owned_tree "${SERVER_UPGRADE_DIRECTORY}"
