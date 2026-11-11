@@ -142,6 +142,21 @@ if [[ "$mode" == fresh-rollback ]]; then
       verify_cache_removed "$layout"
       if [[ "$layout" == directories ]]; then rmdir -- "$STATE_DIRECTORY"; fi
     done
+    write_cache clean
+    set +e
+    (
+      set -e
+      INSTALL_TRANSACTION_ACTIVE=1
+      INSTALL_TRANSACTION_ROLE=server
+      INSTALL_TRANSACTION_UNIT=
+      INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=1
+      rollback_install_transaction 42
+    )
+    status=$?
+    set -e
+    [[ "$status" == 42 && "$(cat "$STATE_DIRECTORY/update-check.json")" == '{"enabled":false}' && -f "$STATE_DIRECTORY/.update-check-x.tmp" ]]
+    rm -- "$STATE_DIRECTORY/update-check.json" "$STATE_DIRECTORY/.update-check-x.tmp"
+    rmdir -- "$STATE_DIRECTORY"
   done
   exit 0
 fi

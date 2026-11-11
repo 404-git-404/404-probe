@@ -108,6 +108,31 @@ func TestEngineStallExhaustsAttemptsAndPreservesLiveAgent(t *testing.T) {
 	}
 }
 
+func TestEngineDownloadDeadline(t *testing.T) {
+	engine, request, _, _, _ := testEngine(t, false, false, time.Second)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	engine.config.ReleaseBase = server.URL
+	engine.config.DownloadTimeout = 150 * time.Millisecond
+	if _, err := engine.Start(request); err != nil {
+		t.Fatal(err)
+	}
+	state := waitLocalStatus(t, engine, request, "failed")
+	if state.FailureCode != "download_deadline_exceeded" {
+		t.Fatalf("unexpected failure: %+v", state)
+	}
+}
+
+func TestEngineDownloadTimeoutDefaults(t *testing.T) {
+	engine, _, _, _, _ := testEngine(t, false, false, time.Second)
+	if engine.config.DownloadTimeout != 30*time.Minute || engine.config.DownloadHeaderTimeout != 30*time.Second {
+		t.Fatalf("unexpected total and header defaults: %v, %v", engine.config.DownloadTimeout, engine.config.DownloadHeaderTimeout)
+	}
+}
+
 func TestDownloadDeadlineSharedAcrossFilesRetryAndFallback(t *testing.T) {
 	var fallbackAttempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

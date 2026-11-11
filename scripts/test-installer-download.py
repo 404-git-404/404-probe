@@ -64,7 +64,7 @@ def main():
                 state['ranges'].append(offset)
                 request_number = len(state['requests'])
                 data = b'x'*(205*2048) if mode == 'slow-real' else payload
-                if mode == 'deadline':
+                if mode in ('deadline', 'direct-deadline'):
                     time.sleep(2)
                     try:
                         self.send_error(503)
@@ -202,6 +202,14 @@ DOWNLOAD_STALL_SECONDS={60 if real else 2}
             assert err.count('超过总上限 30 分钟'.encode()) == 1 and b'README' in err,err
             assert not (root/'asset').exists() and not (root/'asset.partial').exists()
             print(f'PASS shared direct/API deadline: {elapsed:.2f}s',flush=True)
+
+            rc,out,err,elapsed=run('direct-deadline','DOWNLOAD_RETRY_MAX_SECONDS=1; DOWNLOAD_RETRIES=0; '+
+                                  f'download_release_asset v1.2.3 asset "{root}/asset"')
+            assert rc != 0 and elapsed < 4,(rc,elapsed,err)
+            assert len(state['requests']) == 1 and '/releases/tags/' not in state['requests'][0],state
+            assert err.count('超过总上限 30 分钟'.encode()) == 1 and b'README' in err,err
+            assert not (root/'asset').exists() and not (root/'asset.partial').exists()
+            print(f'PASS direct deadline reports once: {elapsed:.2f}s',flush=True)
 
             rc,out,err,_=run('slow',download,tty=True)
             assert rc == 0 and b'#' in err,(rc,err)

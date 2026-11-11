@@ -122,6 +122,11 @@ for identity in '{"version":"dev","dirty":false}' '{"version":"v1.1.1","dirty":t
 done
 printf 'PASS untrusted identities have stable code and pinned installer guidance\n'
 
+if ( require_supported_server_version 'v1.invalid.0' ) >"${temporary}/compare-rejection" 2>&1; then exit 1; fi
+grep -Fq 'server_version_unrecognized: installed Server version is invalid' "${temporary}/compare-rejection"
+grep -Fq 'no files were changed' "${temporary}/compare-rejection"
+printf 'PASS version comparison failure gives the invalid version guidance\n'
+
 mkdir -p "${SERVER_UPGRADE_DIRECTORY}"
 chmod 0700 "${SERVER_UPGRADE_DIRECTORY}"
 printf pending >"${SERVER_UPGRADE_STATE}"
