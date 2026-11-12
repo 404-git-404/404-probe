@@ -185,7 +185,7 @@ func TestAgentPauseResumeUIUsesDistinctNonDestructiveFlow(t *testing.T) {
 		`stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable'`,
 		`stateAction.textContent = agent.disabled_at ? '恢复监控' : '暂停…'`,
 		`const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale)`,
-		`Card.machineView(agent, observed, oldMetrics)`,
+		`Card.machineView(agent, observed, oldMetrics, diskFault)`,
 		`Card.trafficView(agent, {old, quotaDisplay: quotaDisplay(agent.plan)})`,
 		"/${action}`", `method: 'POST'`, `'X-CSRF-Token': mutationCSRFToken`,
 		`if (!agent.revoked) management.append(upgrade, stateAction)`,

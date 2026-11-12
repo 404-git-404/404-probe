@@ -21,7 +21,7 @@
    get('versions').textContent=[s.versionNonformal?`非正式版本 ${s.versionNonformal} 台，未计入待升级`:'',s.versionUnknown?`版本无法识别 ${s.versionUnknown} 台`:'',s.unknown?`状态未知 ${s.unknown} 台`:''].filter(Boolean).join(' · ');
    get('health').textContent=s.health?`⚠ ${s.health} 台需要关注`:s.insufficient?'暂无已知异常':s.registered?'✓ 全部正常':'尚无设备';
    get('health').classList.toggle('attention',s.health>0);get('health').disabled=!s.health;
-   get('health-note').textContent=`网络异常 ${s.quick.network} · 资源吃紧 ${s.quick.resources} · 流量将满 ${s.quick.traffic}`;
+   get('health-note').textContent=`磁盘异常 ${s.quick.disk} · 网络异常 ${s.quick.network} · 资源吃紧 ${s.quick.resources} · 流量将满 ${s.quick.traffic}`;
    get('unknown').textContent=s.insufficient?(s.health?`${s.insufficient} 台暂无最新数据（离线或尚未检测）`:`其余 ${s.insufficient} 台暂无最新数据（离线或尚未检测）`) : '';
    if(doc.createElement){
     let count=get('renewal').querySelector?.('strong');

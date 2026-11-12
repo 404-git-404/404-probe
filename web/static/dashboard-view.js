@@ -43,7 +43,7 @@
   function scheduleTags(){if(!tagFrame)tagFrame=root.requestAnimationFrame(fitTags);}
   const tagResize=new root.ResizeObserver(scheduleTags);tagResize.observe(options.tags.list);
   get('dashboard-tags-clear').addEventListener('click',()=>{p.tags=[];change();});
-  const quickButtons={},quickCounts={};for(const key of ['offline','network','resources','traffic','renewal']){
+  const quickButtons={},quickCounts={};for(const key of ['offline','disk','network','resources','traffic','renewal']){
    const b=button('',()=>toggle('quick',key,!p.quick.includes(key)),'dashboard-quick-item');b.dataset.quick=key;const label=el('span','',M.QUICK[key]),count=el('small');b.append(label,count);quickButtons[key]=b;quickCounts[key]=count;quick.append(b);
   }
   function apply(key){if(!p.quick.includes(key))p.quick.push(key);change();}

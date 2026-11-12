@@ -1,7 +1,7 @@
 (function(root){
  'use strict';
  const State=root.AgentState||(typeof require==='function'?require('./agent-state.js'):null);
- const KEY='404-probe.dashboard.v1',QUICK={offline:'离线',network:'网络异常',resources:'资源吃紧',traffic:'流量将满',renewal:'7 天内续费',health:'需要关注',upgrade:'待升级'};
+ const KEY='404-probe.dashboard.v1',QUICK={offline:'离线',disk:'磁盘异常',network:'网络异常',resources:'资源吃紧',traffic:'流量将满',renewal:'7 天内续费',health:'需要关注',upgrade:'待升级'};
  const STATUS={online:'在线',offline:'离线',paused:'暂停',unknown:'状态未知'};
  // Client display window: 10s telemetry throttle, 15s calibration, read latency
  // and margin. Two refresh cycles tolerate one failed read; the Server's 5s
@@ -17,6 +17,33 @@
   return {value,save,validate(catalog){let changed=false;for(const [key,allowed]of [['groups',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['tags',new Set(catalog.tags.map(t=>t.id))],['collapsed',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['statuses',new Set(Object.keys(STATUS))],['quick',new Set(Object.keys(QUICK))]]){const filtered=value[key].filter(id=>allowed.has(id));if(filtered.length!==value[key].length){value[key]=filtered;changed=true;}}if(changed)save();}};
  }
  function lifecycle(a){return a.revoked?'revoked':a.disabled_at!=null?'paused':a.online?'online':a.state||a.last_seen?'offline':'unknown';}
+ const diskFaultReasons={write_eio:['写入失败','写入失败（I/O 错误）'],read_eio:['读回失败','读回失败（I/O 错误）'],read_only:['变为只读','文件系统变为只读'],stalled:['I/O 卡住','I/O 卡住'],ext4_errors:['文件系统报错','ext4 记录到新错误']};
+ const diskHints={full:'磁盘空间或 inode 已满',scsi_errors:'SCSI 错误计数增加',slow:'探测偏慢',unwritable:'数据目录不可写（配置问题）'};
+ function diskReport(a,now=Date.now()){
+  const h=a.state?.host_health;
+  if(!h?.disk||h.stale||a.state.stale||lifecycle(a)!=='online'||(a.resources&&resourcesOld(a,now)))return null;
+  if(h.disk.status==='ok'&&(!(h.disk.checked_at>0)||now-h.disk.checked_at>150000||h.disk.checked_at-now>60000))return null;
+  return h;
+ }
+ function diskTone(a,now=Date.now()){
+  const h=diskReport(a,now);
+  if(h?.disk.status==='error')return 'crit';
+  return h?.disk.status==='ok'&&h.last_fault_at>0&&h.last_fault_at<=now&&now-h.last_fault_at<=7*86400000?'warn':'';
+ }
+ function diskFaults(disk,{short=false,now=Date.now()}={}){
+  const result=[];
+  for(const [reason,[brief,full]] of Object.entries(diskFaultReasons)){
+   if(!disk?.reasons?.includes(reason))continue;
+   if(short)return [brief];
+   const seconds=Math.floor(Math.max(now-(disk.stalled_since||now),disk.probe_ms||0,30000)/1000);
+   result.push(reason==='stalled'?`I/O 卡住（已超过 ${seconds} 秒无响应）`:full);
+  }
+  return result;
+ }
+ function diskTime(at){
+  const d=new Date(at),pad=n=>String(n).padStart(2,'0');
+  return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+ }
  const savedPlans=new WeakSet();
  function savedPlan(plan){if(plan&&typeof plan==='object')savedPlans.add(plan);}
  // A local plan write arrives before its next summary. Until the matching
@@ -40,9 +67,10 @@
   const resource=fresh&&[r.cpu_percent,r.ram_percent,r.disk_percent].some(v=>typeof v==='number'&&Number.isFinite(v)&&v>=90);
   const traffic=t.quota_state==='current'&&typeof p?.quota_bytes==='number'&&p.quota_bytes>0&&typeof p?.usage_bytes==='number'&&p.usage_bytes/p.quota_bytes>=.8;
   const network=networkKnown&&n.active===true;
+  const disk=diskTone(a,now)==='crit';
   const order=State.compareStableVersions(a.version,server?.version);
   const nonformal=order===null&&/^v\d+\.\d+\.\d+-(?:beta|rc)\.[1-9]\d*$/.test(a.version||'')&&State.compareReleaseVersions(a.version,a.version)===0;
-  return {offline:lifecycle(a)==='offline',network,resources:resource,traffic,renewal:renewal(a,now).type==='due_soon',health:network||resource||traffic,upgrade:order===-1,versionNonformal:nonformal,versionUnknown:order===null&&!nonformal,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
+  return {offline:lifecycle(a)==='offline',disk,network,resources:resource,traffic,renewal:renewal(a,now).type==='due_soon',health:disk||network||resource||traffic,upgrade:order===-1,versionNonformal:nonformal,versionUnknown:order===null&&!nonformal,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
  }
  function aggregate(agents,server,now=Date.now()){
   const s={registered:0,online:0,offline:0,paused:0,unknown:0,health:0,insufficient:0,upgrade:0,versionUnknown:0,versionNonformal:0,renewal:0,overdue:0,renewalInvalid:0,nearest:null,quick:Object.fromEntries(Object.keys(QUICK).map(k=>[k,0]))};
@@ -106,5 +134,5 @@
   const sections=p.sort==='group'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
   return {list,sections,summary:aggregate(agents,server,now)};
  }
- const api={KEY,QUICK,STATUS,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,savedPlan,renewal,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,savedPlan,renewal,diskReport,diskTone,diskFaults,diskHints,diskTime,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);

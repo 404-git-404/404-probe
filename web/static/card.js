@@ -74,13 +74,13 @@
     return parts.join(' · ');
   }
   // observed: the sustained-load observation of card-metrics (cpu / io: 'critical' when it lasted); old: data is not current.
-  function machineView(agent,observed={},old=false) {
+  function machineView(agent,observed={},old=false,diskFault=false) {
     const s=agent.state||{},has=Boolean(agent.state),known=v=>finite(v)?v.toFixed(2):'—';
     const hotCPU=!old&&observed.cpu==='critical',hotIO=!old&&observed.io==='critical';
     const values=[s.cpu_percent,s.ram_percent,s.disk_percent];
     const rings=['cpu','memory','disk'].map((kind,i)=>{
-      const value=has?values[i]:null,tone=ringTone(value,old||!has),name=['CPU','RAM','DISK'][i];
-      const note=[kind==='cpu'&&hotCPU?'CPU 持续高负载':'',kind==='disk'&&hotIO?'磁盘 I/O 持续繁忙':'',old&&has?'旧数据，不是当前负载':''].filter(Boolean).join(' · ');
+      const value=has?values[i]:null,tone=kind==='disk'&&diskFault?'crit':ringTone(value,old||!has),name=['CPU','RAM','DISK'][i];
+      const note=[kind==='cpu'&&hotCPU?'CPU 持续高负载':'',kind==='disk'&&hotIO?'磁盘 I/O 持续繁忙':'',kind==='disk'&&diskFault?'磁盘异常':'',old&&has?'旧数据，不是当前负载':''].filter(Boolean).join(' · ');
       return {kind,name,tone,dash:ringDash(value,old||!has),text:CM.pct(value),old:old&&has,title:`${name} ${CM.pct(value)}${note?' · '+note:''}`};
     });
     const flag=(on)=>on?'! ':'';

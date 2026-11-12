@@ -70,6 +70,14 @@ body #dashboard-main{width:100%;max-width:none;margin:0;min-width:0;padding:0 1.
 #dashboard-tags .dashboard-option{border:1px solid var(--color-line);border-radius:999px}
 .dashboard-quick-item::before{content:'';display:block;width:.625rem;height:.625rem;border-radius:50%;background:var(--color-status-02);margin:.3rem .5rem 0 0;flex:none}
 .dashboard-quick-item[data-quick=offline]::before{background:var(--color-danger)}
+.dashboard-quick-item[data-quick=disk]::before{background:var(--color-danger)}
+
+.agent-card.disk-health-critical{outline:1.5px solid var(--color-danger);outline-offset:-1px}
+.dashboard-card-tags>.disk-health-badge{font-weight:700}
+.dashboard-card-tags>.disk-health-badge[data-tone=crit]{background:var(--color-surface-12);color:var(--color-danger-text);border-color:var(--color-danger)}
+.dashboard-card-tags>.disk-health-badge[data-tone=warn]{background:var(--color-surface-11);color:var(--color-warning-text);border-color:var(--color-line-09)}
+.disk-os-failed{display:inline-block;padding:0 6px;border-radius:5px;font-size:11px;font-weight:700;line-height:17px;white-space:nowrap;color:var(--color-text-06);background:var(--color-surface-11)}
+.disk-os-failed[hidden],.disk-health-badge[hidden]{display:none}
 .dashboard-quick-item.is-zero{opacity:.5}.dashboard-quick-item.is-zero::before{background:transparent}
 .dashboard-panel .panel-view{font-size:1.1875rem;font-weight:400;background:none;text-align:left}.dashboard-panel .panel-view[aria-pressed=true]{font-weight:700;background:var(--color-surface-hover)}
 .enrollment-steps{align-items:center;gap:.6rem}.enrollment-steps li{display:flex;align-items:center;gap:.4rem;white-space:nowrap}.enrollment-steps li+li::before{content:'';width:1.4rem;height:1px;background:var(--color-line);margin-right:.2rem}.step-circle{display:inline-flex;align-items:center;justify-content:center;width:1.5rem;height:1.5rem;border:1px solid var(--color-text-muted);border-radius:50%;font-variant-numeric:tabular-nums}.enrollment-steps [aria-current=step] .step-circle{background:var(--color-accent);border-color:var(--color-accent);color:var(--color-text-02)}.enrollment-steps [data-complete=true]{color:var(--color-accent-text)}.enrollment-steps [data-complete=true] .step-circle{border-color:var(--color-accent)}

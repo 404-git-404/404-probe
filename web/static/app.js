@@ -1334,13 +1334,16 @@ function createAgentCard(initialAgent) {
     const systemText = document.createElement('span');
     systemText.className = 'c7-system';
     setReadableText(systemText, system.text);
+    const systemFailure = document.createElement('span');
+    systemFailure.className = 'disk-os-failed';
+    systemFailure.textContent = '读取失败';
     const publicEgress = createPublicEgress(agent.agent_id);
     const egress = publicEgress.element, updateEgress = publicEgress.update;
     updateEgress(agent);
     const runtime = document.createElement('small');
     runtime.className = 'card-runtime c7-runtime';
     setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
-    sub.append(status, logo, systemText, egress, runtime);
+    sub.append(status, logo, systemText, systemFailure, egress, runtime);
     let nameControl = agentNameControl(agent, state);
     const mark = countryMark(agent.country_code, agent.country_source);
     identity.append(nameControl, sub);
@@ -1348,12 +1351,29 @@ function createAgentCard(initialAgent) {
     card.classList.add(`state-${stateName}`);
     card.append(head);
     const tags=document.createElement('div');tags.className='dashboard-card-tags';
-    const updateTags=()=>{const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);const signature=JSON.stringify(key);if(tags.dataset.signature===signature)return;tags.dataset.signature=signature;tags.replaceChildren(...key.map(([,name])=>{const n=document.createElement('span');n.textContent=name;n.title=name;return n;}));tags.hidden=!key.length;};
-    updateTags();card.append(tags);
+    const diskBadge=document.createElement('span');diskBadge.className='disk-health-badge';tags.append(diskBadge);
+    const updateTags=()=>{
+      const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);
+      const signature=JSON.stringify(key);
+      if(tags.dataset.signature!==signature){
+        tags.dataset.signature=signature;
+        while(tags.lastElementChild!==diskBadge)tags.lastElementChild.remove();
+        for(const [,name] of key){const n=document.createElement('span');n.textContent=name;n.title=name;tags.append(n);}
+      }
+      const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
+      const reason=tone==='crit'?DashboardModel.diskFaults(health.disk,{short:true})[0]:'';
+      const label=tone==='crit'?`⚠ 磁盘异常${reason?' · '+reason:''}`:tone==='warn'?`⚠ 磁盘曾出错 · ${DashboardModel.diskTime(health.last_fault_at)}`:'';
+      setCardText(diskBadge,label);diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
+      tags.hidden=!tone&&!key.length;
+      systemFailure.hidden=!health?.os_read_failed;
+      card.classList.toggle('disk-health-critical',tone==='crit');
+      return tone==='crit';
+    };
+    const diskFault=updateTags();card.append(tags);
 
     // ---- machine ----
     const machine = Card.machineFaces(document);
-    machine.update(Card.machineView(agent, observed, oldMetrics));
+    machine.update(Card.machineView(agent, observed, oldMetrics, diskFault));
     const machineModule = Card.createModule({document, key: 'machine', label: '机器', host: document.createElement('section'), a: machine.a, b: machine.b});
 
     // ---- traffic ----
@@ -1461,12 +1481,12 @@ function createAgentCard(initialAgent) {
 
     return {card, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
-      updateTags();
       const state = agent.state || {}, hasState = Boolean(agent.state);
       const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
       const stateName = cardLifecycle(agent);
       card.className = `card agent-card c7 state-${stateName}`;
+      const diskFault=updateTags();
       card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
       status.className = `status ${stateName}`; status.dataset.agentState = stateName;
       setCardText(status, lifecycleLabels[stateName]);
@@ -1490,7 +1510,7 @@ function createAgentCard(initialAgent) {
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }
       setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
-      machine.update(Card.machineView(agent, observed, oldMetrics));
+      machine.update(Card.machineView(agent, observed, oldMetrics, diskFault));
       updateTraffic();
       const charts=chartKey(agent);if(charts!==renderedCharts){renderedCharts=charts;trafficCharts.mount(agent);latencyCharts.mount(agent);networkQuality.mount(agent);}
       updateDisplay(googleTools.querySelector('.google-checks'), googleStatusPanel(agent));

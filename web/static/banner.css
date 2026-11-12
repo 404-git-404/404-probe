@@ -33,3 +33,6 @@
 .banner-row .banner-upgrade-link{position:absolute;inset:0;width:100%;height:100%}
 .banner-row .banner-upgrade-link:hover{background:var(--color-accent-soft);text-decoration:underline;text-underline-offset:3px}
 .banner-row .banner-upgrade-link:focus-visible{outline:2px solid var(--color-accent);outline-offset:-2px}
+.banner-disk-status{font-weight:700;white-space:nowrap}
+.banner-disk-status[data-tone=crit]{color:var(--color-danger-text)}
+.banner-disk-status[data-tone=warn]{color:var(--color-warning-text)}

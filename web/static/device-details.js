@@ -16,7 +16,9 @@
   const traffic=section('流量'),quota=button('编辑配额',n=>edit(current,n,'quota'),'detail-quota');traffic.h.append(quota);value('usage',traffic.n);
   const track=el('div','details-progress'),fill=el('span');track.append(fill);traffic.n.append(track);value('cycle',traffic.n).className='details-note';fact(traffic,'设备累计','total');value('coverage',traffic.n).className='details-note';
   const network=section('网络地址');network.n.append(egress.addresses);fact(network,'出口地区','country');
-  const system=section('系统');fact(system,'主机名','hostname');fact(system,'配置','config');values.config.className='details-config';fact(system,'Agent','version');fact(system,'最近上报','seen');
+  const system=section('系统');fact(system,'磁盘检测','diskHealth');fact(system,'系统名','os');fact(system,'主机名','hostname');fact(system,'配置','config');values.config.className='details-config';fact(system,'Agent','version');fact(system,'最近上报','seen');
+  const diskStatus=el('span','details-disk-status'),diskMeta=el('span','details-note');values.diskHealth.className='details-disk-health';values.diskHealth.append(diskStatus,diskMeta);
+  const osName=el('span'),osFailure=el('span','disk-os-failed');values.os.append(osName,osFailure);
   const agentGroup=section('Agent',groups),checks=section('检测与统计',groups),danger=section('危险操作',management);danger.n.classList.add('details-danger');
   function row(box,title,key,control){const n=el('div','details-action-row'),left=el('div');left.append(el('strong','',title));value(key,left).className='details-note';n.append(left);if(control)n.append(control);box.n.append(n);return n;}
   row(agentGroup,'升级','upgrade',actions.upgrade).dataset.upgradeRegion='';row(agentGroup,'系统信息','sample');
@@ -33,12 +35,40 @@
   function format(v,binary){let n=Number(v),i=0;const units=binary?['B','KiB','MiB','GiB','TiB']:['B','KB','MB','GB','TB'],base=binary?1024:1000;while(n>=base&&i<4){n/=base;i++;}return Number(n.toFixed(i&&n<10?2:i&&n<100?1:0))+' '+units[i];}
   const countryName=(code)=>catalog.find(c=>c.code===code)?.zh||code||'未知';
   const set=(key,text)=>{if(values[key].textContent!==text)values[key].textContent=text;};
+  const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
+  function updateDisk(a){
+   const model=root.DashboardModel,s=a.state||{},now=Date.now(),h=model?.diskReport(a,now),d=h?.disk,tone=model?.diskTone(a,now)||'';
+   const faults=tone==='crit'?model.diskFaults(d,{now}):[];
+   const hints=(d?.reasons||[]).filter(r=>r!=='unwritable'||tone!=='crit').map(r=>model.diskHints[r]).filter(Boolean);
+   let status=s.host_health?'检测数据已过期':s.hostname?'未检测（需升级 Agent）':'尚未检测',meta=[];
+   if(d){
+    status=tone==='crit'?['异常',...faults].join(' · '):d.container?'部分支持（容器）':tone==='warn'?`曾出错 · ${model.diskTime(h.last_fault_at)}`:d.status==='ok'?`正常 · ${root.Card.agoText(d.checked_at)}检查`:hints.length?'检测受限':'等待检测';
+    if(tone==='crit'&&h.first_fault_at){
+     const minutes=Math.max(0,Math.floor((now-h.first_fault_at)/60000));
+     meta.push(`${model.diskTime(h.first_fault_at).slice(-5)} 起，已持续 ${minutes<1?'不到 1 分钟':minutes+' 分钟'}`);
+    }
+    if(d.container)meta.push('内核计数和只读判断不支持');
+    for(const fs of d.filesystems||[]){
+     if(fs.ext4_errors!=null)meta.push(`${fs.scope==='data'?'数据分区':'根分区'} ext4 错误记录 ${fs.ext4_errors} 次`);
+     if(fs.scsi_errors!=null)meta.push(`SCSI 错误记录 ${fs.scsi_errors} 次${fs.scsi_state?'（'+fs.scsi_state+'）':''}`);
+    }
+    if(d.read_back_verified===false)meta.push('读回未验证');
+    meta.push(...hints);
+   }
+   diskStatus.dataset.tone=tone;text(diskStatus,status);text(diskMeta,meta.join(' · '));
+   text(osName,s.os||'—');osFailure.hidden=!s.host_health?.os_read_failed;
+   text(osFailure,s.os?'读取失败，显示上次的值':'读取失败');
+   tiles[2].className='details-box details-metric'+(tone==='crit'?' disk-health-critical':'');
+   values.sub2.className='details-note'+(tone==='crit'?' disk-fault-text':'');
+   if(tone==='crit')set('sub2',`⚠ ${faults.join(' · ')}`);
+  }
   function update(a,target=null,serverBuild=null){current=a;const s=a.state||{},p=a.plan||{},old=!a.online||a.disabled_at||s.stale,valid=v=>!old&&v!=null;
    set('organization',organizationText(a));organizationButton.disabled=!canWrite(a);
    const percent=v=>v==null?'—':Number(v).toFixed(Number(v)>=10?0:1)+'%';
    [s.cpu_percent,s.ram_percent,s.disk_percent].forEach((v,i)=>set('metric'+i,valid(v)?percent(v):'—'));
    set('sub0',old?'当前数据不可用':`负载 ${s.load1==null?'—':s.load1.toFixed(2)} · steal ${percent(s.cpu_steal_percent)}`);
    set('sub1',old?'当前数据不可用':`${s.ram_used==null?'—':format(s.ram_used,true)} / ${s.ram_total?format(s.ram_total,true):'—'}`);set('sub2',old?'当前数据不可用':`${s.disk_used==null?'—':format(s.disk_used,true).replace(/ [A-Za-z]+$/,'')} / ${s.disk_total?format(s.disk_total,true):'—'}`);
+   updateDisk(a);
    [s.rx_rate,s.tx_rate].forEach((v,i)=>{set('metric'+(i+3),valid(v)?format(v,false)+'/s':'—');set('sub'+(i+3),old?'当前数据不可用':'实时速率');});
    set('price',p.renewal_price?`${p.currency||''} ${p.currency==='USD'?'$':''}${p.renewal_price} / ${{monthly:'月',quarterly:'季',semiannual:'半年',yearly:'年',once:'一次性'}[p.renewal_price_period]||'未设周期'}`:'未设置');
    set('bandwidth',p.bandwidth_value?`${p.bandwidth_value} ${p.bandwidth_unit}`:'未设置');
@@ -116,7 +146,10 @@
       const group=el('div','details-identity'),line=el('div','details-title-line'),name=el('strong','',agent?.name||s.hostname||'未命名设备');
       const lifecycle=agent?.revoked?'已撤销':agent?.disabled_at?'已暂停':agent?.online?'在线':'离线';
       name.title=name.textContent;line.append(name,el('span','details-status status-'+(agent?.revoked?'revoked':agent?.disabled_at?'paused':agent?.online?'online':'offline'),'● '+lifecycle+(agent?.last_seen?' · '+Math.max(0,Math.floor((Date.now()-agent.last_seen)/1000))+' 秒前上报':'')));
-      group.append(line,el('span','details-note',[s.os||'系统未知',s.arch||'架构未知','Agent '+(agent?.version||'未知'),s.uptime==null?'运行时长未知':`运行 ${Math.floor(s.uptime/86400)} 天${!agent?.online?'（旧数据）':''}`].join(' · ')));machine.append(group);title.hidden=true;
+      const nameText=s.os||'系统未知',rest=' · '+[s.arch||'架构未知','Agent '+(agent?.version||'未知'),s.uptime==null?'运行时长未知':`运行 ${Math.floor(s.uptime/86400)} 天${!agent?.online?'（旧数据）':''}`].join(' · ');
+      const info=el('span','details-note',s.host_health?.os_read_failed?null:nameText+rest);
+      if(s.host_health?.os_read_failed)info.append(el('span','',nameText),el('span','disk-os-failed','读取失败'),el('span','',rest));
+      group.append(line,info);machine.append(group);title.hidden=true;
     }
     function renderOverview(){const node=overview(agents.get(current));if(node&&node.parentNode!==panes.overview)panes.overview.replaceChildren(node);}
     function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='overview')renderOverview();if(tab==='management')renderManagement();if(tab==='resources')renderResourceFacts();if(tab==='security')renderSecurity();}
