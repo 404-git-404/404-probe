@@ -65,7 +65,7 @@ func (s *Store) ReadDashboardData(ctx context.Context, now time.Time, offlineTim
 		return out, err
 	}
 	states := map[string]State{}
-	rows, err = tx.QueryContext(ctx, `SELECT agent_id,epoch,session_id,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,agent_upgrade_v2,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,COALESCE(country_code,''),network_counters_version,network_counters_json FROM agent_state`)
+	rows, err = tx.QueryContext(ctx, `SELECT agent_id,`+stateColumns+` FROM agent_state`)
 	if err != nil {
 		return out, err
 	}
@@ -194,15 +194,20 @@ func scanDashboardState(row dashboardScanner) (State, error) {
 	s := State{PublicEgress: blankEgressState()}
 	var epoch, sequence, uptime, cpuCores, ramUsed, ramTotal, swapUsed, swapTotal, diskUsed, diskTotal, rawRX, rawTX, rxTotal, txTotal, networkCountersVersion int64
 	var networkCountersJSON string
+	var rawHealth sql.NullString
 	var upgradeCapable, upgradeV2 int
 	var cpuSteal, diskReadRate, diskWriteRate, diskBusy sql.NullFloat64
 	err := row.Scan(&s.AgentID,
-		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &upgradeV2, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON)
+		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &upgradeV2, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON, &rawHealth)
 	if err != nil {
 		return State{}, err
 	}
 	assignUnsigned(&s, epoch, sequence, uptime, ramUsed, ramTotal, swapUsed, swapTotal, diskUsed, diskTotal, rawRX, rawTX, rxTotal, txTotal)
 	s.NetworkCountersVersion, s.NetworkCounters, err = validateStoredNetworkCounters(networkCountersVersion, networkCountersJSON, s.RXBytes, s.TXBytes)
+	if err != nil {
+		return State{}, err
+	}
+	s.HostHealth, err = decodeHostHealth(rawHealth)
 	if err != nil {
 		return State{}, err
 	}

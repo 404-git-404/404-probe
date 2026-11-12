@@ -150,7 +150,7 @@ func TestMigration36PreservesAllLegacyDataAndIsIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version=36`); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version>=36`); err != nil {
 		t.Fatal(err)
 	}
 	before := m35Fingerprint(t, s.db, "schema_migrations")
@@ -168,7 +168,7 @@ func TestMigration36PreservesAllLegacyDataAndIsIdempotent(t *testing.T) {
 	if !reflect.DeepEqual(first, m35Fingerprint(t, s.db)) {
 		t.Fatal("repeat migration changed data")
 	}
-	if version, err := s.SchemaVersion(ctx); err != nil || version != 36 {
+	if version, err := s.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
 		t.Fatal(version, err)
 	}
 	c := organizationRead(t, s)
@@ -192,7 +192,9 @@ func TestMigration36FailureRollsBackEverything(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			s.db.Exec(`DELETE FROM schema_migrations WHERE version=36`)
+			if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version>=36`); err != nil {
+				t.Fatal(err)
+			}
 			before := m35Fingerprint(t, s.db)
 			injected := errors.New("injected migration 36 failure")
 			migration36FailAt = func(at string) error {

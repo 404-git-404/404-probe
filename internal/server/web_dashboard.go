@@ -314,12 +314,13 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if state := record.State; state != nil {
 			v.Hostname = state.Hostname
 			v.SearchFields = append(v.SearchFields, state.Hostname)
-			stale := record.StateStale || state.CollectedAt <= 0 || state.CollectedAt < now.Add(-a.offlineTimeout).UnixMilli() || state.CollectedAt > now.Add(time.Minute).UnixMilli()
+			stale := record.StateStale || reportStateStale(*state, now, a.offlineTimeout)
 			v.Resources = dashboardResources{Known: true, Stale: stale, CPU: &state.CPUPercent, RAM: &state.RAMPercent, Disk: &state.DiskPercent, CollectedAt: state.CollectedAt, ReceivedAt: state.LastSeen, MaxAgeMS: a.offlineTimeout.Milliseconds()}
 			copy := *state
 			copy.PublicEgress = storage.EgressState{}
 			v.State = newWebAgentStateView(copy, false, now)
 			v.State.Stale = stale
+			v.State.HostHealth = newWebHostHealth(state.HostHealth, stale, now.UnixMilli())
 			v.MaskedEgress = map[string]dashboardMaskedEgress{}
 			for _, o := range []protocol.EgressObservation{state.PublicEgress.IPv4, state.PublicEgress.IPv6} {
 				if mask := maskDashboardIP(o.IP); mask != "" && o.Status == "available" && o.CheckedAt > 0 && o.ValidUntil > now.UnixMilli() && !stale {

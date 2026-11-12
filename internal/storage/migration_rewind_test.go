@@ -27,6 +27,16 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 	}
 }
 
+func rewindHostHealthFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	dropColumnIfPresent(t, db, "agent_state", "host_health_json")
+	for _, q := range []string{`DROP TABLE IF EXISTS agent_youtube_region_manual`, `DELETE FROM schema_migrations WHERE version=37`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // rewindV107Fixture returns a latest-schema database to schema 34 (before v1.0.7): the schema 35 columns
 // are dropped and the TCP Mini tables of schema 29 are back, one state row per agent as migration 29 made them.
 func rewindV107Fixture(t *testing.T, db *sql.DB) {
@@ -59,6 +69,7 @@ func migrateV107Forward(t *testing.T, db *sql.DB) {
 // rewindV107Version lets migration 35 run again: its version row goes and the TCP Mini tables return.
 func rewindV107Version(t *testing.T, db *sql.DB) {
 	t.Helper()
+	rewindHostHealthFixture(t, db)
 	// Schema36 is additive, but its version and FK tables must also be rewound.
 	for _, table := range organizationTables {
 		if _, err := db.Exec(`DROP TABLE IF EXISTS ` + table); err != nil {

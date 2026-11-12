@@ -292,7 +292,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 			a.logger.Error("recalculate quality authorization", "agent_id", authenticatedID, "error", err)
 		}
 	}
-	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, GoogleStatusChinaSignal: true, PublicEgressJob: true, Security: true, ManagementReport: true, NetworkCountersReport: true}}
+	response := protocol.ReportResponse{Accepted: accepted, Reason: reason, Capabilities: protocol.ReportCapabilities{AgentVersionReport: true, LinuxMetricsReport: true, CountryCodeReport: true, AgentUpgrade: true, InteractiveControl: true, GoogleStatus: true, GoogleStatusChinaSignal: true, PublicEgressJob: true, Security: true, ManagementReport: true, NetworkCountersReport: true, HostHealthReport: true}}
 	// Agents of v1.0.3 run their own public IP monitor whenever this capability is true, whatever the
 	// Server does with the data. It is only advertised while detection is switched on for this Agent, so
 	// an Agent that never opted in makes no third-party request; v1.0.4 Agents ignore it (they use jobs).
@@ -574,7 +574,7 @@ func (a *App) publishReportedState(state storage.State, owner trafficOwner, rece
 	if a.traffic != nil {
 		a.traffic.append(owner, state, received, a.now())
 	}
-	payload, _ := json.Marshal(newWebAgentEventView(state))
+	payload, _ := json.Marshal(newWebAgentEventView(state, a.offlineTimeout))
 	a.hub.publish(payload)
 	a.mu.Unlock()
 	return true

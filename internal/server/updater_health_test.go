@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
@@ -25,7 +26,7 @@ func TestUpdaterHealthWebGatesAndSessionFencing(t *testing.T) {
 		if view.UpdaterHealth != h || view.UpgradeCapable != (status == "healthy") {
 			t.Fatal(status, view)
 		}
-		event := newWebAgentEventView(current)
+		event := newWebAgentEventView(current, time.Minute)
 		body, _ := json.Marshal(event)
 		var wire map[string]any
 		_ = json.Unmarshal(body, &wire)
@@ -52,7 +53,7 @@ func TestUpdaterHealthWebGatesAndSessionFencing(t *testing.T) {
 		}
 	}
 	legacy := storage.AgentSnapshot{Online: true, State: &state}
-	encoded, _ := json.Marshal(newWebAgentEventView(state))
+	encoded, _ := json.Marshal(newWebAgentEventView(state, time.Minute))
 	var legacyEvent map[string]any
 	_ = json.Unmarshal(encoded, &legacyEvent)
 	if value, present := legacyEvent["updater_health"]; !present || value != nil {

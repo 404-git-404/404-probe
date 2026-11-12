@@ -153,14 +153,9 @@ func m35Seed(t *testing.T, s *Store, plans []m35Plan) []string {
 		}
 		ids[i] = id
 		if p.end != nil {
-			tx, err := s.db.Begin()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := writeStateTx(context.Background(), tx, State{AgentID: id, SessionID: "s", Hostname: "h", OS: "linux", Arch: "amd64", RXTotal: uint64(p.end[0]), TXTotal: uint64(p.end[1]), LastSeen: 1, CollectedAt: 1}); err != nil {
-				t.Fatal(err)
-			}
-			if err := tx.Commit(); err != nil {
+			// This fixture is already rewound and must use the historical layout.
+			if _, err := s.db.Exec(`INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,uptime,cpu,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen)
+				VALUES(?,'s',1,0,'','h','linux','amd64',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,?,?,1,1)`, id, p.end[0], p.end[1]); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -368,6 +363,10 @@ func TestMigration35From34KeepsEverythingElseAndDropsTCPMini(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
+		t.Fatalf("schema %d %v", version, err)
+	}
+	rewindHostHealthFixture(t, s.db)
 	after := m35Fingerprint(t, s.db, append(organizationTables, "agent_plans", "quality_config", "schema_migrations")...)
 	for table, want := range before {
 		if after[table] != want {
@@ -383,9 +382,6 @@ func TestMigration35From34KeepsEverythingElseAndDropsTCPMini(t *testing.T) {
 		if m35TableExists(t, s.db, table) {
 			t.Fatalf("%s survived", table)
 		}
-	}
-	if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
-		t.Fatalf("schema %d %v", version, err)
 	}
 }
 

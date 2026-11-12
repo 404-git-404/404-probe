@@ -18,7 +18,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 		t.Fatal("schema floor rejection is missing step-by-step upgrade guidance")
 	}
 	ctx := context.Background()
-	for _, version := range []int{34, 35, 36, 37} {
+	for _, version := range []int{34, 35, 36, 37, 38} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "database.db")
 			store, err := Open(ctx, path)
@@ -32,11 +32,14 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 					}
 				}
 			}
+			if version < 37 {
+				rewindHostHealthFixture(t, store.db)
+			}
 			if _, err := store.db.Exec(`DELETE FROM schema_migrations WHERE version>?`, version); err != nil {
 				t.Fatal(err)
 			}
-			if version == 37 {
-				if _, err := store.db.Exec(`INSERT INTO schema_migrations VALUES(37,1)`); err != nil {
+			if version == 38 {
+				if _, err := store.db.Exec(`INSERT INTO schema_migrations VALUES(38,1)`); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -51,7 +54,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 			if version == 34 || version == 35 {
 				wantErr = ErrSchemaTooOld
 			}
-			if version == 37 {
+			if version == 38 {
 				wantErr = ErrUnsupportedSchemaVersion
 			}
 			verification, err := VerifyReadOnly(ctx, path)
@@ -74,7 +77,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 			}
 			if store != nil {
 				got, err := store.SchemaVersion(ctx)
-				if err != nil || got != 36 {
+				if err != nil || got != currentSchemaVersion {
 					t.Fatalf("schema=%d err=%v", got, err)
 				}
 				if err := store.Close(); err != nil {
@@ -85,7 +88,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (wantErr != nil || version == 36) && !bytes.Equal(before, after) {
+			if (wantErr != nil || version == currentSchemaVersion) && !bytes.Equal(before, after) {
 				t.Fatal("non-migrating open changed database")
 			}
 		})
@@ -161,7 +164,7 @@ func TestUpgradeSchemaFloorBoundaryObjects(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer store.Close()
-				if got, err := store.SchemaVersion(context.Background()); err != nil || got != 36 {
+				if got, err := store.SchemaVersion(context.Background()); err != nil || got != currentSchemaVersion {
 					t.Fatalf("schema=%d err=%v", got, err)
 				}
 				return

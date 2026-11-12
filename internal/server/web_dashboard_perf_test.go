@@ -2,6 +2,7 @@ package server
 
 import (
 	"404-probe/internal/auth"
+	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 	"context"
 	"database/sql"
@@ -16,6 +17,22 @@ import (
 	"testing"
 	"time"
 )
+
+func setPerfHostHealth(report *protocol.Report, fault bool) {
+	if os.Getenv("R48_PERF_HOST_HEALTH") != "1" {
+		return
+	}
+	verified, readOnly, errors := true, false, uint64(0)
+	disk := protocol.DiskHealth{Status: protocol.DiskOK, CheckedAt: report.CollectedAt,
+		ReadBackVerified: &verified, ReadOnlySuper: &readOnly,
+		Filesystems: []protocol.DiskFilesystem{{Scope: "root", Ext4Errors: &errors}}}
+	if fault {
+		disk.Status, disk.StartedAt = protocol.DiskError, report.CollectedAt-3000
+		disk.Reasons = []protocol.DiskHealthReason{protocol.DiskWriteEIO}
+		disk.ReadBackVerified = nil
+	}
+	report.HostHealth = &protocol.HostHealth{Disk: disk}
+}
 
 // Explicit opt-in: real SQLite, report authentication and loopback HTTP. Target
 // literals are configuration fixtures; no DNS or outgoing probes run here.
@@ -56,6 +73,7 @@ func TestDashboardPerformanceFixture(t *testing.T) {
 				}
 				report := userReport(id, 1)
 				report.CollectedAt = now.UnixMilli()
+				setPerfHostHealth(&report, i%10 == 0)
 				if w := postWithHeaders(t, a, token, "/api/v1/report", report, userHeaders); w.Code != 200 {
 					t.Fatal(w.Body.String())
 				}

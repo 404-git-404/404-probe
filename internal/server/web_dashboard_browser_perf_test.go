@@ -80,6 +80,7 @@ func dashboardBrowserPerformance(t *testing.T, a *App, server *httptest.Server, 
 			report := userReport(ids[0], cmd.Sequence)
 			report.CollectedAt = time.Now().UnixMilli()
 			report.CPUPercent = cmd.CPU
+			setPerfHostHealth(&report, true)
 			posted := time.Now().UnixMilli()
 			response := postWithHeaders(t, a, tokens[ids[0]], "/api/v1/report", report, userHeaders)
 			if response.Code != 200 {

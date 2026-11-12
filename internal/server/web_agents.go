@@ -103,6 +103,7 @@ type webAgentStateView struct {
 	Stale           bool            `json:"stale"`
 	Hostname        string          `json:"hostname"`
 	OS              string          `json:"os"`
+	HostHealth      *webHostHealth  `json:"host_health,omitempty"`
 	Arch            string          `json:"arch"`
 	Uptime          uint64          `json:"uptime"`
 	CPUPercent      float64         `json:"cpu_percent"`
@@ -273,7 +274,9 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		view.Removal = &removalView
 	}
 	if record.State != nil {
-		view.State = newWebAgentStateView(*record.State, record.StateStale, a.now())
+		now := a.now()
+		view.State = newWebAgentStateView(*record.State, record.StateStale, now)
+		view.State.HostHealth = newWebHostHealth(record.State.HostHealth, !record.Online || reportStateStale(*record.State, now, a.offlineTimeout), now.UnixMilli())
 		traffic, err := a.store.TrafficTotals(ctx, agentID)
 		if err != nil {
 			return webAgentDetailView{}, err
@@ -517,6 +520,7 @@ func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *w
 	}
 	view := &webAgentStateView{
 		PublicEgress: newWebPublicEgress(state.PublicEgress, stale, now),
+		HostHealth:   newWebHostHealth(state.HostHealth, stale, now),
 		Stale:        stale,
 		Hostname:     state.Hostname, OS: state.OS, Arch: state.Arch, Uptime: state.Uptime,
 		CPUPercent: state.CPUPercent, CPUStealPercent: state.CPUStealPercent, CPUCores: state.CPUCores, Load1: state.Load1, Load5: state.Load5, Load15: state.Load15,
@@ -538,12 +542,16 @@ func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *w
 	return view
 }
 
-func newWebAgentEventView(state storage.State) webAgentEventView {
+func newWebAgentEventView(state storage.State, timeout time.Duration) webAgentEventView {
+	view := newWebAgentStateView(state, false)
+	if reportStateStale(state, time.UnixMilli(state.LastSeen), timeout) {
+		view.HostHealth = newWebHostHealth(state.HostHealth, true, state.LastSeen)
+	}
 	return webAgentEventView{
 		SummaryVersion: dashboardVersion(storage.Agent{ID: state.AgentID, Name: state.Name}, &state),
 		UpdaterHealth:  state.AgentUpdaterHealth, UpgradeCapable: state.AgentUpgradeCapable && state.AgentUpdaterHealth.ReasonCode() == "", UpgradeV2: state.AgentUpgradeV2, Version: state.AgentVersion,
 		AgentID: state.AgentID, Name: state.Name, Online: true, LastSeen: state.LastSeen,
-		State: newWebAgentStateView(state, false),
+		State: view,
 	}
 }
 
