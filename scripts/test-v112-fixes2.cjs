@@ -3,8 +3,6 @@ const {launch,open,ID}=require('./lib/v11-panel-fixture.cjs');
 let browser;before(async()=>browser=await launch());after(async()=>browser?.close());
 const settle=p=>p.waitForFunction(()=>!renderFrame);
 async function ui(run){const f=await open(browser,{n:3,width:2048,height:1152,deviceScaleFactor:1.25});try{await run(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
-async function tooltipGeometry(p){return p.evaluate(()=>{const tip=document.querySelector('body>.youtube-status-tip[data-open=true]'),anchor=tip&&document.querySelector(`[aria-describedby="${tip.id}"]`);if(!tip||!anchor)return null;const r=tip.getBoundingClientRect(),a=anchor.getBoundingClientRect(),hit=document.elementFromPoint(r.left+10,r.top+10);return {tip:{x:r.x,y:r.y,width:r.width,height:r.height},anchor:{x:a.x,y:a.y,width:a.width,height:a.height},width:innerWidth,height:innerHeight,hit:tip===hit||tip.contains(hit),backdrop:getComputedStyle(anchor.closest('.agent-card')).backdropFilter};});}
-module.exports={tooltipGeometry};
 test('S1 A1 full-row edge clicks, hover and keyboard work in both themes under SSE',()=>ui(async f=>{
  const p=f.page;await p.locator('[data-view=list]').click();await settle(p);const row=p.locator(`.banner-row[data-agent-id="${ID(0)}"]`),cell=row.locator('[data-column=upgrade]'),button=cell.locator('button');await button.evaluate(n=>window.__stableUpgrade=n);
  const timer=setInterval(()=>f.f.publish('agent',{agent_id:ID(0),state:{cpu_percent:Math.random()*20,collected_at:Date.now()}}),10);
@@ -17,17 +15,19 @@ test('S1 A1 full-row edge clicks, hover and keyboard work in both themes under S
  await p.setViewportSize({width:1100,height:900});await button.scrollIntoViewIfNeeded();const c=await cell.boundingBox(),r=await row.boundingBox();await p.mouse.click(c.x+3,r.y+r.height-3);assert.equal(await p.locator('#details-tab-management').getAttribute('aria-selected'),'true');await p.keyboard.press('Escape');assert(await p.evaluate(({x,y})=>!document.elementFromPoint(x,y)?.closest('.banner-upgrade-link'),{x:c.x-3,y:r.y+r.height/2}));
  }finally{clearInterval(timer);}
 }));
-test('S2 YouTube portal is visible, hittable and adjacent; leave/scroll/SSE/removal clean it',()=>ui(async f=>{
- const p=f.page,tag=p.locator(`.agent-card[data-agent-id="${ID(0)}"] .check-result`),tip=p.locator('body>.youtube-status-tip[data-open=true]');
- const hidden=async()=>assert.equal(await p.locator('body>.youtube-status-tip').count(),0);
- for(const theme of ['light','dark']){await p.evaluate(t=>ProbeTheme.set(t),theme);await p.mouse.move(0,0);await tag.hover();assert.equal(await p.locator('.youtube-status-tip:visible').count(),1);const g=await tooltipGeometry(p);assert(g&&g.hit);assert(g.tip.width>0&&g.tip.height>0);assert(g.tip.x>=0&&g.tip.y>=0&&g.tip.x+g.tip.width<=g.width&&g.tip.y+g.tip.height<=g.height);assert(Math.min(Math.abs(g.tip.y-g.anchor.y-g.anchor.height),Math.abs(g.tip.y+g.tip.height-g.anchor.y))<=1);assert.notEqual(g.backdrop,'none');console.log('YOUTUBE_GEOMETRY '+theme+' '+JSON.stringify(g));
- await p.mouse.move(0,0);await hidden();await tag.focus();assert(await tip.isVisible());await p.keyboard.press('Tab');await hidden();await tag.hover();await p.evaluate(()=>dispatchEvent(new Event('scroll')));await hidden();
- await p.mouse.move(0,0);await tag.hover();f.f.publish('agent',{agent_id:ID(0),state:{cpu_percent:31,collected_at:Date.now()}});await p.waitForFunction(()=>!document.querySelector('body>.youtube-status-tip'));}
- await p.setViewportSize({width:2048,height:600});await tag.scrollIntoViewIfNeeded();await p.mouse.move(0,0);await tag.hover();const y=await p.evaluate(()=>scrollY);await p.evaluate(()=>scrollBy(0,scrollY>0?-20:20));await p.waitForFunction(()=>!document.querySelector('body>.youtube-status-tip'));assert.notEqual(await p.evaluate(()=>scrollY),y);
- await p.mouse.move(0,0);await tag.hover();await p.locator(`.agent-card[data-agent-id="${ID(1)}"] .check-result`).hover();assert.equal(await p.locator('body>.youtube-status-tip').count(),1);await p.mouse.move(0,0);await hidden();
- // Many genuine live updates must not retain detached body-level tips.
- const count=await p.locator('.youtube-status-tip').count();for(let i=0;i<100;i++){await p.mouse.move(0,0);await tag.hover();f.f.publish('agent',{agent_id:ID(0),state:{cpu_percent:i%90,collected_at:Date.now()+i}});await p.waitForFunction(()=>!document.querySelector('body>.youtube-status-tip'));assert.equal(await p.locator('.youtube-status-tip').count(),count);}
- await p.mouse.move(0,0);await tag.hover();await tag.evaluate(n=>n.closest('.agent-card').remove());await p.waitForFunction(()=>!document.querySelector('body>.youtube-status-tip'));assert.equal(await p.locator('.youtube-status-tip').count(),count-1);
+test('S2 YouTube region is static on hover, focus, click, and SSE',()=>ui(async f=>{
+ const p=f.page,tag=p.locator('.agent-card[data-agent-id="'+ID(0)+'"] .check-result');
+ const absent=async()=>assert.equal(await p.locator('.youtube-status-tip').count(),0);
+ for(const theme of ['light','dark']){
+  await p.evaluate(t=>ProbeTheme.set(t),theme);
+  await tag.hover();await absent();
+  await tag.evaluate(n=>n.dispatchEvent(new FocusEvent('focus')));await absent();
+  assert.equal(await tag.getAttribute('tabindex'),null);
+  assert.equal(await tag.getAttribute('aria-describedby'),null);
+  await tag.click();await absent();
+  f.f.publish('agent',{agent_id:ID(0),state:{cpu_percent:31,collected_at:Date.now()}});
+  await p.waitForFunction(id=>agents.get(id)?.state?.cpu_percent===31,ID(0));await settle(p);await absent();
+ }
 }));
 test('A6 a failed country save is cleared by lookup click and by the next successful save',()=>ui(async f=>{
  const p=f.page,a=f.f.state.items[0];let failSave=true;

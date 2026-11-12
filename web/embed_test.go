@@ -365,15 +365,16 @@ func TestGoogleStatusUIShowsPageObservationStates(t *testing.T) {
 	historyBytes, _ := fs.ReadFile(static, "history.js")
 	jobsBytes, _ := fs.ReadFile(static, "jobs.js")
 	youtubeBytes, _ := fs.ReadFile(static, "youtube-status.js")
+	detailsBytes, _ := fs.ReadFile(static, "device-details.js")
 	youtube := string(youtubeBytes)
 	app, historyHTML, history := string(appBytes), string(htmlBytes), string(historyBytes)
-	for _, marker := range []string{"地区 ", "未知", "尚未检测", "检测中", "过期", "重新检测", "/google-status", "未验证视频播放或 Premium 解锁"} {
+	for _, marker := range []string{"地区 ", "未知", "尚未检测", "检测中", "过期", "重新检测", "/google-status", "/youtube-region", "无广告地区"} {
 		if !strings.Contains(app+youtube, marker) {
 			t.Errorf("YouTube observation UI missing %q", marker)
 		}
 	}
-	if !strings.Contains(historyHTML, "YouTube 地区检测") || !strings.Contains(history, "YouTubeStatus.view(agent)") || !strings.Contains(app, "YouTubeStatus.view(agent)") || !strings.Contains(historyHTML, `src="/youtube-status.js"`) || strings.Contains(app+history+youtube+string(jobsBytes), "SENT TO CHINA") || strings.Contains(app+history+youtube, "CN · 送中") {
-		t.Fatal("history detail is missing complete Google Status rendering")
+	if !strings.Contains(historyHTML, "YouTube 地区检测") || !strings.Contains(history, "YouTubeStatus.display(agent,") || !strings.Contains(app, "YouTubeStatus.display(agent,") || !strings.Contains(string(detailsBytes), "YouTubeStatus.summary(") || !strings.Contains(historyHTML, `src="/youtube-status.js"`) || strings.Contains(app+history+youtube+string(jobsBytes), "SENT TO CHINA") || strings.Contains(app+history+youtube, "CN · 送中") {
+		t.Fatal("YouTube views are missing the shared display or management summary")
 	}
 	for _, removed := range []string{"Gemini", "gemini", "result.search", "result.signin", "value.search", "value.signin", "Google Search", "Google Sign-in", "['Search'", "['登录'"} {
 		if strings.Contains(app+history+youtube+historyHTML+string(jobsBytes), removed) {

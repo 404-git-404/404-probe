@@ -23,7 +23,7 @@
     else if(known){label=`地区 ${y.region}`;tone='observed';state='本次页面地区已识别';}
     else if(consent){label='地区 EU';tone='observed';state='遇到欧盟隐私同意页，具体国家未知';}
     else {label='未知';state='本次结果未知';}
-    const reason=china?(pageRegion?'页面地区 '+pageRegion+'（送中时不可信）':'Google 把本机 IP 当作中国处理（送中）'):reasons[y?.error?.category]||'';
+    const reason=china?(pageRegion?'页面地区 '+pageRegion+'（送中时不可信）':'Google 把本机 IP 当作中国处理（送中）'):!known&&reasons[y?.error?.category]||'';
     const code=china?'CN':known?y.region:consent?'EU':null;
     return {label,code,tone,state,reason,known,expired:expired||old};
   }
@@ -43,10 +43,11 @@
     const result=automatic.tone==='observed'?countryName(automatic.code):automatic.label;
     const parts=[];
     if(manual)parts.push('手动设置：'+countryName(manual)+(regions.includes(manual)?'（无广告地区）':''));
-    parts.push('自动检测：'+result);
+    parts.push('自动检测：'+result+(automatic.tone==='observed'&&regions.includes(automatic.code)?'（无广告地区）':''));
     if(automatic.reason)parts.push(automatic.reason);
     const checked=agent?.google_status?.checked_at;
-    parts.push('上次检测 '+(checked?formatTime(checked):'无记录'));
+    const expiredJob=agent?.google_status?.result?.youtube?.error?.category==='job_expired';
+    parts.push((expiredJob?'作业到期 ':'上次检测 ')+(checked?formatTime(checked):'无记录'));
     return parts.join(' · ');
   }
   function errorText(error){

@@ -62,7 +62,7 @@ class El{
  hasPointerCapture(){return false;}setPointerCapture(){}releasePointerCapture(){}
  all(){return this.children.flatMap(c=>[c,...c.all()]);}
 }
-const fakeDoc={hidden:false,createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
+const fakeDoc={hidden:false,body:new El('body'),documentElement:{clientWidth:1000,clientHeight:1000},createElement:t=>new El(t),createElementNS:(ns,t)=>new El(t,ns),addEventListener(){},removeEventListener(){}};
 const IDS={telecom:1,unicom:2,mobile:3};
 const gate={history:null},clock={ms:0};
 async function card({height=80,protocol='tcp',series,id='a'}){
@@ -135,6 +135,7 @@ test('a single minute above 1000ms is a short dashed mark with the real values o
  c.plot.dispatch('pointermove',{pointerType:'mouse',pointerId:1,clientX:left+(epoch-start)/(end-start)*(300-left)});
  const note=c.node.all().find(n=>n.tagName==='output').textContent;
  assert.match(note,/电信：5 分钟 P50 1830ms · 本分钟 P50 1575ms · P95 3010ms · 超出刻度/);
+ assert.equal(fakeDoc.body.children.at(-1).textContent,note);
 });
 test('top numbers: latest completed minute 5-minute P50, lowest bold, >1000 red, name only when missing',async()=>{
  const c=await card({series:{
