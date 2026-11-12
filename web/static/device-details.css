@@ -87,6 +87,8 @@ html { scrollbar-gutter: stable; }
 /* Keep the select/button row, and give completed lookup feedback a full line. */
 .details-region .country-lookup-controls{display:contents}
 .details-region .country-lookup-controls>span[data-result=true]{display:block;grid-column:1/-1;font-size:12px;margin-top:0}
+.details-youtube-feedback{grid-column:1/-1}
+.details-youtube-feedback:empty{display:none}
 .details-metric.disk-health-critical{border-color:var(--color-danger)}
 .details-metric .disk-fault-text,.details-disk-status[data-tone=crit]{color:var(--color-danger-text);font-weight:700}
 .details-disk-status[data-tone=warn]{color:var(--color-warning-text);font-weight:700}

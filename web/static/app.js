@@ -452,38 +452,24 @@ function openYouTubeTooltip(anchor){
 addEventListener('resize',positionYouTubeTooltip,{passive:true});
 addEventListener('scroll',closeYouTubeTooltip,{capture:true,passive:true});
 
-function googleCheckItems(agent) {
- const value=YouTubeStatus.display(agent);
- return [['YouTube',value.label,value.tone,value.premium]];
-}
-
-function googleStatusSummary(agent) {
-  return googleCheckItems(agent).map(([name, value]) => `${name} ${value}`).join(' · ');
-}
-
-function googleStatusState(google) {
-  if (!google?.supported) return '当前 Agent 不支持检测';
-  if (google.pending) return '检测中';
-  if (!google.result) return '尚未检测';
-  if (google.stale) return '旧结果 · 需重新检测';
-  return '';
-}
+function youtubeRegions() { return dashboardData.catalog().youtube_ad_free_regions || []; }
 
 function googleStatusPanel(agent) {
   const panel = document.createElement('section');
   panel.className = 'google-checks';
   panel.setAttribute('aria-label', 'YouTube 地区检测结果');
-  for (const [label, value, tone, premium] of googleCheckItems(agent)) {
+  const {label, tone, regionTone} = YouTubeStatus.display(agent, youtubeRegions());
+  {
     const item = document.createElement('div');
     item.className = 'google-check';
     const name = document.createElement('span');
     name.className = 'youtube-icon'; name.textContent = '▶'; name.setAttribute('aria-hidden','true');
     const result = document.createElement('strong');
     result.className = `check-result ${tone}`;
-    result.textContent = value;
-    if (premium) result.dataset.premium = premium;
+    result.textContent = label;
+    if (regionTone !== 'unknown') result.dataset.regionTone = regionTone;
     const brand = document.createElement('span');brand.className='youtube-name';brand.textContent='YouTube';
-    const detail=YouTubeStatus.view(agent).description;
+    const detail=YouTubeStatus.summary(agent,youtubeRegions());
     result.tabIndex=0;result.setAttribute('aria-label',detail);
     result.addEventListener('mouseenter',()=>openYouTubeTooltip(result));result.addEventListener('focus',()=>openYouTubeTooltip(result));result.addEventListener('click',()=>{result.focus();openYouTubeTooltip(result);});
     result.addEventListener('mouseleave',()=>{if(activeYouTubeTooltip?.anchor===result)closeYouTubeTooltip();});result.addEventListener('blur',()=>{if(activeYouTubeTooltip?.anchor===result)closeYouTubeTooltip();});
@@ -1184,7 +1170,7 @@ function renderDashboard(dirty=null) {
   selectorView.refreshActive();
   empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
   if(prefs.viewMode==='network')empty.classList.add('hidden');
-  if(prefs.viewMode==='list')for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,deadline}))deferred.add(id);
+  if(prefs.viewMode==='list')for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,youtubeRegions:youtubeRegions(),deadline}))deferred.add(id);
   const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([prefs.viewMode,prefs.sort,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
   for(const [id,view]of groupViews)if(!liveGroups.has(id)){view.node.remove();groupViews.delete(id);}
   let groupPosition=container.firstElementChild;
@@ -1300,6 +1286,36 @@ async function saveDetailCountry(agent,code){
   finishPlanResource(mutation,{plan,...country});}
  catch(error){agentActionErrors.set(`${id}/country`,error.message||'地区保存失败');}
  finally{finishPlanResource(mutation);reconciliation.notify(id);render();}
+}
+
+function canSaveYouTubeRegion(agent) {
+  return Boolean(mutationCSRFToken && !agent.revoked && !agentState.blocked(agent.agent_id) && !agentState.busy(agent.agent_id, 'google'));
+}
+
+async function saveYouTubeRegion(agent, code) {
+  const id = agent.agent_id;
+  const currentRegion = () => agents.get(id)?.google_status?.manual_region || '';
+  if (!canSaveYouTubeRegion(agent)) return currentRegion();
+  const mutation = agentState.beginMutation(id, ['google']);
+  if (!mutation) return currentRegion();
+  agentActionErrors.delete(`${id}/youtube-region`);
+  render(new Set([id]));
+  try {
+    const saved = await Management.write(`/api/v1/web/agents/${encodeURIComponent(id)}/youtube-region`, {
+      method: code ? 'PUT' : 'DELETE',
+      payload: code ? {region: code} : undefined,
+      csrf: mutationCSRFToken,
+      unauthorized: () => location.assign('/login'),
+    });
+    agentState.finishMutation(mutation, {google_status: {...agents.get(id)?.google_status, manual_region: saved.region}});
+  } catch {
+    agentActionErrors.set(`${id}/youtube-region`, 'YouTube 地区保存失败');
+  } finally {
+    agentState.finishMutation(mutation);
+    reconciliation.notify(id);
+    render(new Set([id]));
+  }
+  return currentRegion();
 }
 
 function createAgentCard(initialAgent) {
@@ -1600,6 +1616,7 @@ function createAgentDetails(initial){
 
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
+      youtubeRegions,saveYouTubeRegion,canSaveYouTubeRegion,youtubeError:a=>agentActionErrors.get(`${a.agent_id}/youtube-region`)||'',
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
     detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
 

@@ -1,7 +1,7 @@
 /* Persistent overview/management nodes. Server fields retain their original meanings. */
 (function(root){
  'use strict';
- function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>''}){
+ function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>''}){
   const el=(t,c='',text)=>{const n=doc.createElement(t);n.className=c;if(text!=null)n.textContent=text;return n;};
   const overview=el('div','details-overview'),management=el('div','details-management'),metrics=el('div','details-metrics'),grid=el('div','details-grid'),groups=el('div','details-grid');
   overview.append(metrics,grid);management.append(groups);
@@ -27,7 +27,24 @@
   const catalog=root.Management.countries();select.append(Object.assign(el('option','','使用自动识别'),{value:''}));for(const c of catalog)select.append(Object.assign(el('option','',c.zh+' '+c.code),{value:c.code}));
   select.addEventListener('change',()=>saveCountry(current,select.value));region.append(select,country);row(agentGroup,'出口地区','countryManage',region);
   const iprow=row(checks,'公网 IP 检测','egress',egress.controls),switchLabel=egress.controls.querySelector('.pe-switch');if(switchLabel){switchLabel.querySelector('span').textContent=' 公网 IP 检测';iprow.children[0].querySelector('strong').hidden=true;iprow.children[0].prepend(switchLabel);}row(checks,'设备累计流量','since',actions.reset);checks.n.append(actions.resetFeedback);
-  row(checks,'YouTube 地区检测','google',actions.google);checks.n.append(actions.googleFeedback);
+  const youtubeControls=el('div','details-region');
+  const youtubeSelect=el('select');youtubeSelect.setAttribute('aria-label','YouTube 手动地区');youtubeSelect.dataset.focusKey='detail-youtube-region';
+  youtubeSelect.append(Object.assign(el('option','','自动（按检测结果）'),{value:''}));
+  for(const c of catalog)youtubeSelect.append(Object.assign(el('option','',c.zh+' '+c.code),{value:c.code}));
+  const youtubeFeedback=el('span','details-note details-youtube-feedback');youtubeFeedback.setAttribute('aria-live','polite');
+  let savingYouTube=false;
+  youtubeSelect.addEventListener('change',async()=>{
+   savingYouTube=true;
+   youtubeSelect.disabled=true;
+   youtubeFeedback.textContent='正在保存…';
+   youtubeSelect.value=await saveYouTubeRegion(current,youtubeSelect.value);
+   savingYouTube=false;
+  });
+  youtubeSelect.addEventListener('blur',()=>{
+   if(!savingYouTube)youtubeSelect.value=current?.google_status?.manual_region||'';
+  });
+  youtubeControls.append(youtubeSelect,actions.google,youtubeFeedback);
+  row(checks,'YouTube 地区检测','google',youtubeControls);checks.n.append(actions.googleFeedback);
   row(danger,'暂停监控','pause',actions.pause);row(danger,'撤销 Agent','revoke',actions.remove);
   const more=el('details','details-more'),summary=el('summary','','更多');more.append(summary,actions.history);management.append(more);
   const time=(v,dateOnly=false)=>{if(!v)return '未知';const d=new Date(v),pad=n=>String(n).padStart(2,'0');return (d.getFullYear()!==new Date().getFullYear()?d.getFullYear()+'-':'')+pad(d.getMonth()+1)+'-'+pad(d.getDate())+(dateOnly?'':' '+pad(d.getHours())+':'+pad(d.getMinutes()));};
@@ -92,7 +109,12 @@
    set('upgrade',healthCode==='updater_unsupported'?'':(a.version||'—')+(target?' → '+target.version+(target.supported?'（与面板相同）':target.reason_code===noteCode?'':' · '+targetReason):' · '+(a.online?'正在读取可升级版本，请稍候':'机器离线，请先恢复连接再升级')));
    if(noteCode){const note=el('span','details-note');note.style.display='block';root.AgentState.appendUpgradeReason(note,{reason_code:noteCode},serverBuild,a);values.upgrade.append(note);}
    set('seen',a.last_seen?time(a.last_seen)+':'+String(new Date(a.last_seen).getSeconds()).padStart(2,'0'):'未知');values.config.title=values.config.textContent;values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
-   set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('google',a.google_status?.checked_at?'上次 '+time(a.google_status.checked_at):'尚未检测');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
+   set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
+   const youtubeName=code=>code==='EU'?'欧盟 EU':countryName(code)+' '+code;
+   set('google',root.YouTubeStatus.summary(a,youtubeRegions(),youtubeName,time));
+   if(!savingYouTube&&youtubeSelect!==doc.activeElement)youtubeSelect.value=a.google_status?.manual_region||'';
+   youtubeSelect.disabled=savingYouTube||!canSaveYouTubeRegion(a);
+   text(youtubeFeedback,savingYouTube?'正在保存…':youtubeError(a));
    [editButton,quota,renewal].forEach(n=>{n.disabled=!canWrite(a);});
   }
   return {overview,management,update};

@@ -33,7 +33,7 @@
   }
   function readSummary(ids,all=false){for(const id of ids){summaryDue.set(id,now()+10000+(all?telemetryPhase(id):0));telemetryDirty.delete(id);telemetryReady.delete(id);}armTelemetry();onsuccess();}
   function acceptCatalog(data){
-   if(data.revision>=catalog.revision)catalog={revision:data.revision,groups:data.groups||[],tags:data.tags||[],exchange_rates:data.exchange_rates||[],expenses:data.expenses,server_now:data.server_now};
+   if(data.revision>=catalog.revision)catalog={revision:data.revision,groups:data.groups||[],tags:data.tags||[],exchange_rates:data.exchange_rates||[],expenses:data.expenses,server_now:data.server_now,youtube_ad_free_regions:data.youtube_ad_free_regions||[]};
   }
   function schedule(){if(closed||scheduled)return;scheduled=true;frame(()=>{scheduled=false;flush();});}
   async function refresh(){

@@ -14,7 +14,7 @@
   const s=a.network_slots?.find(s=>s.slot===slot),state=s?.state||'no_data';
   return {state,title:s?.target_name||'',text:state==='ok'||state==='stale'?`${finite(s.latest_ms)?Number(s.latest_ms.toFixed(1))+' ms':'—'}${state==='stale'?' · 过期':''}`:({no_target:'未设目标',unsupported:'不支持',no_data:'暂无数据'}[state]||'暂无数据')};
  }
- function projection(a,{slot=1,server,now=Date.now(),csrf='',blocked=false}={}){
+ function projection(a,{slot=1,server,now=Date.now(),csrf='',blocked=false,youtubeRegions=[]}={}){
   const lifecycle=M.lifecycle(a),r=a.resources||{},old=M.resourcesOld(a,now);
   const name=a.name||a.state?.hostname||'未命名 VPS',uptime=lifecycle==='paused'?'暂停':lifecycle==='offline'?`离线 ${Math.floor(Math.max(0,now-(a.last_seen||now))/60000)} 分钟`:finite(a.state?.uptime)?`${Math.floor(a.state.uptime/86400)} 天 ${Math.floor(a.state.uptime%86400/3600)} 时`:'等待上报';
   const os=a.state?.os||'',system=/debian/i.test(os)?'Deb':/alpine/i.test(os)?'Alp':/ubuntu/i.test(os)?'Ubu':os.split(' ')[0]||'—';
@@ -27,8 +27,8 @@
   if(p?.traffic_mode){const percent=finite(used)&&finite(quota)&&quota>0?used/quota*100:null;
    traffic={text:trafficOld?'数据陈旧':t.quota_state==='pending'?'周期尚未开始':quota==null?`${C.sig3(used)} / 不限流量`:!finite(used)?'暂无用量':`${C.sig3(used)} / ${C.sig3(quota)} · ${percent==null?'—':Number(percent.toFixed(1))+'%'}`,fill:trafficOld?0:Math.max(0,Math.min(100,percent||0)),tone:trafficOld?'unknown':C.ringTone(percent)};
   }
-  const youtube=root.YouTubeStatus.display(a,now);
-  return {name,uptime,lifecycle,country:a.country_code||'',countrySource:a.country_source||'',system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),youtube:{text:youtube.code||'—',tone:youtube.manual?'crit':youtube.premium==='unavailable'?'crit':youtube.tone==='observed'?'ok':'unknown',title:youtube.description},price:price(p),renewal:renewal(a),soon:M.renewal(a).type==='due_soon'||M.renewal(a).type==='overdue',upgrade:M.flags(a,server,now).upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
+  const youtube=root.YouTubeStatus.display(a,youtubeRegions,now);
+  return {name,uptime,lifecycle,country:a.country_code||'',countrySource:a.country_source||'',system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),youtube:{text:youtube.code||'—',tone:youtube.regionTone},price:price(p),renewal:renewal(a),soon:M.renewal(a).type==='due_soon'||M.renewal(a).type==='overdue',upgrade:M.flags(a,server,now).upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
  }
  function create({host,document:doc=root.document,selector,onOpen=()=>{},onCollapse=()=>{},onSort=()=>{},onSlot=()=>{},csrf=()=>'',blocked=()=>false}={}){
   const groups=new Map(),rows=new Map();let lastLayout='',headerKey='',namesKey='';
@@ -65,7 +65,7 @@
    }
    return {node,update,key:''};
   }
-  function render(model,prefs,{dirty=null,server,deadline=Infinity}={}){
+  function render(model,prefs,{dirty=null,server,youtubeRegions,deadline=Infinity}={}){
    const names=model.list.map(a=>a.name||a.state?.hostname||'未命名 VPS'),nk=JSON.stringify(names);
    if(nk!==namesKey){namesKey=nk;const context=doc.createElement('canvas').getContext('2d'),fontSize=parseFloat(root.getComputedStyle(host).fontSize);context.font=`600 ${fontSize*13/12}px system-ui`;const longest=Math.max(0,...names.map(n=>context.measureText(n).width));grid.style.setProperty('--device-width',Math.min(14*13/12,Math.max(8,(longest+62)/fontSize))+'em');}
    sticky.style.setProperty('--device-width',grid.style.getPropertyValue('--device-width'));sync();const deferred=new Set(),visible=new Set(),live=new Set(model.list.map(a=>a.agent_id));let updates=0;
@@ -76,7 +76,7 @@
     if(changed){if(gv.node!==position)grid.insertBefore(gv.node,position);position=gv.node.nextElementSibling;}if(collapsed)continue;
     let rowPosition=gv.body.firstElementChild;
     for(const a of group.items){const id=a.agent_id;visible.add(id);let rv=rows.get(id);if(!rv||dirty===null||dirty.has(id)){
-      if(updates&&performance.now()>=deadline){deferred.add(id);if(!rv)continue;}else{const v=projection(a,{slot:prefs.latencySlot||1,server,csrf:csrf(),blocked:blocked(id)}),key=JSON.stringify(v);updates++;if(!rv){rv=row(a);rows.set(id,rv);}if(key!==rv.key){rv.update(v,a);rv.key=key;}}
+      if(updates&&performance.now()>=deadline){deferred.add(id);if(!rv)continue;}else{const v=projection(a,{slot:prefs.latencySlot||1,server,youtubeRegions,csrf:csrf(),blocked:blocked(id)}),key=JSON.stringify(v);updates++;if(!rv){rv=row(a);rows.set(id,rv);}if(key!==rv.key){rv.update(v,a);rv.key=key;}}
      }if(changed||rv.node.parentNode!==gv.body){if(rv.node!==rowPosition)gv.body.insertBefore(rv.node,rowPosition);}rowPosition=rv.node.nextElementSibling;
     }
    }

@@ -8,7 +8,6 @@ const trafficReset = document.querySelector('#traffic-reset');
 const trafficResetFeedback = document.querySelector('#traffic-reset-feedback');
 const googleState = document.querySelector('#google-status-state');
 const googleValues = document.querySelector('#google-status-values');
-const googleChecked = document.querySelector('#google-status-checked');
 const googleRerun = document.querySelector('#google-status-rerun');
 const googleFeedback = document.querySelector('#google-status-feedback');
 const securityState = document.querySelector('#security-state');
@@ -97,8 +96,8 @@ function renderAgentRuntime(agent) {
   ];
   for (const [label, value] of rows) {
     const term = document.createElement('dt'); term.textContent = label;
-    const description = document.createElement('dd'); description.textContent = value;
-    if (name === 'YouTube' && observation.premium) description.dataset.premium = observation.premium;
+    const description = document.createElement('dd'); description.textContent = value.label;
+    if (value.regionTone !== 'unknown') description.dataset.regionTone = value.regionTone;
     agentRuntimeValues.append(term, description);
   }
 }
@@ -146,27 +145,24 @@ function renderGoogleStatus(agent) {
   googleValues.replaceChildren();
   googleRerun.disabled = !mutationCSRFToken || !agent?.online || Boolean(agent?.disabled_at) || agent?.revoked || !google?.supported || google?.pending;
   googleRerun.textContent = google?.pending ? '检测中…' : '重新检测';
-  if (!google?.supported) {
+  if (!google?.supported && !google?.manual_region) {
     googleState.textContent = '当前 Agent 不支持检测';
-    googleChecked.textContent = '';
     return;
   }
   const observation=YouTubeStatus.view(agent);
   googleState.textContent=observation.state;
-  if (!google.result) {
+  if (!google.result && !google.manual_region) {
     googleValues.textContent = '尚未检测';
-    googleChecked.textContent = '';
     return;
   }
   const rows = [
-    ['YouTube', observation.label],
+    ['YouTube', YouTubeStatus.display(agent, agent.youtube_ad_free_regions)],
   ];
   for (const [name, value] of rows) {
     const term = document.createElement('dt'); term.textContent = name;
     const description = document.createElement('dd'); description.textContent = value;
     googleValues.append(term, description);
   }
-  googleChecked.textContent = observation.description;
 }
 
 googleRerun.addEventListener('click', async () => {

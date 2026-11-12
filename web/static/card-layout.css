@@ -21,10 +21,9 @@ body>header,body>main,body>footer{width:calc(100% - 56px);max-width:2100px}body>
 /* M11: keep one YouTube row; diagnostic detail never participates in layout. */
 .agent-card .google-checks { position: relative; }
 .agent-card .google-check .check-result.observed { color: var(--color-text-04); }
-.agent-card .google-check .check-result:is([data-premium],.manual) { padding: 0 6px; border-radius: 4px; color: var(--color-text-02); }
-.agent-card .google-check .check-result[data-premium="available"] { background: var(--color-surface-02); }
-.agent-card .google-check .check-result[data-premium="unavailable"] { background: var(--color-surface-04); }
-.agent-card .google-check .check-result[data-premium="undetermined"] { background: var(--color-surface-05); }
+.agent-card .google-check .check-result[data-region-tone] { padding: 0 6px; border-radius: 4px; color: var(--color-text-02); }
+.agent-card .google-check .check-result[data-region-tone="ok"] { background: var(--color-surface-02); }
+.agent-card .google-check .check-result[data-region-tone="crit"] { background: var(--color-surface-04); }
 .youtube-status-tip { display: none; position: fixed; z-index: 120; left: 8px; top: 8px; width: min(300px,calc(100vw - 68px)); box-sizing: border-box; padding: 9px; border: 1px solid var(--color-line-02); border-radius: 8px; background: var(--color-surface-03); box-shadow: 0 4px 12px var(--color-shadow-01); font: 12px/1.6 system-ui; color: var(--color-text-03); white-space: normal; overflow-wrap: anywhere; }
 .youtube-status-tip[data-open=true] { display: block; }
 
