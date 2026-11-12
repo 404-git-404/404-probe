@@ -31,8 +31,9 @@ func readDashboardCards(ctx context.Context, tx *sql.Tx, now time.Time) (map[str
 	if err != nil {
 		return nil, err
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT a.id,COALESCE(c.supported,0),COALESCE(j.pending,0),COALESCE(j.expired,0)
+	rows, err = tx.QueryContext(ctx, `SELECT a.id,COALESCE(c.supported,0),COALESCE(j.pending,0),COALESCE(j.expired,0),COALESCE(y.region,'')
  FROM agents a LEFT JOIN agent_google_status_capabilities c ON c.agent_id=a.id
+ LEFT JOIN agent_youtube_region_manual y ON y.agent_id=a.id
  LEFT JOIN (SELECT agent_id,MAX(CASE WHEN status IN ('queued','leased') AND expires_at>? THEN 1 ELSE 0 END) pending,
  MAX(CASE WHEN status IN ('queued','leased','expired') AND expires_at<=? THEN expires_at ELSE 0 END) expired
  FROM probe_jobs WHERE probe_type='google_status' GROUP BY agent_id) j ON j.agent_id=a.id`, now.UnixMilli(), now.UnixMilli())
@@ -40,15 +41,16 @@ func readDashboardCards(ctx context.Context, tx *sql.Tx, now time.Time) (map[str
 		return nil, err
 	}
 	for rows.Next() {
-		var id string
+		var id, manualRegion string
 		var supported, pending int
 		var expired int64
-		if err = rows.Scan(&id, &supported, &pending, &expired); err != nil {
+		if err = rows.Scan(&id, &supported, &pending, &expired, &manualRegion); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		r := out[id]
 		r.GoogleSupported = supported == 1
+		r.YouTubeManualRegion = manualRegion
 		r.GooglePending = pending == 1
 		prior := GoogleStatusSnapshot{}
 		if r.Google != nil {

@@ -85,15 +85,16 @@ type dashboardMaskedEgress struct {
 	LastSuccess *protocol.EgressSuccess `json:"last_success,omitempty"`
 }
 type dashboardResponse struct {
-	Partial       bool                   `json:"partial"`
-	Total         int                    `json:"total"`
-	Expenses      expenseTotals          `json:"expenses"`
-	ServerNow     int64                  `json:"server_now"`
-	Revision      int64                  `json:"revision"`
-	Groups        []storage.AgentGroup   `json:"groups"`
-	Tags          []storage.AgentTag     `json:"tags"`
-	ExchangeRates []storage.ExchangeRate `json:"exchange_rates"`
-	Items         []dashboardSummary     `json:"items"`
+	Partial              bool                   `json:"partial"`
+	Total                int                    `json:"total"`
+	Expenses             expenseTotals          `json:"expenses"`
+	ServerNow            int64                  `json:"server_now"`
+	Revision             int64                  `json:"revision"`
+	Groups               []storage.AgentGroup   `json:"groups"`
+	Tags                 []storage.AgentTag     `json:"tags"`
+	ExchangeRates        []storage.ExchangeRate `json:"exchange_rates"`
+	Items                []dashboardSummary     `json:"items"`
+	YouTubeAdFreeRegions []string               `json:"youtube_ad_free_regions"`
 }
 
 // Opaque equality token only: internal epoch/session/sequence never leave the
@@ -275,6 +276,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := dashboardResponse{Partial: selected != nil, Total: len(data.Records), Expenses: estimateExpenses(data, nil).expenseTotals, ServerNow: now.UnixMilli(), Revision: data.Catalog.Revision, Groups: data.Catalog.Groups, Tags: data.Catalog.Tags, ExchangeRates: data.Catalog.Rates, Items: []dashboardSummary{}}
+	out.YouTubeAdFreeRegions = youtubeAdFreeRegions[:]
 	for _, raw := range data.Records {
 		id := raw.Snapshot.Agent.ID
 		if selected != nil && !selected[id] {
@@ -301,7 +303,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			checked := o.CheckedAt
 			v.Outbounds = webOutboundsView{Configured: true, Available: o.Available, Status: o.Status, Stale: now.Sub(time.UnixMilli(o.CheckedAt)) > outboundSnapshotStaleAfter, OrderSource: o.OrderSource, Selectors: o.Selectors, CheckedAt: &checked, UpdatedAt: o.UpdatedAt}
 		}
-		v.GoogleStatus = webGoogleStatusView{Supported: raw.GoogleSupported, Pending: raw.GooglePending, Stale: !record.Online || record.Agent.DisabledAt != nil || record.Agent.Revoked}
+		v.GoogleStatus = webGoogleStatusView{ManualRegion: raw.YouTubeManualRegion, Supported: raw.GoogleSupported, Pending: raw.GooglePending, Stale: !record.Online || record.Agent.DisabledAt != nil || record.Agent.Revoked}
 		if g := raw.Google; g != nil {
 			copy := *g
 			v.GoogleStatus.Result, v.GoogleStatus.CheckedAt, v.GoogleStatus.NextDueAt = &copy.Result, &copy.CheckedAt, &copy.NextDueAt

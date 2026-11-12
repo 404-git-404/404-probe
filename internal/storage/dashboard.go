@@ -14,6 +14,7 @@ type DashboardRecord struct {
 	Plan                           *AgentPlan
 	CountryCode, CountrySource     string
 	Google                         *GoogleStatusSnapshot
+	YouTubeManualRegion            string
 	GoogleSupported, GooglePending bool
 	Outbound                       *OutboundSnapshot
 	TrafficTotals                  *TrafficTotals

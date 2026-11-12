@@ -1171,6 +1171,9 @@ func (s *Store) RevokeAgent(ctx context.Context, id string, now time.Time) (bool
 		return false, err
 	}
 	if n > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM agent_youtube_region_manual WHERE agent_id=?`, id); err != nil {
+			return false, err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE probe_jobs SET status='expired' WHERE agent_id=? AND probe_type=? AND status='queued'`, id, string(protocol.ProbeTypeSelectorSwitch)); err != nil {
 			return false, err
 		}

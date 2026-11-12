@@ -36,19 +36,20 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
-	CountryCode       string                         `json:"country_code,omitempty"`
-	CountrySource     string                         `json:"country_source,omitempty"`
-	Management        webManagementView              `json:"management"`
-	CountryLookup     *webAgentCountryCodeLookupView `json:"country_code_lookup_operation,omitempty"`
-	Removal           *webAgentRemovalOperationView  `json:"removal,omitempty"`
-	State             *webAgentStateView             `json:"state"`
-	Traffic           *storage.TrafficTotals         `json:"traffic,omitempty"`
-	Usage24h          *storage.Usage24h              `json:"usage_24h,omitempty"`
-	Outbounds         webOutboundsView               `json:"outbounds"`
-	GoogleStatus      webGoogleStatusView            `json:"google_status"`
-	PublicEgressCheck webPublicEgressCheckView       `json:"public_egress_check"`
-	Security          webSecurityView                `json:"security"`
-	Plan              *storage.AgentPlan             `json:"plan,omitempty"`
+	CountryCode          string                         `json:"country_code,omitempty"`
+	CountrySource        string                         `json:"country_source,omitempty"`
+	Management           webManagementView              `json:"management"`
+	CountryLookup        *webAgentCountryCodeLookupView `json:"country_code_lookup_operation,omitempty"`
+	Removal              *webAgentRemovalOperationView  `json:"removal,omitempty"`
+	State                *webAgentStateView             `json:"state"`
+	Traffic              *storage.TrafficTotals         `json:"traffic,omitempty"`
+	Usage24h             *storage.Usage24h              `json:"usage_24h,omitempty"`
+	Outbounds            webOutboundsView               `json:"outbounds"`
+	GoogleStatus         webGoogleStatusView            `json:"google_status"`
+	YouTubeAdFreeRegions []string                       `json:"youtube_ad_free_regions"`
+	PublicEgressCheck    webPublicEgressCheckView       `json:"public_egress_check"`
+	Security             webSecurityView                `json:"security"`
+	Plan                 *storage.AgentPlan             `json:"plan,omitempty"`
 }
 
 type webManagementView struct {
@@ -78,6 +79,7 @@ type webSecurityView struct {
 }
 
 type webGoogleStatusView struct {
+	ManualRegion  string                       `json:"manual_region,omitempty"`
 	NextDueAt     *int64                       `json:"next_due_at,omitempty"`
 	UnknownStreak int                          `json:"unknown_streak,omitempty"`
 	Supported     bool                         `json:"supported"`
@@ -326,6 +328,11 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		return webAgentDetailView{}, err
 	}
 	view.GoogleStatus = webGoogleStatusView{Supported: supported, Pending: pending, Stale: record.Agent.Revoked || record.Agent.DisabledAt != nil || !record.Online}
+	view.YouTubeAdFreeRegions = youtubeAdFreeRegions[:]
+	view.GoogleStatus.ManualRegion, err = a.store.YouTubeManualRegion(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
 	google, exists, err := a.store.GetGoogleStatusAt(ctx, agentID, a.now())
 	if err != nil {
 		return webAgentDetailView{}, err
