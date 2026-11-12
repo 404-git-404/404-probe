@@ -3,16 +3,111 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"404-probe/internal/platformsupport"
 	"404-probe/internal/protocol"
 )
+
+type startupDiskCollector struct {
+	release <-chan struct{}
+	total   atomic.Uint64
+}
+
+func (c *startupDiskCollector) RunDiskUsage(ctx context.Context, _ time.Duration, ready chan<- struct{}) {
+	select {
+	case <-ctx.Done():
+	case <-c.release:
+		c.total.Store(4096)
+		close(ready)
+	}
+}
+
+func (c *startupDiskCollector) Collect(ctx context.Context) (protocol.Report, error) {
+	report, err := (platformMetrics{}).Collect(ctx)
+	report.DiskTotal = c.total.Load()
+	return report, err
+}
+
+func TestFirstReportWaitsForDiskAndOSWithinOneDeadline(t *testing.T) {
+	for _, blocked := range []bool{false, true} {
+		name := "ready"
+		if blocked {
+			name = "blocked"
+		}
+		t.Run(name, func(t *testing.T) {
+			statePath := filepath.Join(t.TempDir(), "epoch")
+			synctest.Test(t, func(t *testing.T) {
+				r, err := newRunner(Config{ServerURL: "http://127.0.0.1:1", AgentID: "test", Token: "synthetic", Interval: time.Second,
+					Timeout: time.Second, StatePath: statePath, AllowInsecureHTTP: true}, nil, UnsupportedExecutor{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				r.quality.probe = func(context.Context, protocol.QualityTarget) qualityProbeResult {
+					t.Error("unexpected network quality probe")
+					return qualityProbeResult{}
+				}
+				disk, identity := make(chan struct{}), make(chan struct{})
+				defer close(identity)
+				r.collector = &startupDiskCollector{release: disk}
+				r.platform = &platformMonitor{timeout: 3 * time.Second, read: func() platformsupport.Identity {
+					<-identity
+					return platformsupport.Identity{OS: "debian 12.15"}
+				}}
+				reports := make(chan protocol.Report, 2)
+				r.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					if req.URL.Path == "/api/v1/report" {
+						var report protocol.Report
+						if err := json.NewDecoder(req.Body).Decode(&report); err != nil {
+							t.Error(err)
+						}
+						reports <- report
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"accepted":true}`))}, nil
+				})
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan error, 1)
+				start := time.Now()
+				go func() { done <- r.Run(ctx) }()
+				if !blocked {
+					time.Sleep(100 * time.Millisecond)
+					close(disk)
+					time.Sleep(100 * time.Millisecond)
+					if len(reports) != 0 {
+						t.Error("first report sent before the OS sample")
+					}
+					identity <- struct{}{}
+				}
+				first := <-reports
+				elapsed := time.Since(start)
+				if blocked {
+					if elapsed != 3*time.Second || first.DiskTotal != 0 || first.OS != protocol.UnavailableSystemName {
+						t.Errorf("first report after %v: disk=%d os=%q", elapsed, first.DiskTotal, first.OS)
+					}
+				} else if elapsed != 200*time.Millisecond || first.DiskTotal != 4096 || first.OS != "debian 12.15" {
+					t.Errorf("first report after %v: disk=%d os=%q", elapsed, first.DiskTotal, first.OS)
+				}
+				<-reports
+				if time.Since(start) != elapsed+time.Second {
+					t.Error("second report waited for sampling")
+				}
+				cancel()
+				if err := <-done; err != nil {
+					t.Error(err)
+				}
+			})
+		})
+	}
+}
 
 type blockedDiskHealth struct {
 	entered chan struct{}

@@ -21,11 +21,45 @@ type platformMonitor struct {
 	latest  atomic.Pointer[identitySample]
 }
 
-func (m *platformMonitor) run(ctx context.Context, wakeQuality func()) {
+type diskUsageCollector interface {
+	RunDiskUsage(context.Context, time.Duration, chan<- struct{})
+}
+
+func (r *Runner) startReportSampling(ctx context.Context) {
+	deadline, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var diskReady, platformReady chan struct{}
+	if c, ok := r.collector.(diskUsageCollector); ok {
+		diskReady = make(chan struct{})
+		go c.RunDiskUsage(ctx, r.config.Interval, diskReady)
+	}
+	if r.platform != nil {
+		platformReady = make(chan struct{})
+		go r.platform.run(ctx, r.quality.signal, platformReady)
+		if r.config.UpdaterSocket != "" {
+			go r.runUpdaterReportSampling(ctx)
+		}
+	}
+	for _, ready := range []chan struct{}{diskReady, platformReady} {
+		if ready != nil {
+			select {
+			case <-ready:
+			case <-deadline.Done():
+				return
+			}
+		}
+	}
+}
+
+func (m *platformMonitor) run(ctx context.Context, wakeQuality func(), firstSample chan<- struct{}) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for ctx.Err() == nil {
 		m.refresh(wakeQuality)
+		if firstSample != nil {
+			close(firstSample)
+			firstSample = nil
+		}
 		select {
 		case <-ctx.Done():
 			return

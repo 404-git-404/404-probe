@@ -41,7 +41,7 @@ type Collector struct {
 
 // RunDiskUsage isolates statfs from live CPU, memory, and network sampling. A
 // stuck call occupies this worker only and never starts a second statfs call.
-func (c *Collector) RunDiskUsage(ctx context.Context, interval time.Duration) {
+func (c *Collector) RunDiskUsage(ctx context.Context, interval time.Duration, firstSample chan<- struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for ctx.Err() == nil {
@@ -51,6 +51,10 @@ func (c *Collector) RunDiskUsage(ctx context.Context, interval time.Duration) {
 			c.rootUsage.Store(root)
 		}
 		cancel()
+		if firstSample != nil {
+			close(firstSample)
+			firstSample = nil
+		}
 		select {
 		case <-ctx.Done():
 			return

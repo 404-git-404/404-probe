@@ -289,18 +289,10 @@ func (r *Runner) Run(parent context.Context) error {
 }
 
 func (r *Runner) run(ctx, parent context.Context) error {
-	if c, ok := r.collector.(*collector.Collector); ok {
-		go c.RunDiskUsage(ctx, r.config.Interval)
-	}
 	if r.diskHealth != nil {
 		go r.diskHealth.Run(ctx)
 	}
-	if r.platform != nil {
-		go r.platform.run(ctx, r.quality.signal)
-		if r.config.UpdaterSocket != "" {
-			go r.runUpdaterReportSampling(ctx)
-		}
-	}
+	r.startReportSampling(ctx)
 	var sequence uint64
 	immediate := true
 	for {
@@ -458,7 +450,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	(*sequence)++
 	measurement.AgentID = r.config.AgentID
 	osReadFailed := false
-	if _, production := r.collector.(*collector.Collector); production {
+	if _, production := r.collector.(diskUsageCollector); production {
 		if r.platform != nil {
 			identity := r.platform.snapshot()
 			measurement.OS = identity.lastOS
