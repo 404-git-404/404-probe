@@ -118,11 +118,6 @@ const duration = value => {
 
 const seen = value => value ? new Date(value).toLocaleString() : '从未上报';
 const pct = value => `${Number(value || 0).toFixed(1)}%`;
-const upgradeLabel = operation => {
-  if (!operation) return '';
-  const labels = {requested: '已提交升级请求', claimed: '机器已接到升级请求', downloading: '正在下载新版本', verifying: '正在校验下载文件', staging: '正在准备安装文件', installing: '正在安装新版本', restarting: '正在重启程序', health_check: '正在确认新版本运行正常', succeeded: `已升级到 ${operation.target_version}`, failed: '升级失败，请查看详情后重试', rolled_back: '升级失败，已恢复原来的版本'};
-  return labels[operation.status] || operation.status;
-};
 const upgradeHint = agent => AgentState.upgradeButtonHint(agent, serverBuild, agentState.busy(agent.agent_id, 'upgrade'));
 
 async function readJSON(path, signal) {

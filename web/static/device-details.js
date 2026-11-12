@@ -106,7 +106,13 @@
    const targetReason=root.AgentState?.upgradeReasonDisplay(target,a)||target?.reason||'暂时不能升级，请刷新后查看原因';
    const noteCode=healthCode||(targetReason.includes('升级服务排查文档')?target?.reason_code:'');
    const upgrade=target?.supported?`可升级到 ${target.version}`:'';values.version.replaceChildren(el('span','',a.version||'—'));if(upgrade)values.version.append(el('span','details-upgrade-badge',upgrade));
-   set('upgrade',healthCode==='updater_unsupported'?'':(a.version||'—')+(target?' → '+target.version+(target.supported?'（与面板相同）':target.reason_code===noteCode?'':' · '+targetReason):' · '+(a.online?'正在读取可升级版本，请稍候':'机器离线，请先恢复连接再升级')));
+   let upgradeText=healthCode==='updater_unsupported'?'':(a.version||'—')+(target?' → '+target.version+(target.supported?'（与面板相同）':target.reason_code===noteCode?'':' · '+targetReason):' · '+(a.online?'正在读取可升级版本，请稍候':'机器离线，请先恢复连接再升级'));
+   if(a.upgrade?.status==='downloading'){
+    upgradeText='正在下载新版本';
+    // The Server updates this timestamp only on an accepted state transition.
+    if(a.upgrade.updated_at>0&&Date.now()-a.upgrade.updated_at>120000)upgradeText+='。网络较慢，最长等待 30 分钟';
+   }
+   set('upgrade',upgradeText);
    if(noteCode){const note=el('span','details-note');note.style.display='block';root.AgentState.appendUpgradeReason(note,{reason_code:noteCode},serverBuild,a);values.upgrade.append(note);}
    set('seen',a.last_seen?time(a.last_seen)+':'+String(new Date(a.last_seen).getSeconds()).padStart(2,'0'):'未知');values.config.title=values.config.textContent;values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
