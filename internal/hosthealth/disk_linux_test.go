@@ -16,6 +16,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestDiskProbeThresholds(t *testing.T) {
+	if ext4Window != 10*time.Minute || stallAfter != 30*time.Second || slowAfter != 15*time.Second ||
+		ProbeInterval != 60*time.Second || probeSize != 4096 {
+		t.Fatalf("unexpected thresholds: ext4=%v stalled=%v slow=%v interval=%v size=%d",
+			ext4Window, stallAfter, slowAfter, ProbeInterval, probeSize)
+	}
+}
+
 func TestDiskProbeCleanupAndRecreation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ProbeFilename)

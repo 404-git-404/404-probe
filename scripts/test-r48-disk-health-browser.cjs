@@ -3,10 +3,26 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {test} = require('node:test');
 const {launch, open, ID} = require('./lib/v11-panel-fixture.cjs');
+const {diskReport, diskTone} = require('../web/static/dashboard-model.js');
 
 const card = i => `.agent-card[data-agent-id="${ID(i)}"]`;
 const row = i => `.banner-row[data-agent-id="${ID(i)}"]`;
 const output = process.env.R48_SCREENS;
+
+test('disk history and check freshness have inclusive cutoffs', () => {
+  const now = 1800000000000;
+  const health = {
+    last_fault_at: now - 7 * 24 * 60 * 60 * 1000,
+    disk: {status: 'ok', checked_at: now - 150 * 1000}
+  };
+  const agent = {online: true, state: {host_health: health}};
+  assert.equal(diskReport(agent, now), health);
+  assert.equal(diskTone(agent, now), 'warn');
+  health.last_fault_at--;
+  assert.equal(diskTone(agent, now), '');
+  health.disk.checked_at--;
+  assert.equal(diskReport(agent, now), null);
+});
 
 for (const theme of ['dark', 'light']) {
   test(`${theme} disk health, filtering, and incremental rendering`, {timeout: 60000}, async () => {
