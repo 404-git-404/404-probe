@@ -40,6 +40,41 @@ test('R52 renders the same effective color in cards and list in both palettes', 
   }
 }));
 
+test('R52 history renders all runtime values and the effective YouTube region', () => ui(async ({page, f}) => {
+  for (const agent of f.state.items) agent.youtube_ad_free_regions = f.state.youtube_ad_free_regions;
+  f.state.items[1].google_status = {supported: true};
+  f.state.items[3].google_status = {supported: true, result: {youtube: {status: 'unknown'}}};
+  for (const theme of ['dark', 'light']) {
+    for (const [i, label, tone] of [[2, '地区 MO', 'crit'], [0, '地区 US', 'ok'], [3, '未知', null], [1, '尚未检测', null]]) {
+      await page.goto(f.base + '/history.html?id=' + ID(i));
+      await page.evaluate(value => ProbeTheme.set(value), theme);
+      const values = page.locator('#agent-runtime-values dd');
+      await values.first().waitFor({state: 'attached'});
+      const runtime = await values.evaluateAll(nodes => nodes.map(node => [node.textContent.trim(), node.dataset.regionTone]));
+      assert.equal(runtime.length, await page.locator('#agent-runtime-values dt').count());
+      assert.equal(runtime[0][0], 'synthetic-' + i);
+      for (const [value, regionTone] of runtime) {
+        assert(value, 'runtime value is empty');
+        assert.doesNotMatch(value, /undefined/);
+        assert.equal(regionTone, undefined);
+      }
+      const youtube = page.locator('#google-status-values');
+      assert.equal(await youtube.locator('dd').count(), i === 1 ? 0 : 1);
+      if (i !== 1) {
+        assert.equal(await youtube.locator('dt').textContent(), 'YouTube');
+        assert.equal(await youtube.locator('dd').textContent(), label);
+        assert.equal(await youtube.locator('dd').getAttribute('data-region-tone'), tone);
+      } else {
+        assert.equal(await youtube.textContent(), label);
+      }
+    }
+  }
+}, {n: 4, handle: async ({url, json}) => {
+  if (!url.pathname.endsWith('/history')) return false;
+  json({points: []});
+  return true;
+}}));
+
 test('R52 saves and clears on an unsupported Agent and protects an open selection from SSE', async () => {
   let response, request, success = true, agent;
   await ui(async ({page, f}) => {

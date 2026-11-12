@@ -96,8 +96,7 @@ function renderAgentRuntime(agent) {
   ];
   for (const [label, value] of rows) {
     const term = document.createElement('dt'); term.textContent = label;
-    const description = document.createElement('dd'); description.textContent = value.label;
-    if (value.regionTone !== 'unknown') description.dataset.regionTone = value.regionTone;
+    const description = document.createElement('dd'); description.textContent = value;
     agentRuntimeValues.append(term, description);
   }
 }
@@ -155,14 +154,11 @@ function renderGoogleStatus(agent) {
     googleValues.textContent = '尚未检测';
     return;
   }
-  const rows = [
-    ['YouTube', YouTubeStatus.display(agent, agent.youtube_ad_free_regions)],
-  ];
-  for (const [name, value] of rows) {
-    const term = document.createElement('dt'); term.textContent = name;
-    const description = document.createElement('dd'); description.textContent = value;
-    googleValues.append(term, description);
-  }
+  const shown = YouTubeStatus.display(agent, agent.youtube_ad_free_regions);
+  const term = document.createElement('dt'); term.textContent = 'YouTube';
+  const description = document.createElement('dd'); description.textContent = shown.label;
+  if (shown.regionTone !== 'unknown') description.dataset.regionTone = shown.regionTone;
+  googleValues.append(term, description);
 }
 
 googleRerun.addEventListener('click', async () => {
