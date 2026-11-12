@@ -43,25 +43,25 @@ func probeDisk(dir string) probeResult {
 	path := filepath.Join(dir, ProbeFilename)
 	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
 	if err != nil {
-		return probeResult{reason: probeFailure(err, protocol.DiskWriteEIO)}
+		return probeFailure(err, protocol.DiskWriteEIO)
 	}
 	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
-		return probeResult{reason: probeFailure(err, protocol.DiskWriteEIO)}
+		return probeFailure(err, protocol.DiskWriteEIO)
 	}
 	if !safeProbeFile(&st) {
 		return probeResult{reason: protocol.DiskUnwritable}
 	}
 	if st.Mode&07777 != 0600 {
 		if err := f.Chmod(0600); err != nil {
-			return probeResult{reason: probeFailure(err, protocol.DiskWriteEIO)}
+			return probeFailure(err, protocol.DiskWriteEIO)
 		}
 	}
 	if st.Size > probeSize {
 		if err := f.Truncate(probeSize); err != nil {
-			return probeResult{reason: probeFailure(err, protocol.DiskWriteEIO)}
+			return probeFailure(err, protocol.DiskWriteEIO)
 		}
 	}
 	payload := make([]byte, probeSize)
@@ -74,26 +74,26 @@ func checkFile(file probeFile, payload []byte) probeResult {
 		if err == nil {
 			err = io.ErrShortWrite
 		}
-		return probeResult{reason: probeFailure(err, protocol.DiskWriteEIO)}
+		return probeFailure(err, protocol.DiskWriteEIO)
 	}
 	if err := file.Sync(); err != nil {
-		return probeResult{reason: probeFailure(err, protocol.DiskWriteEIO)}
+		return probeFailure(err, protocol.DiskWriteEIO)
 	}
 	verified, err := file.ReadBack(payload)
 	if err != nil {
-		return probeResult{reason: probeFailure(err, protocol.DiskReadEIO)}
+		return probeFailure(err, protocol.DiskReadEIO)
 	}
 	return probeResult{verified: &verified}
 }
 
-func probeFailure(err error, ioReason protocol.DiskHealthReason) protocol.DiskHealthReason {
+func probeFailure(err error, ioReason protocol.DiskHealthReason) probeResult {
 	switch {
 	case errors.Is(err, unix.EIO), errors.Is(err, io.ErrShortWrite):
-		return ioReason
+		return probeResult{reason: ioReason}
 	case errors.Is(err, unix.ENOSPC), errors.Is(err, unix.EDQUOT):
-		return protocol.DiskFull
+		return probeResult{reason: protocol.DiskFull}
 	default:
-		return protocol.DiskUnwritable
+		return probeResult{reason: protocol.DiskUnwritable, readOnly: errors.Is(err, unix.EROFS)}
 	}
 }
 

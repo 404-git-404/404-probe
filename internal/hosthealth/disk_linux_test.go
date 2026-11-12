@@ -174,6 +174,57 @@ func TestDiskStateTransitions(t *testing.T) {
 	check(protocol.DiskOK)
 }
 
+func TestDiskFaultPersistsOnEROFSWithWritableSuperblock(t *testing.T) {
+	for _, fault := range []protocol.DiskHealthReason{protocol.DiskExt4Errors, protocol.DiskWriteEIO, protocol.DiskReadEIO} {
+		t.Run(string(fault), func(t *testing.T) {
+			now := time.Unix(1800000000, 0)
+			ro, ext4 := false, uint64(1)
+			readOnly := probeFailure(unix.EROFS, protocol.DiskWriteEIO)
+			result := readOnly
+			m := Monitor{now: func() time.Time { return now }, probe: func() probeResult { return result }, kernel: func() kernelSample {
+				errors := ext4
+				return kernelSample{readOnly: &ro, filesystems: []filesystem{{key: "root", DiskFilesystem: protocol.DiskFilesystem{
+					Scope: "root", Ext4Errors: &errors,
+				}}}}
+			}}
+			check := func(status protocol.DiskHealthStatus, reason protocol.DiskHealthReason) {
+				t.Helper()
+				m.check()
+				disk := m.Snapshot()
+				if disk.Status != status || reason != "" && !slices.Contains(disk.Reasons, reason) {
+					t.Fatalf("after %s: got %+v, want %s/%s", now.Sub(time.Unix(1800000000, 0)), disk, status, reason)
+				}
+			}
+			check(protocol.DiskUnknown, protocol.DiskUnwritable)
+			now = now.Add(time.Minute)
+			if fault == protocol.DiskExt4Errors {
+				ext4++
+			} else {
+				result = probeResult{reason: fault}
+			}
+			check(protocol.DiskError, fault)
+			start := m.Snapshot().StartedAt
+			result = readOnly
+			for range 14 {
+				now = now.Add(time.Minute)
+				check(protocol.DiskError, fault)
+				if m.Snapshot().StartedAt != start {
+					t.Fatal("persistent fault was restarted")
+				}
+			}
+			result = probeResult{}
+			check(protocol.DiskError, fault)
+			result = readOnly
+			check(protocol.DiskError, fault)
+			result = probeResult{}
+			check(protocol.DiskError, fault)
+			check(protocol.DiskOK, "")
+			result = readOnly
+			check(protocol.DiskUnknown, protocol.DiskUnwritable)
+		})
+	}
+}
+
 func TestBlockedSyncHasOneFlightAndSnapshotNeverWaits(t *testing.T) {
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var elapsed, probes atomic.Int64

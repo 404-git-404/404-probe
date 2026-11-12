@@ -33,6 +33,7 @@ type kernelSample struct {
 type probeResult struct {
 	verified *bool
 	reason   protocol.DiskHealthReason
+	readOnly bool
 }
 
 type Monitor struct {
@@ -49,6 +50,8 @@ type Monitor struct {
 	ioFault      protocol.DiskHealthReason
 	successes    int
 	ext4Observed time.Time
+	ext4Pending  bool
+	ext4Held     bool
 	counters     map[string]protocol.DiskFilesystem
 }
 
@@ -133,16 +136,23 @@ func (m *Monitor) check() {
 		d.Filesystems = append(d.Filesystems, fs.DiskFilesystem)
 	}
 	if result.reason == "" {
-		if m.ioFault != "" {
+		if m.ioFault != "" || m.ext4Pending {
 			m.successes++
 			if m.successes >= 2 {
 				m.ioFault = ""
+				m.ext4Pending = false
+				m.ext4Held = false
+				m.successes = 0
 			}
 		}
 	} else {
 		m.successes = 0
 		if result.reason == protocol.DiskWriteEIO || result.reason == protocol.DiskReadEIO {
 			m.ioFault = result.reason
+		} else if result.readOnly && sample.readOnly != nil && !*sample.readOnly && (m.ioFault != "" || m.ext4Pending) {
+			// Some filesystems keep reporting a writable superblock after an
+			// error makes writes fail with EROFS. Hold the observed fault.
+			m.ext4Held = m.ext4Pending
 		} else {
 			d.Status = protocol.DiskUnknown
 			if result.reason != protocol.DiskUnwritable || sample.readOnly == nil || !*sample.readOnly {
@@ -162,7 +172,7 @@ func (m *Monitor) check() {
 	if end.Sub(start) > slowAfter {
 		d.Reasons = append(d.Reasons, protocol.DiskSlow)
 	}
-	if hasFault(d.Reasons) || m.ext4Active(end) {
+	if hasFault(d.Reasons) || m.ext4Fault(end) {
 		if m.started.IsZero() {
 			m.started = end
 			if m.ioFault != "" || end.Sub(start) > stallAfter {
@@ -182,6 +192,8 @@ func (m *Monitor) updateCounters(sample kernelSample, now time.Time) bool {
 		if fs.Ext4Errors != nil {
 			if previous.Ext4Errors != nil && *fs.Ext4Errors > *previous.Ext4Errors {
 				m.ext4Observed = now
+				m.ext4Pending = true
+				m.successes = 0
 			}
 			previous.Ext4Errors = fs.Ext4Errors
 		}
@@ -194,8 +206,8 @@ func (m *Monitor) updateCounters(sample kernelSample, now time.Time) bool {
 	return changed
 }
 
-func (m *Monitor) ext4Active(now time.Time) bool {
-	return !m.ext4Observed.IsZero() && now.Sub(m.ext4Observed) <= ext4Window
+func (m *Monitor) ext4Fault(now time.Time) bool {
+	return m.ext4Held || !m.ext4Observed.IsZero() && now.Sub(m.ext4Observed) <= ext4Window
 }
 
 func hasFault(reasons []protocol.DiskHealthReason) bool {
@@ -213,14 +225,14 @@ func (m *Monitor) Snapshot() protocol.DiskHealth {
 	now := m.now()
 	d.Reasons = slices.Clone(d.Reasons)
 	started := m.started
-	if m.ext4Active(now) {
+	if m.ext4Fault(now) {
 		d.Reasons = append(d.Reasons, protocol.DiskExt4Errors)
 	}
 	if !m.inFlight.IsZero() && now.Sub(m.inFlight) > stallAfter {
 		d.Reasons = append(d.Reasons, protocol.DiskStalled)
 		d.StalledSince = m.inFlight.UnixMilli()
 		d.ProbeMS = now.Sub(m.inFlight).Milliseconds()
-		if started.IsZero() || !hasFault(m.last.Reasons) && !m.ext4Active(now) {
+		if started.IsZero() || !hasFault(m.last.Reasons) && !m.ext4Fault(now) {
 			started = m.inFlight
 		}
 	}
