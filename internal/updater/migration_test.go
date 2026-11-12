@@ -81,6 +81,7 @@ func TestV2InterruptedStatesRetainAuthorizationAndRecover(t *testing.T) {
 				t.Fatal(err)
 			}
 			postInstall := status == "installing" || status == "restarting" || status == "health_check"
+			restarted := make(chan struct{}, 1)
 			if postInstall {
 				if err := os.Link(live, previous); err != nil {
 					t.Fatal(err)
@@ -90,6 +91,17 @@ func TestV2InterruptedStatesRetainAuthorizationAndRecover(t *testing.T) {
 				}
 				if err := os.WriteFile(live, []byte("new-agent"), 0755); err != nil {
 					t.Fatal(err)
+				}
+				service := engine.config.ServiceCommand
+				engine.config.ServiceCommand = func(ctx context.Context, action string) error {
+					err := service(ctx, action)
+					if err == nil && action == "restart" {
+						select {
+						case restarted <- struct{}{}:
+						default:
+						}
+					}
+					return err
 				}
 			}
 			recovered, err := NewEngine(engine.config)
@@ -103,6 +115,13 @@ func TestV2InterruptedStatesRetainAuthorizationAndRecover(t *testing.T) {
 					t.Fatal("authorization changed", state)
 				}
 				return
+			}
+			// Recovery can initially expose the saved health_check status. The
+			// restart callback proves it has entered the new recovery cycle.
+			select {
+			case <-restarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("recovery did not restart the Agent")
 			}
 			waitLocalStatus(t, recovered, request, "health_check")
 			request.Action = ActionHealthy
