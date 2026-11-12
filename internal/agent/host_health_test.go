@@ -58,7 +58,7 @@ func TestFirstReportWaitsForDiskAndOSWithinOneDeadline(t *testing.T) {
 				disk, identity := make(chan struct{}), make(chan struct{})
 				defer close(identity)
 				r.collector = &startupDiskCollector{release: disk}
-				r.platform = &platformMonitor{timeout: 3 * time.Second, read: func() platformsupport.Identity {
+				r.platform = &platformMonitor{timeout: 3 * time.Second, read: func(context.Context) platformsupport.Identity {
 					<-identity
 					return platformsupport.Identity{OS: "debian 12.15"}
 				}}
@@ -173,14 +173,15 @@ func TestHostHealthOnlyFollowsAcceptedCapabilitiesAndDoesNotWaitForProbe(t *test
 }
 
 func TestPlatformTimeoutKeepsOSAndClosesGatesUntilRetry(t *testing.T) {
-	m := &platformMonitor{timeout: 100 * time.Millisecond, read: func() platformsupport.Identity { return platformsupport.Identity{OS: "debian 12"} }}
+	m := &platformMonitor{timeout: 100 * time.Millisecond, read: func(context.Context) platformsupport.Identity { return platformsupport.Identity{OS: "debian 12"} }}
+	ctx := context.Background()
 	wake := func() {}
-	m.refresh(wake)
+	m.refresh(ctx, wake)
 	release := make(chan struct{})
 	woke := make(chan struct{}, 2)
-	m.read = func() platformsupport.Identity { <-release; return platformsupport.Identity{OS: "late"} }
+	m.read = func(context.Context) platformsupport.Identity { <-release; return platformsupport.Identity{OS: "late"} }
 	done := make(chan struct{})
-	go func() { m.refresh(func() { woke <- struct{}{} }); close(done) }()
+	go func() { m.refresh(ctx, func() { woke <- struct{}{} }); close(done) }()
 	<-woke
 	s := m.snapshot()
 	if s.lastOS != "debian 12" || s.identity.OS != "" || !s.identity.Deferred.DeferredUnsupported || !s.identity.Quality.Excluded {
@@ -188,8 +189,8 @@ func TestPlatformTimeoutKeepsOSAndClosesGatesUntilRetry(t *testing.T) {
 	}
 	close(release)
 	<-done
-	m.read = func() platformsupport.Identity { return platformsupport.Identity{OS: "debian 13"} }
-	m.refresh(wake)
+	m.read = func(context.Context) platformsupport.Identity { return platformsupport.Identity{OS: "debian 13"} }
+	m.refresh(ctx, wake)
 	s = m.snapshot()
 	if s.lastOS != "debian 13" || s.identity.Deferred.DeferredUnsupported || s.identity.Quality.Excluded {
 		t.Fatalf("recovered identity: %+v", s)

@@ -2,11 +2,14 @@
 package platformsupport
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"strings"
+
+	"github.com/shirou/gopsutil/v4/host"
 )
 
 const maxReleaseBytes = 4096
@@ -25,13 +28,11 @@ func UnknownIdentity() Identity {
 	return Identity{Deferred: Policy{DeferredUnsupported: true}, Quality: QualityPolicy{true, "platform_identity_unknown"}}
 }
 
-// ReadIdentity uses one set of file reads for both independently gated features
-// and the reported OS name. Callers that need a deadline run it off their hot path.
-func ReadIdentity() Identity { return identify(runtime.GOOS, readRelease) }
-
-func identify(goos string, read func(string) ([]byte, error)) Identity {
-	if goos != "linux" {
-		return Identity{OS: goos}
+// ReadIdentity reads the platform policies and the legacy system name. Callers
+// run it in the background because filesystem reads may outlive the deadline.
+func ReadIdentity(ctx context.Context) Identity {
+	if runtime.GOOS != "linux" {
+		return Identity{OS: runtime.GOOS}
 	}
 	type readResult struct {
 		data []byte
@@ -42,31 +43,37 @@ func identify(goos string, read func(string) ([]byte, error)) Identity {
 		if result, ok := files[path]; ok {
 			return result.data, result.err
 		}
-		data, err := read(path)
+		data, err := readRelease(path)
 		if path == "/etc/os-release" && os.IsNotExist(err) {
-			data, err = read("/usr/lib/os-release")
+			data, err = readRelease("/usr/lib/os-release")
 		}
 		files[path] = readResult{data, err}
 		return data, err
 	}
-	deferred := detect(goos, readOnce)
-	quality := detectQuality(goos, readOnce)
-	raw, err := readOnce("/etc/os-release")
-	id, valid := releaseID(string(raw))
-	var name string
-	if err == nil && valid && len(id) <= 128 {
-		name = id
-		for _, line := range strings.Split(string(raw), "\n") {
-			if version, ok := strings.CutPrefix(strings.TrimSpace(line), "VERSION_ID="); ok {
-				version = strings.Trim(version, `"'`)
-				if version != "" && len(name)+len(version)+1 <= 128 && !strings.ContainsAny(version, "\x00\r\n") {
-					name += " " + version
-				}
-				break
-			}
-		}
+	deferred := detect(runtime.GOOS, readOnce)
+	quality := detectQuality(runtime.GOOS, readOnce)
+	_, releaseErr := readOnce("/etc/os-release")
+	return Identity{OS: systemName(ctx, releaseErr), Deferred: deferred, Quality: quality}
+}
+
+func systemName(ctx context.Context, releaseErr error) string {
+	if ctx.Err() != nil {
+		return ""
 	}
-	return Identity{OS: name, Deferred: deferred, Quality: quality}
+	// v1.1.2 used host.InfoWithContext, which gets these fields from
+	// PlatformInformationWithContext. Debian's version comes from debian_version.
+	platform, _, version, err := host.PlatformInformationWithContext(ctx)
+	if err != nil || ctx.Err() != nil {
+		return ""
+	}
+	name := strings.TrimSpace(strings.Join([]string{platform, version}, " "))
+	if len(name) > 128 || strings.ContainsAny(name, "\x00\r\n") {
+		return ""
+	}
+	if name == "" && (releaseErr == nil || os.IsNotExist(releaseErr)) {
+		return runtime.GOOS
+	}
+	return name
 }
 
 func (p Policy) CheckCommand(command string) error {

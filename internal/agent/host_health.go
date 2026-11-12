@@ -16,7 +16,7 @@ type identitySample struct {
 }
 
 type platformMonitor struct {
-	read    func() platformsupport.Identity
+	read    func(context.Context) platformsupport.Identity
 	timeout time.Duration
 	latest  atomic.Pointer[identitySample]
 }
@@ -55,7 +55,7 @@ func (m *platformMonitor) run(ctx context.Context, wakeQuality func(), firstSamp
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for ctx.Err() == nil {
-		m.refresh(wakeQuality)
+		m.refresh(ctx, wakeQuality)
 		if firstSample != nil {
 			close(firstSample)
 			firstSample = nil
@@ -68,14 +68,16 @@ func (m *platformMonitor) run(ctx context.Context, wakeQuality func(), firstSamp
 	}
 }
 
-func (m *platformMonitor) refresh(wakeQuality func()) {
+func (m *platformMonitor) refresh(ctx context.Context, wakeQuality func()) {
 	latest := m.snapshot()
 	latest.started = time.Now()
 	m.publish(latest)
 	timer := time.AfterFunc(m.timeout, wakeQuality)
-	identity := m.read()
+	deadline, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+	identity := m.read(deadline)
 	timer.Stop()
-	if time.Since(latest.started) >= m.timeout {
+	if deadline.Err() != nil || time.Since(latest.started) >= m.timeout {
 		identity = platformsupport.UnknownIdentity()
 	}
 	latest.started = time.Time{}
