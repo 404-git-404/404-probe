@@ -214,6 +214,127 @@ done
 	}
 }
 
+func TestK1DiskProbeLeftover(t *testing.T) {
+	for _, entry := range []string{"installer", "generated-helper", "openrc", "rollback-systemd", "rollback-openrc"} {
+		for _, layout := range []string{"file", "directory", "symlink"} {
+			t.Run(entry+"/"+layout, func(t *testing.T) {
+				rootNative := t.TempDir()
+				root := shellTestPath(rootNative)
+				source := strings.TrimSuffix(strings.TrimSpace(m12InstallerSource(t)), `main "$@"`)
+				if entry == "generated-helper" {
+					_, helper, ok := strings.Cut(source, "cat <<'HELPER'\n")
+					source, _, _ = strings.Cut(helper, "\nreject_deferred_command_on_host \"${1:-}\"\nrequire_root\n")
+					if !ok || source == helper {
+						t.Fatal("could not locate generated helper definitions")
+					}
+				}
+				if err := os.WriteFile(filepath.Join(rootNative, "source.sh"), []byte(installerFixtureSource(source, root)), 0600); err != nil {
+					t.Fatal(err)
+				}
+				harness := `set -Eeuo pipefail
+task_root='` + root + `'
+entry='` + entry + `'
+layout='` + layout + `'
+source "$task_root/source.sh"
+require_root_linux_systemd() { :; }
+validate_service_user() { :; }
+validate_removable_service_user() { :; }
+openrc_role_residue() { return 1; }
+openrc_stop() { :; }
+openrc_safe_parents() { :; }
+mountpoint() { return 1; }
+stat() {
+  # The default namespace hides passwd, so stat cannot resolve UID 0.
+  if [[ "$1" == -c && "$2" == %U && "$(command stat -c %u -- "${*: -1}")" == 0 ]]; then
+    printf 'root\n'
+  else
+    command stat "$@"
+  fi
+}
+systemctl() {
+  case "$1" in is-active) return 1;; stop|disable|daemon-reload) return 0;; *) return 98;; esac
+}
+id() { [[ -f "$task_root/account" ]]; }
+getent() {
+  case "$1:${2:-}" in
+    passwd:404-probe) id && printf '404-probe:x:451:451::%s:/usr/sbin/nologin\n' "$STATE_DIRECTORY" ;;
+    group:404-probe) [[ -f "$task_root/group" ]] && printf '404-probe:x:451:\n' ;;
+    passwd:) return 0 ;;
+    *) return 2 ;;
+  esac
+}
+userdel() { rm -- "$task_root/account"; }
+groupdel() { rm -- "$task_root/group"; }
+rm() {
+  # The fixture wrapper rejects symlinks. Validate the parent and permit
+  # unlinking only this fixture leaf with the installer's exact arguments.
+  if [[ $# == 3 && "$1" == -f && "$2" == -- && "$3" == "$STATE_DIRECTORY/.disk-probe" && -L "$3" ]]; then
+    fixture_path "$STATE_DIRECTORY" || return
+    command rm "$@"
+  else
+    fixture_mutate rm "$@"
+  fi
+}
+mkdir -p "$STATE_DIRECTORY" "$CONFIG_DIRECTORY"
+probe="$STATE_DIRECTORY/.disk-probe"
+touch "$task_root/account" "$task_root/group"
+case "$layout" in
+  file) touch "$probe" ;;
+  directory) mkdir "$probe"; printf preserve >"$probe/unknown" ;;
+  symlink) printf preserve >"$task_root/target"; ln -s -- "$task_root/target" "$probe" ;;
+esac
+if [[ "$entry" != generated-helper ]] && agent_residue_exists; then
+  echo 'a disk probe alone was detected as an installed Agent' >&2
+  exit 99
+fi
+case "$entry" in
+  installer) uninstall_role agent --confirm-delete-data ;;
+  generated-helper) uninstall agent --confirm-delete-data ;;
+  openrc) INSTALL_INIT=openrc; uninstall_role agent --confirm-delete-data ;;
+  rollback-*)
+    set +e
+    (
+      set -e
+      INSTALL_INIT=${entry#rollback-}
+      INSTALL_TRANSACTION_ACTIVE=1
+      INSTALL_TRANSACTION_ROLE=agent
+      INSTALL_TRANSACTION_UNIT=404-probe-agent
+      INSTALL_TRANSACTION_CONFIG_DIRECTORY_CREATED=1
+      INSTALL_TRANSACTION_STATE_DIRECTORY_CREATED=1
+      INSTALL_TRANSACTION_USER_CREATED=1
+      rollback_install_transaction 42
+    )
+    status=$?
+    set -e
+    [[ "$status" == 42 ]]
+    ;;
+esac
+[[ ! -e "$CONFIG_DIRECTORY" ]]
+if [[ "$layout" == directory ]]; then
+  [[ "$(cat "$probe/unknown")" == preserve ]]
+else
+  [[ ! -e "$STATE_DIRECTORY" && ! -L "$probe" ]]
+fi
+if [[ "$layout" == symlink ]]; then [[ "$(cat "$task_root/target")" == preserve ]]; fi
+# Fresh-install rollback preserves its new locked account for a retry.
+if [[ "$layout" == directory || "$entry" == rollback-* ]]; then
+  [[ -f "$task_root/account" && -f "$task_root/group" ]]
+else
+  [[ ! -e "$task_root/account" && ! -e "$task_root/group" ]]
+fi
+`
+				harnessPath := filepath.Join(rootNative, "disk-probe-cleanup.sh")
+				if err := os.WriteFile(harnessPath, []byte(harness), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if output, err := installerFixtureCommand(t, "bash", shellTestPath(harnessPath)).CombinedOutput(); err != nil {
+					t.Fatalf("Agent disk probe cleanup: %v\n%s", err, output)
+				}
+			})
+		}
+	}
+}
+
 func runInstallerAgentUninstallFixture(t *testing.T, early bool) {
 	bash := "bash"
 	if runtime.GOOS == "windows" {
@@ -247,6 +368,15 @@ func runInstallerAgentUninstallFixture(t *testing.T, early bool) {
 		t.Fatal("could not extract uninstall implementation")
 	}
 	functionSource := strings.Replace(script[start:start+end], "\nuninstall() {", "\nuninstall_role() {", 1)
+	if !early {
+		const signature = "\nremove_disk_probe_file() {\n"
+		_, definitions, found := strings.Cut(script, signature)
+		body, _, closed := strings.Cut(definitions, "\n}\n")
+		if !found || !closed {
+			t.Fatal("could not extract installer disk probe cleanup")
+		}
+		functionSource = signature + body + "\n}\n" + functionSource
+	}
 	rootNative := t.TempDir()
 	root := shellTestPath(rootNative)
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.bootstrap"`, `"${TEST_AGENT_BOOTSTRAP}"`)

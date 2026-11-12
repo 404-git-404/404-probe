@@ -679,6 +679,11 @@ remove_update_check_cache() {
   done
 }
 
+remove_disk_probe_file() {
+  local path="${STATE_DIRECTORY}/.disk-probe"
+  if [[ -L "${path}" || -f "${path}" ]]; then rm -f -- "${path}"; fi
+}
+
 openrc_uninstall() {
   local role="$1" binary="/usr/local/bin/404-probe-$1" path owner permissions
   confirm_uninstall "${role}" "${2:-}"
@@ -734,6 +739,7 @@ openrc_uninstall() {
     remove_update_check_cache
   else
     rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${SELECTOR_ORDER_FILE}"
+    remove_disk_probe_file
   fi
   rmdir --ignore-fail-on-non-empty "${CONFIG_DIRECTORY}" "${STATE_DIRECTORY}" "/run/404-probe-${role}-openrc" /var/log/404-probe 2>/dev/null || true
   if ! server_residue_exists && ! agent_residue_exists && [[ ! -d "${CONFIG_DIRECTORY}" && ! -d "${STATE_DIRECTORY}" && ! -d /var/log/404-probe ]]; then
@@ -926,6 +932,7 @@ rollback_install_transaction() {
       [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || remove_update_check_cache
     else
       rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock"
+      [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || remove_disk_probe_file
     fi
     rm -f -- "/run/404-probe-${INSTALL_TRANSACTION_ROLE}-openrc/supervisor.pid"
     rmdir --ignore-fail-on-non-empty "/run/404-probe-${INSTALL_TRANSACTION_ROLE}-openrc" /var/log/404-probe 2>/dev/null || true
@@ -953,6 +960,7 @@ rollback_install_transaction() {
 	 systemctl stop 404-probe-agent-updater.service >/dev/null 2>&1 || true
 	 systemctl disable 404-probe-agent-updater.service >/dev/null 2>&1 || true
     rm -f -- "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${AGENT_REMOVAL_WORKER_BINARY}"
+    [[ -z "${INSTALL_TRANSACTION_UNIT}" ]] || remove_disk_probe_file
 	 systemctl stop 404-probe-security-collect.timer 404-probe-security-collect.service >/dev/null 2>&1 || true
 	 systemctl disable 404-probe-security-collect.timer >/dev/null 2>&1 || true
   fi
@@ -1485,6 +1493,11 @@ remove_update_check_cache() {
     if [[ -L "${path}" || -f "${path}" ]]; then rm -f -- "${path}"; fi
   done
 }
+remove_disk_probe_file() {
+  local path="${STATE_DIRECTORY}/.disk-probe"
+  if [[ -L "${path}" || -f "${path}" ]]; then rm -f -- "${path}"; fi
+}
+
 uninstall() {
   [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
     || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
@@ -1543,6 +1556,7 @@ uninstall() {
 	fi
 	remove_owned_tree "${SECURITY_STATE_DIRECTORY}"
 	remove_owned_tree /run/404-probe
+    remove_disk_probe_file
   else
     rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
       "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \
@@ -3199,6 +3213,7 @@ uninstall_role() {
     remove_owned_tree "${SECURITY_STATE_DIRECTORY}"
     remove_owned_tree /run/404-probe
     rm -f -- "${SELECTOR_ORDER_FILE}"
+    remove_disk_probe_file
   else
     rm -f -- "${CONFIG_DIRECTORY}/server.env" "${CONFIG_DIRECTORY}/control.token" "${CONFIG_DIRECTORY}/web-password.hash" \
       "${SERVER_DATABASE}" "${SERVER_DATABASE}-wal" "${SERVER_DATABASE}-shm" \

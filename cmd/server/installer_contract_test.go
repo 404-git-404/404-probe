@@ -345,6 +345,34 @@ func TestInstallerUninstallIsExplicitCompleteAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestInstallerDiskProbeCleanupContract(t *testing.T) {
+	script := m12InstallerSource(t)
+	for name, want := range map[string]int{
+		"openrc_uninstall": 1, "uninstall": 1, "uninstall_role": 1, "rollback_install_transaction": 2,
+		"agent_residue_exists": 0, "finalize_agent_removal_account": 0, "recover_agent_removal": 0,
+	} {
+		fragments := strings.Split(script, "\n"+name+"() {\n")[1:]
+		if len(fragments) == 0 {
+			t.Fatalf("missing installer function %s", name)
+		}
+		for _, fragment := range fragments {
+			body, _, ok := strings.Cut(fragment, "\n}\n")
+			if !ok || strings.Count(body, "remove_disk_probe_file") != want || strings.Contains(body, ".disk-probe") {
+				t.Fatalf("%s must have %d calls and no direct reference to .disk-probe", name, want)
+			}
+		}
+	}
+	implementations := strings.Split(script, "\nremove_disk_probe_file() {\n")[1:]
+	if len(implementations) != 2 || strings.Count(script, "remove_disk_probe_file") != 7 {
+		t.Fatal("want two disk probe cleanup implementations and five calls")
+	}
+	outer, _, _ := strings.Cut(implementations[0], "\n}\n")
+	helper, _, _ := strings.Cut(implementations[1], "\n}\n")
+	if outer != helper {
+		t.Fatal("installer and generated helper must use identical disk probe cleanup")
+	}
+}
+
 func TestInstallerBootstrapsUpdaterWithoutExpandingItsAuthority(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
