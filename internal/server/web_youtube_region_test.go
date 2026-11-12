@@ -99,3 +99,38 @@ func TestWebYouTubeRegion(t *testing.T) {
 	}
 	check(mutate(http.MethodPut, id, mo, true, true, origin), http.StatusNotFound)
 }
+
+func TestWebYouTubeRegionMethodsAndContentType(t *testing.T) {
+	app, store, id := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	request := func(method, contentType, body string, authenticated bool) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, webAgentPathPrefix+id+"/youtube-region", strings.NewReader(body))
+		req.Host = app.webAuth.publicOrigin.Host
+		req.Header.Set("Origin", "https://probe.test")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		if authenticated {
+			session := addTestWebSession(t, app, req)
+			req.Header.Set("X-CSRF-Token", session.csrfToken)
+		}
+		response := httptest.NewRecorder()
+		app.Handler().ServeHTTP(response, req)
+		return response
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch} {
+		if res := request(method, "", "", false); res.Code != http.StatusUnauthorized || res.Header().Get("Allow") != "" {
+			t.Errorf("unauthenticated %s: status=%d Allow=%q", method, res.Code, res.Header().Get("Allow"))
+		}
+		if res := request(method, "", "", true); res.Code != http.StatusMethodNotAllowed || res.Header().Get("Allow") != "PUT, DELETE" {
+			t.Errorf("authenticated %s: status=%d Allow=%q", method, res.Code, res.Header().Get("Allow"))
+		}
+	}
+	for _, contentType := range []string{"", "text/plain"} {
+		if res := request(http.MethodPut, contentType, `{"region":"MO"}`, true); res.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("PUT with Content-Type %q: status=%d body=%s", contentType, res.Code, res.Body)
+		}
+	}
+}

@@ -23,7 +23,8 @@ func (a *App) handleWebYouTubeRegion(w http.ResponseWriter, r *http.Request) {
 
 	var value webYouTubeRegion
 	var err error
-	if r.Method == http.MethodPut {
+	switch r.Method {
+	case http.MethodPut:
 		if !hasJSONContentType(r) {
 			writeJobError(w, http.StatusUnsupportedMediaType, "invalid_content_type", "Content-Type must be application/json")
 			return
@@ -38,7 +39,7 @@ func (a *App) handleWebYouTubeRegion(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = a.store.SetYouTubeManualRegion(r.Context(), id, value.Region, a.now())
-	} else {
+	case http.MethodDelete:
 		body, bodyErr := readBoundedBody(w, r, 256)
 		if bodyErr != nil {
 			writeBodyError(w, bodyErr)
@@ -49,6 +50,10 @@ func (a *App) handleWebYouTubeRegion(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = a.store.ClearYouTubeManualRegion(r.Context(), id)
+	default:
+		w.Header().Set("Allow", "PUT, DELETE")
+		writeJobError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method must be PUT or DELETE")
+		return
 	}
 	if errors.Is(err, storage.ErrAgentNotFound) {
 		writeJobError(w, http.StatusNotFound, "agent_not_found", "agent not found")

@@ -178,6 +178,7 @@ func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
 		mux.Handle(method+" /api/v1/web/agents/{agent_id}/youtube-region", a.requireWebMutation(http.HandlerFunc(a.handleWebYouTubeRegion)))
 	}
+	mux.Handle("/api/v1/web/agents/{agent_id}/youtube-region", a.requireWebSession(http.HandlerFunc(a.handleWebYouTubeRegion), true))
 	mux.Handle("/api/v1/web/agents/{agent_id}/google-status", a.requireWebSession(http.HandlerFunc(a.handleWebGoogleStatusMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/public-egress", a.requireWebMutation(http.HandlerFunc(a.handleSetWebPublicEgress)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/public-egress", a.requireWebSession(http.HandlerFunc(a.handleWebPublicEgressMethodNotAllowed), true))
