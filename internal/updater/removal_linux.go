@@ -17,10 +17,14 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"404-probe/internal/hosthealth"
+	"golang.org/x/sys/unix"
 )
 
 type fixedAgentRemovalLauncher struct {
 	agentEnvPath      string
+	agentStateDir     string
 	stateDirectory    string
 	requestPath       string
 	unitPath          string
@@ -37,7 +41,7 @@ type fixedAgentRemovalLauncher struct {
 
 func newFixedAgentRemovalLauncher() *fixedAgentRemovalLauncher {
 	return &fixedAgentRemovalLauncher{
-		agentEnvPath: agentEnvironmentPath, stateDirectory: removalStateDirectory,
+		agentEnvPath: agentEnvironmentPath, agentStateDir: agentStateDirectory, stateDirectory: removalStateDirectory,
 		requestPath: removalRequestPath, unitPath: removalWorkerUnitPath,
 		unitName: removalWorkerUnitName, finalizerPath: removalFinalizerUnitPath,
 		finalizerName: removalFinalizerUnitName, workerBinary: removalWorkerBinary,
@@ -349,12 +353,8 @@ func runFixedAgentRemovalFinalizer(ctx context.Context, paths *fixedAgentRemoval
 		if _, err := readFixedRootRegular(paths.helperPath, 1<<20); err != nil {
 			return errors.New("fixed Agent uninstall helper is unavailable")
 		}
-		if err := paths.runHelper(ctx, "uninstall", "agent", "--confirm-delete-data"); err != nil {
-			return errors.New("fixed local Agent uninstall failed; recovery state was preserved")
-		}
-		if err := paths.runHelper(ctx, removalAccountHelperContract,
-			strconv.FormatUint(uint64(state.ServiceUID), 10), strconv.FormatUint(uint64(state.ServiceGID), 10)); err != nil {
-			return errors.New("fixed Agent account cleanup failed; success receipt was withheld")
+		if err := paths.uninstallAndFinalizeAccount(ctx, state); err != nil {
+			return err
 		}
 		if err := verifyRemovalAccountOutcome(state); err != nil {
 			return fmt.Errorf("Agent account cleanup verification failed; success receipt was withheld: %w", err)
@@ -380,6 +380,35 @@ func runFixedAgentRemovalFinalizer(ctx context.Context, paths *fixedAgentRemoval
 	default:
 		return errors.New("Agent removal finalizer received an unsupported local phase")
 	}
+}
+
+func (l *fixedAgentRemovalLauncher) uninstallAndFinalizeAccount(ctx context.Context, state removalRequestState) error {
+	if err := l.runHelper(ctx, "uninstall", "agent", "--confirm-delete-data"); err != nil {
+		return errors.New("fixed local Agent uninstall failed; recovery state was preserved")
+	}
+	// Older helpers can leave the probe behind. The service has stopped now.
+	removeAgentDiskProbe(l.agentStateDir)
+	if err := l.runHelper(ctx, removalAccountHelperContract,
+		strconv.FormatUint(uint64(state.ServiceUID), 10), strconv.FormatUint(uint64(state.ServiceGID), 10)); err != nil {
+		return errors.New("fixed Agent account cleanup failed; success receipt was withheld")
+	}
+	return nil
+}
+
+func removeAgentDiskProbe(dir string) {
+	fd, err := unix.Open(dir, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if unix.Fstatat(fd, hosthealth.ProbeFilename, &st, unix.AT_SYMLINK_NOFOLLOW) == nil {
+		switch st.Mode & unix.S_IFMT {
+		case unix.S_IFREG, unix.S_IFLNK:
+			_ = unix.Unlinkat(fd, hosthealth.ProbeFilename, 0)
+		}
+	}
+	_ = unix.Rmdir(dir)
 }
 
 func fixedRemovalMarkerExists() (bool, error) {

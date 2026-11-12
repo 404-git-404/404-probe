@@ -4,14 +4,84 @@ package updater
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
+
+	"404-probe/internal/hosthealth"
 )
+
+func TestRemovalCleansDiskProbeAfterOldHelperBeforeAccountFinalization(t *testing.T) {
+	for _, layout := range []string{"file", "symlink", "directory", "failed-uninstall"} {
+		t.Run(layout, func(t *testing.T) {
+			root := t.TempDir()
+			dir, target := filepath.Join(root, "agent"), filepath.Join(root, "target")
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, hosthealth.ProbeFilename)
+			if err := os.WriteFile(target, []byte("preserve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch layout {
+			case "symlink":
+				err = os.Symlink(target, path)
+			case "directory":
+				err = os.Mkdir(path, 0700)
+			default:
+				err = os.WriteFile(path, nil, 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			launcher := fixedAgentRemovalLauncher{agentStateDir: dir, runHelper: func(_ context.Context, args ...string) error {
+				calls++
+				if calls == 1 {
+					if !slices.Equal(args, []string{"uninstall", "agent", "--confirm-delete-data"}) {
+						t.Fatalf("uninstall arguments = %v", args)
+					}
+					if _, err := os.Lstat(path); err != nil {
+						t.Fatalf("probe missing before helper uninstall: %v", err)
+					}
+					if layout == "failed-uninstall" {
+						return errors.New("uninstall failed")
+					}
+					return nil
+				}
+				if !slices.Equal(args, []string{removalAccountHelperContract, "451", "452"}) {
+					t.Fatalf("account finalizer arguments = %v", args)
+				}
+				if layout == "directory" {
+					if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+						t.Fatalf("unknown directory was not preserved: %v, %v", info, err)
+					}
+				} else if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("state directory still present during account cleanup: %v", err)
+				}
+				return nil
+			}}
+			err = launcher.uninstallAndFinalizeAccount(context.Background(), removalRequestState{ServiceUID: 451, ServiceGID: 452})
+			if layout == "failed-uninstall" {
+				if _, statErr := os.Lstat(path); err == nil || calls != 1 || statErr != nil {
+					t.Fatalf("failed uninstall: err=%v calls=%d probe=%v", err, calls, statErr)
+				}
+			} else if err != nil || calls != 2 {
+				t.Fatalf("uninstall: err=%v calls=%d", err, calls)
+			}
+			if data, err := os.ReadFile(target); err != nil || string(data) != "preserve" {
+				t.Fatalf("link target changed: %q, %v", data, err)
+			}
+		})
+	}
+}
 
 func TestRemovalRequestPersistsBoundAccountIdentityAndFinalizingPhase(t *testing.T) {
 	if os.Geteuid() != 0 {
