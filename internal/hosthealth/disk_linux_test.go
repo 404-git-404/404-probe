@@ -3,13 +3,17 @@ package hosthealth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -127,6 +131,96 @@ func TestDiskProbeRepairsUnsafeEntries(t *testing.T) {
 				t.Fatalf("probe changed the target mode: %v, %v", info, err)
 			}
 		})
+	}
+}
+
+// Go runs init on the initial OS thread, which is the thread traced by the test.
+func init() {
+	if dir := os.Getenv("TEST_DISK_PROBE_RECREATE_DIR"); dir != "" {
+		if got := probeDisk(dir); got.reason != protocol.DiskUnwritable || got.verified != nil {
+			fmt.Fprintf(os.Stderr, "probe of a replaced entry returned %+v, want unwritable\n", got)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+}
+
+func TestDiskProbeExclusiveRecreation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ProbeFilename)
+	if err := os.Symlink("missing", path); err != nil {
+		t.Fatal(err)
+	}
+	const sentinel = "preserve this replacement"
+	// Trace only our own test child. Stopping at each syscall boundary lets
+	// us create the replacement after unlink and before open without a race.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "TEST_DISK_PROBE_RECREATE_DIR="+dir)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
+	if err := cmd.Start(); errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
+		t.Skipf("tracing the test subprocess is unavailable: %v", err)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	var status unix.WaitStatus
+	reaped := false
+	wait := func() error {
+		for {
+			_, err := unix.Wait4(pid, &status, 0, nil)
+			if err != unix.EINTR {
+				reaped = err == nil && (status.Exited() || status.Signaled())
+				return err
+			}
+		}
+	}
+	defer func() {
+		if !reaped {
+			_ = cmd.Process.Kill()
+			_ = wait()
+		}
+		_ = cmd.Process.Release()
+	}()
+	if err := wait(); err != nil || !status.Stopped() || status.StopSignal() != unix.SIGTRAP {
+		t.Fatalf("initial ptrace stop: status=%v err=%v", status, err)
+	}
+	if err := unix.PtraceSetOptions(pid, unix.PTRACE_O_TRACESYSGOOD|unix.PTRACE_O_EXITKILL); err != nil {
+		t.Fatal(err)
+	}
+	replaced, signal := false, 0
+	for status.Stopped() {
+		if err := unix.PtraceSyscall(pid, signal); err != nil {
+			t.Fatal(err)
+		}
+		if err := wait(); err != nil {
+			t.Fatal(err)
+		}
+		signal = 0
+		if status.Stopped() && status.StopSignal() != unix.SIGTRAP|0x80 {
+			signal = int(status.StopSignal())
+		}
+		if !replaced {
+			if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+				if err := os.WriteFile(path, []byte(sentinel), 0600); err != nil {
+					t.Fatal(err)
+				}
+				replaced = true
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if !replaced {
+		t.Fatal("probe did not reach the recreation window")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != sentinel {
+		t.Fatalf("probe changed the replacement: %d bytes, err=%v", len(got), err)
+	}
+	if !status.Exited() || status.ExitStatus() != 0 {
+		t.Fatalf("probe child failed: status=%v", status)
 	}
 }
 

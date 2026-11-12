@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -119,6 +120,68 @@ func (d blockedDiskHealth) Cleanup()            {}
 func (d blockedDiskHealth) Snapshot() protocol.DiskHealth {
 	start := time.Now().Add(-31 * time.Second).UnixMilli()
 	return protocol.DiskHealth{Status: protocol.DiskError, Reasons: []protocol.DiskHealthReason{protocol.DiskStalled}, StartedAt: start, StalledSince: start}
+}
+
+type cleanupCountingDisk struct{ calls int }
+
+func (*cleanupCountingDisk) Run(context.Context) {}
+func (d *cleanupCountingDisk) Cleanup()          { d.calls++ }
+func (*cleanupCountingDisk) Snapshot() protocol.DiskHealth {
+	return protocol.DiskHealth{Status: protocol.DiskUnknown}
+}
+
+// The normal report loop handles its known terminal errors itself. Classify
+// this transport error once so the loop surfaces an unexpected error to Run.
+type unexpectedReportExit struct{ classified bool }
+
+func (*unexpectedReportExit) Error() string { return "synthetic report loop error" }
+func (e *unexpectedReportExit) Is(target error) bool {
+	if target != ErrAgentRevoked || e.classified {
+		return false
+	}
+	e.classified = true
+	return true
+}
+
+func TestRunCleansUpDiskProbeOnlyOnSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		fatal bool
+		calls int
+	}{{"normal stop", false, 1}, {"report loop error", true, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := NewWithReportCollector(Config{ServerURL: "http://127.0.0.1:1", AgentID: "test", Token: "synthetic",
+				Interval: time.Second, Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"), AllowInsecureHTTP: true},
+				nil, reportCollectorFunc((platformMetrics{}).Collect))
+			if err != nil {
+				t.Fatal(err)
+			}
+			disk := &cleanupCountingDisk{}
+			r.diskHealth = disk
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var wantErr error
+			if tc.fatal {
+				wantErr = &unexpectedReportExit{}
+			}
+			r.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path != "/api/v1/report" {
+					return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+				}
+				if wantErr != nil {
+					return nil, wantErr
+				}
+				cancel()
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"accepted":true}`))}, nil
+			})
+			if err := r.Run(ctx); !errors.Is(err, wantErr) {
+				t.Fatalf("Run returned %v, want %v", err, wantErr)
+			}
+			if disk.calls != tc.calls {
+				t.Fatalf("Cleanup called %d times, want %d", disk.calls, tc.calls)
+			}
+		})
+	}
 }
 
 func TestHostHealthOnlyFollowsAcceptedCapabilitiesAndDoesNotWaitForProbe(t *testing.T) {
