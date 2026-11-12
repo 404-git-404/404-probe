@@ -33,7 +33,7 @@ function fixture(fetch){const {doc,dialog,Element}=dom(),agents=new Map([[id,{ag
 
 test('old Agent detail summary gives reinstall guidance in both target and updater-health rows',()=>{
  const {doc,Element}=dom(),vm=require('node:vm'),fs=require('node:fs');
- const context={AgentState:S,Management:{countries:()=>[]},Card:{trafficView:()=>({}),cycleDays:()=>null,resetText:()=>''},Date,Intl};
+ const context={AgentState:S,YouTubeStatus:require('../web/static/youtube-status.js'),Management:{countries:()=>[]},Card:{trafficView:()=>({}),cycleDays:()=>null,resetText:()=>''},Date,Intl};
  vm.runInNewContext(fs.readFileSync(require.resolve('../web/static/device-details.js'),'utf8'),context);
  const actions=Object.fromEntries(['upgrade','reset','resetFeedback','google','googleFeedback','pause','remove','history'].map(k=>[k,new Element('button')]));
  const summary=context.DetailSummary.create({document:doc,actions,egress:{addresses:new Element('div'),controls:new Element('div')},country:new Element('div'),canWrite:()=>true});

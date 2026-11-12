@@ -47,8 +47,8 @@ const {launch, start} = fixture(baseline);
           await capture('network-row-' + (lane + 1), {anchor: await measure(anchor), tip: await tipGeometry(tip)});
         }
         await page.mouse.move(1, 1);
-        const bottom = block(page, 5, 2, 19);
-        await nearBottom(page, 5, bottom);
+        const bottom = block(page, 8, 2, 19);
+        await nearBottom(page, 8, bottom);
         await bottom.hover();
         await capture('network-bottom', {anchor: await measure(bottom), tip: await tipGeometry(tip)});
         if (session.errors.length) throw Error(JSON.stringify(session.errors));

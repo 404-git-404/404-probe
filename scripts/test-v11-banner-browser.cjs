@@ -50,7 +50,9 @@ test('compact selector +N title disabled reasons and existing modal; card retain
  for(const patch of [{online:false},{disabled_at:1},{outbounds:{...f.state.items[0].outbounds,stale:true}},{outbounds:{configured:false}}]){await p.evaluate(({id,patch})=>{Object.assign(agents.get(id),patch);render(new Set([id]));},{id:ID(0),patch});await settle(p);assert(await b.isDisabled());await p.evaluate(a=>{Object.assign(agents.get(a.agent_id),a);render(new Set([a.agent_id]));}, {...f.state.items[0],dashboard_traffic:f.state.items[0].traffic});await settle(p);}
  await p.locator('[data-view=cards]').click();await p.waitForFunction(()=>document.querySelectorAll('.agent-card').length===28&&!renderFrame);assert.equal(await p.locator('.agent-card .selector-trigger').count(),28);await p.locator('[data-view=list]').click();await settle(p);assert.equal(await b.count(),1);assert.equal(await p.evaluate(()=>document.querySelector('.selector-compact')===document.querySelector('.selector-trigger')),false);
 }));
-test('YouTube region uses shared verdict including CN EU and unavailable Premium',()=>ui(async({page:p})=>{
+test('YouTube region uses the Server list for CN and MO and keeps EU green',()=>ui(async({page:p,f})=>{
+ f.state.youtube_ad_free_regions=['CN','MO'];
+ await p.evaluate(()=>dashboardData.reload());await settle(p);
  for(const [youtube,code,tone]of [[{status:'not_cn',region:'US'},'US','ok'],[{status:'cn'},'CN','crit'],[{status:'unknown',error:{category:'consent_page'}},'EU','ok'],[{status:'not_cn',region:'MO'},'MO','crit']]){await p.evaluate(({id,youtube})=>{const a=agents.get(id);a.google_status={supported:true,result:{youtube},checked_at:Date.now(),next_due_at:Date.now()+86400000};render(new Set([id]));},{id:ID(0),youtube});await settle(p);assert.equal(await row(p,0).locator('.banner-youtube').textContent(),code);assert.equal(await row(p,0).locator('.banner-youtube').getAttribute('data-tone'),tone);assert.equal(await p.evaluate(id=>YouTubeStatus.view(agents.get(id)).code,ID(0)),code);}
 }));
 test('traffic modes and independent price/renewal formatter',()=>ui(async({page:p})=>{

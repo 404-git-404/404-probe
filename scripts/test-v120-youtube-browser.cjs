@@ -128,8 +128,8 @@ test('B1 shows all network rows, remains visible through real SSE and releases o
   }
   await page.mouse.move(1, 1);
   assert.equal(await tip.count(), 0);
-  const bottom = block(page, 5, 2, 19);
-  await nearBottom(page, 5, bottom);
+  const bottom = block(page, 8, 2, 19);
+  await nearBottom(page, 8, bottom);
   await bottom.hover();
   const box = await assertInside(tip);
   assert(box.bottom <= (await bottom.boundingBox()).y);
@@ -142,6 +142,26 @@ test('B1 shows all network rows, remains visible through real SSE and releases o
   await assertInside(page.locator('.lm7-tip:visible'));
   await page.mouse.move(0, 0);
   assert.equal(await page.locator('.lm7-tip:visible').count(), 0);
+}));
+
+test('name tip stays inside the viewport and public IP uses a native title', () => ui(async ({page, f}) => {
+  const a = f.state.items[8];
+  a.name = 'Synthetic-009 ' + 'Long name '.repeat(14);
+  const now = Date.now();
+  a.state.public_egress = {ipv4: {status: 'available', ip: '203.0.113.42', checked_at: now, valid_until: now + 86400000}};
+  await reload(page);
+  const device = page.locator(card(8));
+  await device.locator('.agent-name-display h2').hover();
+  const g = await tipGeometry(device.locator('.name-tooltip:visible'));
+  assert(g.rect.width > 0 && g.rect.height > 0, JSON.stringify(g));
+  assert(g.rect.left >= 0 && g.rect.top >= 0 && g.rect.right <= g.width && g.rect.bottom <= g.height, JSON.stringify(g));
+  assert(!g.ancestors.some(p => p.tag !== 'HTML' && p.tag !== 'BODY' &&
+    ((p.x !== 'visible' && (g.rect.left < p.box.left || g.rect.right > p.box.right)) ||
+    (p.y !== 'visible' && (g.rect.top < p.box.top || g.rect.bottom > p.box.bottom)))), JSON.stringify(g));
+  const ip = device.locator('.public-egress-item');
+  await ip.hover();
+  assert.match(await ip.getAttribute('title'), /203\.0\.\*\.\*/);
+  assert.equal(await device.locator('.public-egress-tip').count(), 0);
 }));
 
 test('B2 doubles repeated detail failures to 30 s and recovers to 2 s', async () => {
