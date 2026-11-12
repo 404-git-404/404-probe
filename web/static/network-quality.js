@@ -24,7 +24,7 @@
     function setVisible(card,value) {
       const changed=card.visible!==value;
       card.visible=value;
-      if(!value&&changed){card.generation++;queue.release(card.historyOwner);card.summaryLoading=false;queue.release(card.configOwner);
+      if(!value&&changed){hideTip(card);card.generation++;queue.release(card.historyOwner);card.summaryLoading=false;queue.release(card.configOwner);
         if(panel?.card!==card&&!historyHost?.active(card.id)){card.configSerial++;card.reading=false;card.refreshing=null;}}
       else if(value&&changed)refreshCard(card);
     }
@@ -113,18 +113,34 @@
       card.family=value;card.generation++;card.summary=null;card.summaryError='';card.summaryLoading=false;queue.release(card.historyOwner);
       if(history?.card===card)closeHistory();renderCard(card);refreshCard(card);onFamily?.(card.id,value);
     }
-    const hideTips=()=>{for(const card of cards.values())if(card.tip&&!card.tip.hidden)card.tip.hidden=true;};
+    let activeTip=null;
+    function hideTip(card) {
+      if(!activeTip||(card&&activeTip.card!==card))return;
+      const {tip,faceA}=activeTip.card;
+      activeTip=null;
+      tip.hidden=true;
+      faceA.append(tip);
+    }
+    const hideTips=()=>hideTip();
     root.addEventListener?.('scroll',hideTips,{capture:true,passive:true});
-    // ---- face A ----------------------------------------------------------------------------------
+    root.addEventListener?.('resize',hideTips,{passive:true});
     function showTip(card,cell) {
-      const text=cell?.tipText;
-      if(!text){card.tip.hidden=true;return;}
-      const lines=text.split('\n');
-      card.tip.replaceChildren(el('strong','',lines.shift()),el('span','',lines.length?'\n'+lines.join('\n'):''));card.tip.hidden=false;
-      const box=card.faceA.getBoundingClientRect(),at=cell.getBoundingClientRect(),width=Math.min(220,Math.max(120,box.width-8));
-      card.tip.style.width=width+'px';
-      card.tip.style.left=Math.max(0,Math.min(box.width-width,at.left-box.left+at.width/2-width/2))+'px';
-      card.tip.style.top=(at.bottom-box.top+4)+'px';
+      const text=cell.tipText;
+      if(!text||!cell.isConnected||!cell.getClientRects().length){hideTip(card);return;}
+      if(activeTip?.card!==card){
+        hideTips();
+        activeTip={card,cell,text:''};
+        doc.body.append(card.tip);
+        card.tip.hidden=false;
+      }
+      activeTip.cell=cell;
+      if(activeTip.text!==text){
+        activeTip.text=text;
+        const lines=text.split('\n');
+        card.tip.replaceChildren(el('strong','',lines.shift()),el('span','',lines.length?'\n'+lines.join('\n'):''));
+      }
+      const at=cell.getBoundingClientRect();
+      C.positionCardTip(doc,card.tip,at,at.left+at.width/2,220);
     }
     function buildFaceA(card) {
       const faceA=el('div','nq7-face nq7-a');faceA.dataset.face='A';
@@ -136,7 +152,7 @@
       const content=el('div','nq7-rows');card.rows=new Map();
       const tip=el('div','nq7-tip');tip.hidden=true;tip.setAttribute('role','tooltip');
       content.addEventListener('pointerover',event=>{const cell=event.target?.closest?.('.nq7-b[data-i]');if(cell)showTip(card,cell);});
-      content.addEventListener('pointerout',event=>{if(!event.relatedTarget?.closest?.('.nq7-b[data-i]'))tip.hidden=true;});content.addEventListener('pointerleave',()=>{tip.hidden=true;});
+      content.addEventListener('pointerout',event=>{if(!event.relatedTarget?.closest?.('.nq7-b[data-i]'))hideTip(card);});content.addEventListener('pointerleave',()=>hideTip(card));
       faceA.append(head,content,tip);
       Object.assign(card,{faceA,head,sub,tabs,content,tip});
       card.node.append(faceA);
@@ -156,7 +172,6 @@
       return {slot:key,tcp:{...notice('tcp'),blocks:null,red:false,dns_failing:false},icmp:notice('icmp'),right:{kind:'none',percent:null,numerator:0,denominator:0,samples:'none'}};
     }
     function renderCard(card) {
-      if(card.tip&&!card.tip.hidden)card.tip.hidden=true;
       if(!card.head)buildFaceA(card);
       const device=!!(card.agent.revoked||card.agent.disabled_at||card.agent.removal),summary=device?null:card.summary;
       for(const b of card.tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
@@ -224,6 +239,7 @@
       return card.node;
     }
     function retire(card) {
+      hideTip(card);
       card.dead=true;card.generation++;card.configSerial++;observer?.unobserve(card.node);
       queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);queue.release(card.writeOwner);
       if(panel?.card===card)closePanel(true);if(history?.card===card)closeHistory();cards.delete(card.id);
@@ -423,7 +439,7 @@
       else if(event.shiftKey&&(active===first||active===panel.box)){event.preventDefault();last.focus();}else if(!event.shiftKey&&active===last){event.preventDefault();first.focus();}
     }}
     function tick(){if(doc.hidden||closed)return;fallbackVisibility();queue.pump();for(const card of cards.values())refreshCard(card);requestHistory();}
-    function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){for(const card of cards.values()){card.generation++;card.summaryLoading=false;queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;card.refreshing=null;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}
+    function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){hideTips();for(const card of cards.values()){card.generation++;card.summaryLoading=false;queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;card.refreshing=null;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}
       else{if(!timer)timer=interval(tick,30000);tick();}}
     const themeChanged=()=>{if(history&&historyActive(history))renderHistory();};
     root.addEventListener?.('404-probe:themechange',themeChanged);
@@ -436,7 +452,7 @@
     return {mount,sync,
       // Face A reads the v5 answer only while it is shown; the shared configuration stays live on either face.
       setFace(id,face){const c=cards.get(id);if(!c||c.face===face)return;c.face=face;c.node.dataset.face=face;
-        c.faceA.hidden=face!=='A';c.faceA.inert=face!=='A';c.tip.hidden=true;c.generation++;c.summaryLoading=false;queue.release(c.historyOwner);
+        c.faceA.hidden=face!=='A';c.faceA.inert=face!=='A';hideTip(c);c.generation++;c.summaryLoading=false;queue.release(c.historyOwner);
         if(face==='A')refreshCard(c);},
       faceNode:id=>cards.get(id)?.faceA,
       familyOf:id=>cards.get(id)?.family||'ipv4',
@@ -445,7 +461,7 @@
       openSettings(id,trigger){const c=cards.get(id);if(c)openPanel(c,trigger);},
       historyTargets(id){const c=cards.get(id);return (c?.config?.targets||[]).filter(t=>t.id).map(t=>({...t,label:`${C.slotLabel(c.config,t.slot)} · ${t.protocol.toUpperCase()} · ${t.family==='ipv4'?'V4':'V6'}${t.status==='active'?'':' · 当前未检测'}`}));},
       ensureHistoryTargets(id){const c=cards.get(id);return c&&!c.config?loadConfig(c,true):Promise.resolve();},
-      close(){root.removeEventListener?.('scroll',hideTips,true);closed=true;if(timer)clear(timer);observer?.disconnect();closePanel(true);closeHistory();for(const c of [...cards.values()])retire(c);queue.release(dialogOwner);if(!coordinator)queue.close();
+      close(){root.removeEventListener?.('scroll',hideTips,true);root.removeEventListener?.('resize',hideTips);closed=true;if(timer)clear(timer);observer?.disconnect();closePanel(true);closeHistory();for(const c of [...cards.values()])retire(c);queue.release(dialogOwner);if(!coordinator)queue.close();
       doc.removeEventListener('keydown',keydown);root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);
       if(!observer){root.removeEventListener?.('scroll',fallbackVisibility);root.removeEventListener?.('resize',fallbackVisibility);}
       dialog.removeEventListener('cancel',cancelDialog);dialog.removeEventListener('close',dialogClosed);dialog.removeEventListener('click',backdrop);},

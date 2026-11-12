@@ -88,7 +88,12 @@
     const view=c=>({start:c.range.start,end:c.range.end});
     const label=(c,slot)=>C.cardLabel(c.config,slot);
     function invalidate(c,clearData=false){c.serial++;c.loading.clear();queue.release(c.owner);c.cursor=null;hideTip(c);if(clearData){c.cache.clear();}}
-    function hideTip(c){c.tip.hidden=true;c.note.textContent='';}
+    let activeTip=null;
+    function hideTip(c){
+      c.tip.hidden=true;c.note.textContent='';
+      if(activeTip===c){activeTip=null;c.node.append(c.tip);}
+    }
+    function hideActiveTip(){if(activeTip)hideTip(activeTip);}
     // The hover card restates the minute under the pointer, per lane.
     function tipText(c,epoch){
       const parts=[`${stamp(Math.floor(epoch/MINUTE)*MINUTE)} · 5 分钟滑动 P50 / 本分钟 P50、P95`];
@@ -100,9 +105,9 @@
       return parts.join('\n');
     }
     function showTip(c,epoch,x){
+      if(activeTip!==c){hideActiveTip();activeTip=c;doc.body.append(c.tip);}
       const text=tipText(c,epoch);c.note.textContent=text;c.tip.textContent=text;c.tip.hidden=false;
-      const box=c.node.getBoundingClientRect(),plot=c.plot.getBoundingClientRect(),width=Math.min(250,Math.max(140,box.width-8));
-      c.tip.style.width=width+'px';c.tip.style.left=Math.max(0,Math.min(box.width-width,x-box.left-width/2))+'px';c.tip.style.top=(plot.bottom-box.top+4)+'px';
+      C.positionCardTip(doc,c.tip,c.plot.getBoundingClientRect(),x,250);
     }
     function render(c){
       const {start,end}=view(c),rect=c.plot.getBoundingClientRect(),w=rect.width;if(!w)return;
@@ -236,11 +241,13 @@
     function visibility(){if(doc.hidden){for(const c of cards.values())invalidate(c);if(timer!==null)clear(timer);timer=null;}else{if(timer===null&&!closed)timer=interval(tick,30000);tick();}}
     function themeChanged(){for(const c of cards.values()){for(const [slot,b] of c.legend){const color=colorToken(colors[slot]);b.style.setProperty('--lm-color',color);const dot=b.querySelector('.lm-dot');if(dot)dot.style.background=color;}render(c);}}
     root.addEventListener?.('404-probe:themechange',themeChanged);
+    root.addEventListener?.('scroll',hideActiveTip,{capture:true,passive:true});
+    root.addEventListener?.('resize',hideActiveTip,{passive:true});
     doc.addEventListener('visibilitychange',visibility);if(!observer){root.addEventListener?.('scroll',fallback,{passive:true});root.addEventListener?.('resize',fallback,{passive:true});}if(!doc.hidden)timer=interval(tick,30000);
     return {mount,bindConfig,familyChanged,tick,sync(ids){const live=new Set(ids);for(const c of [...cards.values()])if(!live.has(c.id))retire(c);},
       setActive(id,value){const c=cards.get(id);if(!c||c.active===value)return;c.active=value;if(!value)invalidate(c);else{render(c);request(c);}},
       setVisible(id,value){const c=cards.get(id);if(c)setVisible(c,value);},
-      close(){if(closed)return;closed=true;if(timer!==null)clear(timer);observer?.disconnect();for(const c of [...cards.values()])retire(c);root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
+      close(){if(closed)return;closed=true;if(timer!==null)clear(timer);observer?.disconnect();for(const c of [...cards.values()])retire(c);root.removeEventListener?.('404-probe:themechange',themeChanged);root.removeEventListener?.('scroll',hideActiveTip,true);root.removeEventListener?.('resize',hideActiveTip);doc.removeEventListener('visibilitychange',visibility);if(!observer){root.removeEventListener?.('scroll',fallback);root.removeEventListener?.('resize',fallback);}if(!coordinator)queue.close();},
       snapshot:()=>({cards:cards.size,requests:queue.snapshot(),views:[...cards.values()].map(c=>({id:c.id,protocol:c.protocol,family:family(c.id),isps:[...c.isps],follow:c.follow,start:c.range.start,end:c.range.end,visible:c.visible,loading:c.loading.size,cachedTargets:c.cache.size}))})};
   }
   const api={rangeText,create,normalize,normalizeMarks,mergeRuns,ratio,recent};if(typeof module==='object'&&module.exports)module.exports=api;else root.LatencyMini=api;

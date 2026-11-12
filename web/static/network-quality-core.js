@@ -355,6 +355,16 @@
     const n=statusNotice(tcp.status,tcp.condition);
     return {kind:'text',key:n.key,text:n.text,title:n.detail};
   }
-  const api={slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,rightView,tcpRightView,laneView,STATE_TEXT};
+  function positionCardTip(doc, tip, anchor, center, preferredWidth) {
+    const viewport=doc.documentElement, margin=8, gap=4;
+    const width=Math.min(preferredWidth,viewport.clientWidth-2*margin);
+    tip.style.width=width+'px';
+    tip.style.left=Math.max(margin,Math.min(center-width/2,viewport.clientWidth-width-margin))+'px';
+    const height=tip.getBoundingClientRect().height;
+    const below=anchor.bottom+gap, above=anchor.top-gap-height;
+    const fitsBelow=below+height<=viewport.clientHeight-margin;
+    tip.style.top=Math.max(margin,Math.min(fitsBelow?below:above,viewport.clientHeight-height-margin))+'px';
+  }
+  const api={positionCardTip,slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,rightView,tcpRightView,laneView,STATE_TEXT};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);
