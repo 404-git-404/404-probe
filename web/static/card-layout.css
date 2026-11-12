@@ -1,4 +1,4 @@
-/* Page frame and the parts of the card that are not part of the three modules: state frames, the country mark, name and address tooltips, the YouTube hover card. The card itself is card-v7.css. */
+/* Page frame and the parts of the card that are not part of the three modules: state frames, the country mark, name and address tooltips. The card itself is card-v7.css. */
 body>header{padding-block:9px 7px}
 body>header,body>main,body>footer{width:calc(100% - 56px);max-width:2100px}body>header{padding:12px 0 10px;gap:20px}body>header>div:first-child{display:flex;align-items:baseline;gap:14px}body>header h1{font-size:24px}body>header p{font-size:12px;margin:2px 0 0}.header-actions{flex-wrap:wrap;font-size:12px}
 
@@ -24,8 +24,6 @@ body>header,body>main,body>footer{width:calc(100% - 56px);max-width:2100px}body>
 .agent-card .google-check .check-result[data-region-tone] { padding: 0 6px; border-radius: 4px; color: var(--color-text-02); }
 .agent-card .google-check .check-result[data-region-tone="ok"] { background: var(--color-surface-02); }
 .agent-card .google-check .check-result[data-region-tone="crit"] { background: var(--color-surface-04); }
-.youtube-status-tip { display: none; position: fixed; z-index: 120; left: 8px; top: 8px; width: min(300px,calc(100vw - 68px)); box-sizing: border-box; padding: 9px; border: 1px solid var(--color-line-02); border-radius: 8px; background: var(--color-surface-03); box-shadow: 0 4px 12px var(--color-shadow-01); font: 12px/1.6 system-ui; color: var(--color-text-03); white-space: normal; overflow-wrap: anywhere; }
-.youtube-status-tip[data-open=true] { display: block; }
 
 /* Missing or old address observations must not look like fresh usable IPs. */
 .agent-card .name .public-egress-item:is([data-status=unknown],[data-status=unavailable],[data-stale=true]){background:var(--color-surface-hover);color:var(--color-text-muted)}
