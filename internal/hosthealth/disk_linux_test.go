@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -54,6 +56,77 @@ func TestDiskProbeCleanupAndRecreation(t *testing.T) {
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestDiskProbeRepairsUnsafeEntries(t *testing.T) {
+	for _, layout := range []string{"foreign-owner", "hardlink", "symlink", "dangling-symlink", "fifo", "directory"} {
+		t.Run(layout, func(t *testing.T) {
+			if layout == "foreign-owner" && os.Geteuid() != 0 {
+				t.Skip("changing the owner requires the isolated root fixture")
+			}
+			dir := t.TempDir()
+			path, target := filepath.Join(dir, ProbeFilename), filepath.Join(dir, "target")
+			if err := os.WriteFile(target, []byte("preserve"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch layout {
+			case "foreign-owner":
+				account, lookupErr := user.Lookup("404-probe")
+				if lookupErr != nil {
+					t.Fatal(lookupErr)
+				}
+				uid, uidErr := strconv.Atoi(account.Uid)
+				gid, gidErr := strconv.Atoi(account.Gid)
+				if uidErr != nil || gidErr != nil || uid <= 0 || gid <= 0 {
+					t.Fatal("invalid isolated service account")
+				}
+				if err = os.WriteFile(path, []byte("foreign"), 0000); err == nil {
+					err = os.Chown(path, uid, gid)
+				}
+			case "hardlink":
+				err = os.Link(target, path)
+			case "symlink":
+				err = os.Symlink(target, path)
+			case "dangling-symlink":
+				err = os.Symlink(filepath.Join(dir, "absent"), path)
+			case "fifo":
+				err = unix.Mkfifo(path, 0600)
+			case "directory":
+				if err = os.Mkdir(path, 0700); err == nil {
+					err = os.WriteFile(filepath.Join(path, "unknown"), []byte("preserve"), 0600)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if layout == "foreign-owner" {
+				removeProbe(dir)
+				if _, err := os.Lstat(path); err != nil {
+					t.Fatalf("shutdown removed the foreign-owned probe: %v", err)
+				}
+			}
+			result := probeDisk(dir)
+			if layout == "directory" {
+				data, err := os.ReadFile(filepath.Join(path, "unknown"))
+				if result.reason != protocol.DiskUnwritable || err != nil || string(data) != "preserve" {
+					t.Fatalf("directory probe: %v, %q, %v", result.reason, data, err)
+				}
+				return
+			}
+			var st unix.Stat_t
+			if err := unix.Lstat(path, &st); err != nil || !safeProbeFile(&st) ||
+				st.Size != 4096 || st.Mode&07777 != 0600 || result.reason != "" {
+				t.Fatalf("recreated probe: reason=%q stat=%+v err=%v", result.reason, st, err)
+			}
+			if data, err := os.ReadFile(target); err != nil || string(data) != "preserve" {
+				t.Fatalf("probe modified the link target: %q, %v", data, err)
+			}
+			if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0644 {
+				t.Fatalf("probe changed the target mode: %v, %v", info, err)
+			}
+		})
 	}
 }
 

@@ -41,7 +41,23 @@ func removeProbe(dir string) {
 
 func probeDisk(dir string) probeResult {
 	path := filepath.Join(dir, ProbeFilename)
-	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
+	var previous unix.Stat_t
+	err := unix.Lstat(path, &previous)
+	existing := err == nil && safeProbeFile(&previous)
+	if err == nil && !existing {
+		if previous.Mode&unix.S_IFMT == unix.S_IFDIR {
+			return probeResult{reason: protocol.DiskUnwritable}
+		}
+		err = unix.Unlink(path)
+	}
+	if err != nil && !errors.Is(err, unix.ENOENT) {
+		return probeFailure(err, protocol.DiskWriteEIO)
+	}
+	flags := unix.O_WRONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
+	if !existing {
+		flags |= unix.O_CREAT | unix.O_EXCL
+	}
+	fd, err := unix.Open(path, flags, 0600)
 	if err != nil {
 		return probeFailure(err, protocol.DiskWriteEIO)
 	}
@@ -51,7 +67,7 @@ func probeDisk(dir string) probeResult {
 	if err := unix.Fstat(fd, &st); err != nil {
 		return probeFailure(err, protocol.DiskWriteEIO)
 	}
-	if !safeProbeFile(&st) {
+	if !safeProbeFile(&st) || existing && (st.Dev != previous.Dev || st.Ino != previous.Ino) {
 		return probeResult{reason: protocol.DiskUnwritable}
 	}
 	if st.Mode&07777 != 0600 {
