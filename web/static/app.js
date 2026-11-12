@@ -63,7 +63,7 @@ const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinato
   overview: agent => detailsFor(agent.agent_id)?.overview,
   upgradeTargets: id => loadDetailUpgradeTargets(id),
   // Revealed IP addresses never outlive the dialog or a switch to another Agent.
-  conceal: () => { for (const view of detailViews.values()) view.egressPanel?.conceal(); },
+  conceal: () => { resetDetailPoll(); for (const view of detailViews.values()) view.egressPanel?.conceal(); },
   resourceFacts: agent => resourceFactsFor(agent).filter(row=>row[0]==='DISK'),
   hydrate: id => hydrateActiveDetail(id)});
 const revokedAgentIDs = agentState.revokedAgentIDs;
@@ -1713,11 +1713,26 @@ const reconciliation={
 function refresh(){return dashboardData.refresh();}
 // Operation state is detail-only: dashboard summaries and telemetry cannot finish it.
 // Poll just the open device while a check is pending; never resubmit an operation.
-const detailCheckTimer=setInterval(()=>{
- if(suspended||document.hidden)return;
- const active=deviceDetails.snapshot(),agent=active.open&&agents.get(active.id);
- if(agent&&(['requested','delivered'].includes(agent.country_code_lookup_operation?.status)||agent.google_status?.pending))hydrateActiveDetail(active.id);
-},2000);
+const DETAIL_POLL_INTERVAL=2000, DETAIL_POLL_MAX=30000;
+let detailCheckTimer=setTimeout(pollActiveDetail,DETAIL_POLL_INTERVAL);
+let detailPollDelay=DETAIL_POLL_INTERVAL,detailPollGeneration=0;
+function resetDetailPoll(){
+ detailPollGeneration++;
+ clearTimeout(detailCheckTimer);
+ detailPollDelay=DETAIL_POLL_INTERVAL;
+ if(!suspended)detailCheckTimer=setTimeout(pollActiveDetail,detailPollDelay);
+}
+async function pollActiveDetail(){
+ if(suspended)return;
+ const generation=detailPollGeneration;
+ const active=deviceDetails.snapshot(),agent=active.open&&!document.hidden&&agents.get(active.id);
+ const pending=agent&&(['requested','delivered'].includes(agent.country_code_lookup_operation?.status)||agent.google_status?.pending);
+ const results=pending?await hydrateActiveDetail(active.id):null;
+ if(generation!==detailPollGeneration)return;
+ detailPollDelay=results?.some(result=>result.status==='rejected')
+  ?Math.min(detailPollDelay*2,DETAIL_POLL_MAX):DETAIL_POLL_INTERVAL;
+ if(!suspended)detailCheckTimer=setTimeout(pollActiveDetail,detailPollDelay);
+}
 
 const organizationAPI=OrganizationAPI.create({csrf:()=>mutationCSRFToken,read:readJSON});
 organizationDialogs=OrganizationDialogs.create({api:organizationAPI,read:readJSON,agents,state:agentState,refresh:async id=>{await dashboardData.reload();if(id&&!suspended)renderDashboard(new Set([id]));}});
@@ -1729,7 +1744,7 @@ refresh();
 let suspended = false;
 setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); dashboardUI.refreshVersion(); if (!agentState.refreshing()) refresh(); }, 15000);
 document.addEventListener('visibilitychange',()=>{if(!suspended&&!document.hidden)dashboardData.reload();});
-addEventListener('pagehide', () => { suspended = true; clearInterval(detailCheckTimer); planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
+addEventListener('pagehide', () => { suspended = true; clearTimeout(detailCheckTimer); planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });
 
