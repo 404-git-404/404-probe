@@ -167,6 +167,8 @@ type Runner struct {
 	countryCodeLookup            func(context.Context) (string, error)
 }
 
+var errReportExtensionsRejected = errors.New("optional report fields rejected")
+
 type reportCollector interface {
 	Collect(context.Context) (protocol.Report, error)
 }
@@ -524,12 +526,21 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	// The public IP check is a Server-dispatched job now: nothing about it is measured or attached here.
 	measurement.PublicEgress = nil
 	response, err := r.post(ctx, measurement)
-	if errors.Is(err, errQualityV2Rejected) {
-		r.qualityStagedSupported.Store(false)
-		r.qualityV2Supported.Store(false)
-		r.setQualityUserTargets(false)
-		r.stopQuality("v2_negotiation_rejected")
-		measurement.NetworkQualityV2 = nil
+	if errors.Is(err, errReportExtensionsRejected) {
+		if measurement.NetworkQualityV2 != nil {
+			r.qualityStagedSupported.Store(false)
+			r.qualityV2Supported.Store(false)
+			r.setQualityUserTargets(false)
+			r.stopQuality("v2_negotiation_rejected")
+			measurement.NetworkQualityV2 = nil
+		}
+		if measurement.HostHealth != nil {
+			r.reportHostHealth = false
+			measurement.HostHealth = nil
+			if measurement.OS == "" {
+				measurement.OS = protocol.UnavailableSystemName
+			}
+		}
 		response, err = r.post(ctx, measurement) // Once only; the rejected report was not committed.
 	}
 	if err != nil {
@@ -671,8 +682,8 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	if len(limited) > 4096 {
 		return protocol.ReportResponse{}, errors.New("server response is too large")
 	}
-	if resp.StatusCode == http.StatusBadRequest && report.NetworkQualityV2 != nil {
-		return protocol.ReportResponse{}, errQualityV2Rejected
+	if resp.StatusCode == http.StatusBadRequest && (report.NetworkQualityV2 != nil || report.HostHealth != nil) {
+		return protocol.ReportResponse{}, errReportExtensionsRejected
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusLocked {

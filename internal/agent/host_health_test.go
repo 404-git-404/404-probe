@@ -100,3 +100,67 @@ func TestPlatformTimeoutKeepsOSAndClosesGatesUntilRetry(t *testing.T) {
 		t.Fatalf("recovered identity: %+v", s)
 	}
 }
+
+func TestHostHealthReportFallsBackAfterServerRollback(t *testing.T) {
+	type step struct {
+		sequence   uint64
+		carries    bool
+		badRequest bool
+		advertises bool
+	}
+	steps := []step{
+		{1, false, false, true},
+		{2, true, true, false}, {2, false, false, false},
+		{3, false, false, false},
+		{4, false, false, true},
+		{5, true, false, true},
+		{6, true, true, false}, {6, false, true, false},
+		{7, false, false, false},
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		i := int(requests.Add(1)) - 1
+		if i >= len(steps) {
+			t.Errorf("unexpected report request %d", i+1)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		want := steps[i]
+		var report protocol.Report
+		if err := json.NewDecoder(req.Body).Decode(&report); err != nil {
+			t.Error(err)
+		}
+		if report.Sequence != want.sequence || (report.HostHealth != nil) != want.carries {
+			t.Errorf("request %d: sequence=%d host health=%v, want %d/%v", i+1, report.Sequence, report.HostHealth != nil, want.sequence, want.carries)
+		}
+		if !want.carries && report.OS != protocol.UnavailableSystemName {
+			t.Errorf("request %d: missing legacy OS placeholder", i+1)
+		}
+		if want.badRequest {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{HostHealthReport: want.advertises}})
+	}))
+	defer server.Close()
+	r, err := NewWithReportCollector(Config{ServerURL: server.URL, AgentID: "test", Token: "synthetic", Interval: time.Second,
+		Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"), AllowInsecureHTTP: true}, nil,
+		reportCollectorFunc(func(ctx context.Context) (protocol.Report, error) {
+			report, err := (platformMetrics{}).Collect(ctx)
+			report.OS = ""
+			return report, err
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sequence uint64
+	for _, wantAccepted := range []bool{true, true, true, true, true, false, true} {
+		accepted, err := r.sendReport(context.Background(), &sequence)
+		if err != nil || accepted != wantAccepted {
+			t.Fatalf("report %d accepted=%v err=%v, want %v", sequence, accepted, err, wantAccepted)
+		}
+	}
+	if requests.Load() != int32(len(steps)) {
+		t.Fatalf("sent %d requests, want %d", requests.Load(), len(steps))
+	}
+}

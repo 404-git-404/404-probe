@@ -17,7 +17,6 @@ import (
 )
 
 var errQualityAuthorization = errors.New("quality session unavailable")
-var errQualityV2Rejected = errors.New("quality v2 report rejected")
 
 type qualityControl struct {
 	excludedReason   string // Local platform gate, immutable for this Runner.
