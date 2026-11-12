@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -302,8 +304,10 @@ func TestHostHealthReportFallsBackAfterServerRollback(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{HostHealthReport: want.advertises}})
 	}))
 	defer server.Close()
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	r, err := NewWithReportCollector(Config{ServerURL: server.URL, AgentID: "test", Token: "synthetic", Interval: time.Second,
-		Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"), AllowInsecureHTTP: true}, nil,
+		Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"), AllowInsecureHTTP: true}, logger,
 		reportCollectorFunc(func(ctx context.Context) (protocol.Report, error) {
 			report, err := (platformMetrics{}).Collect(ctx)
 			report.OS = ""
@@ -321,5 +325,9 @@ func TestHostHealthReportFallsBackAfterServerRollback(t *testing.T) {
 	}
 	if requests.Load() != int32(len(steps)) {
 		t.Fatalf("sent %d requests, want %d", requests.Load(), len(steps))
+	}
+	const warning = `level=WARN msg="server rejected report with host health; retrying without host health"`
+	if count := strings.Count(logs.String(), warning); count != 2 {
+		t.Fatalf("logged %d host health fallback warnings, want one per fallback: %s", count, &logs)
 	}
 }

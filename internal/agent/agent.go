@@ -527,6 +527,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 			measurement.NetworkQualityV2 = nil
 		}
 		if measurement.HostHealth != nil {
+			r.logger.Warn("server rejected report with host health; retrying without host health")
 			r.reportHostHealth = false
 			measurement.HostHealth = nil
 			if measurement.OS == "" {
