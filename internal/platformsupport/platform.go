@@ -14,7 +14,10 @@ import (
 
 const maxReleaseBytes = 4096
 
-type Policy struct{ DeferredUnsupported bool }
+type Policy struct {
+	DeferredUnsupported bool
+	IdentityUnknown     bool
+}
 
 func Host() Policy { return detect(runtime.GOOS, readRelease) }
 
@@ -25,7 +28,7 @@ type Identity struct {
 }
 
 func UnknownIdentity() Identity {
-	return Identity{Deferred: Policy{DeferredUnsupported: true}, Quality: QualityPolicy{true, "platform_identity_unknown"}}
+	return Identity{Deferred: Policy{DeferredUnsupported: true, IdentityUnknown: true}, Quality: QualityPolicy{true, "platform_identity_unknown"}}
 }
 
 // ReadIdentity reads the platform policies and the legacy system name. Callers
@@ -102,15 +105,21 @@ func detect(goos string, read func(string) ([]byte, error)) Policy {
 	}
 	release, err := read("/etc/os-release")
 	if err != nil {
-		return Policy{DeferredUnsupported: true}
+		return Policy{DeferredUnsupported: true, IdentityUnknown: true}
 	}
 	id, ok := releaseID(string(release))
 	if !ok {
-		return Policy{DeferredUnsupported: true}
+		return Policy{DeferredUnsupported: true, IdentityUnknown: true}
 	}
 	_, alpineErr := read("/etc/alpine-release")
 	// Contradictory markers or unreadable identity close only deferred services.
-	return Policy{DeferredUnsupported: id == "alpine" || alpineErr == nil || !os.IsNotExist(alpineErr)}
+	if id == "alpine" || alpineErr == nil {
+		return Policy{DeferredUnsupported: true}
+	}
+	if !os.IsNotExist(alpineErr) {
+		return Policy{DeferredUnsupported: true, IdentityUnknown: true}
+	}
+	return Policy{}
 }
 
 func releaseID(data string) (string, bool) {

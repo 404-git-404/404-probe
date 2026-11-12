@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,6 +44,41 @@ func (p platformTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func (platformMetrics) Collect(context.Context) (protocol.Report, error) {
 	return protocol.Report{Hostname: "isolated", OS: "Alpine 3.24.2", Arch: "amd64", BootID: "boot", RAMTotal: 1, DiskTotal: 1}, nil
+}
+
+func TestSecurityReportSkipsUnknownPlatformUntilIdentityIsKnown(t *testing.T) {
+	r, err := newRunner(Config{ServerURL: "http://127.0.0.1:1", AgentID: "test", Token: "synthetic",
+		Interval: time.Second, Timeout: time.Second, StatePath: filepath.Join(t.TempDir(), "epoch"),
+		SecurityExportDir: filepath.Join(t.TempDir(), "absent"), AllowInsecureHTTP: true}, nil, UnsupportedExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.platform = &platformMonitor{}
+	var reasons []string
+	r.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var submission protocol.SecuritySubmission
+		if err := json.NewDecoder(req.Body).Decode(&submission); err != nil {
+			t.Fatal(err)
+		}
+		reasons = append(reasons, submission.Reason)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"accepted":true}`))}, nil
+	})
+	ctx := context.Background()
+	r.uploadSecurity(ctx)
+	if len(reasons) != 0 {
+		t.Fatalf("security uploaded before platform identification: %v", reasons)
+	}
+	r.platform.publish(identitySample{identity: platformsupport.Identity{OS: "debian 12.15"}})
+	r.uploadSecurity(ctx)
+	if len(reasons) != 1 || reasons[0] != "setup_required" {
+		t.Fatalf("known Debian security report: %v", reasons)
+	}
+	r.platform.publish(identitySample{identity: platformsupport.Identity{OS: "alpine 3.24.3",
+		Deferred: platformsupport.Policy{DeferredUnsupported: true}}})
+	r.uploadSecurity(ctx)
+	if len(reasons) != 2 || reasons[1] != "platform_unsupported" {
+		t.Fatalf("known Alpine security report: %v", reasons)
+	}
 }
 
 func TestAlpineActualReportWorkerAndDeferredCycles(t *testing.T) {

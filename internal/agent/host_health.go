@@ -104,10 +104,14 @@ func (m *platformMonitor) snapshot() identitySample {
 }
 
 func (r *Runner) platformUnsupported() bool {
+	return r.deferredPlatformPolicy().DeferredUnsupported
+}
+
+func (r *Runner) deferredPlatformPolicy() platformsupport.Policy {
 	if r.platform != nil {
-		return r.platform.snapshot().identity.Deferred.DeferredUnsupported
+		return r.platform.snapshot().identity.Deferred
 	}
-	return r.deferredUnsupported
+	return platformsupport.Policy{DeferredUnsupported: r.deferredUnsupported}
 }
 
 func (r *Runner) qualityExclusion() string {
