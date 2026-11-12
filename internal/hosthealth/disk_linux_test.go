@@ -1,17 +1,85 @@
 package hosthealth
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"404-probe/internal/protocol"
 	"golang.org/x/sys/unix"
 )
+
+func TestDiskProbeCleanupAndRecreation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ProbeFilename)
+	for range 2 {
+		m := New(dir)
+		m.check()
+		if info, err := os.Stat(path); err != nil || info.Size() != 4096 {
+			t.Fatalf("probe file after startup: %v, %v", info, err)
+		}
+		m.Cleanup()
+		m.check()
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("probe file after shutdown: %v", err)
+		}
+	}
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range []func(string, string) error{os.Symlink, os.Link} {
+		if err := link(target, path); err != nil {
+			t.Fatal(err)
+		}
+		New(dir).Cleanup()
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatal("cleanup removed an unsafe probe file:", err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDiskProbeCleanupDoesNotWaitForStalledProbeOrUnlink(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		m := Monitor{
+			probe:  func() probeResult { <-release; return probeResult{} },
+			kernel: func() kernelSample { return kernelSample{} },
+			now:    time.Now,
+			remove: func() { t.Error("cleanup attempted while probe is in flight") },
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go m.Run(ctx)
+		synctest.Wait()
+		start := time.Now()
+		m.Cleanup()
+		if time.Since(start) != 0 {
+			t.Fatal("cleanup waited for probe")
+		}
+		close(release)
+	})
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		defer close(release)
+		m := Monitor{probe: func() probeResult { return probeResult{} }, remove: func() { <-release }}
+		start := time.Now()
+		m.Cleanup()
+		if elapsed := time.Since(start); elapsed != 2*time.Second {
+			t.Fatalf("blocked cleanup took %v", elapsed)
+		}
+	})
+}
 
 type testFile struct {
 	writeErr, syncErr, readErr error

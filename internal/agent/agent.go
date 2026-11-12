@@ -114,6 +114,7 @@ type Runner struct {
 	platform             *platformMonitor
 	diskHealth           interface {
 		Run(context.Context)
+		Cleanup()
 		Snapshot() protocol.DiskHealth
 	}
 	updaterReport                atomic.Pointer[updaterReportSample]
@@ -274,10 +275,18 @@ func newRunner(config Config, logger *slog.Logger, executor Executor) (*Runner, 
 	}, nil
 }
 
-func (r *Runner) Run(ctx context.Context) error {
-	parent := ctx
+func (r *Runner) Run(parent context.Context) error {
 	ctx, cancelAuthentication := withAgentAuthentication(parent)
 	defer cancelAuthentication(nil)
+	err := r.run(ctx, parent)
+	if err == nil && r.diskHealth != nil {
+		cancelAuthentication(nil)
+		r.diskHealth.Cleanup()
+	}
+	return err
+}
+
+func (r *Runner) run(ctx, parent context.Context) error {
 	if c, ok := r.collector.(*collector.Collector); ok {
 		go c.RunDiskUsage(ctx, r.config.Interval)
 	}

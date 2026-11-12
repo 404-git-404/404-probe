@@ -27,6 +27,18 @@ func platformProbe(dir string) (func() probeResult, func() kernelSample) {
 	}
 }
 
+func safeProbeFile(st *unix.Stat_t) bool {
+	return st.Mode&unix.S_IFMT == unix.S_IFREG && st.Nlink == 1 && st.Uid == uint32(os.Geteuid())
+}
+
+func removeProbe(dir string) {
+	path := filepath.Join(dir, ProbeFilename)
+	var st unix.Stat_t
+	if unix.Lstat(path, &st) == nil && safeProbeFile(&st) {
+		_ = unix.Unlink(path)
+	}
+}
+
 func probeDisk(dir string) probeResult {
 	path := filepath.Join(dir, ProbeFilename)
 	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0600)
@@ -39,7 +51,7 @@ func probeDisk(dir string) probeResult {
 	if err := unix.Fstat(fd, &st); err != nil {
 		return probeResult{reason: probeFailure(err, protocol.DiskWriteEIO)}
 	}
-	if st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 || st.Uid != uint32(os.Geteuid()) {
+	if !safeProbeFile(&st) {
 		return probeResult{reason: protocol.DiskUnwritable}
 	}
 	if st.Mode&07777 != 0600 {

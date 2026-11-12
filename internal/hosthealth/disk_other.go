@@ -3,3 +3,5 @@
 package hosthealth
 
 func platformProbe(string) (func() probeResult, func() kernelSample) { return nil, nil }
+
+func removeProbe(string) {}

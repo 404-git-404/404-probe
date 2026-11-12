@@ -39,8 +39,10 @@ type Monitor struct {
 	probe  func() probeResult
 	kernel func() kernelSample
 	now    func() time.Time
+	remove func()
 
 	mu           sync.Mutex
+	stopping     bool
 	inFlight     time.Time
 	last         protocol.DiskHealth
 	started      time.Time
@@ -52,7 +54,7 @@ type Monitor struct {
 
 func New(dir string) *Monitor {
 	probe, kernel := platformProbe(dir)
-	return &Monitor{probe: probe, kernel: kernel, now: time.Now}
+	return &Monitor{probe: probe, kernel: kernel, now: time.Now, remove: func() { removeProbe(dir) }}
 }
 
 // Run keeps the kernel call on a single background goroutine. A deadline can
@@ -73,9 +75,32 @@ func (m *Monitor) Run(ctx context.Context) {
 	}
 }
 
+// Cleanup stops new probes and gives an idle monitor a bounded chance to remove
+// its file. A blocked filesystem call must not hold up process exit.
+func (m *Monitor) Cleanup() {
+	m.mu.Lock()
+	idle := !m.stopping && m.inFlight.IsZero()
+	m.stopping = true
+	m.mu.Unlock()
+	if !idle || m.probe == nil || m.remove == nil {
+		return
+	}
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.remove()
+	}()
+	select {
+	case <-done:
+	case <-timeout.C:
+	}
+}
+
 func (m *Monitor) check() {
 	m.mu.Lock()
-	if !m.inFlight.IsZero() {
+	if m.stopping || !m.inFlight.IsZero() {
 		m.mu.Unlock()
 		return
 	}

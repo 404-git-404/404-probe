@@ -20,6 +20,7 @@ type blockedDiskHealth struct {
 }
 
 func (d blockedDiskHealth) Run(context.Context) { close(d.entered); <-d.release }
+func (d blockedDiskHealth) Cleanup()            {}
 func (d blockedDiskHealth) Snapshot() protocol.DiskHealth {
 	start := time.Now().Add(-31 * time.Second).UnixMilli()
 	return protocol.DiskHealth{Status: protocol.DiskError, Reasons: []protocol.DiskHealthReason{protocol.DiskStalled}, StartedAt: start, StalledSince: start}
