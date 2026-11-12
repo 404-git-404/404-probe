@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dedicated Debian root harness. Build as a regular user with Go's pinned toolchain:
 #   go test -tags disk_health_fixture -c -o /path/to/agent-fixture ./internal/agent
-# On an authorized disposable test Agent, with v1.1.2 active:
+# On an authorized disposable test Agent, with the installed Agent active:
 #   sudo bash scripts/test-disk-health-linux.sh /path/to/agent-fixture [all|fault|stall]
 # The only block-device writes are to a new loop-backed device in a private
 # mount namespace. The fixture Agent runs as nobody and talks over loopback.
@@ -15,9 +15,9 @@ fi
 binary=$3
 scenario=$4
 [[ $scenario == all || $scenario == fault || $scenario == stall ]] || exit 2
-[[ $(systemctl is-active 404-probe-agent.service) == active && $(/usr/local/bin/404-probe-agent version) == v1.1.2 ]] || exit 2
+[[ $(systemctl is-active 404-probe-agent.service) == active && -n $(/usr/local/bin/404-probe-agent version) ]] || exit 2
 printf 'KERNEL_RELEASE %s\n' "$(uname -r)"
-for utility in losetup dmsetup mkfs.ext4 e2fsck debugfs dumpe2fs mount umount blockdev modprobe setpriv python3; do command -v "$utility" >/dev/null; done
+for utility in losetup dmsetup mkfs.ext4 e2fsck debugfs dumpe2fs mount umount blockdev modprobe rmmod setpriv python3; do command -v "$utility" >/dev/null; done
 
 work=$(mktemp -d /var/lib/r48-disk.XXXXXXXX)
 name=r48-${work##*.}
@@ -28,6 +28,7 @@ bind=$work/bind
 control=$work/control
 dir=$mnt/agent
 loop= fixture_pid= created=0 suspended=0 step_number=0 sectors=0
+loaded_modules=()
 uid=$(id -u nobody)
 gid=$(id -g nobody)
 
@@ -59,7 +60,7 @@ replace_table() {
 }
 
 cleanup() {
-  local rc=$? cleanup_rc=0
+  local rc=$? cleanup_rc=0 index module
   trap - EXIT
   trap '' HUP INT TERM
   set +e
@@ -79,6 +80,12 @@ cleanup() {
     if [[ -n $(losetup -j "$image") ]]; then cleanup_rc=1; fi
   fi
   if dmsetup info "$name" >/dev/null 2>&1 || mountpoint -q "$mnt" || mountpoint -q "$bind"; then cleanup_rc=1; fi
+  for ((index=${#loaded_modules[@]}-1; index>=0; index--)); do
+    module=${loaded_modules[index]}
+    # rmmod leaves dependencies that were present before the fixture alone.
+    if [[ -d /sys/module/$module ]]; then rmmod "$module" || cleanup_rc=1; fi
+    if [[ -d /sys/module/$module ]]; then cleanup_rc=1; fi
+  done
   snapshot > "$work/after" || cleanup_rc=1
   if cmp -s "$work/before" "$work/after"; then
     printf 'REAL_SNAPSHOT differences=0 sha256=%s\n' "$(sha256sum "$work/after" | cut -d ' ' -f 1)"
@@ -105,8 +112,13 @@ mkdir "$mnt" "$bind" "$control"
 chown "$uid:$gid" "$control"
 chmod 0700 "$control"
 install -m 0755 -- "$binary" "$work/fixture"
-modprobe dm-flakey
-modprobe dm-delay
+for module in dm_mod dm_flakey dm_delay; do
+  if [[ -d /sys/module/$module ]]; then continue; fi
+  module_status=0
+  modprobe "${module//_/-}" || module_status=$?
+  if [[ -d /sys/module/$module ]]; then loaded_modules+=("$module"); fi
+  if (( module_status != 0 )); then exit "$module_status"; fi
+done
 truncate -s 128M -- "$image"
 loop=$(losetup --find --show -- "$image")
 owned_loop
@@ -290,4 +302,5 @@ fi
 send stop
 wait "$fixture_pid"
 fixture_pid=
-echo 'PASS recovered probe and worker exit, only mode-0600 probe file present'
+[[ ! -e "$dir/.disk-probe" && ! -L "$dir/.disk-probe" ]]
+echo 'PASS recovered probe, mode-0600 probe removed on worker exit'
