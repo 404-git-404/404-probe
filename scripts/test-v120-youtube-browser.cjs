@@ -199,6 +199,43 @@ test('name tip stays inside the viewport and public IP uses a native title', () 
   assert.equal(await device.locator('.public-egress-tip').count(), 0);
 }));
 
+test('R63 clamps the rightmost network tip to both viewport edges and closes it on scroll', () => ui(async ({page}) => {
+  const edge = block(page, 8, 2, 19);
+  const tip = page.locator('.nq7-tip:visible');
+  await nearBottom(page, 8, edge);
+  await page.waitForFunction(node => Boolean(node.tipText), await edge.elementHandle());
+  const rightmost = await page.locator(card(8)).evaluate(node => {
+    const right = node.getBoundingClientRect().right;
+    return [...document.querySelectorAll('.agent-card')].every(card => card.getBoundingClientRect().right <= right);
+  });
+  assert(rightmost, 'fixture must use a card in the rightmost column');
+  // Move the card so its last square sits against the viewport edge.
+  await edge.evaluate(node => {
+    const shift = document.documentElement.clientWidth - node.getBoundingClientRect().right - 12;
+    node.closest('.agent-card').style.transform = `translateX(${shift}px)`;
+  });
+  await edge.hover();
+  const geometry = await tipGeometry(tip);
+  const anchor = await edge.boundingBox();
+  assert(anchor.x + anchor.width / 2 + geometry.rect.width / 2 > geometry.width, 'fixture must reach the right clamp');
+  assert(geometry.rect.right <= geometry.width, `tip right edge ${geometry.rect.right} exceeds ${geometry.width}`);
+
+  await page.mouse.move(1, 1);
+  // Exercise a tall tip which fits in the viewport but cannot fit on either side of the square.
+  await page.addStyleTag({content: `.nq7-tip { min-height: ${geometry.height - 16}px; }`});
+  await edge.hover();
+  const tall = await tipGeometry(tip);
+  assert(anchor.y - 4 - tall.rect.height < 0, 'fixture must reach the vertical clamp');
+  assert(tall.rect.top >= 0 && tall.rect.bottom <= tall.height, `tip top/bottom ${tall.rect.top}/${tall.rect.bottom} exceeds viewport 0/${tall.height}`);
+  const scroll = await page.evaluate(() => {
+    const before = scrollY;
+    scrollBy(0, -1);
+    return [before, scrollY];
+  });
+  assert.notEqual(scroll[0], scroll[1], 'fixture must scroll while the pointer remains over the square');
+  await tip.waitFor({state: 'hidden'});
+}));
+
 test('B2 doubles repeated detail failures to 30 s and recovers to 2 s', async () => {
   let failReads = false;
   await ui(async ({page, f}) => {
