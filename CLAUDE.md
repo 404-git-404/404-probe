@@ -102,7 +102,7 @@ go test ./... -count=1
 5. **推送顺序：** 推送和 gh 操作需要维护者授权，可以在任务书里一次性授权。任务书必须写明哪些情况一定要停下来问，至少包括：结果与预期不符、升级失败、需要维护者操作面板或输入密码。
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
    2. 对发布提交打**带注释**的 tag `vX.Y.Z`，只推这个 tag。
-   3. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file <说明文件> --latest=false`，附上这 7 个文件。说明文件 = `RELEASE_NOTES_vX.Y.Z.md` 全文 + 一行 `SHA256SUMS` 的 SHA-256（从最终产物计算，不手抄；摘要不能提前写进发布准备提交里的文件，因为 `SHA256SUMS` 来自这个提交的构建）。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
+   3. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file <说明文件> --latest=false`，附上这 7 个文件。说明文件 = `RELEASE_NOTES_vX.Y.Z.md` 全文 + 一行 `SHA256SUMS` 的 SHA-256（从最终产物计算，不手抄；摘要不能提前写进发布准备提交里的文件，因为 `SHA256SUMS` 来自这个提交的构建）。**首次公开的正文可以是经 B 段复查的修订稿，tag 里的说明文件保持原样，main 上的文件在发布后文档提交里同步**（v1.2.0 起的做法，维护者 2026-11-13 决定）。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
    4. **核对清单：GitHub release 说明里公布的 `SHA256SUMS` 摘要 = 最终上传的 `SHA256SUMS` 文件的 SHA-256**：把 7 件资产下载回来逐个比对 SHA256，并用下载回来的 `SHA256SUMS` 重新计算摘要，与说明里公布的值逐字符比对；不符就按失败处理（见本条第 6 点）。
    5. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。**升级前后各记录一次状态快照并对比（R05）**：升级前 `python3 -I scripts/agent-state-snapshot.py collect --label before --out <仓库外目录> <测试 Agent 的 SSH 别名…>`，升级后 `--label after`，再 `python3 -I scripts/agent-state-snapshot.py compare <目录> before after`。快照只读采集版本、二进制哈希、`agent.env` 的各项设置（密钥只记“已设置/为空”）、每个 systemd 单元（含 drop-in）或 OpenRC 脚本的哈希、实际生效的沙箱选项、服务状态；版本、二进制哈希、进程是升级预期会变的，其他任何差异（单元文件、沙箱、设置、权限、服务不再运行）都要查清，命令退出码为 1。快照放在仓库外（例如 `release-records` 的版本目录），不提交。
    6. 成功后 `gh release edit vX.Y.Z --latest`；失败则改回草稿（`--draft=true`），不删除 release 或 tag，也不重新上传不同字节。
@@ -133,7 +133,7 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
 - 2 台 Alpine 3.24 Agent（OpenRC），**都是容器**（能力受限，例如没有 CAP_NET_RAW，ICMP 会被报告为不可用）。OpenRC 路径没有 systemd 沙箱：安装器的 `sandbox_prepare` 在 OpenRC 下直接返回，只有 systemd 路径才调用 `sandbox_probe`，后者现在只由 `scripts/test-install-sandbox.sh` 覆盖（原来由已退役的 Debian Podman 做过真机验证）：一台 128 MiB 内存（arm64，cgroup 限制，用来验证内存是否稳定），另一台东京 512 MiB（SSH 经常超时，**不再使用**）。
 
 使用规则：
-- 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；安装系统软件、改防火墙、重启机器要先问。
+- 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；改防火墙、重启机器要先问。**测试必需的工具（例如 bubblewrap、strace）可以直接在登记的测试机上安装：只限登记的测试机，只用系统官方软件源，装了什么写进报告；正式环境一律不装。**（维护者 2026-11-13 决定；其他系统软件仍要先问。）
 - 安装器的角色选择和管理员密码从 `/dev/tty` 读取。管理员密码由维护者自己输入，不要代填。交互安装 Agent 时粘贴的 enrollment value（`404-probe-install enroll <名字>` 生成，是 Agent 的永久凭据）同样由维护者自己输入，不在对话中明文显示。
 - 注册 token：在 CLAUDE.local.md 列出的测试 Server 上，Claude Code 可以自己用 `404-probe-install oneclick-token <名称>` 生成，用于一键安装和注册验证；绝不用于任何正式环境。
   - 它生成与面板相同的一次性 token（30 分钟、绑定名称、计入"同时最多 10 条未使用"的上限），不能用 `enroll`：`enroll` 给的是 Agent 的永久凭据，不能用于一键安装（`PROBE_404_ENROLL_TOKEN` 要求 43 个字符的注册 token）。
