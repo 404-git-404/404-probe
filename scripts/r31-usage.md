@@ -4,9 +4,9 @@ scripts/r31-rehearse.sh 只能在 `CLAUDE.local.md` 登记的测试 Server 上�
 
 ## 版本登记与正式产物
 
-`scripts/r31-versions.json` 登记已正式发布的起始版本：版本、GitHub tag 的完整提交、schema、相对上一版的表增删。当前登记 v1.0.6/schema34、v1.0.7/schema35（删除 tcp_mini_high、tcp_mini_state）、v1.0.8/schema35（无表增删）、v1.0.9/schema35（无表增删）、v1.0.10/schema36（新增 organization_meta、groups、tags、agent_organization、agent_tags、expense_exchange_rates 六张表，无删除）、v1.1.0/schema36、v1.1.1/schema36（后两版无表增删）。每版的 `generation_chain` 明确记录从 schema34 底座开始的官方迁移链；高门槛起点 v1.1.0/v1.1.1 均先经 v1.0.10。未登记的起始版本一律拒绝。
+`scripts/r31-versions.json` 登记已正式发布的起始版本：版本、GitHub tag 的完整提交、schema、相对上一版的表增删。当前登记 v1.0.6/schema34、v1.0.7/schema35（删除 tcp_mini_high、tcp_mini_state）、v1.0.8/schema35（无表增删）、v1.0.9/schema35（无表增删）、v1.0.10/schema36（新增 organization_meta、groups、tags、agent_organization、agent_tags、expense_exchange_rates 六张表，无删除）、v1.1.0/schema36、v1.1.1/schema36、v1.1.2/schema36（后三版无表增删）。每版的 `generation_chain` 明确记录从 schema34 底座开始的官方迁移链；高门槛起点 v1.1.0/v1.1.1/v1.1.2 均先经 v1.0.10。未登记的起始版本一律拒绝。
 
-**受支持起点 = 前两个正式版**；v1.1.2 的发布演练矩阵为 v1.1.0、v1.1.1 → v1.1.2，两条路径均显式指定 `expected_schema: 36`。更早的登记起点仍可演练，但不属于发布门槛；登记表保留完整历史，生成器继续使用 v1.0.6 底座。
+**受支持起点 = 前两个正式版**；v1.2.0 的发布演练矩阵为 v1.1.1、v1.1.2 → v1.2.0，两条路径均显式指定 `expected_schema: 37`（v1.2.0 新增 schema 37 迁移，起点库为 schema 36；v1.2.0 发布时本版只演练 v1.1.2 起点，v1.1.1 起点由升级门槛测试覆盖）。更早的登记起点仍可演练，但不属于发布门槛；登记表保留完整历史，生成器继续使用 v1.0.6 底座。
 
 每次正式发布后，在下一版准备工作中将该版补入登记表，并核对正式 tag、schema 和表增删；不要把开发分支提交或未发布候选写进去。
 
@@ -16,7 +16,7 @@ scripts/r31-rehearse.sh 只能在 `CLAUDE.local.md` 登记的测试 Server 上�
 
 ## 生成数据库
 
-v1.0.6 生成主体保持为 schema34 底座，仍由正式 v1.0.6 Server 的 agent list/storage.Open 创建 schema，不手写 DDL。其他起始版本按登记的 `generation_chain` 逐跳执行官方 Server 的 database migrate-protected 和 database verify。v1.0.7–v1.0.10 直接迁移；v1.1.0/v1.1.1 先由官方 v1.0.10 将 schema34 迁到36，再用所选起点的官方 Server 迁移（无新迁移）并验证。每跳在创建数据库前核对七件资产哈希、版本、完整提交、dirty=false，执行后核对登记 schema、完整性、外键、计数器及逐表行数；不手写 schema、不降低产品门槛。
+v1.0.6 生成主体保持为 schema34 底座，仍由正式 v1.0.6 Server 的 agent list/storage.Open 创建 schema，不手写 DDL。其他起始版本按登记的 `generation_chain` 逐跳执行官方 Server 的 database migrate-protected 和 database verify。v1.0.7–v1.0.10 直接迁移；v1.1.0/v1.1.1/v1.1.2 先由官方 v1.0.10 将 schema34 迁到36，再用所选起点的官方 Server 迁移（无新迁移）并验证。每跳在创建数据库前核对七件资产哈希、版本、完整提交、dirty=false，执行后核对登记 schema、完整性、外键、计数器及逐表行数；不手写 schema、不降低产品门槛。
 
 生成一份 v1.0.8 起始的 snapshot 的单行示例（路径替换为准备好的本地目录）：
 
@@ -41,23 +41,23 @@ Linux amd64/arm64，root、systemd、既有 Server 用户/组，以及已安装�
 1. 干净源码中的 scripts/r31-rehearse.sh、r31-preflight.py、r31-run-with-evidence.py、r31-upgrade.py、r31-generate.py、r31lib.py、r31-versions.json 保持同一套版本；直接引用该源码目录，或将这几件文件一起复制到仓库外工具目录。
 2. 正式 v1.0.6 底座、所选起始版、目标版，以及 generation_chain 要求的桥接版（高门槛起点需 v1.0.10）各自的七件产物目录；起始版已安装，二进制必须与其产物完全相同。
 3. 仓库外的 root 私有0700工作目录及全新的空 `evidence/`、`results/`（均0700）；没有 run-started、operator-exit.txt、operator-summary.json 或上次恢复残留。
-4. 创建配置文件。下面是 **v1.1.1→v1.1.2、目标 schema36（未登记目标，必须显式提供）的示例**；实际目标 schema 由发布任务确认。路径都是参数，不在工具里写死机器、提交或目录：
+4. 创建配置文件。下面是 **v1.1.2→v1.2.0、目标 schema37（未登记目标，必须显式提供）的示例**；实际目标 schema 由发布任务确认。路径都是参数，不在工具里写死机器、提交或目录：
 
 ```json
 {
-  "from_version": "v1.1.1",
-  "to_version": "v1.1.2",
-  "from_assets": "/var/lib/404-probe-rehearsal/assets-v1.1.1",
-  "to_assets": "/var/lib/404-probe-rehearsal/assets-v1.1.2",
+  "from_version": "v1.1.2",
+  "to_version": "v1.2.0",
+  "from_assets": "/var/lib/404-probe-rehearsal/assets-v1.1.2",
+  "to_assets": "/var/lib/404-probe-rehearsal/assets-v1.2.0",
   "base_assets": "/var/lib/404-probe-rehearsal/assets-v1.0.6",
   "bridge_assets": {"v1.0.10": "/var/lib/404-probe-rehearsal/assets-v1.0.10"},
   "work_dir": "/var/lib/404-probe-rehearsal/run",
   "scale": "snapshot",
-  "expected_schema": 36
+  "expected_schema": 37
 }
 ```
 
-第二条矩阵将 `from_version` 改为 `v1.1.0`、`from_assets` 改为其正式产物目录，使用独立的全新工作目录；目标与 `expected_schema: 36` 保持一致。
+第二条矩阵将 `from_version` 改为 `v1.1.1`、`from_assets` 改为其正式产物目录，使用独立的全新工作目录；目标与 `expected_schema: 37` 保持一致。
 
 先只读预检（可以没有TTY；不会创建锁、标记或结果文件）：
 
@@ -109,4 +109,4 @@ Windows 按 CLAUDE.md 设置 R31_PYTHON、R31_BASH，在沙箱外跑全仓；Lin
 R31_BASE_SERVER=/local/assets-v1.0.6/404-probe-server-linux-amd64 R31_PREVIOUS_SERVER=/local/assets-v1.0.8/404-probe-server-linux-amd64 R31_START_VERSION=v1.0.8 python3 -B scripts/test-r31.py -v
 ```
 
-v1.1.0/v1.1.1 的 tiny 集成还需设置 `R31_BRIDGE_ASSETS=/local/assets-v1.0.10`。未给正式产物时 tiny 集成明确跳过；测试其余部分只使用合成资产、临时根目录、假 systemctl 和PTY，不调用真实安装/升级。Linux root 下还验证入口的非TTY拒绝、锁排他、只运行一次和 --check 不修改文件。已有冻结证据、计时锚点、恢复故障及字节可复现测试继续保留。真实的大库安装/升级/回滚演练仍由后续发布任务安排，不能把这些自测写成真实演练通过。
+v1.1.0/v1.1.1/v1.1.2 的 tiny 集成还需设置 `R31_BRIDGE_ASSETS=/local/assets-v1.0.10`。未给正式产物时 tiny 集成明确跳过；测试其余部分只使用合成资产、临时根目录、假 systemctl 和PTY，不调用真实安装/升级。Linux root 下还验证入口的非TTY拒绝、锁排他、只运行一次和 --check 不修改文件。已有冻结证据、计时锚点、恢复故障及字节可复现测试继续保留。真实的大库安装/升级/回滚演练仍由后续发布任务安排，不能把这些自测写成真实演练通过。

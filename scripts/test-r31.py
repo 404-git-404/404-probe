@@ -380,8 +380,8 @@ class RegisteredReleaseTests(unittest.TestCase):
 
     def test_unknown_start_and_unregistered_target_schema(self):
         with self.assertRaisesRegex(ValueError,'unregistered'):
-            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.1.2')
-        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.1.2')
+            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.2.0')
+        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.2.0')
         self.assertEqual(releases.expected_schema('v1.0.10',36),36)
         self.assertEqual(releases.expected_schema('v1.0.8',35),35)
         with self.assertRaises(ValueError): releases.expected_schema('v1.0.8',36)
@@ -529,6 +529,7 @@ class BridgeGenerationTests(unittest.TestCase):
     def test_chain_and_bridge_arguments_cannot_be_ambiguous(self):
         self.assertEqual(releases.registered('v1.1.0')['generation_chain'],['v1.0.10','v1.1.0'])
         self.assertEqual(releases.registered('v1.1.1')['generation_chain'],['v1.0.10','v1.1.1'])
+        self.assertEqual(releases.registered('v1.1.2')['generation_chain'],['v1.0.10','v1.1.2'])
         for values in (['v1.0.10=x','v1.0.10=y'],['v1.0.10'],['v01.0.10=x']):
             with self.assertRaises(ValueError):releases.parse_bridge_assets(values)
         document=releases.registry();document['versions']['v1.1.1']['generation_chain']=['v1.1.1','v1.0.10']

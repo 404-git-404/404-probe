@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v1.1.2"
+readonly DEFAULT_VERSION="v1.2.0"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -3309,20 +3309,20 @@ identify_installed_server_version() {
   if version_json="$("${SERVER_BINARY}" version --json 2>/dev/null)"; then
     version="$(json_string_field "${version_json}" version)"
     release_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
-      || die "server_version_unrecognized: installed Server returned an untrusted build identity; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+      || die "server_version_unrecognized: installed Server returned an untrusted build identity; this release cannot be installed directly; first upgrade with install.sh from release v1.1.1 (PROBE_404_VERSION=v1.1.1) or v1.1.2 (PROBE_404_VERSION=v1.1.2); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
     printf '%s\n' "${version}"
     return
   fi
-  die "server_version_unrecognized: installed Server build cannot be identified safely; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+  die "server_version_unrecognized: installed Server build cannot be identified safely; this release cannot be installed directly; first upgrade with install.sh from release v1.1.1 (PROBE_404_VERSION=v1.1.1) or v1.1.2 (PROBE_404_VERSION=v1.1.2); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
 }
 
 # Update before each release according to the supported upgrade window.
 require_supported_server_version() {
   local comparison
-  comparison="$(compare_versions "$1" v1.1.0)" \
-    || die "server_version_unrecognized: installed Server version is invalid; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+  comparison="$(compare_versions "$1" v1.1.1)" \
+    || die "server_version_unrecognized: installed Server version is invalid; this release cannot be installed directly; first upgrade with install.sh from release v1.1.1 (PROBE_404_VERSION=v1.1.1) or v1.1.2 (PROBE_404_VERSION=v1.1.2); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
   [[ "${comparison}" != -1 ]] \
-    || die "server_version_too_old: installed Server $1 is older than the supported window; this release cannot be installed directly; first upgrade with install.sh from release v1.1.0 (PROBE_404_VERSION=v1.1.0) or v1.1.1 (PROBE_404_VERSION=v1.1.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+    || die "server_version_too_old: installed Server $1 is older than the supported window; this release cannot be installed directly; first upgrade with install.sh from release v1.1.1 (PROBE_404_VERSION=v1.1.1) or v1.1.2 (PROBE_404_VERSION=v1.1.2); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
 }
 
 write_server_upgrade_state() {
