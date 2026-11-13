@@ -1,7 +1,7 @@
 /* Persistent overview/management nodes. Server fields retain their original meanings. */
 (function(root){
  'use strict';
- function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>''}){
+ function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>'',serverNow=()=>null}){
   const el=(t,c='',text)=>{const n=doc.createElement(t);n.className=c;if(text!=null)n.textContent=text;return n;};
   const overview=el('div','details-overview'),management=el('div','details-management'),metrics=el('div','details-metrics'),grid=el('div','details-grid'),groups=el('div','details-grid');
   overview.append(metrics,grid);management.append(groups);
@@ -108,9 +108,10 @@
    const upgrade=target?.supported?`可升级到 ${target.version}`:'';values.version.replaceChildren(el('span','',a.version||'—'));if(upgrade)values.version.append(el('span','details-upgrade-badge',upgrade));
    let upgradeText=healthCode==='updater_unsupported'?'':(a.version||'—')+(target?' → '+target.version+(target.supported?'（与面板相同）':target.reason_code===noteCode?'':' · '+targetReason):' · '+(a.online?'正在读取可升级版本，请稍候':'机器离线，请先恢复连接再升级'));
    if(a.upgrade?.status==='downloading'){
-    upgradeText='正在下载新版本';
+    upgradeText+=(upgradeText?' · ':'')+'正在下载新版本';
     // The Server updates this timestamp only on an accepted state transition.
-    if(a.upgrade.updated_at>0&&Date.now()-a.upgrade.updated_at>120000)upgradeText+='。网络较慢，最长等待 30 分钟';
+    const now=serverNow();
+    if(now!==null&&a.upgrade.updated_at>0&&now-a.upgrade.updated_at>=120000)upgradeText+='。网络较慢，最长等待 30 分钟';
    }
    set('upgrade',upgradeText);
    if(noteCode){const note=el('span','details-note');note.style.display='block';root.AgentState.appendUpgradeReason(note,{reason_code:noteCode},serverBuild,a);values.upgrade.append(note);}

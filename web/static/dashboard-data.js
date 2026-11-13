@@ -10,6 +10,7 @@
  }
  function create({state,read,onchange=()=>{},onerror=()=>{},onsuccess=()=>{},frame=root.requestAnimationFrame||((f)=>setTimeout(f,0)),now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout}){
   let catalog={revision:0,groups:[],tags:[],exchange_rates:[],expenses:null},ready=false,closed=false;
+  let serverClock=null;
   let full=null,partial=null,scheduled=false,wantFull=false;
   const dirty=new Set();
   const telemetryDirty=new Set(),telemetryReady=new Set(),summaryDue=new Map();
@@ -33,6 +34,8 @@
   }
   function readSummary(ids,all=false){for(const id of ids){summaryDue.set(id,now()+10000+(all?telemetryPhase(id):0));telemetryDirty.delete(id);telemetryReady.delete(id);}armTelemetry();onsuccess();}
   function acceptCatalog(data){
+   // Advance the Server timestamp with monotonic elapsed time, independent of the local clock.
+   if(Number.isFinite(data.server_now)&&data.server_now>0)serverClock={time:data.server_now,receivedAt:root.performance.now()};
    if(data.revision>=catalog.revision)catalog={revision:data.revision,groups:data.groups||[],tags:data.tags||[],exchange_rates:data.exchange_rates||[],expenses:data.expenses,server_now:data.server_now,youtube_ad_free_regions:data.youtube_ad_free_regions||[]};
   }
   function schedule(){if(closed||scheduled)return;scheduled=true;frame(()=>{scheduled=false;flush();});}
@@ -86,7 +89,7 @@
    if(id){state.invalidate(id,value.kind==='name'?['name','summary']:['lifecycle','summary']);notify(id);}
   }
   return {refresh,async reload(){if(full)await full;if(partial)await partial;wantFull=false;return refresh();},notify,telemetry(id){if(!closed&&id&&!state.blocked(id)){if(!summaryDue.has(id))summaryDue.set(id,now()+10000+telemetryPhase(id));telemetryDirty.add(id);armTelemetry();}},metadata,organization(){for(const id of state.agents.keys())state.invalidate(id,['organization','summary']);wantFull=true;schedule();},retry(){schedule();},
-   catalog:()=>catalog,ready:()=>ready,close(){closed=true;dirty.clear();telemetryDirty.clear();telemetryReady.clear();if(telemetryTimer!==null)clearTimer(telemetryTimer);state.beginRefresh().controller.abort();},
+   catalog:()=>catalog,serverNow:()=>serverClock?serverClock.time+root.performance.now()-serverClock.receivedAt:null,ready:()=>ready,close(){closed=true;dirty.clear();telemetryDirty.clear();telemetryReady.clear();if(telemetryTimer!==null)clearTimer(telemetryTimer);state.beginRefresh().controller.abort();},
    snapshot:()=>({ready,pending:[...dirty],full:!!full,partial:!!partial})};
  }
  const api={create,normalize,GROUPS};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardData=api;

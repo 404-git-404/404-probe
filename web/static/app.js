@@ -1569,7 +1569,7 @@ function createAgentDetails(initial){
 
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
-      youtubeRegions,saveYouTubeRegion,canSaveYouTubeRegion,youtubeError:a=>agentActionErrors.get(`${a.agent_id}/youtube-region`)||'',
+      youtubeRegions,saveYouTubeRegion,canSaveYouTubeRegion,youtubeError:a=>agentActionErrors.get(`${a.agent_id}/youtube-region`)||'',serverNow:dashboardData.serverNow,
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
     detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
 

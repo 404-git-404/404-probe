@@ -264,29 +264,54 @@ test('B2 doubles repeated detail failures to 30 s and recovers to 2 s', async ()
   }});
 });
 
-test('B3 explains the wait after two minutes using the downloading transition timestamp', async () => {
-  let upgrade;
-  await ui(async ({page}) => {
-    await page.evaluate(id => deviceDetails.open(id, 'management'), ID(0));
-    await page.waitForFunction(id => !detailJobs.has(id), ID(0));
-    const message = page.locator('[data-upgrade-region] .details-note').first();
-    for (const [status, elapsed, expected] of [
-      ['downloading', 0, /^正在下载新版本$/],
-      ['downloading', 125000, /^正在下载新版本。网络较慢，最长等待 30 分钟$/],
-      ['verifying', 125000, /v1\.0\.10/],
-      ['downloading', null, /^正在下载新版本$/]
-    ]) {
-      upgrade = {operation_id: ID(301), status, started_at: Date.now() - 500000,
-        updated_at: elapsed === null ? undefined : Date.now() - elapsed};
+for (const skewMinutes of [-10, 10]) {
+  test(`B3 shows the two-minute Server wait with local clock skew of ${skewMinutes} minutes`, async () => {
+    const serverTime = Date.now();
+    const upgrade = {operation_id: ID(301), status: 'downloading', started_at: serverTime - 500000,
+      updated_at: serverTime - 119999};
+    let catalog;
+    await ui(async ({page, f}) => {
+      f.state.items[0].version = 'v1.0.9';
+      catalog = {...f.catalog(), server_now: serverTime};
+      await page.evaluate(({localTime}) => {
+        Date.now = () => localTime + window.testElapsed;
+        performance.now = () => window.testElapsed;
+        window.testElapsed = 0;
+      }, {localTime: serverTime + skewMinutes * 60000});
+      await reload(page);
+      await page.evaluate(id => deviceDetails.open(id, 'management'), ID(0));
+      await page.waitForFunction(id => !detailJobs.has(id), ID(0));
+      const message = page.locator('[data-upgrade-region] .details-note').first();
+      await page.waitForFunction(() => document.querySelector('[data-upgrade-region] .details-note')?.textContent.includes('v1.0.9 → v1.0.10'));
+      const versions = 'v1.0.9 → v1.0.10（与面板相同）';
+      const downloading = versions + ' · 正在下载新版本';
+      assert.equal(await message.textContent(), downloading);
+
+      await page.evaluate(() => { window.testElapsed = 1; });
       await page.evaluate(id => hydrateActiveDetail(id), ID(0));
       await settled(page);
-      assert.match(await message.textContent(), expected);
-    }
-  }, {n: 1, handle: async ({url, json}) => {
-    if (upgrade && url.pathname.endsWith('/upgrade')) {
-      json(upgrade);
-      return true;
-    }
-    return false;
-  }});
-});
+      assert.equal(await message.textContent(), downloading + '。网络较慢，最长等待 30 分钟');
+
+      upgrade.status = 'verifying';
+      await page.evaluate(id => hydrateActiveDetail(id), ID(0));
+      await settled(page);
+      assert.equal(await message.textContent(), versions);
+
+      upgrade.status = 'downloading';
+      delete upgrade.updated_at;
+      await page.evaluate(id => hydrateActiveDetail(id), ID(0));
+      await settled(page);
+      assert.equal(await message.textContent(), downloading);
+    }, {n: 1, handle: async ({url, json}) => {
+      if (catalog && url.pathname === '/api/v1/web/dashboard') {
+        json(catalog);
+        return true;
+      }
+      if (url.pathname.endsWith('/upgrade')) {
+        json(upgrade);
+        return true;
+      }
+      return false;
+    }});
+  });
+}
