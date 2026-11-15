@@ -163,7 +163,8 @@ R23 的“送中”判定是新写的，不来自该脚本。本节只保留历�
 | YouTube Premium 地区名单；[Google 官方帮助](https://support.google.com/youtube/answer/6307365?hl=en)，代码记载 2026-10-17、119 地区；无固定帮助页面版本 | `web/static/youtube-status.js` 的地区代码集合，手动整理，非原网页副本；本次读取现行帮助页，未重建 10-17 的历史快照 | 列表版本为仓库记录；历史对应关系及独立数据再分发许可**未核实**（Q6） | Server 内嵌、Web |
 | YouTube Premium 页面/重定向的精简样本；[源页面](https://www.youtube.com/premium)；无上游构建版本 | `internal/agent/testdata/youtube/`，处理记录见该目录 README；删减页面并脱敏，不保留原始完整抓取 | 测试样本版权/再分发授权**未核实**（Q6）；不推断删减或脱敏等于获得许可 | 源码测试数据；`testdata` 不嵌入生产二进制 |
 | 维护者提供的日志样本，来源日期 2026-09-05，无公开上游 URL | `internal/securitycollector/testdata/reality-overlapping-export.jsonl`；来源记录见同目录 README；转换器 `scripts/convert-security-fixture.go`；已加工 | 属用户提供数据，不是已识别的第三方软件库；记录未声明独立许可证，原始日志权利状态**未核实**（Q6） | 源码测试数据，不嵌入生产二进制 |
-| [ipify](https://www.ipify.org/)、[IPWho](https://ipwho.is/)、Google/YouTube 在线服务 | `internal/egress/egress.go`、`internal/geoip/geoip.go`、`internal/agent/google_status.go`；HTTP 调用、运行时读取结果，没有 vendoring 服务实现或 GeoIP 数据库 | 不将 API 使用自动写成服务代码的开源授权；本项仅记录调用边界，服务条款和用户运行时数据另行适用 | 二进制含请求代码和 URL，不含这些服务的实现；Web/Server 可展示处理后的结果 |
+| [ipify](https://www.ipify.org/)、[icanhazip](https://icanhazip.com/)、[Cloudflare](https://one.one.one.one/cdn-cgi/trace) | `internal/egress/egress.go`；启用并派发公网 IP 检测时，Agent 分别以 IPv4 和 IPv6 按 ipify、icanhazip、Cloudflare 的顺序发起 HTTPS 请求，每个协议成功即停止。被访问的站点可以看到 Agent 的公网出口地址 | 在线 API 的服务条款适用 | 二进制含请求代码和 URL，Web/Server 可展示经校验的结果和成功站点 |
+| [IPWho](https://ipwho.is/)、Google/YouTube 在线服务 | `internal/geoip/geoip.go`、`internal/agent/google_status.go`；通过 HTTP 在运行时读取结果 | 在线 API 的服务条款适用 | 二进制含请求代码和 URL，Web/Server 可展示处理后的结果 |
 
 ### 5.3 OpenRC 和 Komari
 
