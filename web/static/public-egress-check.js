@@ -4,6 +4,13 @@
 (function(root){
   'use strict';
   const FAMILIES=[['ipv4','IPv4'],['ipv6','IPv6']];
+  const REASONS={
+    network:'连接失败',timeout:'超时',dns:'域名解析失败',tls:'证书错误',
+    http_status:'网站返回错误',invalid_response:'返回内容无效',
+    no_route:'无路由',family_unavailable:'系统不支持',
+    not_checked:'尚未检测',not_reported:'Agent 未上报',invalid_report:'上报数据无效',
+  };
+  const SITES={ipify:'ipify',icanhazip:'icanhazip',cloudflare:'Cloudflare'};
 
   // IPv4 keeps two octets (203.0.*.*), IPv6 keeps two groups (2001:db8:…). Anything that is not a
   // valid address is never echoed back.
@@ -46,22 +53,27 @@
   // One address row: text for display and, only when there is an address, the full value for the copy button.
   function row(name,o,now,reveal){
     const show=ip=>reveal?ip:maskIP(ip);
-    if(!o||!o.checked_at)return {text:`${name}：尚未检测`,ip:''};
+    if(!(o?.checked_at>0))return {text:`${name}：尚未检测`,ip:''};
     const hasIP=o.status==='available'&&validIP(o.ip);
-    const fresh=hasIP&&!o.stale&&(!o.valid_until||o.valid_until>now);
-    if(fresh)return {text:`${name}：${show(o.ip)}`,ip:o.ip};
-    if(hasIP)return {text:`${name}：旧数据 ${show(o.ip)}`,ip:o.ip};
-    return {text:`${name}：${o.status==='unavailable'?'不可用':'未知'}`,ip:''};
+    if(hasIP){
+      const stale=o.stale||(o.valid_until&&o.valid_until<=now);
+      const source=Object.hasOwn(SITES,o.site)?` · 来自 ${SITES[o.site]}`:'';
+      return {text:`${name}：${stale?'旧数据 ':''}${show(o.ip)}`,ip:o.ip,source};
+    }
+    const reason=Object.hasOwn(REASONS,o.reason)?REASONS[o.reason]:'';
+    const status=reason&&o.status==='unavailable'?'不可用':'未知';
+    const attempts=o.tried===3?'（3 个网站都失败）':'';
+    return {text:`${name}：${status}${reason?' · '+reason:''}${attempts}`,ip:''};
   }
   function lastSuccess(name,o,now,reveal){
     const last=o?.last_success;
     if(!last||!validIP(last.ip)||(o.status==='available'&&o.ip===last.ip&&!o.stale))return null;
-    return {text:`最后成功 ${name}：${reveal?last.ip:maskIP(last.ip)}（${new Date(last.checked_at).toLocaleString()}）`,ip:last.ip};
+    return {text:`最后成功 ${name}：${reveal?last.ip:maskIP(last.ip)}（${new Date(last.checked_at).toLocaleString()}）`,ip:last.ip,lastCheckedAt:last.checked_at};
   }
 
   function view(agent,now=Date.now(),{reveal=false}={}){
     const c=agent?.public_egress_check||{};
-    const egress=agent?.state?.public_egress;
+    const egress=agent?.detail_public_egress===undefined?agent?.state?.public_egress:agent.detail_public_egress;
     const enabled=Boolean(c.enabled);
     const revoked=Boolean(agent?.revoked),paused=Boolean(agent?.disabled_at),offline=agent?.online===false;
     const cooldownUntil=c.cooldown_until>now?c.cooldown_until:0;
@@ -79,7 +91,7 @@
     else{
       lines.push('公网 IP 检测：已启用');
       for(const [key,name] of FAMILIES){
-        rows[key]=row(name,egress?.[key],now,reveal);lines.push(rows[key].text);
+        rows[key]=row(name,egress?.[key],now,reveal);lines.push(rows[key].text+(rows[key].source||''));
         const last=lastSuccess(name,egress?.[key],now,reveal);if(last){rows['last_'+key]=last;lines.push(last.text);}
       }
       const checked=Math.max(egress?.ipv4?.checked_at||0,egress?.ipv6?.checked_at||0);
@@ -109,9 +121,10 @@
     const lines=el('div','pe-lines'),status=el('div','pe-status');
     const rowNodes={};
     for(const key of ['ipv4','ipv6','last_ipv4','last_ipv6']){
-      const r=el('div','pe-row');r.dataset.row=key;const text=el('span','pe-text');
+      const r=el('div','pe-row');r.dataset.row=key;const label=el('span','pe-text');
+      const text=el('span'),source=el('span','pe-source');label.append(text,source);
       const copy=el('button','pe-copy','复制');copy.type='button';copy.dataset.focusKey=`${idPrefix}-copy-${key}`;copy.setAttribute('aria-label','复制完整 IP');
-      r.append(text,copy);r.hidden=true;lines.append(r);rowNodes[key]={r,text,copy,ip:''};
+      r.append(label,copy);r.hidden=true;lines.append(r);rowNodes[key]={r,label,text,source,copy,ip:''};
     }
     const times=el('div','pe-times');
     const feedback=el('p','pe-feedback','');feedback.setAttribute('aria-live','polite');
@@ -131,7 +144,15 @@
       if(note.textContent!==model.note)note.textContent=model.note;
       for(const key of Object.keys(rowNodes)){
         const item=model.rows[key],n=rowNodes[key];n.r.hidden=!item;n.ip='';
-        if(item){n.ip=item.ip;let text=splitMode?item.text.replace(/^IPv[46]：/,''):item.text;if(splitMode&&key==='ipv6'&&agent?.state?.public_egress?.ipv6?.checked_at&&agent.state.public_egress.ipv6.status==='unavailable')text='无';if(splitMode&&key.startsWith('last_'))text=text.replace(/（.*）/, '（'+shortDate(agent?.state?.public_egress?.[key.slice(5)]?.last_success?.checked_at)+'）');n.text.title=item.text;if(n.text.textContent!==text)n.text.textContent=text;}
+        if(item){
+          n.ip=item.ip;
+          let text=splitMode?item.text.replace(/^IPv[46]：/,''):item.text;
+          if(splitMode&&item.lastCheckedAt)text=text.replace(/（.*）/,`（${shortDate(item.lastCheckedAt)}）`);
+          const source=item.source||'';
+          n.label.title=item.text+source;
+          if(n.text.textContent!==text)n.text.textContent=text;
+          if(n.source.textContent!==source)n.source.textContent=source;
+        }
         n.copy.hidden=!item||!item.ip;
       }
       eye.hidden=!model.hasAddress;

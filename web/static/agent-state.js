@@ -196,10 +196,20 @@
     }
     function commitDetail(token, detail) {
       if (!detail) return false;
+      const current=agents.get(token.id);
+      const previous=current?.detail_public_egress??current?.state?.public_egress;
+      const incoming=detail.state?.public_egress;
+      const detailEgress={...previous,...incoming};
+      // Preserve checked observations across empty replies. A checked failure
+      // from the detail endpoint is authoritative for the panel.
+      for(const family of ['ipv4','ipv6']){
+        if(previous?.[family]?.checked_at>0&&!(incoming?.[family]?.checked_at>0))detailEgress[family]=previous[family];
+      }
       // webAgentDetailView omitempty means absence is authoritative removal,
       // unlike a partial event, list summary, upgrade or mutation patch.
       return commitRead(token, {country_code: '', country_source: '', country_code_lookup_operation: null,
-        removal: null, traffic: null, plan: null, ...detail});
+        removal: null, traffic: null, plan: null, ...detail,
+        detail_public_egress: detailEgress});
     }
     function commitList(value, records) {
       if (!validCycle(value)) return false;

@@ -81,8 +81,9 @@ html { scrollbar-gutter: stable; }
 .details-config{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Preserve action contrast in both palettes for every interaction state. */
-#device-details .details-action-row .upgrade-agent:is(:hover,:focus-visible,:disabled){background:var(--color-accent);color:var(--color-text-02);border-color:var(--color-accent);opacity:1}
-#device-details .details-danger .remove-agent:is(:hover,:focus-visible,:disabled){background:var(--color-danger);color:var(--color-text-02);border-color:var(--color-danger);opacity:1}
+#device-details .details-action-row .upgrade-agent:not(:disabled):is(:hover,:focus-visible){background:var(--color-accent);color:var(--color-text-02);border-color:var(--color-accent);opacity:1}
+#device-details .details-danger .remove-agent:not(:disabled):is(:hover,:focus-visible){background:var(--color-danger);color:var(--color-text-02);border-color:var(--color-danger);opacity:1}
+#device-details .details-action-row .upgrade-agent:disabled,#device-details .details-danger .remove-agent:disabled{background:var(--color-surface-hover);color:var(--muted);border-color:var(--line);cursor:not-allowed}
 
 /* Keep the select/button row, and give completed lookup feedback a full line. */
 .details-region .country-lookup-controls{display:contents}
@@ -95,3 +96,4 @@ html { scrollbar-gutter: stable; }
 .details-disk-health{display:flex;flex-direction:column;gap:2px}
 .details-disk-health>.details-note:empty{display:none}
 .details-box .disk-os-failed,.details-identity .disk-os-failed{margin-inline-start:6px}
+.details-upgrade-failure{display:block;overflow-wrap:anywhere}

@@ -44,6 +44,48 @@ test('old Agent detail summary gives reinstall guidance in both target and updat
   assert.match(text,/请在机器上重新安装/);assert.doesNotMatch(text,/不用重装/);
  }
 });
+test('management shows upgrade failure text safely and keeps the rollback help link',()=>{
+ const {doc,Element}=dom(),vm=require('node:vm'),fs=require('node:fs');
+ const context={AgentState:S,YouTubeStatus:require('../web/static/youtube-status.js'),Management:{countries:()=>[]},Card:{trafficView:()=>({}),cycleDays:()=>null,resetText:()=>''},Date,Intl};
+ vm.runInNewContext(fs.readFileSync(require.resolve('../web/static/device-details.js'),'utf8'),context);
+ const special='<img src=x onerror=alert(1)>&';
+ for(const [status,code,reason] of [
+  ['failed','download_stalled','下载失败或太慢'],
+  ['rolled_back','checksum_manifest_mismatch','新版本文件校验不通过'],
+  ['failed','release_metadata_invalid','新版本文件校验不通过'],
+  ['failed','candidate_buildinfo_invalid','新版本文件校验不通过'],
+  ['failed','stage_failed','安装新版本文件失败'],
+  ['failed','install_failed','安装新版本文件失败'],
+  ['failed','restart_failed','新版本启动后没有恢复正常'],
+  ['failed','health_timeout','新版本启动后没有恢复正常'],
+  ['failed','rollback_failed','回滚未能确认，请检查机器'],
+  ['failed','updater_restarted','升级过程中升级服务重启'],
+  ['failed','unsupported_platform','当前系统不支持'],
+  ['failed','new_code','升级失败（原因代码：new_code）'],
+  ['failed','字'.repeat(70),'升级失败（原因代码：'+'字'.repeat(64)+'）'],
+  ['failed',special,'升级失败（原因代码：'+special+'）'],
+  ['succeeded','health_timeout',null],
+ ]){
+  const actions=Object.fromEntries(['upgrade','reset','resetFeedback','google','googleFeedback','pause','remove','history'].map(k=>[k,new Element('button')]));
+  const summary=context.DetailSummary.create({document:doc,actions,egress:{addresses:new Element('div'),controls:new Element('div')},country:new Element('div'),canWrite:()=>true});
+  summary.update({version:'v1.2.0',online:true,upgrade:{status,failure_code:code,failure_message:'untrusted detail'}},{version:'v1.2.0',supported:false,reason_code:'already_latest'},{version:'v1.2.0'});
+  const note=summary.management.querySelector('.details-upgrade-failure');
+  const prefix=status==='rolled_back'?'上次升级失败，已自动恢复到原版本：':'上次升级失败：';
+  assert.equal(note?.textContent,reason===null?undefined:prefix+reason);
+  if(code==='rollback_failed')assert.equal(note.querySelector('a').href,S.updaterTroubleshootingURL({version:'v1.2.0'}));
+  assert.equal(summary.management.querySelector('img'),undefined);
+  const text=summary.management.all().map(n=>n.textContent).join(' ');
+  assert.doesNotMatch(text,/untrusted detail/);
+  assert.match(text,/这台机器已与面板版本相同，无需升级/);
+ }
+});
+
+test('detail actions reserve accent colors for interactive buttons',()=>{
+ const css=require('node:fs').readFileSync(require.resolve('../web/static/device-details.css'),'utf8');
+ assert.match(css,/\.upgrade-agent:not\(:disabled\):is\(:hover,:focus-visible\)\{background:var\(--color-accent\)/);
+ assert.match(css,/\.remove-agent:not\(:disabled\):is\(:hover,:focus-visible\)\{background:var\(--color-danger\)/);
+ assert.match(css,/\.upgrade-agent:disabled,#device-details \.details-danger \.remove-agent:disabled\{background:var\(--color-surface-hover\);color:var\(--muted\);border-color:var\(--line\);cursor:not-allowed/);
+});
 test('OS1b actual security pane distinguishes platform unavailable from setup and other statuses',()=>{
  const f=fixture();try{for(const [status,reason,label]of [['unavailable','platform_unsupported','此平台暂不支持安全观察'],['unavailable','setup_required','需要配置'],['failed','platform_unsupported','采集失败'],['unavailable','sandbox_unavailable','当前环境无法运行安全观察'],['unavailable','collector_start_failed','本地安全采集服务启动失败'],['no_data','no_sing_box_logs','未发现 sing-box 日志'],['failed','journal_read_failed','采集失败'],['failed','invalid_export','采集失败']]){
   f.agents.get(id).security={supported:true,status,reason};f.details.open(id,'security');f.details.update(f.agents.get(id));

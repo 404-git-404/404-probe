@@ -248,11 +248,11 @@ test('M10 panel: offline, paused and revoked Agents', () => {
 
 test('M10 panel: results, last check and next check are shown only while enabled', () => {
   const fresh = {status: 'available', ip: '8.8.8.8', checked_at: T0 - 60000, valid_until: T0 + 86400000, stale: false};
-  const agent = panelAgent({next_check_at: T0 + 604800000}, {state: {public_egress: {ipv4: fresh, ipv6: {status: 'unavailable', checked_at: T0 - 60000, valid_until: T0 + 1}}}});
+  const agent = panelAgent({next_check_at: T0 + 604800000}, {state: {public_egress: {ipv4: fresh, ipv6: {status: 'unavailable', reason: 'no_route', checked_at: T0 - 60000, valid_until: T0 + 1}}}});
   const text = PublicEgressCheck.view(agent, T0).lines.join('\n');
   assert.match(text, /公网 IP 检测：已启用/);
   assert.match(text, /IPv4：8\.8\.\*\.\*/);
-  assert.match(text, /IPv6：不可用/);
+  assert.match(text, /IPv6：不可用 · 无路由/);
   assert.match(text, /上次检测：/);
   assert.match(text, /下次检测：/);
   const stale = panelAgent({}, {state: {public_egress: {ipv4: {...fresh, stale: true}, ipv6: {status: 'unknown', checked_at: 0}}}});
@@ -260,6 +260,21 @@ test('M10 panel: results, last check and next check are shown only while enabled
   assert.match(PublicEgressCheck.view(stale, T0, {reveal: true}).lines.join('\n'), /IPv4：旧数据 8\.8\.8\.8/);
   assert.match(PublicEgressCheck.view(stale, T0).lines.join('\n'), /IPv6：尚未检测/);
   assert.doesNotMatch(PublicEgressCheck.view(panelAgent({enabled: false}), T0).lines.join('\n'), /IPv4/);
+});
+
+test('M10 detail read shows the current failure even after an earlier success', () => {
+  const store=State.create(), id='a', success=available('203.0.113.9');
+  seed(store,[panelAgent({}, {agent_id:id,state:{public_egress:{ipv4:success}}})]);
+  const failure={status:'unknown',reason:'timeout',tried:3,checked_at:2000,last_success:{ip:success.ip,checked_at:success.checked_at}};
+  assert.equal(store.commitDetail(store.read(id),panelAgent({}, {agent_id:id,state:{public_egress:{ipv4:failure}}})),true);
+  store.event({agent_id:id,state:{cpu_percent:23}});
+  const agent=store.agents.get(id);
+  assert.equal(agent.state.public_egress.ipv4.ip,success.ip);
+  const rows=PublicEgressCheck.view(agent,T0).rows;
+  assert.equal(rows.ipv4.text,'IPv4：未知 · 超时（3 个网站都失败）');
+  assert.match(rows.last_ipv4.text,/最后成功 IPv4：203\.0\.\*\.\*/);
+  store.commitDetail(store.read(id),panelAgent({}, {agent_id:id,state:{public_egress:{ipv4:{checked_at:0,status:'unknown',reason:'not_reported'}}}}));
+  assert.equal(PublicEgressCheck.view(store.agents.get(id),T0).rows.ipv4.text,rows.ipv4.text);
 });
 
 test('M10 panel: both pages build the one shared panel, which posts to the two endpoints with the CSRF token', () => {

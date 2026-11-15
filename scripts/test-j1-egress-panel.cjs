@@ -8,6 +8,8 @@ class El {
   set textContent(v) { this.ownText = String(v); this.children = []; }
   get textContent() { return this.ownText + this.children.map(c => c.textContent).join(''); }
   append(...c) { this.children.push(...c); }
+  prepend(...c) { this.children.unshift(...c); }
+  insertBefore(node, before) { this.children.splice(this.children.indexOf(before), 0, node); }
   setAttribute(k, v) { this.attributes[k] = String(v); }
   getAttribute(k) { return this.attributes[k]; }
   addEventListener(t, f) { (this.listeners[t] || (this.listeners[t] = [])).push(f); }
@@ -40,6 +42,38 @@ function harness(options = {}) {
   return {panel, calls, timers, copied, store, setToken: v => { token = v; }};
 }
 const rowText = (panel, key) => panel.elements.rows[key].text.textContent;
+
+test('detail and history use closed reason labels, attempt count and source titles', () => {
+  const {panel}=harness();
+  const checked_at=NOW-1000;
+  for(const [reason, label] of Object.entries({
+    network:'连接失败',timeout:'超时',dns:'域名解析失败',tls:'证书错误',
+    http_status:'网站返回错误',invalid_response:'返回内容无效',
+    no_route:'无路由',family_unavailable:'系统不支持',
+    not_checked:'尚未检测',not_reported:'Agent 未上报',invalid_report:'上报数据无效',
+  })){
+    const unavailable=reason==='no_route'||reason==='family_unavailable';
+    panel.update(agentWith({}, {ipv6:{checked_at, status:unavailable?'unavailable':'unknown', reason, tried:1}}));
+    assert.equal(rowText(panel,'ipv6'),`IPv6：${unavailable?'不可用':'未知'} · ${label}`);
+  }
+  for(const reason of [undefined,'<img>', 'constructor']){
+    panel.update(agentWith({}, {ipv6:{checked_at, status:'unknown', reason, tried:2}}));
+    assert.equal(rowText(panel,'ipv6'),'IPv6：未知');
+  }
+  panel.update(agentWith({}, {ipv6:{checked_at:0, status:'unknown',reason:'timeout',tried:3}}));
+  assert.equal(rowText(panel,'ipv6'),'IPv6：尚未检测');
+  panel.update(agentWith({}, {ipv6:{checked_at,status:'unknown',reason:'timeout',tried:3}}));
+  assert.equal(rowText(panel,'ipv6'),'IPv6：未知 · 超时（3 个网站都失败）');
+  for(const [site,source] of [['ipify','ipify'],['icanhazip','icanhazip'],['cloudflare','Cloudflare'],['constructor','']]){
+    panel.update(agentWith({}, {ipv6:{checked_at,status:'available',ip:'2001:db8::1',site}}));
+    const suffix=source?' · 来自 '+source:'';
+    assert.equal(panel.elements.rows.ipv6.source.textContent,suffix);
+    assert.equal(panel.elements.rows.ipv6.label.title,'IPv6：2001:db8:…'+suffix);
+  }
+  panel.split();
+  panel.update(agentWith({}, {ipv6:{checked_at,status:'unavailable',reason:'no_route',tried:1}}));
+  assert.equal(rowText(panel,'ipv6'),'不可用 · 无路由');
+});
 
 test('J2: maskIP keeps two IPv4 octets or two IPv6 groups', () => {
   for (const [input, want] of [

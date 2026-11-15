@@ -1,6 +1,19 @@
 /* Persistent overview/management nodes. Server fields retain their original meanings. */
 (function(root){
  'use strict';
+ const upgradeFailureReasons={
+  stage_failed:'安装新版本文件失败',install_failed:'安装新版本文件失败',
+  restart_failed:'新版本启动后没有恢复正常',health_timeout:'新版本启动后没有恢复正常',
+  rollback_failed:'回滚未能确认，请检查机器',updater_restarted:'升级过程中升级服务重启',
+  unsupported_platform:'当前系统不支持',
+ };
+ function upgradeFailureReason(code){
+  if(typeof code!=='string'||!code)return '升级失败';
+  if(code.startsWith('download_'))return '下载失败或太慢';
+  if(/^(checksum|release_metadata|candidate)_/.test(code))return '新版本文件校验不通过';
+  if(Object.hasOwn(upgradeFailureReasons,code))return upgradeFailureReasons[code];
+  return `升级失败（原因代码：${Array.from(code).slice(0,64).join('')}）`;
+ }
  function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>'',serverNow=()=>null}){
   const el=(t,c='',text)=>{const n=doc.createElement(t);n.className=c;if(text!=null)n.textContent=text;return n;};
   const overview=el('div','details-overview'),management=el('div','details-management'),metrics=el('div','details-metrics'),grid=el('div','details-grid'),groups=el('div','details-grid');
@@ -115,6 +128,17 @@
    }
    set('upgrade',upgradeText);
    if(noteCode){const note=el('span','details-note');note.style.display='block';root.AgentState.appendUpgradeReason(note,{reason_code:noteCode},serverBuild,a);values.upgrade.append(note);}
+   const failure=a.upgrade;
+   if(failure?.status==='failed'||failure?.status==='rolled_back'){
+    const prefix=failure.status==='rolled_back'?'上次升级失败，已自动恢复到原版本：':'上次升级失败：';
+    const note=el('span','details-note details-upgrade-failure',prefix+upgradeFailureReason(failure.failure_code));
+    if(failure.failure_code==='rollback_failed'){
+     const link=el('a','','升级服务排查文档');
+     link.href=root.AgentState.updaterTroubleshootingURL(serverBuild);link.target='_blank';link.rel='noopener noreferrer';
+     note.append(el('span','',' · '),link);
+    }
+    values.upgrade.append(note);
+   }
    set('seen',a.last_seen?time(a.last_seen)+':'+String(new Date(a.last_seen).getSeconds()).padStart(2,'0'):'未知');values.config.title=values.config.textContent;values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
    const youtubeName=code=>code==='EU'?'欧盟 EU':countryName(code)+' '+code;
