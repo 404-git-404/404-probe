@@ -514,11 +514,14 @@ func DecodeProbeResult(probeType ProbeType, data []byte) (ProbeResult, error) {
 		}
 		result.GoogleStatus = &value
 	case ProbeTypePublicEgress:
-		var value PublicEgressResult
-		if err := decodeStrict(data, &value); err != nil {
+		var wire struct {
+			IPv4 egressObservationWire `json:"ipv4"`
+			IPv6 egressObservationWire `json:"ipv6"`
+		}
+		if err := decodeStrict(data, &wire); err != nil {
 			return ProbeResult{}, err
 		}
-		result.PublicEgress = &value
+		result.PublicEgress = &PublicEgressResult{IPv4: wire.IPv4.observation(), IPv6: wire.IPv6.observation()}
 	}
 	if err := result.Validate(probeType); err != nil {
 		return ProbeResult{}, err
@@ -730,6 +733,12 @@ func normalizeProbeResult(result ProbeResult) ProbeResult {
 		value.TTFBMS = normalizeZero(value.TTFBMS)
 		value.TotalMS = normalizeZero(value.TotalMS)
 		normalized.HTTP = &value
+	}
+	if result.PublicEgress != nil {
+		normalized.PublicEgress = &PublicEgressResult{
+			IPv4: result.PublicEgress.IPv4.withValidSiteFields(),
+			IPv6: result.PublicEgress.IPv6.withValidSiteFields(),
+		}
 	}
 	return normalized
 }

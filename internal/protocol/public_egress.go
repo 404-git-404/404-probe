@@ -29,7 +29,15 @@ type EgressObservation struct {
 	ValidUntil  int64          `json:"valid_until"`
 	Reason      string         `json:"reason"`
 	LastSuccess *EgressSuccess `json:"last_success,omitempty"`
+	Site        string         `json:"site,omitempty"`
+	Tried       int            `json:"tried,omitempty"`
 }
+
+const (
+	EgressSiteIPify      = "ipify"
+	EgressSiteIcanhazip  = "icanhazip"
+	EgressSiteCloudflare = "cloudflare"
+)
 
 const EgressSuccessTTL = 45 * time.Minute
 const EgressFailureTTL = 5 * time.Minute
@@ -38,13 +46,12 @@ const EgressFailureTTL = 5 * time.Minute
 const EgressJobInterval = 7 * 24 * time.Hour
 const EgressJobSuccessTTL = 8 * 24 * time.Hour
 
-// PublicEgressConfig is the whole job: it has no fields, the destinations (api.ipify.org and
-// api6.ipify.org) are compiled into the Agent and nothing in a job can change them.
+// PublicEgressConfig is the whole job: it has no fields. The ipify, icanhazip and
+// Cloudflare endpoints are compiled into the Agent and jobs cannot change them.
 type PublicEgressConfig struct{}
 
-// PublicEgressResult is what the Agent returns for a public_egress job. Only the family, status, IP
-// and reason matter: the Server stamps the check time and validity itself, so Agent clocks and
-// requested lifetimes are never trusted.
+// PublicEgressResult is what the Agent returns for a public_egress job. The Server
+// stamps the check time and validity itself, and accepts optional site metadata.
 type PublicEgressResult struct {
 	IPv4 EgressObservation `json:"ipv4"`
 	IPv6 EgressObservation `json:"ipv6"`
@@ -99,6 +106,37 @@ func UnknownEgress(family, reason string) EgressObservation {
 	return EgressObservation{Family: family, Status: "unknown", Reason: reason}
 }
 
+type egressObservationFields EgressObservation
+
+// Decode the core observation strictly while treating each site field as optional.
+type egressObservationWire struct {
+	egressObservationFields
+	Site  json.RawMessage `json:"site"`
+	Tried json.RawMessage `json:"tried"`
+}
+
+func (w egressObservationWire) observation() EgressObservation {
+	o := EgressObservation(w.egressObservationFields)
+	_ = json.Unmarshal(w.Site, &o.Site)
+	_ = json.Unmarshal(w.Tried, &o.Tried)
+	return o.withValidSiteFields()
+}
+
+func (o EgressObservation) withValidSiteFields() EgressObservation {
+	switch o.Site {
+	case EgressSiteIPify, EgressSiteIcanhazip, EgressSiteCloudflare:
+	default:
+		o.Site = ""
+	}
+	if o.Status != "available" {
+		o.Site = ""
+	}
+	if o.Tried < 1 || o.Tried > 3 {
+		o.Tried = 0
+	}
+	return o
+}
+
 func strictEgressJSON(data []byte, v any) bool {
 	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return false
@@ -118,12 +156,12 @@ func (p *PublicEgress) UnmarshalJSON(data []byte) error {
 	if len(data) > 4096 || !strictEgressJSON(data, &raw) || raw.Version != 1 {
 		return nil
 	}
-	var v4, v6 EgressObservation
+	var v4, v6 egressObservationWire
 	if strictEgressJSON(raw.IPv4, &v4) {
-		p.IPv4 = v4
+		p.IPv4 = v4.observation()
 	}
 	if strictEgressJSON(raw.IPv6, &v6) {
-		p.IPv6 = v6
+		p.IPv6 = v6.observation()
 	}
 	return nil
 }
@@ -232,5 +270,5 @@ func normalizeEgress(o EgressObservation, family string, collected, received int
 	} else if o.ValidUntil <= o.CheckedAt || o.ValidUntil-o.CheckedAt > maxTTL.Milliseconds() {
 		return bad()
 	}
-	return o
+	return o.withValidSiteFields()
 }

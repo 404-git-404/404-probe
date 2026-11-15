@@ -493,10 +493,16 @@ func TestPublicEgressResultValidityIsEightDays(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := at.Add(time.Second)
-	finishEgressJob(t, store, agentID, done, egressOutcome(true, false))
+	result := egressOutcome(true, false)
+	result.IPv4.Site, result.IPv4.Tried = protocol.EgressSiteIcanhazip, 2
+	result.IPv6.Tried = 1
+	finishEgressJob(t, store, agentID, done, result)
 	state := egressState(t, store, agentID, done)
 	if !state.Supported || state.IPv4.Status != "available" || state.IPv4.IP != "8.8.8.8" || state.IPv4.CheckedAt != done.UnixMilli() {
 		t.Fatalf("state=%+v", state)
+	}
+	if state.IPv4.Site != protocol.EgressSiteIcanhazip || state.IPv4.Tried != 2 || state.IPv6.Site != "" || state.IPv6.Tried != 1 {
+		t.Fatalf("site metadata did not survive storage: %+v", state)
 	}
 	if state.IPv4.ValidUntil-state.IPv4.CheckedAt != (8 * 24 * time.Hour).Milliseconds() {
 		t.Fatalf("success validity %v", time.Duration(state.IPv4.ValidUntil-state.IPv4.CheckedAt)*time.Millisecond)
