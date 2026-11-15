@@ -141,6 +141,7 @@ type Runner struct {
 	googleStatusSupported        atomic.Bool
 	googleChinaSignalSupported   atomic.Bool
 	publicEgressSupported        atomic.Bool
+	publicEgressSitesSupported   atomic.Bool
 	securitySupported            atomic.Bool
 	managementAPISupported       atomic.Bool
 	qualitySupported             atomic.Bool
@@ -574,6 +575,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	if response.Capabilities.CountryCodeReport {
 		r.reportCountryCode = true
 	}
+	r.publicEgressSitesSupported.Store(response.Capabilities.PublicEgressSites)
 	r.publicEgressSupported.Store(response.Capabilities.PublicEgressJob)
 	r.reportManagementCapabilities = response.Capabilities.ManagementReport
 	r.qualitySupported.Store(response.Capabilities.NetworkQuality)

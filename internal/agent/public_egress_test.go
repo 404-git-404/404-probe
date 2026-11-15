@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,20 +18,23 @@ import (
 	"404-probe/internal/protocol"
 )
 
-// countingChecker stands in for the HTTPS transport to the echo service: every Check is one
-// would-be request to api.ipify.org or api6.ipify.org.
+// countingChecker stands in for a family check against the fixed echo sites.
 type countingChecker struct {
-	calls atomic.Int32
-	mu    sync.Mutex
-	seen  []string
-	reply func(family string) protocol.EgressObservation
+	calls       atomic.Int32
+	mu          sync.Mutex
+	seen        []string
+	reply       func(family string) protocol.EgressObservation
+	withContext func(context.Context, string) protocol.EgressObservation
 }
 
-func (c *countingChecker) Check(_ context.Context, family string) protocol.EgressObservation {
+func (c *countingChecker) Check(ctx context.Context, family string) protocol.EgressObservation {
 	c.calls.Add(1)
 	c.mu.Lock()
 	c.seen = append(c.seen, family)
 	c.mu.Unlock()
+	if c.withContext != nil {
+		return c.withContext(ctx, family)
+	}
 	if c.reply != nil {
 		return c.reply(family)
 	}
@@ -202,8 +206,167 @@ func TestPublicEgressJobChecksBothFamiliesAndReturnsTheResult(t *testing.T) {
 	}
 	checker.mu.Lock()
 	defer checker.mu.Unlock()
-	if len(checker.seen) != 2 || checker.seen[0] != "ipv4" || checker.seen[1] != "ipv6" {
+	if len(checker.seen) != 2 || checker.seen[0] == checker.seen[1] {
 		t.Fatalf("checked %v", checker.seen)
+	}
+}
+
+func TestPublicEgressSitesUseLatestServerCapability(t *testing.T) {
+	type oldObservation struct {
+		Family      string                  `json:"family"`
+		Status      string                  `json:"status"`
+		IP          string                  `json:"ip,omitempty"`
+		CheckedAt   int64                   `json:"checked_at"`
+		ValidUntil  int64                   `json:"valid_until"`
+		Reason      string                  `json:"reason"`
+		LastSuccess *protocol.EgressSuccess `json:"last_success,omitempty"`
+	}
+	type oldResult struct {
+		IPv4 oldObservation `json:"ipv4"`
+		IPv6 oldObservation `json:"ipv6"`
+	}
+	oldPayload, err := json.Marshal(oldResult{
+		IPv4: oldObservation{Family: "ipv4", Status: "available", IP: "8.8.8.8", Reason: "verified"},
+		IPv6: oldObservation{Family: "ipv6", Status: "unknown", Reason: "dns"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, supported := range []bool{false, true} {
+		var advertised atomic.Bool
+		advertised.Store(!supported)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeTestJSON(t, w, protocol.ReportResponse{Accepted: true, Capabilities: protocol.ReportCapabilities{
+				PublicEgressJob: true, PublicEgressSites: advertised.Load(),
+			}})
+		}))
+		checkStarted, release := make(chan struct{}), make(chan struct{})
+		checker := &countingChecker{reply: func(family string) protocol.EgressObservation {
+			if family == "ipv4" {
+				close(checkStarted)
+				<-release
+				return protocol.EgressObservation{Family: family, Status: "available", IP: "8.8.8.8", Reason: "verified",
+					Site: protocol.EgressSiteIPify, Tried: 1, CheckedAt: 123, ValidUntil: 456}
+			}
+			o := protocol.UnknownEgress(family, "dns")
+			o.Tried = 3
+			return o
+		}}
+		runner := newJobTestRunner(t, server.URL, time.Second, time.Hour, egressTestExecutor(checker))
+		runner.collector = reportCollectorFunc(staticReportCollector)
+		var sequence uint64
+		if ok, err := runner.sendReport(context.Background(), &sequence); !ok || err != nil {
+			server.Close()
+			t.Fatal(ok, err)
+		}
+		result := make(chan protocol.JobResult, 1)
+		go func() { result <- runner.executeJob(context.Background(), egressJob(time.Now())) }()
+		waitSignal(t, checkStarted, "in-flight public egress check")
+		advertised.Store(supported)
+		ok, err := runner.sendReport(context.Background(), &sequence)
+		close(release)
+		server.Close()
+		if !ok || err != nil {
+			t.Fatal(ok, err)
+		}
+		wire, err := json.Marshal(<-result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var envelope struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if err := json.Unmarshal(wire, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		var old oldResult
+		strict := json.NewDecoder(bytes.NewReader(envelope.Result))
+		strict.DisallowUnknownFields()
+		oldErr := strict.Decode(&old)
+		decoded, err := protocol.DecodeJobResult(wire, protocol.ProbeTypePublicEgress)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v4, v6 := decoded.Result.PublicEgress.IPv4, decoded.Result.PublicEgress.IPv6
+		if supported {
+			if oldErr == nil || v4.Site != protocol.EgressSiteIPify || v4.Tried != 1 || v6.Tried != 3 {
+				t.Fatalf("modern payload %s, legacy error %v", envelope.Result, oldErr)
+			}
+		} else if oldErr != nil || !bytes.Equal(envelope.Result, oldPayload) {
+			t.Fatalf("legacy payload %s, want %s: %v", envelope.Result, oldPayload, oldErr)
+		}
+	}
+}
+
+func TestPublicEgressParallelBudgetKeepsOtherFamilySuccess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), publicEgressResultReserve+250*time.Millisecond)
+	defer cancel()
+	taskDeadline, _ := ctx.Deadline()
+	v4Started, v6Finished := make(chan struct{}), make(chan struct{})
+	checker := &countingChecker{withContext: func(familyCtx context.Context, family string) protocol.EgressObservation {
+		deadline, ok := familyCtx.Deadline()
+		if !ok || !deadline.Equal(taskDeadline.Add(-publicEgressResultReserve)) {
+			t.Errorf("%s deadline %v vs task %v", family, deadline, taskDeadline)
+		}
+		if family == "ipv4" {
+			close(v4Started)
+			select {
+			case <-v6Finished:
+			case <-familyCtx.Done():
+				t.Error("IPv6 did not run alongside the slow IPv4 check")
+			}
+			<-familyCtx.Done()
+			return protocol.UnknownEgress(family, "timeout")
+		}
+		<-v4Started
+		close(v6Finished)
+		return protocol.EgressObservation{Status: "available", IP: "2606:4700:4700::1111", Reason: "verified"}
+	}}
+	executor := &PublicEgressExecutor{checker: checker}
+	got, err := executor.Execute(ctx, egressJob(time.Now()))
+	if err != nil || !got.Success || got.ErrorCategory != "" || ctx.Err() != nil ||
+		got.Result.PublicEgress.IPv4.Reason != "timeout" || got.Result.PublicEgress.IPv6.Status != "available" {
+		t.Fatalf("got %+v, %v, task error %v", got, err, ctx.Err())
+	}
+	canceled, stop := context.WithCancel(context.Background())
+	stop()
+	executor.checker = &countingChecker{}
+	got, err = executor.Execute(canceled, egressJob(time.Now()))
+	if err != nil || got.Success || got.ErrorCategory != "canceled" {
+		t.Fatalf("parent cancellation: %+v, %v", got, err)
+	}
+}
+
+func TestPublicEgressJobDeadlineIncludesResultSubmission(t *testing.T) {
+	job := egressJob(time.Now())
+	job.TimeoutMS = 250
+	post := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/claim") {
+			writeTestJSON(t, w, job)
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		post <- struct{}{}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+			_, _ = w.Write([]byte(`{"accepted":true,"job_status":"finished"}`))
+		}
+	}))
+	defer server.Close()
+	r := newJobTestRunner(t, server.URL, 3*time.Second, time.Hour, egressTestExecutor(&countingChecker{}))
+	client := jobHTTPClient{baseURL: server.URL, token: r.config.Token, client: r.client}
+	request := protocol.ClaimRequest{ProtocolVersion: protocol.JobProtocolVersion, AgentEpoch: r.epoch,
+		SessionID: r.sessionID, SupportedProbeTypes: []protocol.ProbeType{protocol.ProbeTypePublicEgress}}
+	start := time.Now()
+	if !r.runJobCycle(context.Background(), client, request) || time.Since(start) >= 1500*time.Millisecond {
+		t.Fatalf("result POST escaped the job deadline after %v", time.Since(start))
+	}
+	select {
+	case <-post:
+	default:
+		t.Fatal("the job never attempted to submit its result")
 	}
 }
 

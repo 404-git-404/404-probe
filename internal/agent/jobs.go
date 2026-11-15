@@ -259,6 +259,12 @@ func (r *Runner) runJobCycle(ctx context.Context, client jobHTTPClient, request 
 		return true
 	}
 
+	if job.ProbeType == protocol.ProbeTypePublicEgress {
+		// Keep the result POST inside the same budget as the check.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(job.TimeoutMS)*time.Millisecond)
+		defer cancel()
+	}
 	result := r.executeJob(ctx, *job)
 	r.submitJobResult(ctx, client, job.JobID, result)
 	return true
@@ -378,6 +384,12 @@ func (r *Runner) executeJob(ctx context.Context, job protocol.Job) protocol.JobR
 
 	if err == nil && job.ProbeType == protocol.ProbeTypeGoogleStatus && !r.googleChinaSignalSupported.Load() {
 		googleStatusOlderServerShape(execution.Result.GoogleStatus)
+	}
+	if egressResult := execution.Result.PublicEgress; err == nil && egressResult != nil && !r.publicEgressSitesSupported.Load() {
+		execution.Result.PublicEgress = &protocol.PublicEgressResult{
+			IPv4: strip(egressResult.IPv4, egressResult.IPv4.Family, false),
+			IPv6: strip(egressResult.IPv6, egressResult.IPv6.Family, false),
+		}
 	}
 	if err != nil {
 		category := "executor_error"
