@@ -92,6 +92,19 @@
         "v1.0.10",
         "v1.1.2"
       ]
+    },
+    "v1.2.0": {
+      "commit": "36aa47afdc0c27c81632ab9b7fff4124d62e2cf3",
+      "schema": 37,
+      "previous_version": "v1.1.2",
+      "added_tables": [
+        "agent_youtube_region_manual"
+      ],
+      "removed_tables": [],
+      "generation_chain": [
+        "v1.0.10",
+        "v1.2.0"
+      ]
     }
   }
 }

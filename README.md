@@ -1,26 +1,27 @@
 # 404-probe
 
+> v1.2.1 Stable（只修 bug，没有数据库变化）：Agent 的公网 IP 检测在 ipify 失败时依次改用 icanhazip、Cloudflare（Agent 现在会在需要时访问这三家服务），详情显示检测失败的原因和成功时“来自哪个网站”；只有 IPv4 的机器，IPv6 显示“不可用 · 无路由”；同版本时“升级…”按钮变灰；详情显示 Agent 升级失败的原因。
 > v1.2.0 Stable：新增 Agent **磁盘故障检测**（每分钟在 Agent 数据目录写入并读回一个小文件，盘出错时卡片标红、左侧“需要关注”新增“磁盘异常”）和 **YouTube 地区手动选择**（详情“管理 → YouTube 地区检测”；内置 15 个无广告地区，名单内显示红色，其余有效地区绿色）；面板升级 Agent 的下载改为“持续 60 秒低于 1 KB/s 才算卡住、整个升级任务的下载阶段共用 30 分钟总上限”（从下一次升级开始生效）；修复网络方块和延迟小图悬停提示框被裁掉等问题；安装器续传和卸载清理小改进。**数据库 schema 36 → 37，升级后不能降级。**
 > 支持 Debian 12/13 systemd；Alpine 3.24.x OpenRC 仅支持 Agent 基础功能。
 > 真实网络质量评分、网络状态页仍待后续开发；Alpine 自动升级/回滚、安全观察、远程永久删除尚未提供，未确定发布版本。
-> **本版支持从 v1.1.1、v1.1.2 升级**；更早版本会在改动任何文件之前被安装器拒绝，并提示先升级到 v1.1.1 或 v1.1.2。版本窗口只由安装器保证，手动替换二进制不保证。更早的起点可能需要逐版升级，请先查阅中间版本发布说明中的支持起点。详情见 [v1.2.0 发布说明](RELEASE_NOTES_v1.2.0.md)“升级前必读”。
-> **Agent 升级规则不变：先升级 Server，再从面板升级 Agent；Agent 只能升级到与 Server 完全相同的版本和构建，不能更高、不能回退，回退需重新安装。** Alpine / OpenRC 暂不支持面板升级。升级后请刷新面板。**Server 默认每 12 小时访问一次 `api.github.com` 检查新版本，可在面板 ⚙ 关闭**，见下方“新版本检查与外联”。详情见 [v1.2.0 发布说明](RELEASE_NOTES_v1.2.0.md)。
+> **本版支持从 v1.2.0、v1.1.2 升级**；更早版本（包括 v1.1.1）会在改动任何文件之前被安装器拒绝，并提示先升级到 v1.1.2 或 v1.2.0。版本窗口只由安装器保证，手动替换二进制不保证。更早的起点可能需要逐版升级，请先查阅中间版本发布说明中的支持起点。详情见 [v1.2.1 发布说明](RELEASE_NOTES_v1.2.1.md)“升级前必读”。
+> **Agent 升级规则不变：先升级 Server，再从面板升级 Agent；Agent 只能升级到与 Server 完全相同的版本和构建，不能更高、不能回退，回退需重新安装。** Alpine / OpenRC 暂不支持面板升级。升级后请刷新面板。**Server 默认每 12 小时访问一次 `api.github.com` 检查新版本，可在面板 ⚙ 关闭**，见下方“新版本检查与外联”。详情见 [v1.2.1 发布说明](RELEASE_NOTES_v1.2.1.md)。
 
-## 快速开始：安装与升级到 v1.2.0 Stable
+## 快速开始：安装与升级到 v1.2.1 Stable
 
 在 Debian 12/13 systemd 主机运行以下固定版本命令，按提示选择 Server 或 Agent。已有受支持 Server 会进入升级确认流程；已有 Agent 不会被这个命令自动升级。
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.0/install.sh | sudo PROBE_404_VERSION=v1.2.0 bash
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.1/install.sh | sudo PROBE_404_VERSION=v1.2.1 bash
 ```
 
-无参数入口在新主机显示角色菜单（选择 Server），在已有 Server 上直接进入升级确认；不要追加 `server` 参数。在 root SSH 中可省略 `sudo`，使用 `curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.0/install.sh | PROBE_404_VERSION=v1.2.0 bash`。
+无参数入口在新主机显示角色菜单（选择 Server），在已有 Server 上直接进入升级确认；不要追加 `server` 参数。在 root SSH 中可省略 `sudo`，使用 `curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.1/install.sh | PROBE_404_VERSION=v1.2.1 bash`。
 
 Server 新装需输入公开 HTTPS 地址并设置 Web 管理员密码（默认由安装器生成 43 个字符的随机密码，在终端显示一次，请立即保存；也可以选择自己输入，至少 16 个字符）；反向代理或 Cloudflare Tunnel 由你自行配置，安装器不管理 Tunnel。Agent 新装先在 Server 创建 Agent，复制显示一次的 enrollment 值，然后在 Agent 主机的隐藏提示中粘贴；不要把凭据放进命令、URL 或历史记录。
 
-**现有 Server 升级（支持 v1.1.1、v1.1.2）：**在 Server 主机运行上面的同一命令，确认目标 v1.2.0。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。两个受支持起点均为 schema 36；**本版有新的数据库迁移（schema 36 → 37）**：给 Agent 状态表增加磁盘检测数据，并新增手动 YouTube 地区表。安装器在受保护备份之后执行迁移，并做完整性校验。升级后不能降级回旧版本；恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。更早的 Server 或数据库会在停服务、备份之前被拒绝，请先用对应官方 release 的安装器升级到 v1.1.1 或 v1.1.2；绕过安装器手动替换二进制不受上述版本窗口的保证。更早的起点可能需要逐版升级，请先查阅中间版本发布说明中的支持起点。
+**现有 Server 升级（支持 v1.2.0、v1.1.2）：**在 Server 主机运行上面的同一命令，确认目标 v1.2.1。安装器先验证官方 installer、metadata、校验清单、候选身份、数据库与可用空间，再停止服务；保留配置、凭据、数据库、监听/域名设置及服务状态，并建立受保护的一致性备份与失败恢复事务。起点 v1.2.0 的数据库是 schema 37，v1.1.2 是 schema 36；**本版没有新的数据库迁移**：从 v1.2.0 升级时 schema 保持 37，从 v1.1.2 升级时会执行 v1.2.0 引入的 schema 36 → 37 迁移（给 Agent 状态表增加磁盘检测数据，并新增手动 YouTube 地区表）。安装器在受保护备份之后执行迁移，并做完整性校验。升级后不能降级回旧版本；恢复旧 Server 必须同时恢复匹配的一致性数据库备份，不要直接换回旧二进制。更早的 Server 或数据库会在停服务、备份之前被拒绝，请先用对应官方 release 的安装器升级到 v1.1.2 或 v1.2.0；绕过安装器手动替换二进制不受上述版本窗口的保证。更早的起点可能需要逐版升级，请先查阅中间版本发布说明中的支持起点。
 
-**现有 Agent，且 Updater 正常：**先升级 Server，再登录 Web，打开设备管理中的升级操作。唯一目标与当前 Server 的版本及构建完全相同；只有更低版本的 Agent 可以升级，同版本显示“已是最新版本”，更高版本禁止回退，回退需重新安装。Server 为 RC/Beta 时仍需在当前单台 Agent 操作中显式确认，并保留原有能力门禁。仅在线、未暂停/撤销、具有所需 updater 能力的受支持 Agent 可执行；逐台核对健康版本上报，失败由 updater 恢复升级前安装。打开对话框不再连接 GitHub；实际升级仍需 Updater 下载并验证对应的正式发布资产。Web 路径只替换 Agent 二进制，不安装新的 root helper。v1.1.0 不再提供 v1.0.1 时代的本地迁移入口 `upgrade-agent`。对于 v1.0.1 及更早、未具备 V2 升级能力的 Agent，若面板因升级服务或升级协议条件禁用升级，会提示在机器上重新安装；其他情况以面板具体提示为准。旧 Agent 的监控上报仍兼容，本版不做最低 Agent 版本拒绝。当 Agent 明确报告当前系统不支持面板升级时（例如本次验证的 Alpine v1.0.10），详情只显示“不支持从面板升级”的说明；更早且未报告升级服务健康的 Agent 可能显示含 Alpine/OpenRC 提醒的通用排查文案，监控上报不受影响。本版起 Updater 下载改为“持续 60 秒低于 1 KB/s 才算卡住、整个升级任务的下载阶段共用 30 分钟总上限”。从 v1.1.x 升到 v1.2.0 时，旧版 Updater 仍按单次请求 2 分钟、下载阶段合计 3 分钟执行。下载超时后，Agent 会继续运行原版本，可以稍后从面板重试。v1.2.0 Updater 的新下载规则从下一次升级生效。
+**现有 Agent，且 Updater 正常：**先升级 Server，再登录 Web，打开设备管理中的升级操作。唯一目标与当前 Server 的版本及构建完全相同；只有更低版本的 Agent 可以升级，同版本显示“这台机器已与面板版本相同，无需升级”且“升级…”按钮变灰，更高版本禁止回退，回退需重新安装。Server 为 RC/Beta 时仍需在当前单台 Agent 操作中显式确认，并保留原有能力门禁。仅在线、未暂停/撤销、具有所需 updater 能力的受支持 Agent 可执行；逐台核对健康版本上报，失败由 updater 恢复升级前安装。打开对话框不再连接 GitHub；实际升级仍需 Updater 下载并验证对应的正式发布资产。Web 路径只替换 Agent 二进制，不安装新的 root helper。v1.1.0 不再提供 v1.0.1 时代的本地迁移入口 `upgrade-agent`。对于 v1.0.1 及更早、未具备 V2 升级能力的 Agent，若面板因升级服务或升级协议条件禁用升级，会提示在机器上重新安装；其他情况以面板具体提示为准。旧 Agent 的监控上报仍兼容，本版不做最低 Agent 版本拒绝。当 Agent 明确报告当前系统不支持面板升级时（例如本次验证的 Alpine v1.0.10），详情只显示“不支持从面板升级”的说明；更早且未报告升级服务健康的 Agent 可能显示含 Alpine/OpenRC 提醒的通用排查文案，监控上报不受影响。本版起 Updater 下载改为“持续 60 秒低于 1 KB/s 才算卡住、整个升级任务的下载阶段共用 30 分钟总上限”。从 v1.1.2 的 Agent 升到 v1.2.1 时，执行升级的仍是旧版 Updater，按单次请求 2 分钟、下载阶段合计 3 分钟执行；从 v1.2.0 的 Agent 升到 v1.2.1 时已使用新规则。下载超时后，Agent 会继续运行原版本，可以稍后从面板重试。
 
 ### 网络慢时的升级办法
 
@@ -40,12 +41,12 @@ GitHub 下载较慢时，可先准备本地资产，再在目标主机运行安�
 
 已有正常 Stable Updater 的 Agent 使用 Web 升级。Alpine 自动升级尚未提供，未确定发布版本，不要在现有 Alpine Agent 上把新装命令当作升级命令。
 
-Alpine 3.24.x 新装仅选 Agent，并须预先具备完整 OpenRC 启动环境和 Bash、GNU coreutils/tar、util-linux、shadow、curl、CA；以 root 运行固定版本 installer。v1.2.0 不提供 Alpine Server，也不提供已装 Alpine Agent 的自动升级、安全观察或远程永久删除。
+Alpine 3.24.x 新装仅选 Agent，并须预先具备完整 OpenRC 启动环境和 Bash、GNU coreutils/tar、util-linux、shadow、curl、CA；以 root 运行固定版本 installer。v1.2.1 不提供 Alpine Server，也不提供已装 Alpine Agent 的自动升级、安全观察或远程永久删除。
 
 在满足上述条件的 Alpine 新主机上，以 root 执行（替换 Server HTTPS 地址，凭据仍在隐藏提示输入）：
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.0/install.sh | PROBE_404_VERSION=v1.2.0 bash -s -- agent --server 'https://probe.example.com'
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.1/install.sh | PROBE_404_VERSION=v1.2.1 bash -s -- agent --server 'https://probe.example.com'
 ```
 
 ### 新版本检查与外联
@@ -174,11 +175,11 @@ change to the selected device set rebuilds the affected baseline and reports
 that metric as unknown. CPU and disk baselines are independent, so an unavailable
 disk topology does not suppress CPU steal (and vice versa). Older Agents omit the
 fields and remain compatible. These fields were introduced with schema 24;
-the current v1.2.0 Server upgrades only from v1.1.1 or v1.1.2 (both schema 36;
-v1.2.0 adds the schema 37 migration). Preserve the protected upgrade backup and do not directly
+the current v1.2.1 Server upgrades only from v1.2.0 or v1.1.2 (schema 37 and 36;
+v1.2.1 adds no migration, the schema 37 migration came with v1.2.0). Preserve the protected upgrade backup and do not directly
 downgrade the migrated database.
 
-## 历史升级说明：V0.9（不是当前 v1.2.0 命令）
+## 历史升级说明：V0.9（不是当前 v1.2.1 命令）
 
 V0.9 adds local sing-box REALITY security observability. A root-only, fixed-purpose daily systemd oneshot reads only `sing-box.service` journal JSON, stores its cursor and private outbox under `/var/lib/404-probe-security/private`, and exports bounded aggregate batches under `/var/lib/404-probe-security/export`. The normal locked `404-probe` Agent can read those aggregates but cannot read the private cursor/outbox, write the export, invoke arbitrary journal queries, or perform firewall/ban actions. It uploads only canonical source IP, counts, time bounds, and typed classifications; raw journal messages and ports never leave the host.
 
@@ -295,10 +296,10 @@ Uninstall is intentionally destructive in v1.0: it shows the exact role and requ
 The installed helper removes itself last. To retry after an interrupted or completed uninstall, use the official version-pinned entry point; the command is idempotent:
 
 ```bash
-curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.0/install.sh | sudo PROBE_404_VERSION=v1.2.0 bash -s -- uninstall agent --confirm-delete-data
+curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.2.1/install.sh | sudo PROBE_404_VERSION=v1.2.1 bash -s -- uninstall agent --confirm-delete-data
 ```
 
-Replace `agent` with `server` for the Server role. From v1.2.0, Server uninstall also removes `update-check.json` (the new-version check setting) and its `.update-check-*.tmp` files from the default state directory; a cache left behind by an older installer can be removed by running the v1.2.0 uninstall again; see [docs/update-check-operations.md](docs/update-check-operations.md). Local uninstall does not contact the Server or remove the Agent's Server-side telemetry; Web “permanent delete” is a separate tracked v1.0 operation.
+Replace `agent` with `server` for the Server role. From v1.2.0, Server uninstall also removes `update-check.json` (the new-version check setting) and its `.update-check-*.tmp` files from the default state directory; a cache left behind by an older installer can be removed by running the v1.2.0 or later uninstall again; see [docs/update-check-operations.md](docs/update-check-operations.md). Local uninstall does not contact the Server or remove the Agent's Server-side telemetry; Web “permanent delete” is a separate tracked v1.0 operation.
 
 All Web mutations require an authenticated Web session, the full canonical Origin admitted for the current request (with exact scheme, host, and effective port), `Sec-Fetch-Site: same-origin`, and the session CSRF token. Requests use bounded strict JSON bodies and no-store responses. The browser never receives the Control token.
 
