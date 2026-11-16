@@ -130,6 +130,27 @@ func TestReportAdvertisesNetworkCounterCapability(t *testing.T) {
 	}
 }
 
+func TestReportAdvertisesPublicEgressSites(t *testing.T) {
+	app, store, id, token := testApp(t)
+	defer store.Close()
+	response := postReport(t, app, token, reportFor(id, 1))
+	if response.Code != http.StatusOK {
+		t.Fatalf("report status=%d body=%s", response.Code, response.Body.String())
+	}
+	var decoded struct {
+		Accepted     bool `json:"accepted"`
+		Capabilities struct {
+			PublicEgressSites bool `json:"public_egress_sites"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Accepted || !decoded.Capabilities.PublicEgressSites {
+		t.Fatalf("accepted report must advertise capabilities.public_egress_sites: %s", response.Body.String())
+	}
+}
+
 func TestReportRevocationHasStableMachineSignal(t *testing.T) {
 	app, store, id, token := testApp(t)
 	defer store.Close()
