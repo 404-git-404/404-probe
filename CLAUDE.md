@@ -24,9 +24,11 @@ go test ./... -count=1
 - Linux 全仓测试必须在 IPv6 回环（`::1`）可用的机器上跑；禁用了 IPv6 的机器上，`internal/agent`、`internal/egress` 的 IPv6 用例会因为绑定不上 `[::1]` 而失败，这是环境限制，不是回归，要换机验证，并如实保留原机器的首次失败。
 - Linux 上的既有偶发失败：`internal/egress` 的 `TestM10HTTPSFailureClassification/body_timeout_after_headers` 可能把预期的 `timeout` 判为 `invalid_response`。v1.0.7 发布前首次全量曾失败；同机定向 50 轮对照中 v1.0.6 失败 1 次、v1.0.7 为 0 次，随后 v1.0.7 包级和全量复测通过。维护者据此按既有偶发处理，不视为本次回归；50 轮不能证明两版失败率完全相同。遇到时如实保留首次失败及复测结果，不把复测通过写成首次通过。
 - `cmd/server` 的 `TestDatabaseCommandUsesTheTimeoutFlag`（1 ns 超时，属于时间竞争）有偶发失败，登记为既有偶发：v1.1.0 修复轮在干净克隆里对基准提交 421fd12 与当时的修复提交各跑 100 次：基准 98 过 2 败、当前 100 过 0 败；此前各 20 次的一轮是基准 20 过 0 败、当前 19 过 1 败；该测试涉及的代码（`cmd/server`、整个 `internal/storage`、`go.mod`/`go.sum`）在对照范围内无改动，不视为回归。遇到时如实保留首次失败，单独重跑该用例，不能把重跑通过写成首次通过；100 次不能证明两边失败率完全相同。
-- `scripts/test-p1-agent-state.cjs`、`scripts/test-p2c-google-ui.cjs`、`scripts/test-n3-network-quality.cjs`（19 过 4 败，v1.0.3 上相同）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.0.2 上相同，不是回归。`scripts/test-p4b2-traffic-chart.cjs`（8 过 7 败）和 `scripts/test-p5a2-device-details.cjs`（3 败）同样是基线失败，v1.0.3 上相同。
-- `scripts/test-m02-real-chain.cjs`：R37 将旧 radio 操作改为 `selectOption` 后，受控真实链路实测由改前 0 过 6 败变为 5 过 1 败；切换、刷新/重启持久化、目标拒绝和请求校验均通过。剩余 R33 的 30 轮滚动/焦点检查在改前也失败（关闭后 `Control+Home` 等待 150ms 时滚动位置未稳定为 0）；本轮 `pageerror` 为空，不归因为 `latency-mini.js` 未加载。保留为旧套件基线失败，首次结果和改前/改后计数照实报告。
-- `scripts/test-agent-upgrade-systemd.sh` 可以使用（R04 已参数化）：`sudo bash scripts/test-agent-upgrade-systemd.sh <起始版本> <目标版本> <起始资产目录> <目标资产目录> <源码 git 目录> <go 路径>`，在隔离的 systemd 环境里演练一次 Agent 升级（官方起始 Agent → 目标 Server → 受控 updater → 官方目标 Agent）。**只接受正式版本号**（`vX.Y.Z`），不支持 beta/rc、同版本覆盖和降级；两个资产目录各需 `build-release-assets.sh` 输出的 7 个文件；只在 Linux amd64/arm64 且有 root 的机器上运行。它不覆盖官方 updater 本身、Web 操作入口和 GitHub release 的可用性发现，这些由 Web 升级真机验证补上。
+- `internal/updater` 的 `TestEngineHealthTimeoutRollsBack`（v1.2.0 起的测试时序问题：先写 rolled_back 状态、后删 candidate）有偶发失败，登记为既有偶发；遇到时单独重跑一次并如实记录首次失败，不把重跑通过写成首次通过。
+- `-race` 全仓的耗时很长：`internal/storage` 约 34 分钟、`internal/server` 约 21 分钟（测试 Server 上），必须显式带 `-timeout=60m` 以上，并预留 40 分钟以上。
+- `scripts/test-p1-agent-state.cjs`（24 过 51 败）、`scripts/test-p2c-google-ui.cjs`（3 过 2 败）、`scripts/test-n3-network-quality.cjs`（10 过 4 败）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.2.1 发布时对照确认，不是回归。`scripts/test-p4b2-traffic-chart.cjs`（8 过 7 败）同样是基线失败，v1.0.3 上相同；`scripts/test-p5a2-device-details.cjs` 已不再是基线失败（v1.2.1 为 13 过 0 败）。
+- `scripts/test-m02-real-chain.cjs`：R37 将旧 radio 操作改为 `selectOption` 后，受控真实链路实测由改前 0 过 6 败变为 5 过 1 败；切换、刷新/重启持久化、目标拒绝和请求校验均通过。剩余 R33 的 30 轮滚动/焦点检查在改前也失败（关闭后 `Control+Home` 等待 150ms 时滚动位置未稳定为 0）；本轮 `pageerror` 为空，不归因为 `latency-mini.js` 未加载。保留为旧套件基线失败，首次结果和改前/改后计数照实报告；v1.2.1 发布时为 6 过 1 败（仍是同一项 R33）。
+- `scripts/test-agent-upgrade-systemd.sh` 可以使用（R04 已参数化）：`sudo bash scripts/test-agent-upgrade-systemd.sh <起始版本> <目标版本> <起始资产目录> <目标资产目录> <源码 git 目录> <go 路径>`，在隔离的 systemd 环境里演练一次 Agent 升级（官方起始 Agent → 目标 Server → 受控 updater → 官方目标 Agent）。**只接受正式版本号**（`vX.Y.Z`），不支持 beta/rc、同版本覆盖和降级；两个资产目录各需 `build-release-assets.sh` 输出的 7 个文件；只在 Linux amd64/arm64 且有 root 的机器上运行。它不覆盖官方 updater 本身、Web 操作入口和 GitHub release 的可用性发现，这些由 Web 升级真机验证补上。v1.2.1 起的新用法和提醒：演练用同 uid / gid 与不同身份对照 Agent 健康上报（同身份应报 healthy，只同组应 unreachable，身份不符应 identity_mismatch）；资产目录里的文件要有可执行权限，所有路径写绝对路径且不含空格；演练被 SIGTERM 打断后，清理约 80 秒才完成，别在清理中途再起一轮。
 - 文档、说明和提交信息用中文或英文均可，提交信息采用 `type(scope): subject`，作者邮箱用 `305518817+404-git-404@users.noreply.github.com`。
 
 ## 换行（务必保持 LF）
@@ -102,8 +104,9 @@ go test ./... -count=1
 5. **推送顺序：** 推送和 gh 操作需要维护者授权，可以在任务书里一次性授权。任务书必须写明哪些情况一定要停下来问，至少包括：结果与预期不符、升级失败、需要维护者操作面板或输入密码。
    1. 把发布分支 `release/vX.Y.Z` 推到远端。每个版本使用独立的发布分支，从 `dev/vX.Y.Z` 上已验收的提交拉出（`dev` 本身从 `main` 拉出，包含该版本的全部开发提交；`main` 只包含已正式发布的版本，所以不能直接从 `main` 拉，否则会漏掉开发提交）；tag 打在该分支的发布提交上。旧分支 `codex/v1.0.1-m01` 不再使用，暂时保留，因为 v1.0.1–v1.0.3 的 tag 在它上面。
    2. 对发布提交打**带注释**的 tag `vX.Y.Z`，只推这个 tag。
-   3. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file <说明文件> --latest=false`，附上这 7 个文件。说明文件 = `RELEASE_NOTES_vX.Y.Z.md` 全文 + 一行 `SHA256SUMS` 的 SHA-256（从最终产物计算，不手抄；摘要不能提前写进发布准备提交里的文件，因为 `SHA256SUMS` 来自这个提交的构建）。**首次公开的正文可以是经 B 段复查的修订稿，tag 里的说明文件保持原样，main 上的文件在发布后文档提交里同步**（v1.2.0 起的做法，维护者 2026-11-13 决定）。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
-   4. **核对清单：GitHub release 说明里公布的 `SHA256SUMS` 摘要 = 最终上传的 `SHA256SUMS` 文件的 SHA-256**：把 7 件资产下载回来逐个比对 SHA256，并用下载回来的 `SHA256SUMS` 重新计算摘要，与说明里公布的值逐字符比对；不符就按失败处理（见本条第 6 点）。
+   - **推送遇到传输层失败（例如“连接被重置”）时**：先用 `git ls-remote` 确认远端没有任何变化，没有变化就可以把同一条已授权的命令原样重试一次，并把首次失败和重试写进报告；远端状态不明（查询失败、分支或 tag 指向与预期不符）就停下报告，不重试、不强推。
+   3. `gh release create vX.Y.Z --verify-tag --title "vX.Y.Z" --notes-file <说明文件> --latest=false`，附上这 7 个文件。说明文件只有 3 行（v1.2.1 起的做法）：“支持从 vA、vB 升级。”；“完整说明：”加 tag 里 `RELEASE_NOTES_vX.Y.Z.md` 的完整 URL（`https://github.com/404-git-404/404-probe/blob/vX.Y.Z/RELEASE_NOTES_vX.Y.Z.md`）；“SHA256SUMS 的 SHA-256：<摘要>”（从最终产物计算，不手抄；摘要不能提前写进发布准备提交里的文件，因为 `SHA256SUMS` 来自这个提交的构建）。完整说明留在仓库的 `RELEASE_NOTES_vX.Y.Z.md`，tag 里的该文件保持原样，main 上的文件在发布后文档提交里补上摘要。不要用 `--prerelease`、`--draft`、`--generate-notes`，也不要让 `gh` 自己建 tag。
+   4. **核对清单：GitHub release 说明里公布的 `SHA256SUMS` 摘要 = 最终上传的 `SHA256SUMS` 文件的 SHA-256**：把 7 件资产下载回来逐个比对 SHA256，并用下载回来的 `SHA256SUMS` 重新计算摘要，与 release 正文第 3 行公布的值逐字符比对（用 `gh release view … --json body` 取 `body` 字符串后做 ordinal 比较，并核对正文与 `--notes-file` 文件一致）；不符就按失败处理（见本条第 6 点）。
    5. 在运行同一提交的测试 Server 上，对旧版本的测试 Agent 做 Web 升级。**升级前后各记录一次状态快照并对比（R05）**：升级前 `python3 -I scripts/agent-state-snapshot.py collect --label before --out <仓库外目录> <测试 Agent 的 SSH 别名…>`，升级后 `--label after`，再 `python3 -I scripts/agent-state-snapshot.py compare <目录> before after`。快照只读采集版本、二进制哈希、`agent.env` 的各项设置（密钥只记“已设置/为空”）、每个 systemd 单元（含 drop-in）或 OpenRC 脚本的哈希、实际生效的沙箱选项、服务状态；版本、二进制哈希、进程是升级预期会变的，其他任何差异（单元文件、沙箱、设置、权限、服务不再运行）都要查清，命令退出码为 1。快照放在仓库外（例如 `release-records` 的版本目录），不提交。
    6. 成功后 `gh release edit vX.Y.Z --latest`；失败则改回草稿（`--draft=true`），不删除 release 或 tag，也不重新上传不同字节。
    7. 说明文件的后续修改在 tag 之后单独提交并推送（包括把 `SHA256SUMS` 摘要补进 `RELEASE_NOTES_vX.Y.Z.md`；只改 main，不影响 tag）。
@@ -126,11 +129,10 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
 
 ## 测试机
 
-登记 5 台测试机，当前可用 4 台（东京 512M 不再使用；DE、FR、NL 三台 Podman 已退役，不再登记），具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
+登记 3 台测试机（Alpine 2 台已于 2026-11-14 退役；东京 512M 不再使用；DE、FR、NL 三台 Podman 已退役，不再登记），具体 SSH 别名和对应角色见本地的 `CLAUDE.local.md`（该文件被 `.gitignore` 忽略，不提交；换了电脑需要重新创建）。**它们都是纯测试机，可以随意卸载、删数据、重装**：
 
-- 1 台 Debian 12，作 Server。
-- 2 台 Debian Agent（Debian 12 和 Debian 13）。
-- 2 台 Alpine 3.24 Agent（OpenRC），**都是容器**（能力受限，例如没有 CAP_NET_RAW，ICMP 会被报告为不可用）。OpenRC 路径没有 systemd 沙箱：安装器的 `sandbox_prepare` 在 OpenRC 下直接返回，只有 systemd 路径才调用 `sandbox_probe`，后者现在只由 `scripts/test-install-sandbox.sh` 覆盖（原来由已退役的 Debian Podman 做过真机验证）：一台 128 MiB 内存（arm64，cgroup 限制，用来验证内存是否稳定），另一台东京 512 MiB（SSH 经常超时，**不再使用**）。
+- 只测 Debian 13（正式环境也是 Debian 13 + amd64）：1 台 Server + 2 台 Agent，其中一台只有 IPv4，另一台 IPv4 + IPv6。
+- 不再测试 Debian 12 和 Alpine（安装器不改，仍能装；只是不再测试）；arm64 照常发布，但未经真机测试。`sandbox_probe` 只由 `scripts/test-install-sandbox.sh` 覆盖。
 
 使用规则：
 - 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；改防火墙、重启机器要先问。**测试必需的工具（例如 bubblewrap、strace）可以直接在登记的测试机上安装：只限登记的测试机，只用系统官方软件源，装了什么写进报告；正式环境一律不装。**（维护者 2026-11-13 决定；其他系统软件仍要先问。）
@@ -142,7 +144,7 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
   - 安装结束后（无论成功失败），删除 Server 和目标机上的 token 文件。
 - Server 只监听 `127.0.0.1:8080`；Agent 用 HTTP 回环地址接入时，通过 `ssh -R 18080:127.0.0.1:8080` 反向隧道（Web 页面用 `ssh -L 8080:127.0.0.1:8080` 本地转发），Agent 的 `--server` 填 `http://127.0.0.1:18080`。这只是测试用法，线上应使用 HTTPS 地址。验证结束后要关闭隧道。
 - 不要把主机名之外的连接信息（IP、密钥）、密码、token 写进仓库、说明、文档或提交。第三方页面的原始抓取（例如 YouTube 页面）只保留脱敏后的最小样本，使用后删除原始文件。
-- Alpine 只支持 Agent，不提供 Server 和自动升级；新装前先确认 OpenRC 已完整启动，工具为 GNU 版本；不要把产物放在 `/tmp`（tmpfs 占内存）。
+- Alpine 只支持 Agent，不提供 Server 和自动升级，且不再测试；若要手动验证，新装前先确认 OpenRC 已完整启动，工具为 GNU 版本；不要把产物放在 `/tmp`（tmpfs 占内存）。
 
 ## 开发方式（v1.0.8 起）
 
