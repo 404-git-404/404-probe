@@ -1046,6 +1046,8 @@ download_binary() (
 render_local_helper() {
   printf '#!/usr/bin/env bash\n'
   render_platform_functions
+  declare -f acquire_server_operation_lock write_private_file generate_token run_web_password_hasher \
+    tty_write tty_read tty_read_secret utf8_length utf8_valid obtain_web_password_hash
   cat <<'HELPER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -1094,7 +1096,7 @@ server_residue_exists() {
   return 1
 }
 usage() {
-  printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data] | recover-agent-removal\n'
+  printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | web-password reset | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data] | recover-agent-removal\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
@@ -1608,14 +1610,39 @@ setup_security() {
   printf '404-probe local security audit is enabled.\n'
 }
 
+reset_web_password() (
+  set +ax
+  [[ $# -eq 1 && "$1" == reset ]] || die "usage: 404-probe-install web-password reset"
+  local hash_file="${CONFIG_DIRECTORY}/web-password.hash" hash
+  [[ -f "${SERVER_BINARY}" && ! -L "${SERVER_BINARY}" \
+    && "$(stat -c '%U:%G:%a' "${SERVER_BINARY}")" == 'root:root:755' \
+    && -d "${CONFIG_DIRECTORY}" && ! -L "${CONFIG_DIRECTORY}" \
+    && "$(stat -c '%U:%G:%a' "${CONFIG_DIRECTORY}")" == "root:${SERVICE_USER}:750" \
+    && -f "${hash_file}" && ! -L "${hash_file}" ]] || die "a safe existing Server installation was not found"
+  command -v runuser >/dev/null || die "runuser is required"
+  acquire_server_operation_lock
+  [[ ! -e "${SERVER_UPGRADE_DIRECTORY}/pending" ]] || die "recover the pending Server upgrade before resetting the Web password"
+  runuser -u "${SERVICE_USER}" -- test -f "${SERVER_DATABASE}" \
+    && runuser -u "${SERVICE_USER}" -- test ! -L "${SERVER_DATABASE}" \
+    || die "a safe existing Server database was not found"
+  hash="$(obtain_web_password_hash)" || die "Web password setup failed"
+  write_private_file "${hash_file}" "${hash}" || die "could not replace the Web password hash file"
+  unset hash
+  if ! runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" web-credential adopt --db "${SERVER_DATABASE}" --hash-file "${hash_file}"; then
+    die "password file replaced, but the running Server could not adopt it; restart 404-probe-server.service to apply it"
+  fi
+  printf 'Web administrator password reset. All existing Web sessions have been signed out.\n'
+)
+
 reject_deferred_command_on_host "${1:-}"
 require_root
-case "${1:-}" in setup-security|finalize-agent-removal-account|recover-agent-removal) reject_openrc_deferred "${1}" ;; esac
+case "${1:-}" in setup-security|web-password|finalize-agent-removal-account|recover-agent-removal) reject_openrc_deferred "${1}" ;; esac
 case "${1:-}" in
   -h|--help|help) usage ;;
   enroll) shift; enroll "$@" ;;
   oneclick-token) shift; oneclick_token "$@" ;;
   domains) shift; domains "$@" ;;
+  web-password) shift; reset_web_password "$@" ;;
   selector-order) shift; selector_order "$@" ;;
   setup-security) shift; setup_security "$@" ;;
   uninstall) shift; uninstall "$@" ;;
@@ -1649,16 +1676,16 @@ write_private_file() (
   local path="$1"
   local value="$2"
   local temporary_file
-  temporary_file="$(mktemp "${CONFIG_DIRECTORY}/.404-probe.XXXXXX")"
+  temporary_file="$(mktemp "${CONFIG_DIRECTORY}/.404-probe.XXXXXX")" || exit 1
   trap 'rm -f -- "${temporary_file}"' EXIT
-  chmod 0600 "${temporary_file}"
-  printf '%s\n' "${value}" >"${temporary_file}"
+  chmod 0600 "${temporary_file}" || exit 1
+  printf '%s\n' "${value}" >"${temporary_file}" || exit 1
   if [[ "${INSTALL_INIT:-systemd}" == openrc && "${path}" != "${CONFIG_DIRECTORY}/control.token" && "${path}" != "${CONFIG_DIRECTORY}/web-password.hash" ]]; then
-    chown "root:${SERVICE_USER}" "${temporary_file}"
-    chmod 0640 "${temporary_file}"
+    chown "root:${SERVICE_USER}" "${temporary_file}" || exit 1
+    chmod 0640 "${temporary_file}" || exit 1
   else
-    chown "${SERVICE_USER}:${SERVICE_USER}" "${temporary_file}"
-    chmod 0400 "${temporary_file}"
+    chown "${SERVICE_USER}:${SERVICE_USER}" "${temporary_file}" || exit 1
+    chmod 0400 "${temporary_file}" || exit 1
   fi
   mv -f -- "${temporary_file}" "${path}"
 )
@@ -1710,7 +1737,8 @@ utf8_valid() {
 # Prints the Argon2id hash for the Web administrator password. The password only ever travels on
 # the hasher's stdin (never an argument or environment variable) and is never written to a file.
 obtain_web_password_hash() {
-  local choice password confirmation hash attempt acknowledge
+  local choice hash attempt acknowledge
+  local +x password confirmation
   tty_write $'Web administrator password:\n  [1] Generate a random password (default)\n  [2] Enter my own (at least 16 characters)\nChoice [1]: '
   tty_read choice
   choice="${choice:-1}"
@@ -1718,7 +1746,7 @@ obtain_web_password_hash() {
     1)
       password="$(generate_token)"
       [[ "${#password}" -eq 43 ]] || die "could not generate the Web administrator password"
-      hash="$(printf '%s\n' "${password}" | run_web_password_hasher)" || die "Web password setup failed"
+      hash="$(printf '%s' "${password}" | run_web_password_hasher)" || die "Web password setup failed"
       tty_write $'\nYour administrator password (shown only once, save it now; it cannot be shown again):\n\n  '"${password}"$'\n\nPress Enter after you have saved it. '
       tty_read acknowledge
       tty_write $'\n'
@@ -1748,7 +1776,10 @@ obtain_web_password_hash() {
           tty_write $'The passwords do not match.\n'
           continue
         fi
-        hash="$(printf '%s\n' "${password}" | run_web_password_hasher)" || die "Web password setup failed"
+        if ! hash="$(printf '%s' "${password}" | run_web_password_hasher)"; then
+          tty_write $'The password must be at most 1024 bytes and contain no control characters.\n'
+          continue
+        fi
         break
       done
       [[ -n "${hash}" ]] || die "Web password setup failed: no valid password was entered"
@@ -3603,6 +3634,25 @@ server_upgrade_trap() {
   exit "${status}"
 }
 
+acquire_server_operation_lock() {
+  if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
+    [[ -d "${SERVER_UPGRADE_LOCK_DIRECTORY}" && ! -L "${SERVER_UPGRADE_LOCK_DIRECTORY}" \
+      && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK_DIRECTORY}")" == "root:root:700" ]] \
+      || die "Server upgrade lock directory is unsafe"
+  else
+    install -d -m 0700 -o root -g root "${SERVER_UPGRADE_LOCK_DIRECTORY}"
+  fi
+  if [[ ! -e "${SERVER_UPGRADE_LOCK}" && ! -L "${SERVER_UPGRADE_LOCK}" ]]; then
+    (umask 077; set -C; : >"${SERVER_UPGRADE_LOCK}") 2>/dev/null || [[ -f "${SERVER_UPGRADE_LOCK}" ]] \
+      || die "could not create the Server upgrade lock"
+  fi
+  [[ -f "${SERVER_UPGRADE_LOCK}" && ! -L "${SERVER_UPGRADE_LOCK}" \
+    && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK}")" == "root:root:600" ]] \
+    || die "Server upgrade lock file is unsafe"
+  exec 9<>"${SERVER_UPGRADE_LOCK}"
+  flock -n 9 || die "another Server upgrade or Web password reset is already running"
+}
+
 upgrade_existing_server() (
   reject_openrc_deferred Server-upgrade
   local target current comparison active=0 enabled=0 helper_existed=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
@@ -3615,22 +3665,7 @@ upgrade_existing_server() (
     current="$(identify_installed_server_version)" || exit 1
     require_supported_server_version "${current}"
   fi
-  if [[ -e "${SERVER_UPGRADE_LOCK_DIRECTORY}" ]]; then
-    [[ -d "${SERVER_UPGRADE_LOCK_DIRECTORY}" && ! -L "${SERVER_UPGRADE_LOCK_DIRECTORY}" \
-      && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK_DIRECTORY}")" == "root:root:700" ]] \
-      || die "Server upgrade lock directory is unsafe"
-  else
-    install -d -m 0700 -o root -g root "${SERVER_UPGRADE_LOCK_DIRECTORY}"
-  fi
-  if [[ -e "${SERVER_UPGRADE_LOCK}" ]]; then
-    [[ -f "${SERVER_UPGRADE_LOCK}" && ! -L "${SERVER_UPGRADE_LOCK}" \
-      && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_LOCK}")" == "root:root:600" ]] \
-      || die "Server upgrade lock file is unsafe"
-  else
-    install -m 0600 -o root -g root /dev/null "${SERVER_UPGRADE_LOCK}"
-  fi
-  exec 9<>"${SERVER_UPGRADE_LOCK}"
-  flock -n 9 || die "another Server upgrade is already running"
+  acquire_server_operation_lock
   trap 'rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"' EXIT
   if [[ -e "${SERVER_UPGRADE_DIRECTORY}" ]]; then
     [[ -d "${SERVER_UPGRADE_DIRECTORY}" && ! -L "${SERVER_UPGRADE_DIRECTORY}" \

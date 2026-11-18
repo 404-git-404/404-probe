@@ -475,7 +475,10 @@ def proof_environment(env):
 def selected_profile(opts, repo):
     # Only an explicit launcher choice or this exact registered harness selects
     # multi-user execution. Environment variables never select capabilities.
-    if opts.script and Path(opts.script).resolve() == repo / 'scripts/test-selector-order-existing.sh':
+    if opts.script and Path(opts.script).resolve() in {
+        repo / 'scripts/test-selector-order-existing.sh',
+        repo / 'scripts/test-install-web-password-reset.sh',
+    }:
         return 'multiuser'
     return getattr(opts, 'profile', 'default')
 

@@ -610,6 +610,7 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer keepalive.Stop()
 	var sessionTimer *time.Timer
 	var sessionExpiry <-chan time.Time
+	var sessionPolicyCheck <-chan time.Time
 	if session != nil && a.webAuth != nil {
 		deadline := a.webAuth.sessionDeadline(session)
 		delay := deadline.Sub(a.now())
@@ -619,9 +620,12 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		sessionTimer = time.NewTimer(delay)
 		sessionExpiry = sessionTimer.C
 		defer sessionTimer.Stop()
+		policyTicker := time.NewTicker(3 * time.Second)
+		sessionPolicyCheck = policyTicker.C
+		defer policyTicker.Stop()
 	}
 
-	// Domain-policy tightening may take up to three seconds to close this SSE.
+	// Domain and credential revisions are rechecked even on an idle stream.
 	// Session revocation and expiry still use their immediate channels below.
 	var originChecked time.Time
 	originAllowed := func() bool {
@@ -646,7 +650,7 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-sessionExpiry:
-			deadline, active := a.webAuth.sessionStillActive(session, a.now())
+			deadline, active := a.webAuth.sessionStillActive(r.Context(), session, a.now())
 			if !active {
 				return
 			}
@@ -655,6 +659,12 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 				delay = 0
 			}
 			sessionTimer.Reset(delay)
+		case <-sessionPolicyCheck:
+			if !a.webAuth.sessionOriginAllowed(r.Context(), session) {
+				a.webAuth.revokeSession(session)
+				return
+			}
+			originChecked = a.now()
 		case <-sessionDone(session):
 			return
 		case message, open := <-ch:

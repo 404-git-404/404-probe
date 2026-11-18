@@ -26,8 +26,9 @@ const (
 	webLoginTokenTTL          = 10 * time.Minute
 	webLoginTokenLimit        = 128
 	webLoginBodyBytes         = 2 << 10
-	// At most this many password hashes run at once. A wrong password never locks anything: the
-	// only protection besides a strong password is this cap, which keeps the CPU from being filled.
+	// Form encoding can use three bytes per password byte plus the CSRF field.
+	webLoginFormBytes = 3*auth.WebPasswordMaxBytes + 128
+	// Login never locks out. Login and password changes share the hashing cap.
 	webPasswordCheckSlots = 2
 )
 
@@ -43,16 +44,18 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <button type="submit">登录</button></form></article></main></body></html>`))
 
 type WebAuthenticationConfig struct {
-	PasswordHash      string
-	PublicOrigin      string
-	AllowInsecureHTTP bool
+	PasswordHash       string
+	PasswordFileSHA256 func() (string, error)
+	PublicOrigin       string
+	AllowInsecureHTTP  bool
 }
 
 type webAuthenticator struct {
-	passwordHash string
-	publicOrigin *url.URL
-	secureCookie bool
-	store        *storage.Store
+	passwordHash       string
+	passwordFileSHA256 func() (string, error)
+	publicOrigin       *url.URL
+	secureCookie       bool
+	store              *storage.Store
 
 	mu            sync.Mutex
 	sessions      map[string]*webSession
@@ -61,13 +64,15 @@ type webAuthenticator struct {
 }
 
 type webSession struct {
-	key       string
-	csrfToken string
-	createdAt time.Time
-	lastSeen  time.Time
-	done      chan struct{}
-	origin    string
-	policyRev int64
+	key              string
+	csrfToken        string
+	createdAt        time.Time
+	lastSeen         time.Time
+	done             chan struct{}
+	origin           string
+	policyRev        int64
+	credRev          int64
+	passwordFailures int
 }
 
 type webLoginToken struct {
@@ -79,6 +84,7 @@ type webLoginToken struct {
 type webAllowedTarget struct {
 	origin    *url.URL
 	policyRev int64
+	credRev   int64
 }
 
 type webSessionContextKey struct{}
@@ -119,7 +125,8 @@ func newWebAuthenticator(config WebAuthenticationConfig, stores ...*storage.Stor
 	}
 	return &webAuthenticator{
 		passwordHash: config.PasswordHash, publicOrigin: origin, secureCookie: origin.Scheme == "https", store: store,
-		sessions: make(map[string]*webSession), loginTokens: make(map[string]webLoginToken),
+		passwordFileSHA256: config.PasswordFileSHA256,
+		sessions:           make(map[string]*webSession), loginTokens: make(map[string]webLoginToken),
 		passwordSlots: make(chan struct{}, webPasswordCheckSlots),
 	}, nil
 }
@@ -135,6 +142,7 @@ func webLoopbackHost(host string) bool {
 func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	a.organizationRoutes(mux)
 	mux.Handle("PUT /api/v1/web/settings/update-check", a.requireWebMutation(http.HandlerFunc(a.handlePutUpdateCheck)))
+	mux.Handle("POST /api/v1/web/settings/password", a.requireWebMutation(http.HandlerFunc(a.handleChangeWebPassword)))
 	mux.Handle("POST /api/v1/web/expenses/estimate", a.requireWebMutation(http.HandlerFunc(a.handleExpenseEstimate)))
 	mux.Handle("GET /api/v1/web/dashboard", a.requireWebSession(http.HandlerFunc(a.handleDashboard), true))
 	mux.Handle("GET /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLoginPage)))
@@ -245,8 +253,9 @@ func (w *webAuthenticator) allowedTarget(r *http.Request) (*webAllowedTarget, er
 		return nil, errors.New("insecure Web targets are allowed only on loopback")
 	}
 	policy := storage.WebDomainPolicy{Mode: storage.WebDomainModeExact}
+	var credRev int64
 	if w.store != nil {
-		policy, err = w.store.GetWebDomainPolicy(r.Context())
+		policy, credRev, err = w.store.WebAuthenticationPolicy(r.Context())
 		if err != nil {
 			return nil, err
 		}
@@ -255,11 +264,11 @@ func (w *webAuthenticator) allowedTarget(r *http.Request) (*webAllowedTarget, er
 		if target.String() != w.publicOrigin.String() {
 			return nil, errors.New("Web request host does not match the exact public origin")
 		}
-		return &webAllowedTarget{origin: target, policyRev: policy.Revision}, nil
+		return &webAllowedTarget{origin: target, policyRev: policy.Revision, credRev: credRev}, nil
 	}
 	for _, item := range policy.Suffixes {
 		if webdomain.MatchesSuffix(target.Hostname(), item.Suffix) {
-			return &webAllowedTarget{origin: target, policyRev: policy.Revision}, nil
+			return &webAllowedTarget{origin: target, policyRev: policy.Revision, credRev: credRev}, nil
 		}
 	}
 	return nil, errors.New("Web request host does not match an allowed domain suffix")
@@ -280,7 +289,11 @@ func (w *webAuthenticator) sessionOriginAllowed(ctx context.Context, session *we
 	}
 	request := (&http.Request{Host: parsed.Host}).WithContext(ctx)
 	target, err := w.allowedTarget(request)
-	return err == nil && target.origin.String() == session.origin && target.policyRev == session.policyRev
+	return err == nil && target.matchesSession(session)
+}
+
+func (t *webAllowedTarget) matchesSession(session *webSession) bool {
+	return session != nil && session.origin == t.origin.String() && session.policyRev == t.policyRev && session.credRev == t.credRev
 }
 
 func (a *App) requireWebMutation(next http.Handler) http.Handler {
@@ -318,8 +331,12 @@ func (a *App) requireWebSession(next http.Handler, api bool) http.Handler {
 			return
 		}
 		session := a.webAuth.authenticate(cookie.Value, a.now())
-		if session == nil || session.origin != target.origin.String() || session.policyRev != target.policyRev {
-			a.webAuth.clearSessionCookie(w)
+		if !target.matchesSession(session) {
+			// An older background response can arrive after a password change
+			// has set the replacement cookie. Clear stale cookies on page loads.
+			if !api {
+				a.webAuth.clearSessionCookie(w)
+			}
 			a.writeWebUnauthenticated(w, r, api)
 			return
 		}
@@ -348,7 +365,7 @@ func (a *App) handleWebLoginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie(a.webAuth.sessionCookieName()); err == nil {
-		if session := a.webAuth.authenticate(cookie.Value, a.now()); session != nil && session.origin == target.origin.String() && session.policyRev == target.policyRev {
+		if session := a.webAuth.authenticate(cookie.Value, a.now()); target.matchesSession(session) {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
@@ -373,7 +390,7 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid login request")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, webLoginBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, webLoginFormBytes)
 	if err := r.ParseForm(); err != nil || !exactWebForm(r.PostForm, "csrf_token", "password") {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid login request")
 		return
@@ -388,13 +405,14 @@ func (a *App) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 		a.renderWebLoginPage(w, r, http.StatusTooManyRequests, webLoginPageView{Busy: true})
 		return
 	}
-	valid := auth.VerifyPassword(a.webAuth.passwordHash, []byte(r.PostForm.Get("password")))
+	credential, err := a.webAuth.currentCredential(r.Context())
+	valid := err == nil && credential.Revision == target.credRev && auth.VerifyPassword(credential.PasswordHash, []byte(r.PostForm.Get("password")))
 	a.webAuth.endPasswordCheck()
 	if !valid {
 		a.renderWebLogin(w, r, http.StatusUnauthorized, true, false)
 		return
 	}
-	plain, _, err := a.webAuth.createSessionForTarget(a.now(), target.origin.String(), target.policyRev)
+	plain, _, err := a.webAuth.createSessionForTarget(a.now(), target.origin.String(), target.policyRev, credential.Revision)
 	if err != nil {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not create session")
 		return
@@ -532,18 +550,19 @@ func (w *webAuthenticator) consumeLoginToken(cookie, form, origin string, policy
 }
 
 func (w *webAuthenticator) createSession(now time.Time) (string, *webSession, error) {
-	policyRev := int64(0)
+	var policyRev, credRev int64
 	if w.store != nil {
-		policy, err := w.store.GetWebDomainPolicy(context.Background())
+		policy, rev, err := w.store.WebAuthenticationPolicy(context.Background())
 		if err != nil {
 			return "", nil, err
 		}
 		policyRev = policy.Revision
+		credRev = rev
 	}
-	return w.createSessionForTarget(now, w.publicOrigin.String(), policyRev)
+	return w.createSessionForTarget(now, w.publicOrigin.String(), policyRev, credRev)
 }
 
-func (w *webAuthenticator) createSessionForTarget(now time.Time, origin string, policyRev int64) (string, *webSession, error) {
+func newWebSession(now time.Time, origin string, policyRev, credRev int64) (string, *webSession, error) {
 	plain, err := randomWebToken()
 	if err != nil {
 		return "", nil, err
@@ -552,7 +571,15 @@ func (w *webAuthenticator) createSessionForTarget(now time.Time, origin string, 
 	if err != nil {
 		return "", nil, err
 	}
-	session := &webSession{key: webTokenKey(plain), csrfToken: csrf, createdAt: now, lastSeen: now, done: make(chan struct{}), origin: origin, policyRev: policyRev}
+	session := &webSession{key: webTokenKey(plain), csrfToken: csrf, createdAt: now, lastSeen: now, done: make(chan struct{}), origin: origin, policyRev: policyRev, credRev: credRev}
+	return plain, session, nil
+}
+
+func (w *webAuthenticator) createSessionForTarget(now time.Time, origin string, policyRev, credRev int64) (string, *webSession, error) {
+	plain, session, err := newWebSession(now, origin, policyRev, credRev)
+	if err != nil {
+		return "", nil, err
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.pruneSessionsLocked(now)
@@ -585,7 +612,11 @@ func (w *webAuthenticator) sessionDeadline(session *webSession) time.Time {
 	return sessionDeadline(session)
 }
 
-func (w *webAuthenticator) sessionStillActive(session *webSession, now time.Time) (time.Time, bool) {
+func (w *webAuthenticator) sessionStillActive(ctx context.Context, session *webSession, now time.Time) (time.Time, bool) {
+	if !w.sessionOriginAllowed(ctx, session) {
+		w.revokeSession(session)
+		return time.Time{}, false
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	current := w.sessions[session.key]

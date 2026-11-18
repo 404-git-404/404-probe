@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -60,6 +59,8 @@ func run(args []string) error {
 		return databaseCommand(args[1:])
 	case "web-domain":
 		return webDomainCommand(args[1:])
+	case "web-credential":
+		return webCredentialCommand(args[1:])
 	case "release":
 		return releaseCommand(args[1:])
 	case "serve":
@@ -82,7 +83,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	return errors.New("usage: 404-probe-server licenses | version [--json] | release verify [flags] | database <verify|migrate-copy|migrate-protected> --db path | web-domain <list|add|remove|disable> --db path [--json] [suffix] | serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
+	return errors.New("usage: 404-probe-server licenses | version [--json] | release verify [flags] | database <verify|migrate-copy|migrate-protected> --db path | web-domain <list|add|remove|disable> --db path [--json] [suffix] | web-credential adopt --db path --hash-file path | serve [flags] | agent add <name> [--db path] | agent list [--db path] | agent revoke <id> [--db path] | probe <run|get|list> [flags] | schedule <add|list|enable|disable|delete> [flags] | remote <agent|schedule|probe> <list|get> [flags] | web password-hash")
 }
 
 type webDomainCommandResult struct {
@@ -381,19 +382,28 @@ func serve(args []string) error {
 		return errors.New("web-allow-insecure-http requires Web authentication configuration")
 	}
 	if webConfigured {
-		passwordHash, err := loadWebPasswordHash(*webPasswordHashFile)
-		if err != nil {
+		if _, err := readWebPasswordFile(*webPasswordHashFile); err != nil {
 			return err
 		}
-		appOptions = append(appOptions, appserver.WithWebAuthentication(appserver.WebAuthenticationConfig{
-			PasswordHash: passwordHash, PublicOrigin: *webPublicOrigin, AllowInsecureHTTP: *webAllowInsecureHTTP,
-		}))
 	}
 	store, err := openStore(*dbPath)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	if webConfigured {
+		passwordFile, err := reconcileWebPasswordFile(context.Background(), store, *webPasswordHashFile, time.Now())
+		if err != nil {
+			return err
+		}
+		appOptions = append(appOptions, appserver.WithWebAuthentication(appserver.WebAuthenticationConfig{
+			PasswordHash: passwordFile.PasswordHash, PublicOrigin: *webPublicOrigin, AllowInsecureHTTP: *webAllowInsecureHTTP,
+			PasswordFileSHA256: func() (string, error) {
+				file, err := readWebPasswordFile(*webPasswordHashFile)
+				return file.FileSHA256, err
+			},
+		}))
+	}
 	app, err := appserver.NewApp(store, *offline, slog.Default(), appOptions...)
 	if err != nil {
 		return err
@@ -1006,9 +1016,6 @@ func runScheduleMutation(command string, args []string, now func() time.Time, ou
 
 func startsFlag(value string) bool { return len(value) > 0 && value[0] == '-' }
 
-// minWebPasswordLength applies to newly set Web passwords only; existing hash files keep working.
-const minWebPasswordLength = 16
-
 func webCommand(args []string) error {
 	if len(args) != 1 || args[0] != "password-hash" {
 		return usageError()
@@ -1028,7 +1035,7 @@ func webPasswordHash(stdin *os.File, stdout, stderr io.Writer, terminal bool) er
 		if err != nil {
 			return errors.New("read password")
 		}
-		if err := checkWebPasswordLength(first); err != nil {
+		if err := auth.ValidateNewWebPassword(first, first, nil); err != nil {
 			return err
 		}
 		fmt.Fprint(stderr, "Confirm password: ")
@@ -1037,20 +1044,20 @@ func webPasswordHash(stdin *os.File, stdout, stderr io.Writer, terminal bool) er
 		if err != nil {
 			return errors.New("read password confirmation")
 		}
-		if subtle.ConstantTimeCompare(first, confirmation) != 1 {
-			return errors.New("passwords do not match")
+		if err := auth.ValidateNewWebPassword(first, confirmation, nil); err != nil {
+			return err
 		}
 		password = first
 	} else {
-		line, err := io.ReadAll(io.LimitReader(stdin, 1025))
+		line, err := io.ReadAll(io.LimitReader(stdin, auth.WebPasswordMaxBytes+3))
 		if err != nil {
 			return errors.New("read password")
 		}
-		if len(line) > 1024 {
-			return errors.New("password is too long")
+		password = line
+		if bytes.HasSuffix(password, []byte{10}) {
+			password = bytes.TrimSuffix(password[:len(password)-1], []byte{13})
 		}
-		password = bytes.TrimSuffix(bytes.TrimSuffix(line, []byte{10}), []byte{13})
-		if err := checkWebPasswordLength(password); err != nil {
+		if err := auth.ValidateNewWebPassword(password, password, nil); err != nil {
 			return err
 		}
 	}
@@ -1062,13 +1069,6 @@ func webPasswordHash(stdin *os.File, stdout, stderr io.Writer, terminal bool) er
 	return err
 }
 
-func checkWebPasswordLength(password []byte) error {
-	if utf8.RuneCount(password) < minWebPasswordLength {
-		return fmt.Errorf("password must be at least %d characters", minWebPasswordLength)
-	}
-	return nil
-}
-
 func loadControlTokenHash(path string) ([]byte, error) {
 	token, err := loadControlToken(path)
 	if err != nil {
@@ -1078,30 +1078,36 @@ func loadControlTokenHash(path string) ([]byte, error) {
 }
 
 func loadWebPasswordHash(path string) (string, error) {
+	file, err := readWebPasswordFile(path)
+	return file.PasswordHash, err
+}
+
+func readWebPasswordFile(path string) (storage.WebCredential, error) {
+	var result storage.WebCredential
 	file, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("open Web password hash file: %w", err)
+		return result, fmt.Errorf("open Web password hash file: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return "", fmt.Errorf("inspect Web password hash file: %w", err)
+		return result, fmt.Errorf("inspect Web password hash file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", errors.New("Web password hash file must be a regular file")
+		return result, errors.New("Web password hash file must be a regular file")
 	}
 	if info.Size() > 1024 {
-		return "", errors.New("Web password hash file is too large")
+		return result, errors.New("Web password hash file is too large")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return "", errors.New("Web password hash file permissions must not allow group or other access")
+		return result, errors.New("Web password hash file permissions must not allow group or other access")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, 1025))
 	if err != nil {
-		return "", errors.New("read Web password hash file")
+		return result, errors.New("read Web password hash file")
 	}
 	if len(content) > 1024 {
-		return "", errors.New("Web password hash file is too large")
+		return result, errors.New("Web password hash file is too large")
 	}
 	encoded := string(content)
 	if strings.HasSuffix(encoded, "\r\n") {
@@ -1110,9 +1116,10 @@ func loadWebPasswordHash(path string) (string, error) {
 		encoded = strings.TrimSuffix(encoded, "\n")
 	}
 	if err := auth.ParsePasswordHash(encoded); err != nil {
-		return "", errors.New("Web password hash file contains an invalid password hash")
+		return result, errors.New("Web password hash file contains an invalid password hash")
 	}
-	return encoded, nil
+	digest := sha256.Sum256(content)
+	return storage.WebCredential{PasswordHash: encoded, FileSHA256: hex.EncodeToString(digest[:])}, nil
 }
 
 func loadControlToken(path string) (string, error) {

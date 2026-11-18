@@ -181,6 +181,36 @@ func TestInstallerOfflineDomainManagementContract(t *testing.T) {
 	}
 }
 
+func TestInstallerWebPasswordResetContract(t *testing.T) {
+	source := m12InstallerSource(t)
+	start := strings.Index(source, "reset_web_password() (")
+	if start < 0 {
+		t.Fatal("missing rendered helper reset function")
+	}
+	end := strings.Index(source[start:], "\nreject_deferred_command_on_host ")
+	if end < 0 {
+		t.Fatal("missing rendered helper dispatch")
+	}
+	body := source[start : start+end]
+	last := -1
+	for _, step := range []string{
+		"acquire_server_operation_lock",
+		"$(obtain_web_password_hash)",
+		`write_private_file "${hash_file}" "${hash}"`,
+		`runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" web-credential adopt --db "${SERVER_DATABASE}" --hash-file "${hash_file}"`,
+		"restart 404-probe-server.service to apply it",
+	} {
+		if next := strings.Index(body, step); next <= last {
+			t.Fatalf("reset step missing or out of order: %s", step)
+		} else {
+			last = next
+		}
+	}
+	if strings.Contains(body, "systemctl") || !strings.Contains(source, `web-password) shift; reset_web_password "$@" ;;`) {
+		t.Fatal("reset must be reachable without restarting the service")
+	}
+}
+
 func TestReleaseManifestAuthenticatesInstaller(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
