@@ -6,6 +6,8 @@ import re
 import subprocess
 
 REGISTRY = Path(__file__).with_name('r31-versions.json')
+BASE_VERSION = 'v1.2.0'
+BASE_SCHEMA = 37
 BINARIES = {f'404-probe-{role}-linux-{arch}'
             for role in ('agent', 'server') for arch in ('amd64', 'arm64')}
 PAYLOADS = BINARIES | {'install.sh', 'RELEASE-METADATA.json'}
@@ -19,11 +21,13 @@ def version_tuple(version):
 
 def registry():
     doc = json.loads(REGISTRY.read_text(encoding='utf-8'))
-    if doc.get('format') != 1 or doc.get('base_version') != 'v1.0.6':
+    if doc.get('format') != 2 or doc.get('base_version') != BASE_VERSION:
         raise ValueError('unsupported R31 registry')
     versions = doc['versions']
+    if BASE_VERSION not in versions or versions[BASE_VERSION]['schema'] != BASE_SCHEMA:
+        raise ValueError('missing v1.2.0 schema 37 base')
     previous = None
-    schema = 0
+    schema = BASE_SCHEMA
     for version in sorted(versions, key=version_tuple):
         row = versions[version]
         if not re.fullmatch('[0-9a-f]{40}', row['commit']):
@@ -39,13 +43,11 @@ def registry():
         if set(row['added_tables']) & set(row['removed_tables']):
             raise ValueError('overlapping registered table changes')
         previous, schema = version, row['schema']
-    if 'v1.0.6' not in versions:
-        raise ValueError('missing schema34 base')
     for version, row in versions.items():
         chain = row.get('generation_chain')
-        if not isinstance(chain, list) or (chain != [] if version == 'v1.0.6' else not chain or chain[-1] != version):
+        if not isinstance(chain, list) or (chain != [] if version == BASE_VERSION else not chain or chain[-1] != version):
             raise ValueError('invalid registered generation chain')
-        prior = 'v1.0.6'
+        prior = BASE_VERSION
         for index, step in enumerate(chain):
             if step not in versions or not version_tuple(prior) < version_tuple(step) <= version_tuple(version):
                 raise ValueError('invalid registered generation transition')
@@ -75,34 +77,14 @@ def expected_schema(version, explicit=None):
     return row['schema'] if row else explicit
 
 
-def parse_bridge_assets(values):
-    result = {}
-    for value in values:
-        version, separator, directory = value.partition('=')
-        version_tuple(version)
-        if not separator or not directory or version in result:
-            raise ValueError('bridge assets require unique VERSION=DIRECTORY entries')
-        result[version] = Path(directory)
-    return result
-
-
-def generation_assets(directory, version, arch, base_directory, bridge_assets=None):
-    """Authenticate every hop before creating or freezing any database."""
+def generation_assets(directory, version, arch, base_directory):
+    """Authenticate the base and starting release before any database writes."""
     chain = registered(version)['generation_chain']
-    bridges = bridge_assets or {}
-    if not isinstance(bridges, dict) or set(bridges) != set(chain[:-1]):
-        raise ValueError('bridge_assets must name exactly the required official bridge releases: '
-                         + ', '.join(chain[:-1]))
-    base = assets(base_directory, 'v1.0.6', arch, True)
-    selected = assets(directory, version, arch, True)
-    steps = []
-    for step in chain:
-        try:
-            item = selected if step == version else assets(bridges[step], step, arch, True)
-        except (OSError, ValueError) as error:
-            raise ValueError('invalid official bridge assets for '+step+': '+str(error)) from error
-        steps.append((step, *item))
-    return base, selected, steps
+    if chain not in ([], [version]):
+        raise ValueError('generation must go directly from v1.2.0 to the selected release')
+    base = assets(base_directory, BASE_VERSION, arch, True)
+    selected = base if not chain and Path(directory).resolve(strict=True) == base[0] else assets(directory, version, arch, True)
+    return base, selected, [(version, *selected)] if chain else []
 
 
 def digest(path):

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests plus tiny end-to-end tests when R31_PREVIOUS_SERVER is set."""
 import importlib.util
+from contextlib import closing
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -70,8 +71,8 @@ class ToolTests(unittest.TestCase):
         with self.assertRaises(ValueError): upgrade.instrument('unsupported installer',Path('/h'),Path('/e'),True)
 
     def test_corrupt_counter_is_rejected(self):
-        server=os.environ.get('R31_BASE_SERVER') or os.environ.get('R31_PREVIOUS_SERVER')
-        if not server: self.skipTest('R31_PREVIOUS_SERVER not provided')
+        server=os.environ.get('R31_BASE_SERVER')
+        if not server: self.skipTest('R31_BASE_SERVER not provided')
         with tempfile.TemporaryDirectory() as d:
             first=Path(d)/'first.db'; second=Path(d)/'second.db'
             a=gen.generate(Path(server),first,'tiny')
@@ -79,7 +80,7 @@ class ToolTests(unittest.TestCase):
             b=gen.generate(Path(server),second,'tiny')
             self.assertTrue(first.read_bytes()==second.read_bytes(),'fixed seed/anchor must be byte reproducible')
             self.assertEqual(a['rows'],b['rows'])
-            self.assertEqual(a['verify']['schema_version'],34)
+            self.assertEqual(a['verify']['schema_version'],37)
             self.assertEqual(a['rows']['agents'],71)
             self.assertEqual(a['rows']['agent_plans'],43)
             with self.assertRaises(ValueError): gen.generate(Path(server),first,'tiny')
@@ -88,7 +89,7 @@ class ToolTests(unittest.TestCase):
                 [('icmp','ipv4',60),('icmp','ipv6',60),('tcp','ipv4',66),('tcp','ipv6',66)])
             self.assertEqual(c.execute('SELECT count(*) FROM quality_targets WHERE retired_at IS NULL').fetchone()[0],0)
             self.assertEqual(c.execute('SELECT count(*) FROM quality_retired').fetchone()[0],23)
-            self.assertEqual(c.execute('SELECT count(*) FROM tcp_mini_state').fetchone()[0],71)
+            self.assertNotIn('tcp_mini_state',a['rows'])
             self.assertEqual(c.execute('SELECT count(*) FROM agent_google_status').fetchone()[0],48)
             backwards=c.execute('''SELECT count(*) FROM (SELECT rx_total,tx_total,
                 lag(rx_total) OVER (PARTITION BY agent_id ORDER BY bucket) prior_rx,
@@ -375,16 +376,16 @@ class RegisteredReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
-        self.assets=fake_assets(self.root/'assets','v1.0.8')
-        self.identity=dict(version='v1.0.8',commit=releases.registered('v1.0.8')['commit'],dirty=False)
+        self.assets=fake_assets(self.root/'assets','v1.2.0')
+        self.identity=dict(version='v1.2.0',commit=releases.registered('v1.2.0')['commit'],dirty=False)
 
     def test_unknown_start_and_unregistered_target_schema(self):
         with self.assertRaisesRegex(ValueError,'unregistered'):
-            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.2.1')
-        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.2.1')
+            gen.generate('/does/not/exist','/unused','tiny',start_version='v1.1.2')
+        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.3.0')
         self.assertEqual(releases.expected_schema('v1.0.10',36),36)
-        self.assertEqual(releases.expected_schema('v1.0.8',35),35)
-        with self.assertRaises(ValueError): releases.expected_schema('v1.0.8',36)
+        self.assertEqual(releases.expected_schema('v1.2.0',37),37)
+        with self.assertRaises(ValueError): releases.expected_schema('v1.2.0',36)
         for value in (0,-1,True):
             with self.assertRaises(ValueError): releases.expected_schema('v1.0.10',value)
         for value in ('v1.0.10-rc.1','1.0.8','v01.0.8'):
@@ -392,173 +393,163 @@ class RegisteredReleaseTests(unittest.TestCase):
 
     def test_identity_all_three_sources_must_agree(self):
         with mock.patch.object(releases.subprocess,'check_output',return_value=json.dumps(self.identity).encode()):
-            self.assertEqual(releases.assets(self.assets,'v1.0.8','amd64')[2],self.identity)
-        for changed in (dict(self.identity,dirty=True),dict(self.identity,commit='a'*40),dict(self.identity,version='v1.0.7')):
+            self.assertEqual(releases.assets(self.assets,'v1.2.0','amd64')[2],self.identity)
+        for changed in (dict(self.identity,dirty=True),dict(self.identity,commit='a'*40),dict(self.identity,version='v1.1.2')):
             with mock.patch.object(releases.subprocess,'check_output',return_value=json.dumps(changed).encode()):
-                with self.assertRaises(ValueError): releases.assets(self.assets,'v1.0.8','amd64')
+                with self.assertRaises(ValueError): releases.assets(self.assets,'v1.2.0','amd64')
         metadata=json.loads((self.assets/'RELEASE-METADATA.json').read_text()); metadata['commit']='b'*40
         (self.assets/'RELEASE-METADATA.json').write_text(json.dumps(metadata)); refresh_manifest(self.assets)
-        with self.assertRaisesRegex(ValueError,'registry'): releases.assets(self.assets,'v1.0.8','amd64')
+        with self.assertRaisesRegex(ValueError,'registry'): releases.assets(self.assets,'v1.2.0','amd64')
 
     def test_checksums_and_metadata_asset_hashes_cannot_disagree(self):
         binary=self.assets/'404-probe-agent-linux-arm64'; binary.write_bytes(b'tampered')
-        with self.assertRaisesRegex(ValueError,'checksum'): releases.assets(self.assets,'v1.0.8','amd64')
+        with self.assertRaisesRegex(ValueError,'checksum'): releases.assets(self.assets,'v1.2.0','amd64')
         refresh_manifest(self.assets)
-        with self.assertRaisesRegex(ValueError,'metadata/manifest'): releases.assets(self.assets,'v1.0.8','amd64')
+        with self.assertRaisesRegex(ValueError,'metadata/manifest'): releases.assets(self.assets,'v1.2.0','amd64')
 
     def test_metadata_version_and_manifest_metadata_hash_are_checked(self):
-        p=self.assets/'RELEASE-METADATA.json'; doc=json.loads(p.read_text()); doc['version']='v1.0.7';p.write_text(json.dumps(doc))
-        with self.assertRaisesRegex(ValueError,'checksum'): releases.assets(self.assets,'v1.0.8','amd64')
+        p=self.assets/'RELEASE-METADATA.json'; doc=json.loads(p.read_text()); doc['version']='v1.1.2';p.write_text(json.dumps(doc))
+        with self.assertRaisesRegex(ValueError,'checksum'): releases.assets(self.assets,'v1.2.0','amd64')
         refresh_manifest(self.assets)
-        with self.assertRaisesRegex(ValueError,'metadata identity'): releases.assets(self.assets,'v1.0.8','amd64')
+        with self.assertRaisesRegex(ValueError,'metadata identity'): releases.assets(self.assets,'v1.2.0','amd64')
 
-    def test_v109_registration_and_numeric_9_10_chain(self):
-        row=releases.registered('v1.0.9')
-        self.assertEqual(row,dict(commit='42c5eeb798f679e49ea81f9480b7bcab46aac2df',schema=35,previous_version='v1.0.8',added_tables=[],removed_tables=[],generation_chain=['v1.0.9']))
-        document=releases.registry()
-        # Insert 10 first: registry validation must sort numerically, not by JSON order.
-        document['versions']={'v1.0.10':document['versions'].pop('v1.0.10'),**document['versions']}
-        added=document['versions']['v1.0.10']['added_tables']
-        before=dict(agents=71,schema_migrations=35)
-        after=dict(agents=71,schema_migrations=36,**dict.fromkeys(added,0))
-        registry=self.root/'registry.json';registry.write_text(json.dumps(document),encoding='utf-8')
-        with mock.patch.object(releases,'REGISTRY',registry):
-            self.assertEqual(releases.registered('v1.0.10')['schema'],36)
-            releases.check_counts(before,after,'v1.0.9','v1.0.10')
-            with self.assertRaisesRegex(ValueError,'backward'):
-                releases.check_counts({}, {}, 'v1.0.10','v1.0.9')
-            with self.assertRaisesRegex(ValueError,'record count'):
-                releases.check_counts(before,dict(after,agents=70),'v1.0.9','v1.0.10')
-        self.assertEqual(releases.version_tuple('v1.0.9') < releases.version_tuple('v1.0.10'),True)
+    def test_schema37_registry_and_old_format_or_base_rejection(self):
+        doc = releases.registry()
+        self.assertEqual(list(sorted(doc['versions'])), ['v1.2.0', 'v1.2.1'])
+        base = releases.registered('v1.2.0')
+        self.assertEqual(base, dict(commit='36aa47afdc0c27c81632ab9b7fff4124d62e2cf3',
+            schema=37, previous_version=None, added_tables=[], removed_tables=[], generation_chain=[]))
+        self.assertEqual(releases.registered('v1.2.1')['generation_chain'], ['v1.2.1'])
+        self.assertLess(releases.version_tuple('v1.2.9'), releases.version_tuple('v1.2.10'))
+        registry = self.root/'registry.json'
+        for bad in (dict(doc, format=1), dict(doc, base_version='v1.0.6')):
+            registry.write_text(json.dumps(bad), encoding='utf-8')
+            with mock.patch.object(releases, 'REGISTRY', registry):
+                with self.assertRaisesRegex(ValueError, 'unsupported R31 registry'):
+                    releases.registry()
 
-    def test_schema36_fixture_and_exact_registration_chain(self):
-        added=['organization_meta','groups','tags','agent_organization','agent_tags','expense_exchange_rates']
-        document=releases.registry()
-        self.assertEqual(document['versions']['v1.0.10'],dict(commit='271c67d029d1fa1d5e8347a40f66f4a78648ff82',schema=36,previous_version='v1.0.9',added_tables=added,removed_tables=[],generation_chain=['v1.0.10']))
-        registry=self.root/'schema36-registry.json';registry.write_text(json.dumps(document),encoding='utf-8')
-        with sqlite3.connect(':memory:') as conn:
-            conn.executescript('CREATE TABLE agents(id TEXT PRIMARY KEY);CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);')
-            conn.executemany('INSERT INTO agents VALUES(?)',[(str(i),) for i in range(71)])
-            conn.executemany('INSERT INTO schema_migrations VALUES(?)',[(i,) for i in range(1,36)])
-            def counts():
-                names=[r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-                return {name:conn.execute('SELECT count(*) FROM "'+name+'"').fetchone()[0] for name in names}
-            before=counts()
-            for name in added:conn.execute('CREATE TABLE "'+name+'"(fixture INTEGER)')
-            conn.execute('INSERT INTO organization_meta VALUES(1)');conn.execute('INSERT INTO expense_exchange_rates VALUES(1)');conn.execute('INSERT INTO schema_migrations VALUES(36)')
-            after=counts()
-            with mock.patch.object(releases,'REGISTRY',registry):
-                self.assertEqual(releases.registered('v1.0.10')['schema'],36)
-                releases.check_counts(before,after,'v1.0.9','v1.0.10')
-                for missing in added:
-                    bad=dict(after);del bad[missing]
-                    with self.assertRaises(ValueError):releases.check_counts(before,bad,'v1.0.9','v1.0.10')
-                with self.assertRaises(ValueError):releases.check_counts(before,dict(after,schema_migrations=35),'v1.0.9','v1.0.10')
-        document['versions']['v1.0.10']['previous_version']='v1.0.8';registry.write_text(json.dumps(document),encoding='utf-8')
-        with mock.patch.object(releases,'REGISTRY',registry):
-            with self.assertRaises(ValueError):releases.registry()
-        self.assertEqual(releases.registered('v1.0.10')['previous_version'],'v1.0.9')
+    def test_previous_and_generation_chains_are_validated(self):
+        registry = self.root/'registry.json'
+        for change in (dict(previous_version='v1.1.2'), dict(generation_chain=['v1.1.2','v1.2.1']),
+                       dict(schema=36), dict(added_tables=['agents'], removed_tables=['agents'])):
+            with self.subTest(change=change):
+                doc = releases.registry()
+                doc['versions']['v1.2.1'].update(change)
+                registry.write_text(json.dumps(doc), encoding='utf-8')
+                with mock.patch.object(releases, 'REGISTRY', registry):
+                    with self.assertRaises(ValueError):
+                        releases.registry()
 
-    def test_registered_table_changes_and_only_migration_count_may_change(self):
-        before=dict(agents=71,schema_migrations=34,tcp_mini_high=7,tcp_mini_state=71)
-        after=dict(agents=71,schema_migrations=35)
-        releases.check_counts(before,after,'v1.0.6','v1.0.7')
-        releases.check_counts(before,after,'v1.0.6','v1.0.8')
-        releases.check_counts(after,after,'v1.0.7','v1.0.8')
-        for bad in (dict(after,agents=70),dict(after,schema_migrations=34),dict(after,new_table=0),dict(after,tcp_mini_state=0)):
-            with self.assertRaises(ValueError): releases.check_counts(before,bad,'v1.0.6','v1.0.8')
+    def test_equal_schema_migration_must_preserve_every_count(self):
+        before = dict(agents=71, schema_migrations=37, groups=4)
+        releases.check_counts(before, dict(before), 'v1.2.0', 'v1.2.1')
+        for after in (dict(before,agents=70), dict(before,schema_migrations=38),
+                      dict(before,new_table=0), dict(agents=71,schema_migrations=37)):
+            with self.assertRaises(ValueError):
+                releases.check_counts(before, after, 'v1.2.0', 'v1.2.1')
+        with self.assertRaisesRegex(ValueError, 'backward'):
+            releases.check_counts(before, before, 'v1.2.1', 'v1.2.0')
 
 
-class BridgeGenerationTests(unittest.TestCase):
+class BaseGenerationTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name)
-        self.base=fake_assets(self.root/'base','v1.0.6')
-        self.bridge=fake_assets(self.root/'bridge','v1.0.10')
-        self.start=fake_assets(self.root/'start','v1.1.1')
-        self.server=self.start/'404-probe-server-linux-amd64'
-        self.out=self.root/'output.db'
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.base = fake_assets(self.root/'base', 'v1.2.0')
+        self.start = fake_assets(self.root/'start', 'v1.2.1')
+        self.server = self.start/'404-probe-server-linux-amd64'
+        self.out = self.root/'output.db'
         def identity(args):
-            meta=json.loads(Path(args[0]).parent.joinpath('RELEASE-METADATA.json').read_text())
-            return json.dumps(dict(version=meta['version'],commit=meta['commit'],dirty=False)).encode()
-        self.patch=mock.patch.object(gen.releases.subprocess,'check_output',side_effect=identity)
-        self.patch.start(); self.addCleanup(self.patch.stop)
+            meta = json.loads(Path(args[0]).parent.joinpath('RELEASE-METADATA.json').read_text())
+            return json.dumps(dict(version=meta['version'], commit=meta['commit'], dirty=False)).encode()
+        patcher = mock.patch.object(releases.subprocess, 'check_output', side_effect=identity)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def generate(self, bridges=None):
-        return gen.generate(self.server,self.out,'tiny',start_version='v1.1.1',
-                            base_assets=self.base,bridge_assets=bridges)
-
-    def test_missing_bridge_rejected_before_database_creation(self):
-        with self.assertRaisesRegex(ValueError,'required official bridge releases: v1.0.10'):
-            self.generate()
-        self.assertFalse(self.out.exists())
-        (self.bridge/'SHA256SUMS').unlink()
-        with self.assertRaisesRegex(ValueError,'invalid official bridge assets'):
-            self.generate({'v1.0.10':self.bridge})
+    def test_invalid_base_assets_are_rejected_before_database_creation(self):
+        with self.assertRaisesRegex(ValueError, 'base-assets'):
+            gen.generate(self.server, self.out, 'tiny', start_version='v1.2.1')
+        (self.base/'404-probe-server-linux-amd64').write_bytes(b'tampered')
+        with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+            gen.generate(self.server, self.out, 'tiny', start_version='v1.2.1', base_assets=self.base)
         self.assertFalse(self.out.exists())
 
-    def test_bridge_checksum_and_complete_identity_are_enforced(self):
-        binary=self.bridge/'404-probe-server-linux-amd64'
-        binary.write_bytes(b'tampered')
-        with self.assertRaisesRegex(ValueError,'checksum mismatch'):
-            self.generate({'v1.0.10':self.bridge})
-        refresh_manifest(self.bridge)
-        meta=json.loads((self.bridge/'RELEASE-METADATA.json').read_text())
-        meta['commit']='a'*40
-        (self.bridge/'RELEASE-METADATA.json').write_text(json.dumps(meta));refresh_manifest(self.bridge)
-        with self.assertRaisesRegex(ValueError,'commit differs from registry'):
-            self.generate({'v1.0.10':self.bridge})
-        self.assertFalse(self.out.exists())
-
-    def test_each_hop_rejects_wrong_schema_and_verify_failure(self):
-        def base(*args):
-            self.out.touch()
-            Path(str(self.out)+'.json').write_text('{}')
-            return dict(rows={},verify=dict(integrity='ok',schema_version=34))
-        with mock.patch.object(gen,'generate_base',side_effect=base):
-            with mock.patch.object(gen,'run',return_value='{"integrity":"ok","schema_version":35}'):
-                with self.assertRaisesRegex(ValueError,'registered schema: v1.0.10'):
-                    self.generate({'v1.0.10':self.bridge})
-        self.out.unlink();Path(str(self.out)+'.schema34.json').unlink()
-        responses=['{"integrity":"ok","schema_version":36}',
-                   '{"integrity":"ok","schema_version":35}']
-        with mock.patch.object(gen,'generate_base',side_effect=base),mock.patch.object(gen,'run',side_effect=responses):
-            with self.assertRaisesRegex(ValueError,'verification differs from registered schema: v1.0.10'):
-                self.generate({'v1.0.10':self.bridge})
-
-    def test_chain_and_bridge_arguments_cannot_be_ambiguous(self):
-        self.assertEqual(releases.registered('v1.1.0')['generation_chain'],['v1.0.10','v1.1.0'])
-        self.assertEqual(releases.registered('v1.1.1')['generation_chain'],['v1.0.10','v1.1.1'])
-        self.assertEqual(releases.registered('v1.1.2')['generation_chain'],['v1.0.10','v1.1.2'])
-        self.assertEqual(releases.registered('v1.2.0')['generation_chain'],['v1.0.10','v1.2.0'])
-        for values in (['v1.0.10=x','v1.0.10=y'],['v1.0.10'],['v01.0.10=x']):
-            with self.assertRaises(ValueError):releases.parse_bridge_assets(values)
-        document=releases.registry();document['versions']['v1.1.1']['generation_chain']=['v1.1.1','v1.0.10']
-        registry=self.root/'bad-registry.json';registry.write_text(json.dumps(document))
-        with mock.patch.object(releases,'REGISTRY',registry):
-            with self.assertRaisesRegex(ValueError,'generation chain'):releases.registry()
+    def test_v121_rejects_wrong_migration_and_verify_schema(self):
+        base = dict(rows={}, schema_sha256='fixture', page_size=4096, page_count=1,
+                    freelist_count=0, verify=dict(integrity='ok', schema_version=37))
+        valid = '{"integrity":"ok","schema_version":37}'
+        invalid = '{"integrity":"ok","schema_version":36}'
+        for operation, responses in (('migrate-protected',[invalid]), ('verify',[valid,invalid])):
+            with self.subTest(operation=operation):
+                with mock.patch.object(gen, 'generate_base', return_value=base), \
+                     mock.patch.object(gen, 'run', side_effect=responses):
+                    with self.assertRaisesRegex(ValueError, f'{operation} did not verify schema 37'):
+                        gen.generate(self.server, self.out, 'tiny', start_version='v1.2.1',base_assets=self.base)
+                Path(str(self.out)+'.schema37.json').unlink()
+                self.assertFalse(Path(str(self.out)+'.json').exists())
 
 
 class StartingVersionIntegrationTests(unittest.TestCase):
     def test_registered_start_official_migration_and_post_audit(self):
-        server=os.environ.get('R31_PREVIOUS_SERVER');version=os.environ.get('R31_START_VERSION')
-        if not server or not version: self.skipTest('set R31_PREVIOUS_SERVER and R31_START_VERSION for official integration')
-        base=os.environ.get('R31_BASE_SERVER',server)
+        server = os.environ.get('R31_PREVIOUS_SERVER')
+        version = os.environ.get('R31_START_VERSION')
+        if not server or not version:
+            self.skipTest('set R31_PREVIOUS_SERVER and R31_START_VERSION for official integration')
+        base = os.environ.get('R31_BASE_SERVER', server)
         with tempfile.TemporaryDirectory() as directory:
-            db=Path(directory)/'fixture.db'
-            bridges={'v1.0.10':Path(os.environ['R31_BRIDGE_ASSETS'])} if os.environ.get('R31_BRIDGE_ASSETS') else {}
-            result=gen.generate(Path(server),db,'tiny',start_version=version,base_assets=Path(base).parent,bridge_assets=bridges)
-            self.assertEqual(result['verify']['schema_version'],releases.registered(version)['schema'])
-            self.assertEqual(result['base_version'],'v1.0.6');self.assertEqual(result['starting_version'],version)
-            self.assertTrue(result['rows_checked']);self.assertEqual(result['rows']['agents'],71)
-            self.assertEqual([s['to_version'] for s in result['official_migrations']],releases.registered(version)['generation_chain'])
-            if version!='v1.0.6': self.assertNotIn('tcp_mini_state',result['rows'])
-            with sqlite3.connect(db) as c:c.execute('DELETE FROM agent_google_status WHERE agent_id=(SELECT agent_id FROM agent_google_status LIMIT 1)')
-            after=gen.audit(db,releases.registered(version)['schema'])
-            with self.assertRaisesRegex(ValueError,'record count'):
-                releases.check_counts(result['base_generation']['rows'],after['rows'],'v1.0.6',version)
-            with sqlite3.connect(db) as c:c.execute("UPDATE quality_totals SET value=value+1 WHERE kind='minute'")
-            with self.assertRaisesRegex(RuntimeError,'quality_totals'):gen.audit(db,releases.registered(version)['schema'])
+            db = Path(directory)/'fixture.db'
+            result = gen.generate(Path(server), db, 'tiny', start_version=version, base_assets=Path(base).parent)
+            self.assertEqual(result['verify']['schema_version'], 37)
+            self.assertEqual(result['base_version'], 'v1.2.0')
+            self.assertEqual(result['starting_version'], version)
+            self.assertTrue(result['rows_checked'])
+            self.assertEqual(result['rows']['agents'], 71)
+            self.assertEqual(result['rows'], result['base_generation']['rows'])
+            self.assertEqual(result['schema_sha256'], result['base_generation']['schema_sha256'])
+            self.assertEqual([s['to_version'] for s in result['official_migrations']],
+                             releases.registered(version)['generation_chain'])
+            for step in result['official_migrations']:
+                self.assertTrue(step['rows_checked'])
+                self.assertEqual(step['audit']['rows'], result['rows'])
+            self.assertNotIn('tcp_mini_state', result['rows'])
+            self.assertNotIn('tcp_mini_high', result['rows'])
+            self.assertEqual({t for t, count in result['rows'].items() if count == 0}, gen.EMPTY_TABLES.keys())
+            with closing(sqlite3.connect(db)) as c:
+                c.execute('DELETE FROM agent_google_status WHERE agent_id=(SELECT agent_id FROM agent_google_status LIMIT 1)')
+                c.commit()
+                after = gen.audit(db, 37)
+                with self.assertRaisesRegex(ValueError, 'record count'):
+                    releases.check_counts(result['base_generation']['rows'], after['rows'], 'v1.2.0', version)
+                c.execute("UPDATE agent_plans SET usage_bytes=usage_bytes+1 WHERE cycle_dir_basis='since'")
+                c.commit()
+                with self.assertRaisesRegex(ValueError, 'plan counters differ from minute history'):
+                    gen.audit(db, 37)
+                c.execute("UPDATE agent_plans SET usage_bytes=usage_bytes-1 WHERE cycle_dir_basis='since'")
+                c.execute('DELETE FROM agent_youtube_region_manual')
+                c.commit()
+                with self.assertRaisesRegex(ValueError, 'unexpected empty fixture tables: agent_youtube_region_manual'):
+                    gen.audit(db, 37)
+
+    def test_compact_matches_snapshot_logical_rows(self):
+        directory = os.environ.get('R31_SCALE_EVIDENCE')
+        if not directory:
+            self.skipTest('set R31_SCALE_EVIDENCE to the directory containing the large fixture JSON evidence')
+        def fixture(scale):
+            evidence = json.loads((Path(directory)/f'{scale}120.db.json').read_text(encoding='utf-8'))
+            self.assertEqual(evidence['scale'], scale)
+            self.assertEqual(evidence['starting_version'], 'v1.2.0')
+            self.assertEqual(evidence['verify']['integrity'], 'ok')
+            self.assertEqual(evidence['verify']['schema_version'], 37)
+            self.assertEqual(evidence['foreign_keys'], 'ok')
+            self.assertTrue(evidence['rows_checked'])
+            return evidence
+        snapshot, compact = fixture('snapshot'), fixture('compact')
+        self.assertEqual(snapshot['seed'], compact['seed'])
+        self.assertEqual(snapshot['anchor_ms'], compact['anchor_ms'])
+        self.assertEqual(snapshot['schema_sha256'], compact['schema_sha256'])
+        self.assertEqual(snapshot['rows'], compact['rows'])
+        self.assertEqual(compact['freelist_count'], 0)
 
 
 class RehearsalAssetPathTests(unittest.TestCase):
@@ -569,46 +560,39 @@ class RehearsalAssetPathTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.addCleanup(os.chdir, Path.cwd())
         os.chdir(self.root)
-        for name in ('base', 'bridge', 'old', 'new'):
-            (self.root / name).mkdir()
-        self.old, self.new = self.root / 'old', self.root / 'new'
-        self.args = SimpleNamespace(from_version='v1.1.1', base_assets='base',
-                                    bridge_assets=['v1.0.10=bridge'], out='result')
+        for name in ('base', 'old', 'new'):
+            (self.root/name).mkdir()
+        self.old, self.new = self.root/'old', self.root/'new'
+        self.args = SimpleNamespace(from_version='v1.2.1', base_assets='base', out='result')
 
     def test_relative_generation_paths_resolve_to_absolute_paths(self):
         self.assertEqual(upgrade.rehearsal_asset_paths(self.args, self.old, self.new),
-                         (self.root / 'result', self.root / 'base', {'v1.0.10': self.root / 'bridge'}))
+                         (self.root/'result', self.root/'base'))
 
-    def test_base_and_bridge_symlinks_are_rejected(self):
+    def test_base_symlink_is_rejected(self):
         try:
-            (self.root / 'alias').symlink_to(self.root / 'base', target_is_directory=True)
+            (self.root/'alias').symlink_to(self.root/'base', target_is_directory=True)
         except (NotImplementedError, OSError) as error:
             self.skipTest(f'symlink creation unavailable: {error}')
-        for base, bridge in (('alias', 'bridge'), ('base', 'alias')):
-            with self.subTest(base=base, bridge=bridge):
-                self.args.base_assets = base
-                self.args.bridge_assets = [f'v1.0.10={bridge}']
-                with self.assertRaisesRegex(ValueError, 'asset directory symlink'):
-                    upgrade.rehearsal_asset_paths(self.args, self.old, self.new)
+        self.args.base_assets = 'alias'
+        with self.assertRaisesRegex(ValueError, 'asset directory symlink'):
+            upgrade.rehearsal_asset_paths(self.args, self.old, self.new)
 
-    def test_resolved_relative_assets_cannot_overlap_installation(self):
-        installed = self.root / 'installed'
-        (installed / 'nested').mkdir(parents=True)
+    def test_resolved_relative_base_cannot_overlap_installation(self):
+        installed = self.root/'installed'
+        installed.mkdir()
+        self.args.base_assets = 'base/../installed'
         with mock.patch.object(upgrade, 'PATHS', [installed]):
-            for base, bridge in (('base/../installed', 'bridge'), ('base', 'bridge/../installed/nested')):
-                with self.subTest(base=base, bridge=bridge):
-                    self.args.base_assets = base
-                    self.args.bridge_assets = [f'v1.0.10={bridge}']
-                    with self.assertRaisesRegex(ValueError, 'assets overlap installation'):
-                        upgrade.rehearsal_asset_paths(self.args, self.old, self.new)
+            with self.assertRaisesRegex(ValueError, 'assets overlap installation'):
+                upgrade.rehearsal_asset_paths(self.args, self.old, self.new)
 
 
 class PreflightTests(unittest.TestCase):
     def setUp(self):
         import types
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
-        self.old=fake_assets(self.root/'old','v1.0.9');self.base=fake_assets(self.root/'base','v1.0.6')
-        self.new=fake_assets(self.root/'new','v1.0.10')
+        self.old=fake_assets(self.root/'old','v1.2.1');self.base=fake_assets(self.root/'base','v1.2.0')
+        self.new=fake_assets(self.root/'new','v1.3.0','d'*40)
         self.work=self.root/'work';self.work.mkdir(mode=0o700)
         for name in ('evidence','results'):(self.work/name).mkdir(mode=0o700)
         paths=[self.root/p for p in ['var/lib/404-probe','etc/404-probe','usr/local/bin/404-probe-server',
@@ -622,12 +606,12 @@ class PreflightTests(unittest.TestCase):
         self.m=types.SimpleNamespace(PATHS=paths,CANDIDATES=[self.root/'candidate'],BINARY=paths[2],DB=paths[0]/'404-probe.db',SERVICE='example.service',
              systemctl=lambda *a:self.control_calls.append(a) or types.SimpleNamespace(returncode=0),
              preflight_filesystems=lambda *a:None,instrument=upgrade.instrument)
-        self.raw=dict(from_version='v1.0.9',to_version='v1.0.10',from_assets=str(self.old),to_assets=str(self.new),base_assets=str(self.base),work_dir=str(self.work),scale='tiny',expected_schema=36)
+        self.raw=dict(from_version='v1.2.1',to_version='v1.3.0',from_assets=str(self.old),to_assets=str(self.new),base_assets=str(self.base),work_dir=str(self.work),scale='tiny',expected_schema=37)
         self.config=self.root/'config.json';self.config.write_text(json.dumps(self.raw))
         self.doc=preflight.configuration(self.config)
         def output(args):
-            if args[0]=='runuser':return json.dumps(dict(schema_version=35,integrity='ok')).encode()
-            if Path(args[0])==self.m.BINARY:return json.dumps(dict(version='v1.0.9',commit=releases.registered('v1.0.9')['commit'],dirty=False)).encode()
+            if args[0]=='runuser':return json.dumps(dict(schema_version=37,integrity='ok')).encode()
+            if Path(args[0])==self.m.BINARY:return json.dumps(dict(version='v1.2.1',commit=releases.registered('v1.2.1')['commit'],dirty=False)).encode()
             meta=json.loads(Path(args[0]).parent.joinpath('RELEASE-METADATA.json').read_text())
             return json.dumps(dict(version=meta['version'],commit=meta['commit'],dirty=False)).encode()
         self.addCleanup(mock.patch.stopall)
@@ -635,6 +619,13 @@ class PreflightTests(unittest.TestCase):
         mock.patch.object(preflight.subprocess,'check_output',side_effect=output).start()
         mock.patch.object(preflight.subprocess,'run',return_value=types.SimpleNamespace(returncode=0)).start()
         mock.patch.object(preflight.shutil,'disk_usage',return_value=types.SimpleNamespace(free=9*1024**3)).start()
+
+    def test_obsolete_bridge_configuration_is_rejected(self):
+        for value in ({}, {'v1.0.10': 'example'}, None):
+            with self.subTest(value=value):
+                self.config.write_text(json.dumps(dict(self.raw, bridge_assets=value)), encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'bridge_assets is obsolete'):
+                    preflight.configuration(self.config)
 
     def test_check_is_read_only_and_only_queries_service_state(self):
         before=upgrade.tree_state([self.root])
@@ -656,7 +647,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_operator_summary_is_automatic_and_rejects_incomplete_result(self):
         (self.work/'run-started').touch()
-        valid=dict(status='passed',restored=True,restore_errors=[],restore_warnings=[],from_version='v1.0.9',to_version='v1.0.10',post_upgrade_verification=dict(schema_version=36,integrity='ok'))
+        valid=dict(status='passed',restored=True,restore_errors=[],restore_warnings=[],from_version='v1.2.1',to_version='v1.3.0',post_upgrade_verification=dict(schema_version=37,integrity='ok'))
         (self.work/'results/result.json').write_text(json.dumps(valid));(self.work/'evidence/frozen-compare.json').write_text('{"equal":true}')
         with mock.patch.object(preflight.sys,'platform','linux'),mock.patch.object(preflight.os,'geteuid',return_value=0,create=True),mock.patch.object(preflight.sys.stdin,'isatty',return_value=True),mock.patch.object(preflight.sys.stdout,'isatty',return_value=True):
             self.assertEqual(preflight.operator_run(self.doc),0)

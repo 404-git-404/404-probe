@@ -1,110 +1,22 @@
 {
-  "format": 1,
-  "base_version": "v1.0.6",
+  "format": 2,
+  "base_version": "v1.2.0",
   "versions": {
-    "v1.0.6": {
-      "commit": "9326788f838699e2b2014f8e2d95b5f89fde2ed0",
-      "schema": 34,
+    "v1.2.0": {
+      "commit": "36aa47afdc0c27c81632ab9b7fff4124d62e2cf3",
+      "schema": 37,
       "previous_version": null,
       "added_tables": [],
       "removed_tables": [],
       "generation_chain": []
     },
-    "v1.0.7": {
-      "commit": "bba70f798a470e41d6173ecb0bbc766c2b5123e0",
-      "schema": 35,
-      "previous_version": "v1.0.6",
-      "added_tables": [],
-      "removed_tables": [
-        "tcp_mini_high",
-        "tcp_mini_state"
-      ],
-      "generation_chain": [
-        "v1.0.7"
-      ]
-    },
-    "v1.0.8": {
-      "commit": "5bd4623c558f4fd7ee3d3149e6829c5a3e246d14",
-      "schema": 35,
-      "previous_version": "v1.0.7",
-      "added_tables": [],
-      "removed_tables": [],
-      "generation_chain": [
-        "v1.0.8"
-      ]
-    },
-    "v1.0.9": {
-      "commit": "42c5eeb798f679e49ea81f9480b7bcab46aac2df",
-      "schema": 35,
-      "previous_version": "v1.0.8",
-      "added_tables": [],
-      "removed_tables": [],
-      "generation_chain": [
-        "v1.0.9"
-      ]
-    },
-    "v1.0.10": {
-      "commit": "271c67d029d1fa1d5e8347a40f66f4a78648ff82",
-      "schema": 36,
-      "previous_version": "v1.0.9",
-      "added_tables": [
-        "organization_meta",
-        "groups",
-        "tags",
-        "agent_organization",
-        "agent_tags",
-        "expense_exchange_rates"
-      ],
-      "removed_tables": [],
-      "generation_chain": [
-        "v1.0.10"
-      ]
-    },
-    "v1.1.0": {
-      "commit": "b1c58f962a377797f7f790cfe55a65c9051ba792",
-      "schema": 36,
-      "previous_version": "v1.0.10",
-      "added_tables": [],
-      "removed_tables": [],
-      "generation_chain": [
-        "v1.0.10",
-        "v1.1.0"
-      ]
-    },
-    "v1.1.1": {
-      "commit": "f6b631f5d98d28bdf1cb593fcaac41b484c62f74",
-      "schema": 36,
-      "previous_version": "v1.1.0",
-      "added_tables": [],
-      "removed_tables": [],
-      "generation_chain": [
-        "v1.0.10",
-        "v1.1.1"
-      ]
-    },
-    "v1.1.2": {
-      "commit": "4907b988072070e4a44b34a2894b5464f7d8c598",
-      "schema": 36,
-      "previous_version": "v1.1.1",
-      "added_tables": [],
-      "removed_tables": [],
-      "generation_chain": [
-        "v1.0.10",
-        "v1.1.2"
-      ]
-    },
-    "v1.2.0": {
-      "commit": "36aa47afdc0c27c81632ab9b7fff4124d62e2cf3",
+    "v1.2.1": {
+      "commit": "cf955e9cc3375da729a0a368ed33f0654c3590f0",
       "schema": 37,
-      "previous_version": "v1.1.2",
-      "added_tables": [
-        "agent_youtube_region_manual"
-      ],
+      "previous_version": "v1.2.0",
+      "added_tables": [],
       "removed_tables": [],
-      "generation_chain": [
-        "v1.0.10",
-        "v1.2.0"
-      ]
+      "generation_chain": ["v1.2.1"]
     }
   }
 }

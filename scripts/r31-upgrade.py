@@ -278,18 +278,16 @@ def resolve_generation_directory(path):
 
 
 def rehearsal_asset_paths(args, old, new):
-    base = args.base_assets or (old if args.from_version == 'v1.0.6' else None)
+    base = args.base_assets or (old if args.from_version == releases.BASE_VERSION else None)
     if base is None:
         raise ValueError('--base-assets required for later starting versions')
     base = resolve_generation_directory(base)
-    bridges = {version: resolve_generation_directory(path)
-               for version, path in releases.parse_bridge_assets(args.bridge_assets).items()}
     out = Path(args.out).resolve()
     # Output/assets must be outside the paths that are moved/restored.
-    for path in (out, old, new, base, *bridges.values()):
+    for path in (out, old, new, base):
         if any(path == installed or installed in path.parents for installed in PATHS):
             raise ValueError('output/assets overlap installation')
-    return out, base, bridges
+    return out, base
 
 
 def rehearse(args):
@@ -312,9 +310,8 @@ def rehearse(args):
         raise ValueError('only linux amd64/arm64 supported')
     old,old_server,old_identity=assets(args.from_assets,args.from_version,arch)
     new,new_server,new_identity=assets(args.to_assets,args.to_version,arch)
-    out,base_assets,bridge_assets=rehearsal_asset_paths(args,old,new)
-    assets(base_assets,'v1.0.6',arch)
-    releases.generation_assets(old,args.from_version,arch,base_assets,bridge_assets)
+    out,base_assets=rehearsal_asset_paths(args,old,new)
+    releases.generation_assets(old,args.from_version,arch,base_assets)
     if not BINARY.is_file() or not DB.is_file():
         raise ValueError('requires an existing Server installation to restore')
     for p in PATHS+CANDIDATES:
@@ -370,7 +367,7 @@ def rehearse(args):
         spec=importlib.util.spec_from_file_location('r31_generate',generator)
         module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         result['fixture']=module.generate(old_server,work/'fixture.db',args.scale,anchor_ms=int(time.time()//60)*60000,
-                                          start_version=args.from_version,base_assets=base_assets,bridge_assets=bridge_assets)
+                                          start_version=args.from_version,base_assets=base_assets)
         if install(old,args.from_version)!=0:
             raise RuntimeError('starting-version local installation failed/cancelled')
         call('systemctl','stop',SERVICE)
@@ -471,8 +468,7 @@ def main():
     p.add_argument('--out',required=True)
     p.add_argument('--confirm-test-host',required=True,help='type this test machine hostname exactly; never use on production')
     p.add_argument('--expected-schema',type=int,help='registered target schema, or required explicit schema for a new target')
-    p.add_argument('--base-assets',help='official v1.0.6 assets for the schema34 fixture base')
-    p.add_argument('--bridge-assets',action='append',default=[],metavar='VERSION=DIRECTORY',help='official intermediate release assets')
+    p.add_argument('--base-assets',help='official v1.2.0 assets for the schema 37 fixture base')
     return rehearse(p.parse_args())
 
 if __name__=='__main__':
