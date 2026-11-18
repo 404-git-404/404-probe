@@ -55,7 +55,7 @@ const cardObservations = CardMetrics.createObserver();
 const agents = agentState.agents;
 let overviewReady = false;
 let organizationDialogs=null,expenseDialog=null;
-const dashboardUI=DashboardView.create({csrf:()=>mutationCSRFToken,read:readJSON,onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
+const dashboardUI=DashboardView.create({read:readJSON,onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
 const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(matchMedia('(max-width:42rem)').matches?document.querySelector('#panel-mobile-open'):trigger)});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   identity: agent => countryMark(agent?.country_code,agent?.country_source),
