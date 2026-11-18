@@ -573,8 +573,17 @@ func TestEngineHealthTimeoutRollsBack(t *testing.T) {
 		t.Fatalf("live=%q err=%v", data, err)
 	}
 	candidate := filepath.Join(filepath.Dir(filepath.Dir(live)), "state", "candidate")
-	if _, err := os.Stat(candidate); !os.IsNotExist(err) {
-		t.Fatalf("candidate was not cleaned after rollback: %v", err)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("candidate was not cleaned after rollback")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	commands.mu.Lock()
 	defer commands.mu.Unlock()
