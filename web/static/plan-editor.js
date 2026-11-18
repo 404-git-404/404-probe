@@ -23,7 +23,7 @@
   }
   function close(){if(dialog.open)dialog.close();ended();}
   function ask(kind,next=null){action={kind,next,focus:doc.activeElement};confirmation.hidden=false;
-   note.textContent=kind==='clear'?'将清除：价格、购买记录、下次续费、到期日和带宽。保留：流量配额、统计周期、计费方向、对账状态、时区和出口地区；设备累计与历史不会删除。':busy?'提交可能仍在服务器执行。关闭不代表未写入；再次打开后核对实际资料。':'有未保存的修改。放弃后不会自动保存。';
+   note.textContent=kind==='clear'?'将清除：价格、购买记录、下次续费、到期日、带宽和续费网址。保留：流量配额、统计周期、计费方向、对账状态、时区和出口地区；设备累计与历史不会删除。':busy?'提交可能仍在服务器执行。关闭不代表未写入；再次打开后核对实际资料。':'有未保存的修改。放弃后不会自动保存。';
    discard.textContent=kind==='clear'?'确认清除套餐资料':'放弃修改';resume.focus({preventScroll:true});
   }
   function requestClose(){if(!dialog.open)return;if(dirty()||busy)ask('close');else close();}

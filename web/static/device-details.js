@@ -25,7 +25,8 @@
   function fact(box,label,key){const row=el('div','details-fact');row.append(el('span','details-label',label));value(key,row);box.n.append(row);}
   const tiles=['CPU','内存','磁盘','下行','上行'].map((label,i)=>{const n=el('div','details-box details-metric');n.append(el('span','details-label',label));const main=value('metric'+i,n),sub=value('sub'+i,n);main.className='metric-value';sub.className='details-note';metrics.append(n);return n;});
   const plan=section('套餐与续费'),editButton=button('编辑',n=>edit(current,n),'detail-plan');plan.h.append(editButton);
-  fact(plan,'价格','price');values.price.className='details-price';fact(plan,'带宽','bandwidth');fact(plan,'下次续费','renewal');const renewal=button('已续费…',n=>renew(current,n),'detail-renewal');values.renewal.parentNode.append(renewal);fact(plan,'到期日','expiry');
+  fact(plan,'价格','price');values.price.className='details-price';fact(plan,'带宽','bandwidth');fact(plan,'下次续费','renewal');const renewal=button('续费…',n=>renew(current,n),'detail-renewal');values.renewal.parentNode.append(renewal);fact(plan,'到期日','expiry');
+  fact(plan,'续费网址','renewalURL');values.renewalURL.className='details-renewal-url';values.renewalURL.parentNode.hidden=true;
   const traffic=section('流量'),quota=button('编辑配额',n=>edit(current,n,'quota'),'detail-quota');traffic.h.append(quota);value('usage',traffic.n);
   const track=el('div','details-progress'),fill=el('span');track.append(fill);traffic.n.append(track);value('cycle',traffic.n).className='details-note';fact(traffic,'设备累计','total');value('coverage',traffic.n).className='details-note';
   const network=section('网络地址');network.n.append(egress.addresses);fact(network,'出口地区','country');
@@ -104,6 +105,8 @@
    set('bandwidth',p.bandwidth_value?`${p.bandwidth_value} ${p.bandwidth_unit}`:'未设置');
    let relative='';if(p.renewal_date){try{const today=new Intl.DateTimeFormat('en-CA',{timeZone:p.timezone||'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());const days=Math.round((Date.parse(p.renewal_date)-Date.parse(today))/86400000);if(Number.isFinite(days))relative=days===0?'今天':days>0?`${days} 天后`:`已过 ${-days} 天`;}catch{}}
    values.renewal.replaceChildren(el('strong','',p.renewal_date||'未设置'),el('span','details-note',relative));set('expiry',p.expiry_date||'未设置');
+   values.renewalURL.parentNode.hidden=!p.renewal_url;
+   set('renewalURL',p.renewal_url||'');values.renewalURL.title=p.renewal_url||'';
    const view=root.Card.trafficView(a,{old:Boolean(old)}),days=root.Card.cycleDays(p,Date.now());
    values.usage.className='details-usage';values.usage.replaceChildren();const usageLeft=el('span');usageLeft.append(el('strong','',format(p.usage_bytes||0,false)),el('span','',` / ${p.quota_bytes==null?'不限流量':format(p.quota_bytes,false)} 本周期`));values.usage.append(usageLeft);
    if(p.quota_bytes)values.usage.append(el('span','details-note',(Number(p.usage_bytes||0)/p.quota_bytes*100).toFixed(1)+'%'));if(!p.traffic_mode)values.usage.textContent='未开启套餐流量统计';

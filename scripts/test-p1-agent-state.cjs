@@ -425,7 +425,7 @@ test('P5b actual disabled traffic and empty optional values preserve original pa
  app.nodes.get('#plan-purchase-period').value='yearly';app.nodes.get('#plan-renewal-period').value='monthly';app.nodes.get('#plan-bandwidth-unit').value='Gbps';app.nodes.get('#plan-calibration-unit').value='TB';
  app.nodes.get('#plan-currency').value=' eur ';app.nodes.get('#plan-country-code').value=' jp ';app.nodes.get('#plan-timezone').value=' UTC ';
  const saving=app.nodes.get('#plan-form').emit('submit'),write=app.request('/plan'),payload=JSON.parse(write.options.body);
- assert.deepEqual(payload,{traffic_mode:'',quota_value:'',quota_unit:'',cycle_kind:'',cycle_count:0,cycle_anchor:'',timezone:'UTC',calibration_value:'',calibration_unit:'',bandwidth_value:'',bandwidth_unit:'',currency:'EUR',purchase_price:'',purchase_price_period:'',renewal_price:'',renewal_price_period:'',purchase_date:'',renewal_date:'',expiry_date:'',country_code_override:'JP'});
+ assert.deepEqual(payload,{traffic_mode:'',quota_value:'',quota_unit:'',cycle_kind:'',cycle_count:0,cycle_anchor:'',timezone:'UTC',calibration_value:'',calibration_unit:'',bandwidth_value:'',bandwidth_unit:'',currency:'EUR',purchase_price:'',purchase_price_period:'',renewal_price:'',renewal_price_period:'',purchase_date:'',renewal_date:'',renewal_url:'',expiry_date:'',country_code_override:'JP'});
  write.resolve(response(payload));await saving;
 });
 

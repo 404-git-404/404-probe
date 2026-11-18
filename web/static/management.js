@@ -67,8 +67,22 @@
     return {set(code) { selected = /^[A-Z]{2}$/.test(code || '') ? code : ''; search.value = ''; render(); }};
   }
   function planPayload(plan={},patch={}) {
-    const keys=['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','timezone','bandwidth_value','bandwidth_unit','currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','country_code_override'];
+    const keys=['traffic_mode','quota_value','quota_unit','cycle_kind','cycle_count','cycle_anchor','timezone','bandwidth_value','bandwidth_unit','currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','renewal_url','expiry_date','country_code_override'];
     return {...Object.fromEntries(keys.map(k=>[k,plan[k]??(k==='cycle_count'?0:'')])),...patch};
+  }
+  function parseRenewalURL(value) {
+    const text=typeof value==='string'?value.trim():'';
+    if(!text)return {url:null,error:''};
+    if(!/^https?:\/\//i.test(text))return {url:null,error:'只支持 http:// 或 https:// 开头的网址'};
+    if(/^https?:\/\/[^/?#]*@/i.test(text))return {url:null,error:'网址里不能带账号和密码'};
+    const invalid='请输入有效的网址';
+    if(new TextEncoder().encode(text).length>2048||/[\s\p{Cc}]/u.test(text))return {url:null,error:invalid};
+    try {
+      const url=new URL(text);
+      if(!['http:','https:'].includes(url.protocol)||!url.hostname)return {url:null,error:invalid};
+      if(url.username||url.password)return {url:null,error:'网址里不能带账号和密码'};
+      return {url,error:''};
+    } catch { return {url:null,error:invalid}; }
   }
   function validPlanDate(value){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value);if(!m||+m[1]<1)return false;const d=new Date(0);d.setUTCFullYear(+m[1],+m[2]-1,+m[3]);return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3];}
   function planDate(now=Date.now(),timezone='UTC'){
@@ -91,7 +105,7 @@
   // Both presentations edit a disjoint subset of one full PUT contract.
   function planSectionPayload(plan={},section,fields={},options={}) {
     const copy=keys=>Object.fromEntries(keys.map(k=>[k,String(fields[k]??'').trim()]));
-    const information=['currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','expiry_date','bandwidth_value','bandwidth_unit'];
+    const information=['currency','purchase_price','purchase_price_period','renewal_price','renewal_price_period','purchase_date','renewal_date','renewal_url','expiry_date','bandwidth_value','bandwidth_unit'];
     if(section==='clear')return planPayload(plan,Object.fromEntries(information.map(k=>[k,''])));
     if(section==='plan'){
       const patch=copy([...information,'timezone']);patch.currency=patch.currency.toUpperCase();for(const key of ['purchase_date','renewal_date','expiry_date'])if(patch[key]&&!validPlanDate(patch[key]))throw Error('请填写有效日期（YYYY-MM-DD）');
@@ -110,7 +124,7 @@
     return payload;
   }
   const matchesDeviceName=(input,name)=>typeof name==='string'&&!!name.trim()&&typeof input==='string'&&input.trim()===name.trim();
-  const api = {validPlanDate,planDate,monthlyQuotaAnchor,planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload};
+  const api = {validPlanDate,planDate,monthlyQuotaAnchor,planSectionPayload,matchesDeviceName,validName, write, countries, matches, countryPicker, planPayload, parseRenewalURL};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Management = api;
 })(globalThis);

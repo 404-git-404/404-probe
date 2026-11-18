@@ -490,9 +490,20 @@ const planFields = {
   bandwidth_value: '#plan-bandwidth-value', bandwidth_unit: '#plan-bandwidth-unit', currency: '#plan-currency',
   purchase_price: '#plan-purchase-price', purchase_price_period: '#plan-purchase-period',
   renewal_price: '#plan-renewal-price', renewal_price_period: '#plan-renewal-period',
-  purchase_date: '#plan-purchase-date', renewal_date: '#plan-renewal-date', expiry_date: '#plan-expiry-date',
+  purchase_date: '#plan-purchase-date', renewal_date: '#plan-renewal-date', renewal_url: '#plan-renewal-url', expiry_date: '#plan-expiry-date',
   country_code_override: '#plan-country-code',
 };
+const renewalURLInput=document.querySelector('#plan-renewal-url');
+const renewalURLHint=document.querySelector('#plan-renewal-url-hint');
+const renewalURLHelp=renewalURLHint.textContent;
+function validateRenewalURL(){
+  const {error}=Management.parseRenewalURL(renewalURLInput.value);
+  if(error)renewalURLInput.setAttribute('aria-invalid','true');else renewalURLInput.removeAttribute('aria-invalid');
+  renewalURLHint.classList.toggle('text-danger',Boolean(error));
+  renewalURLHint.textContent=error||renewalURLHelp;
+  return !error;
+}
+renewalURLInput.addEventListener('input',validateRenewalURL);
 const planFieldValues=()=>Object.fromEntries(Object.entries(planFields).map(([key,selector])=>[key,key==='currency'&&document.querySelector(selector).value==='__custom__'?document.querySelector('#plan-currency-custom').value:document.querySelector(selector).value]));
 const readPlanDraft=()=>({limited:document.querySelector('#quota-limit').value,traffic_enabled:planTrafficEnabled.checked,...planFieldValues()});
 const planEditor = PlanEditor.create({agents,read:readPlanDraft,
@@ -538,6 +549,7 @@ function openPlanDialog(agent, trigger = null, mode='plan') {
     }
     input.value = key.startsWith('calibration_') ? (key === 'calibration_unit' ? 'GB' : '') : (plan[key] ?? fallback);
   }
+  validateRenewalURL();
   document.querySelector('#plan-currency-custom').hidden=true;document.querySelector('#plan-currency-custom').required=false;
   if (!plan.traffic_mode) document.querySelector('#plan-traffic-mode').value = 'sum';
   if (!plan.quota_unit) document.querySelector('#plan-quota-unit').value = 'TB';
@@ -587,6 +599,7 @@ planForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (!pendingPlanAgentID || !mutationCSRFToken || !planEditor.canSubmit() || planRenewal.unconfirmed(pendingPlanAgentID)) return;
   if(planDialogMode==='quota'&&!planTrafficEnabled.checked&&!quotaOffConfirmed)return;
+  if(planDialogMode==='plan'&&!validateRenewalURL()){renewalURLInput.focus();return;}
   let payload;try {payload=Management.planSectionPayload(agents.get(pendingPlanAgentID)?.plan||{},planDialogMode,planFieldValues(),{enabled:planTrafficEnabled.checked,limited:document.querySelector('#quota-limit').value==='limited',quotaSession:planQuotaSession});}
   catch (error) { planError.textContent = error.message; planError.classList.remove('hidden'); return; }
   const agentID=pendingPlanAgentID,submittedDraft=JSON.stringify(readPlanDraft());
@@ -1432,11 +1445,11 @@ function createAgentCard(initialAgent) {
     due.textContent = deadline.label;
     const renewHint = document.createElement('span');
     renewHint.className = 'c7-money-side';
-    renewHint.textContent = '标记已续费';
+    renewHint.textContent = '续费';
     renewPlan.append(due, renewHint);
     renewPlan.disabled=!mutationCSRFToken||agent.revoked||agentState.busy(agent.agent_id,'plan')||agentState.blocked(agent.agent_id);
     renewPlan.addEventListener('click',()=>openPlanRenewal(agent,renewPlan));
-    renewPlan.title='记录本次已续费，需确认；此按钮不是已确认状态';renewPlan.setAttribute('aria-label','记录已续费');
+    renewPlan.title='续费';renewPlan.setAttribute('aria-label','续费');
     const actions = document.createElement('div');
     actions.className = 'card-actions c7-foot2';
     actions.append(editPlan, renewPlan);

@@ -8,9 +8,11 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
@@ -42,6 +44,7 @@ type webAgentPlanRequest struct {
 	RenewalPricePeriod  string `json:"renewal_price_period"`
 	PurchaseDate        string `json:"purchase_date"`
 	RenewalDate         string `json:"renewal_date"`
+	RenewalURL          string `json:"renewal_url"`
 	ExpiryDate          string `json:"expiry_date"`
 	CountryCodeOverride string `json:"country_code_override"`
 }
@@ -103,6 +106,7 @@ func (a *App) handlePutWebAgentPlan(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid plan")
 		return
 	}
+	request.RenewalURL = strings.TrimSpace(request.RenewalURL)
 	if request.empty() {
 		if _, err := a.store.DeleteAgentPlan(r.Context(), agentID); err != nil {
 			a.logger.Error("delete Web agent plan", "agent_id", agentID, "error", err)
@@ -149,13 +153,17 @@ func (request webAgentPlanRequest) empty() bool {
 }
 
 func (request webAgentPlanRequest) plan(agentID string) (storage.AgentPlan, *uint64, error) {
+	renewalURL, err := normalizeRenewalURL(request.RenewalURL)
+	if err != nil {
+		return storage.AgentPlan{}, nil, err
+	}
 	plan := storage.AgentPlan{
 		AgentID: agentID, TrafficMode: request.TrafficMode, QuotaValue: request.QuotaValue, QuotaUnit: request.QuotaUnit,
 		CycleKind: request.CycleKind, CycleCount: request.CycleCount, CycleAnchor: request.CycleAnchor, Timezone: request.Timezone,
 		BandwidthValue: request.BandwidthValue, BandwidthUnit: request.BandwidthUnit, Currency: request.Currency,
 		PurchasePrice: request.PurchasePrice, PurchasePricePeriod: request.PurchasePricePeriod,
 		RenewalPrice: request.RenewalPrice, RenewalPricePeriod: request.RenewalPricePeriod,
-		PurchaseDate: request.PurchaseDate, RenewalDate: request.RenewalDate, ExpiryDate: request.ExpiryDate, CountryCodeOverride: request.CountryCodeOverride,
+		PurchaseDate: request.PurchaseDate, RenewalDate: request.RenewalDate, RenewalURL: renewalURL, ExpiryDate: request.ExpiryDate, CountryCodeOverride: request.CountryCodeOverride,
 	}
 	if request.CountryCodeOverride != "" && !protocol.ValidCountryCode(request.CountryCodeOverride) {
 		return storage.AgentPlan{}, nil, errors.New("country override must be a supported uppercase ISO alpha-2 code")
@@ -244,6 +252,31 @@ func (request webAgentPlanRequest) plan(agentID string) (storage.AgentPlan, *uin
 		}
 	}
 	return plan, calibration, nil
+}
+
+func normalizeRenewalURL(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) > 2048 || strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return "", errors.New("invalid renewal URL")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Hostname() == "" {
+		return "", errors.New("invalid renewal URL")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("renewal URL must use http:// or https://")
+	}
+	if parsed.User != nil {
+		return "", errors.New("renewal URL must not include credentials")
+	}
+	if value = parsed.String(); len(value) > 2048 {
+		return "", errors.New("renewal URL must be at most 2048 bytes")
+	}
+	return value, nil
 }
 
 func planQuantity(value, unit string, factors map[string]uint64, allowZero bool) (uint64, error) {

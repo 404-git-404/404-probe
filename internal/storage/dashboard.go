@@ -89,17 +89,12 @@ func (s *Store) ReadDashboardData(ctx context.Context, now time.Time, offlineTim
 		return out, err
 	}
 	plans := map[string]AgentPlan{}
-	rows, err = tx.QueryContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(quota_value,''),COALESCE(quota_unit,''),quota_bytes,
-		COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,
-		COALESCE(bandwidth_value,''),COALESCE(bandwidth_unit,''),bandwidth_bps,COALESCE(currency,''),COALESCE(purchase_price,''),COALESCE(purchase_price_period,''),
-		COALESCE(renewal_price,''),COALESCE(renewal_price_period,''),COALESCE(purchase_date,''),COALESCE(renewal_date,''),COALESCE(expiry_date,''),COALESCE(country_code_override,''),updated_at,observe_after,
-		cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since
-		 FROM agent_plans`)
+	rows, err = tx.QueryContext(ctx, `SELECT `+agentPlanColumns+` FROM agent_plans`)
 	if err != nil {
 		return out, err
 	}
 	for rows.Next() {
-		plan, scanErr := scanDashboardPlan(rows)
+		plan, scanErr := scanAgentPlan(rows)
 		if scanErr != nil {
 			rows.Close()
 			return out, scanErr
@@ -225,20 +220,4 @@ func scanDashboardState(row dashboardScanner) (State, error) {
 	s.DiskWriteRate = nullableFloat(diskWriteRate)
 	s.DiskBusyPercent = nullableFloat(diskBusy)
 	return s, nil
-}
-func scanDashboardPlan(row dashboardScanner) (AgentPlan, error) {
-	var plan AgentPlan
-	var quotaBytes, bandwidthBPS, cycleStart, cycleEnd, dirSince sql.NullInt64
-	err := row.Scan(
-		&plan.AgentID, &plan.TrafficMode, &plan.QuotaValue, &plan.QuotaUnit, &quotaBytes,
-		&plan.CycleKind, &plan.CycleCount, &plan.CycleAnchor, &plan.Timezone, &plan.UsageBytes, &plan.UsageStatus, &cycleStart, &cycleEnd,
-		&plan.BandwidthValue, &plan.BandwidthUnit, &bandwidthBPS, &plan.Currency, &plan.PurchasePrice, &plan.PurchasePricePeriod,
-		&plan.RenewalPrice, &plan.RenewalPricePeriod, &plan.PurchaseDate, &plan.RenewalDate, &plan.ExpiryDate, &plan.CountryCodeOverride, &plan.UpdatedAt, &plan.ObserveAfter,
-		&plan.CycleRXBytes, &plan.CycleTXBytes, &plan.CycleDirBasis, &dirSince)
-	if err != nil {
-		return AgentPlan{}, err
-	}
-	assignNullablePlanValues(&plan, quotaBytes, bandwidthBPS, cycleStart, cycleEnd)
-	assignDirectionSince(&plan, dirSince)
-	return plan, nil
 }

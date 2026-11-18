@@ -97,3 +97,5 @@ html { scrollbar-gutter: stable; }
 .details-disk-health>.details-note:empty{display:none}
 .details-box .disk-os-failed,.details-identity .disk-os-failed{margin-inline-start:6px}
 .details-upgrade-failure{display:block;overflow-wrap:anywhere}
+.details-fact[hidden]{display:none}
+.details-renewal-url{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -54,3 +54,4 @@
 #plan-dialog .plan-currency-field{display:flex;flex-direction:column;gap:6px;min-width:0}#plan-dialog .plan-price-row{align-items:start}
 
 #plan-dialog:has(#plan-confirmation:not([hidden])) .plan-information-note{display:none}
+#plan-dialog #plan-renewal-url[aria-invalid=true]{border-color:var(--color-danger)}

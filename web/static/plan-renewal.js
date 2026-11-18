@@ -2,6 +2,7 @@
 (function(root){
  'use strict';
   const Copy=root.PublicEgressCheck||(typeof require==='function'?require('./public-egress-check.js'):null);
+  const Management=root.Management||(typeof require==='function'?require('./management.js'):null);
  const hex=v=>typeof v==='string'&&/^[a-f0-9]{32}$/.test(v);
  const date=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v);
  const fields=['renewal_date','expiry_date'];
@@ -36,6 +37,12 @@
   function place(){if(!dialog.open)return;const card=doc.querySelector(`.agent-card[data-agent-id="${id}"]`),p=position(card?.getBoundingClientRect(),dialog.getBoundingClientRect().height,{width:win.innerWidth||1366,height:win.innerHeight||900,dialogWidth:420});Object.assign(dialog.style,{left:p.left+'px',top:p.top+'px',width:p.width+'px'});}
   function draw(){if(!dialog.open||!id||dead)return;const r=record(id),busy=!!r.owner;
    get('name').textContent=agents.get(id)?.name||agents.get(id)?.state?.hostname||'未命名设备';
+   const {url}=Management.parseRenewalURL(agents.get(id)?.plan?.renewal_url);
+   get('payment').hidden=undoAsk;
+   get('payment-link').hidden=!url;
+   get('no-url').hidden=!!url;
+   if(url)get('go').href=url.href;else get('go').removeAttribute('href');
+   get('domain').textContent=url?`${url.hostname} · 新标签页打开`:'';
    get('error').textContent=r.error;get('error').hidden=!r.error;
    get('result').textContent=r.message;get('result').hidden=!r.message;
    get('recovery').hidden=!r.unknown;get('request-id').textContent=r.unknown?.dto.request_id||'';get('request-id').title=r.unknown?.dto.request_id||'';
@@ -54,7 +61,7 @@
     get('warning').textContent=preview.new_overdue?'新日期仍已过期；确认只从原日期顺延一期，不自动补齐。':preview.due_today?'新日期今天到期；仍从原日期顺延一期。':'';
     get('anchor').textContent=preview.anchor_source==='current_date'?'以原当前日期为锚点；没有可兼容的购买日，不猜测未知历史月末。':'沿原购买日锚定，月末或闰日按服务端夹取。';
    }else{get('detail').textContent=preview?(reasons[preview.reason]+' 请编辑套餐后再登记。'):'';get('warning').textContent='';get('anchor').textContent='';}
-   if(preview?.eligible&&!undoAsk){get('detail').title=get('detail').textContent+' '+get('anchor').textContent;get('detail').textContent=labels[preview.field]+'日顺延'+({monthly:'一个月',quarterly:'三个月',semiannual:'六个月',yearly:'一年'})[preview.period]+'：';}get('anchor').hidden=true;
+   if(preview?.eligible&&!undoAsk){get('detail').title=get('detail').textContent+' '+get('anchor').textContent;const label=preview.field==='renewal_date'?'下次续费日':'到期日';get('detail').textContent=`② 付款后，${label}顺延${({monthly:'一个月',quarterly:'三个月',semiannual:'六个月',yearly:'一年'})[preview.period]}：`;}get('anchor').hidden=true;
    confirm.textContent=undoAsk?'确认撤销此次登记':'确认已续费';
    confirm.disabled=busy||loading||!!r.unknown||!canWrite(id)||(undoAsk?!undoAvailable(r):!preview?.eligible);
    get('undo-note').hidden=!undoAsk;place();

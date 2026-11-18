@@ -47,3 +47,15 @@ test('short text dates keep calendar validation before a PUT',()=>{
  const M=require('../web/static/management.js');for(const value of ['2026-02-30','2026-13-01','0000-01-01','2026-2-01'])assert.throws(()=>M.planSectionPayload({},'plan',{renewal_date:value}),/有效日期/);
  assert.equal(M.planSectionPayload({},'plan',{renewal_date:'2024-02-29'}).renewal_date,'2024-02-29');
 });
+test('renewal URL survives country and quota writes and clears with plan information', () => {
+  const management = require('../web/static/management.js');
+  const renewal_url = 'https://billing.example.invalid/account';
+  const existing = {renewal_url, timezone:'UTC'};
+  assert.equal(management.planPayload(existing, {country_code_override:'JP'}).renewal_url, renewal_url);
+  assert.equal(management.planSectionPayload(existing, 'quota', {}, {enabled:false}).renewal_url, renewal_url);
+  assert.equal(management.planSectionPayload(existing, 'clear').renewal_url, '');
+  assert.equal(management.parseRenewalURL('HTTPS://billing.example.invalid/account').url.href, renewal_url);
+  for (const bad of ['javascript:alert(1)','https://user:secret@example.invalid','https://@example.invalid','https://example.invalid/a b']) {
+    assert.equal(management.parseRenewalURL(bad).url, null);
+  }
+});

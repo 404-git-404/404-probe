@@ -44,35 +44,42 @@ type AgentPlan struct {
 	RenewalPricePeriod  string  `json:"renewal_price_period,omitempty"`
 	PurchaseDate        string  `json:"purchase_date,omitempty"`
 	RenewalDate         string  `json:"renewal_date,omitempty"`
+	RenewalURL          string  `json:"renewal_url,omitempty"`
 	ExpiryDate          string  `json:"expiry_date,omitempty"`
 	CountryCodeOverride string  `json:"country_code_override,omitempty"`
 	UpdatedAt           int64   `json:"updated_at"`
 	ObserveAfter        int64   `json:"-"`
 }
 
-func (s *Store) GetAgentPlan(ctx context.Context, agentID string) (AgentPlan, bool, error) {
-	var plan AgentPlan
-	var quotaBytes, bandwidthBPS, cycleStart, cycleEnd, dirSince sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT agent_id,COALESCE(traffic_mode,''),COALESCE(quota_value,''),COALESCE(quota_unit,''),quota_bytes,
+const agentPlanColumns = `agent_id,COALESCE(traffic_mode,''),COALESCE(quota_value,''),COALESCE(quota_unit,''),quota_bytes,
 		COALESCE(cycle_kind,''),COALESCE(cycle_count,0),COALESCE(cycle_anchor,''),COALESCE(timezone,''),usage_bytes,usage_status,cycle_start,cycle_end,
 		COALESCE(bandwidth_value,''),COALESCE(bandwidth_unit,''),bandwidth_bps,COALESCE(currency,''),COALESCE(purchase_price,''),COALESCE(purchase_price_period,''),
 		COALESCE(renewal_price,''),COALESCE(renewal_price_period,''),COALESCE(purchase_date,''),COALESCE(renewal_date,''),COALESCE(expiry_date,''),COALESCE(country_code_override,''),updated_at,observe_after,
-		cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since
-		FROM agent_plans WHERE agent_id=?`, agentID).Scan(
+		cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since,COALESCE(renewal_url,'')`
+
+func (s *Store) GetAgentPlan(ctx context.Context, agentID string) (AgentPlan, bool, error) {
+	plan, err := scanAgentPlan(s.db.QueryRowContext(ctx, `SELECT `+agentPlanColumns+` FROM agent_plans WHERE agent_id=?`, agentID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentPlan{}, false, nil
+	}
+	return plan, err == nil, err
+}
+
+func scanAgentPlan(row interface{ Scan(...any) error }) (AgentPlan, error) {
+	var plan AgentPlan
+	var quotaBytes, bandwidthBPS, cycleStart, cycleEnd, dirSince sql.NullInt64
+	err := row.Scan(
 		&plan.AgentID, &plan.TrafficMode, &plan.QuotaValue, &plan.QuotaUnit, &quotaBytes,
 		&plan.CycleKind, &plan.CycleCount, &plan.CycleAnchor, &plan.Timezone, &plan.UsageBytes, &plan.UsageStatus, &cycleStart, &cycleEnd,
 		&plan.BandwidthValue, &plan.BandwidthUnit, &bandwidthBPS, &plan.Currency, &plan.PurchasePrice, &plan.PurchasePricePeriod,
 		&plan.RenewalPrice, &plan.RenewalPricePeriod, &plan.PurchaseDate, &plan.RenewalDate, &plan.ExpiryDate, &plan.CountryCodeOverride, &plan.UpdatedAt, &plan.ObserveAfter,
-		&plan.CycleRXBytes, &plan.CycleTXBytes, &plan.CycleDirBasis, &dirSince)
-	if errors.Is(err, sql.ErrNoRows) {
-		return AgentPlan{}, false, nil
-	}
+		&plan.CycleRXBytes, &plan.CycleTXBytes, &plan.CycleDirBasis, &dirSince, &plan.RenewalURL)
 	if err != nil {
-		return AgentPlan{}, false, err
+		return AgentPlan{}, err
 	}
 	assignNullablePlanValues(&plan, quotaBytes, bandwidthBPS, cycleStart, cycleEnd)
 	assignDirectionSince(&plan, dirSince)
-	return plan, true, nil
+	return plan, nil
 }
 
 func (s *Store) DeleteAgentPlan(ctx context.Context, agentID string) (bool, error) {
@@ -181,10 +188,10 @@ func (s *Store) PutAgentPlan(ctx context.Context, plan AgentPlan, calibration *u
 	}
 	plan.UsageBytes, plan.UsageStatus, plan.CycleStart, plan.CycleEnd, plan.UpdatedAt, plan.ObserveAfter = usage, status, start, end, updatedAt, observeAfter
 	plan.CycleRXBytes, plan.CycleTXBytes, plan.CycleDirBasis, plan.CycleDirSince = dirRX, dirTX, dirBasis, dirSince
-	_, err = tx.ExecContext(ctx, `INSERT INTO agent_plans(agent_id,traffic_mode,quota_value,quota_unit,quota_bytes,cycle_kind,cycle_count,cycle_anchor,timezone,usage_bytes,usage_status,cycle_start,cycle_end,bandwidth_value,bandwidth_unit,bandwidth_bps,currency,purchase_price,purchase_price_period,renewal_price,renewal_price_period,purchase_date,renewal_date,expiry_date,country_code_override,updated_at,observe_after,cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET traffic_mode=excluded.traffic_mode,quota_value=excluded.quota_value,quota_unit=excluded.quota_unit,quota_bytes=excluded.quota_bytes,cycle_kind=excluded.cycle_kind,cycle_count=excluded.cycle_count,cycle_anchor=excluded.cycle_anchor,timezone=excluded.timezone,usage_bytes=excluded.usage_bytes,usage_status=excluded.usage_status,cycle_start=excluded.cycle_start,cycle_end=excluded.cycle_end,bandwidth_value=excluded.bandwidth_value,bandwidth_unit=excluded.bandwidth_unit,bandwidth_bps=excluded.bandwidth_bps,currency=excluded.currency,purchase_price=excluded.purchase_price,purchase_price_period=excluded.purchase_price_period,renewal_price=excluded.renewal_price,renewal_price_period=excluded.renewal_price_period,purchase_date=excluded.purchase_date,renewal_date=excluded.renewal_date,expiry_date=excluded.expiry_date,country_code_override=excluded.country_code_override,updated_at=excluded.updated_at,observe_after=excluded.observe_after,cycle_rx_bytes=excluded.cycle_rx_bytes,cycle_tx_bytes=excluded.cycle_tx_bytes,cycle_dir_basis=excluded.cycle_dir_basis,cycle_dir_since=excluded.cycle_dir_since`,
+	_, err = tx.ExecContext(ctx, `INSERT INTO agent_plans(agent_id,traffic_mode,quota_value,quota_unit,quota_bytes,cycle_kind,cycle_count,cycle_anchor,timezone,usage_bytes,usage_status,cycle_start,cycle_end,bandwidth_value,bandwidth_unit,bandwidth_bps,currency,purchase_price,purchase_price_period,renewal_price,renewal_price_period,purchase_date,renewal_date,expiry_date,country_code_override,updated_at,observe_after,cycle_rx_bytes,cycle_tx_bytes,cycle_dir_basis,cycle_dir_since,renewal_url)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET traffic_mode=excluded.traffic_mode,quota_value=excluded.quota_value,quota_unit=excluded.quota_unit,quota_bytes=excluded.quota_bytes,cycle_kind=excluded.cycle_kind,cycle_count=excluded.cycle_count,cycle_anchor=excluded.cycle_anchor,timezone=excluded.timezone,usage_bytes=excluded.usage_bytes,usage_status=excluded.usage_status,cycle_start=excluded.cycle_start,cycle_end=excluded.cycle_end,bandwidth_value=excluded.bandwidth_value,bandwidth_unit=excluded.bandwidth_unit,bandwidth_bps=excluded.bandwidth_bps,currency=excluded.currency,purchase_price=excluded.purchase_price,purchase_price_period=excluded.purchase_price_period,renewal_price=excluded.renewal_price,renewal_price_period=excluded.renewal_price_period,purchase_date=excluded.purchase_date,renewal_date=excluded.renewal_date,expiry_date=excluded.expiry_date,country_code_override=excluded.country_code_override,updated_at=excluded.updated_at,observe_after=excluded.observe_after,cycle_rx_bytes=excluded.cycle_rx_bytes,cycle_tx_bytes=excluded.cycle_tx_bytes,cycle_dir_basis=excluded.cycle_dir_basis,cycle_dir_since=excluded.cycle_dir_since,renewal_url=excluded.renewal_url`,
 		plan.AgentID, nullable(plan.TrafficMode), nullable(plan.QuotaValue), nullable(plan.QuotaUnit), nullableUint(plan.QuotaBytes), nullable(plan.CycleKind), nullableInt(plan.CycleCount), nullable(plan.CycleAnchor), nullable(plan.Timezone), int64(plan.UsageBytes), plan.UsageStatus, nullableInt64(plan.CycleStart), nullableInt64(plan.CycleEnd), nullable(plan.BandwidthValue), nullable(plan.BandwidthUnit), nullableUint(plan.BandwidthBPS), nullable(plan.Currency), nullable(plan.PurchasePrice), nullable(plan.PurchasePricePeriod), nullable(plan.RenewalPrice), nullable(plan.RenewalPricePeriod), nullable(plan.PurchaseDate), nullable(plan.RenewalDate), nullable(plan.ExpiryDate), nullable(plan.CountryCodeOverride), plan.UpdatedAt, plan.ObserveAfter,
-		int64(plan.CycleRXBytes), int64(plan.CycleTXBytes), plan.CycleDirBasis, nullableInt64(plan.CycleDirSince))
+		int64(plan.CycleRXBytes), int64(plan.CycleTXBytes), plan.CycleDirBasis, nullableInt64(plan.CycleDirSince), nullable(plan.RenewalURL))
 	if err != nil {
 		return AgentPlan{}, err
 	}

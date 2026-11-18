@@ -79,6 +79,36 @@ func renewalWebApply(t *testing.T, a *App, id string, q storage.PlanRenewalApply
 	}
 	return out
 }
+
+func TestWebPlanRenewalURLSurvivesRegistrationAndReads(t *testing.T) {
+	a, _, id := webRenewalSetup(t)
+	const link = "https://billing.example.invalid/pay?q=monthly"
+	request := `{"renewal_url":"  HTTPS://billing.example.invalid/pay?q=monthly  ","renewal_date":"2024-01-31","renewal_price_period":"monthly","renewal_price":"9","currency":"USD","timezone":"UTC"}`
+	assertURL := func(w *httptest.ResponseRecorder) {
+		t.Helper()
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"renewal_url":"`+link+`"`) {
+			t.Fatalf("status=%d body=%s", w.Code, w.Body)
+		}
+	}
+	assertURL(webPlanPut(t, a, id, request, true))
+	q := renewalWebApplyDTO(renewalWebPreview(t, a, id, ""), strings.Repeat("1", 32))
+	result := renewalWebApply(t, a, id, q)
+	if result.CurrentPlan == nil || result.CurrentPlan.RenewalURL != link || result.CurrentPlan.RenewalDate != "2024-02-29" {
+		t.Fatalf("invalid renewal result: %+v", result.CurrentPlan)
+	}
+	for _, path := range []string{webAgentPathPrefix + id + "/plan", webAgentPathPrefix + id, "/api/v1/web/dashboard", "/api/v1/web/dashboard?ids=" + id} {
+		assertURL(webAgentResponse(t, a, http.MethodGet, path))
+	}
+	if w := webPlanPut(t, a, id, `{"renewal_url":"   "}`, true); w.Code != http.StatusNoContent {
+		t.Fatalf("clearing URL returned %d", w.Code)
+	}
+	for _, value := range []string{"ftp://example.invalid/pay", "https://admin:password@example.invalid", "https://@example.invalid", "https://", "http:///renew", "https://example.invalid/with space", "https://example.invalid/with\u0085control", "https://example.invalid/" + strings.Repeat("a", 2048)} {
+		body := renewalWebJSON(t, map[string]string{"renewal_url": value})
+		if w := webPlanPut(t, a, id, body, true); w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid URL save status=%d", w.Code)
+		}
+	}
+}
 func TestWebPlanRenewalAuthenticationAndMutationProof(t *testing.T) {
 	for _, action := range []string{"preview", "apply", "undo"} {
 		t.Run(action, func(t *testing.T) {
