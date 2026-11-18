@@ -8,7 +8,66 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"404-probe/internal/storage"
 )
+
+func TestWebYouTubeAdFreeRegionSettingsPublishDashboardRevision(t *testing.T) {
+	a, store, id := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	const path = "/api/v1/web/settings/youtube-ad-free-regions"
+	if got := webRequest(a, http.MethodGet, path, nil, nil).Code; got != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated settings status=%d", got)
+	}
+	if w := webAgentResponse(t, a, http.MethodGet, path); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"defaults":[`) {
+		t.Fatalf("default settings status=%d body=%s", w.Code, w.Body)
+	}
+	if w := renewalWebRequest(t, a, http.MethodPut, path, `{"regions":["MO"]}`, func(r *http.Request) { r.Header.Del("X-CSRF-Token") }); w.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF status=%d", w.Code)
+	}
+	for _, body := range []string{`{}`, `{"regions":null}`, `{"regions":["EU"]}`, `{"regions":["mo"]}`, `{"regions":[` + strings.Repeat(`"MO",`, 249) + `"MO"]}`, `{"regions":[],"extra":true}`} {
+		if w := renewalWebRequest(t, a, http.MethodPut, path, body, nil); w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid settings status=%d", w.Code)
+		}
+	}
+	readDashboard := func() dashboardResponse {
+		t.Helper()
+		w := webAgentResponse(t, a, http.MethodGet, "/api/v1/web/dashboard")
+		var out dashboardResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("dashboard status=%d err=%v", w.Code, err)
+		}
+		return out
+	}
+	before := readDashboard()
+	events, ok := a.hub.subscribe()
+	if !ok {
+		t.Fatal("could not subscribe to SSE hub")
+	}
+	defer a.hub.unsubscribe(events)
+	if w := renewalWebRequest(t, a, http.MethodPut, path, `{"regions":["US","US","MO"]}`, nil); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"regions":["MO","US"]`) {
+		t.Fatalf("save status=%d body=%s", w.Code, w.Body)
+	}
+	select {
+	case event := <-events:
+		if !strings.Contains(string(event), `"kind":"youtube-ad-free-regions"`) {
+			t.Fatalf("unexpected SSE event %s", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("region update did not publish SSE")
+	}
+	after := readDashboard()
+	if after.Revision <= before.Revision || !slices.Equal(after.YouTubeAdFreeRegions, []string{"MO", "US"}) {
+		t.Fatalf("outdated catalog revision=%d, regions=%v", after.Revision, after.YouTubeAdFreeRegions)
+	}
+	if w := renewalWebRequest(t, a, http.MethodPut, path, `{"regions":[]}`, nil); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"regions":[]`) {
+		t.Fatalf("clear status=%d body=%s", w.Code, w.Body)
+	}
+	if w := webAgentResponse(t, a, http.MethodGet, webAgentPathPrefix+id); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"youtube_ad_free_regions":[]`) {
+		t.Fatalf("detail status=%d body=%s", w.Code, w.Body)
+	}
+}
 
 func TestWebYouTubeRegion(t *testing.T) {
 	app, store, id := newWebAuthenticationTestApp(t)
@@ -52,6 +111,8 @@ func TestWebYouTubeRegion(t *testing.T) {
 	}
 	check(mutate(http.MethodDelete, id, mo, true, true, origin), http.StatusBadRequest)
 
+	defaults := storage.DefaultYouTubeAdFreeRegions()
+	slices.Sort(defaults)
 	assertViews := func(region, country string) {
 		t.Helper()
 		detail := webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+id)
@@ -61,7 +122,7 @@ func TestWebYouTubeRegion(t *testing.T) {
 			t.Fatal(err)
 		}
 		if item.GoogleStatus.Supported || item.GoogleStatus.ManualRegion != region || item.CountryCode != country ||
-			!slices.Equal(item.YouTubeAdFreeRegions, youtubeAdFreeRegions[:]) {
+			!slices.Equal(item.YouTubeAdFreeRegions, defaults) {
 			t.Fatalf("detail=%s", detail.Body)
 		}
 		for _, suffix := range []string{"", "?ids=" + id} {
@@ -72,7 +133,7 @@ func TestWebYouTubeRegion(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(data.Items) != 1 || data.Items[0].GoogleStatus.ManualRegion != region ||
-				data.Items[0].CountryCode != country || !slices.Equal(data.YouTubeAdFreeRegions, youtubeAdFreeRegions[:]) {
+				data.Items[0].CountryCode != country || !slices.Equal(data.YouTubeAdFreeRegions, defaults) {
 				t.Fatalf("dashboard=%s", dash.Body)
 			}
 		}

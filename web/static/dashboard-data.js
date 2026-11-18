@@ -9,7 +9,7 @@
   return result;
  }
  function create({state,read,onchange=()=>{},onerror=()=>{},onsuccess=()=>{},frame=root.requestAnimationFrame||((f)=>setTimeout(f,0)),now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout}){
-  let catalog={revision:0,groups:[],tags:[],exchange_rates:[],expenses:null},ready=false,closed=false;
+  let catalog={revision:0,groups:[],tags:[],exchange_rates:[],expenses:null,youtube_ad_free_regions:[]},ready=false,closed=false;
   let serverClock=null;
   let full=null,partial=null,scheduled=false,wantFull=false;
   const dirty=new Set();
@@ -84,6 +84,7 @@
   }
   function notify(id){if(!closed&&id&&!state.blocked(id)){dirty.add(id);schedule();}}
   function metadata(value){
+   if(value.kind==='youtube-ad-free-regions'){wantFull=true;schedule();return;}
    const id=value.agent_id;
    if(value.revoked&&state.agents.has(id)){const token=state.beginDelete(id);state.finishDelete(token,true);dirty.delete(id);telemetryDirty.delete(id);telemetryReady.delete(id);summaryDue.delete(id);onchange(new Set([id]),{full:false});wantFull=true;schedule();return;}
    if(id){state.invalidate(id,value.kind==='name'?['name','summary']:['lifecycle','summary']);notify(id);}

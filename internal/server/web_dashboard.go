@@ -276,7 +276,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := dashboardResponse{Partial: selected != nil, Total: len(data.Records), Expenses: estimateExpenses(data, nil).expenseTotals, ServerNow: now.UnixMilli(), Revision: data.Catalog.Revision, Groups: data.Catalog.Groups, Tags: data.Catalog.Tags, ExchangeRates: data.Catalog.Rates, Items: []dashboardSummary{}}
-	out.YouTubeAdFreeRegions = youtubeAdFreeRegions[:]
+	out.YouTubeAdFreeRegions = data.YouTubeAdFreeRegions
 	for _, raw := range data.Records {
 		id := raw.Snapshot.Agent.ID
 		if selected != nil && !selected[id] {

@@ -3,15 +3,68 @@ package server
 import (
 	"errors"
 	"net/http"
+	"slices"
 
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 )
 
-var youtubeAdFreeRegions = [...]string{"AL", "MD", "AD", "SM", "MO", "KH", "LA", "MV", "MN", "CI", "MG", "ET", "RU", "MM", "CN"}
-
 type webYouTubeRegion struct {
 	Region string `json:"region"`
+}
+
+type webYouTubeAdFreeRegions struct {
+	Regions  []string `json:"regions"`
+	Defaults []string `json:"defaults"`
+}
+
+func (a *App) handleYouTubeAdFreeRegions(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid YouTube regions request")
+		return
+	}
+	if r.Method == http.MethodGet {
+		regions, err := a.store.YouTubeAdFreeRegions(r.Context())
+		if err != nil {
+			writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read YouTube regions")
+			return
+		}
+		writeJSON(w, http.StatusOK, webYouTubeAdFreeRegions{regions, storage.DefaultYouTubeAdFreeRegions()})
+		return
+	}
+	if !hasJSONContentType(r) {
+		writeJobError(w, http.StatusUnsupportedMediaType, "invalid_content_type", "Content-Type must be application/json")
+		return
+	}
+	body, err := readBoundedBody(w, r, 16<<10)
+	if err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	var request struct {
+		Regions []string `json:"regions"`
+	}
+	if decodeStrictJSON(body, &request) != nil || request.Regions == nil || len(request.Regions) > 249 {
+		writeJobError(w, http.StatusBadRequest, "invalid_request", "regions must be an array of at most 249 country codes")
+		return
+	}
+	for _, region := range request.Regions {
+		if !protocol.ValidCountryCode(region) {
+			writeJobError(w, http.StatusBadRequest, "invalid_region", "region must be a supported uppercase ISO alpha-2 code")
+			return
+		}
+	}
+	slices.Sort(request.Regions)
+	regions := slices.Compact(request.Regions)
+	changed, err := a.store.SetYouTubeAdFreeRegions(r.Context(), regions, a.now())
+	if err != nil {
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not save YouTube regions")
+		return
+	}
+	if changed {
+		a.publishDashboardChange("", "youtube-ad-free-regions", false)
+	}
+	writeJSON(w, http.StatusOK, webYouTubeAdFreeRegions{regions, storage.DefaultYouTubeAdFreeRegions()})
 }
 
 func (a *App) handleWebYouTubeRegion(w http.ResponseWriter, r *http.Request) {

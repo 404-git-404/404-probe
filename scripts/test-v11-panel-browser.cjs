@@ -36,10 +36,12 @@ test('release notice requires true newer and canonical stable version, never use
  await p.evaluate(()=>dashboardUI.updateVersion({update:{newer:'true',latest:'v1.2.3'}}));assert.equal(await p.locator('#panel-update').isVisible(),false);
  await p.evaluate(()=>dashboardUI.updateVersion({update:{newer:true,latest:'v1.2.3',checked_at:1}}));await p.locator('#panel-collapse').click();assert.equal(await p.locator('#panel-update').isVisible(),true);assert.equal(await p.locator('#panel-update b').textContent(),'⬆');
 }));
-test('settings opens on disabled/corrupt state, saves explicit boolean with session/CSRF, and explains 403',()=>ui(async({page:p,state})=>{
- state.update={enabled:false,newer:false,latest:'',checked_at:0};await p.locator('#panel-settings').click();await p.waitForFunction(()=>!document.querySelector('#update-check-enabled').checked);state.failSettings=true;await p.locator('#update-check-enabled').check();await p.locator('#update-check-save').click();await p.waitForFunction(()=>document.querySelector('#update-check-error').textContent.includes('CSRF'));assert.equal(await p.locator('#panel-settings-dialog').isVisible(),true);
+test('settings page persists the version checkbox immediately with session/CSRF, and explains 403',()=>ui(async({page:p,state})=>{
+ state.update={enabled:false,newer:false,latest:'',checked_at:0};await p.locator('#panel-settings').click();assert.equal(new URL(p.url()).pathname,'/settings.html');
+ await p.waitForFunction(()=>!document.querySelector('#update-check-enabled').disabled);
+ state.failSettings=true;await p.locator('#update-check-enabled').check();await p.waitForFunction(()=>document.querySelector('#update-check-error').textContent.includes('CSRF'));
  assert.deepEqual(state.writes[0].body,{enabled:true});assert.equal(state.writes[0].headers['x-csrf-token'],'synthetic-csrf');assert.equal(state.writes[0].headers['sec-fetch-site'],'same-origin');assert.equal(state.writes[0].headers.origin,new URL(p.url()).origin);
- state.failSettings=false;await p.locator('#update-check-save').click();await p.waitForFunction(()=>!document.querySelector('#panel-settings-dialog').open);assert.equal(state.update.enabled,true);
+ state.failSettings=false;await p.locator('#update-check-enabled').check();await p.locator('#update-saved').waitFor();assert.equal(state.update.enabled,true);
 }));
 test('theme control works inside the panel in both expanded and icon modes',()=>ui(async({page:p})=>{
  await p.locator('[data-theme-toggle]').click();assert.equal(await p.locator('html').getAttribute('data-theme'),'dark');await p.locator('#panel-collapse').click();await p.locator('[data-theme-toggle]').click();assert.equal(await p.evaluate(()=>ProbeTheme.get()),'light');

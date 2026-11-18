@@ -1097,7 +1097,8 @@ function setCardText(node, value) {
 
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
-function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+let youtubeRegionKey='',youtubeRegionGeneration=0;
+function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1699,7 +1700,16 @@ function hydrateActiveDetail(id){
  });
  detailJobs.set(id,{controller,task,again:false});return task;
 }
-const dashboardData=DashboardData.create({state:agentState,read:readJSON,onchange:ids=>{overviewReady=true;render(ids);},onsuccess:()=>{if(events.readyState===EventSource.OPEN){stream.textContent='实时连接';stream.classList.add('live');}},onerror:()=>{stream.textContent='部分资料读取失败';stream.classList.remove('live');}});
+const dashboardData=DashboardData.create({state:agentState,read:readJSON,onchange:ids=>{
+  overviewReady=true;
+  const nextRegions=youtubeRegions().join(',');
+  if(nextRegions===youtubeRegionKey){render(ids);return;}
+  youtubeRegionKey=nextRegions;
+  youtubeRegionGeneration++;
+  const detail=deviceDetails.snapshot();
+  if(detail.open)deviceDetails.update(agents.get(detail.id));
+  render();
+},onsuccess:()=>{if(events.readyState===EventSource.OPEN){stream.textContent='实时连接';stream.classList.add('live');}},onerror:()=>{stream.textContent='部分资料读取失败';stream.classList.remove('live');}});
 const reconciliation={
  notify(id){dashboardData.notify(id);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===id)hydrateActiveDetail(id);},
  retry(){dashboardData.retry();},cancel(id){detailJobs.get(id)?.controller.abort();detailJobs.delete(id);},

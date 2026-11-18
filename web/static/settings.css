@@ -1,0 +1,40 @@
+.settings-page{min-width:0}
+.settings-header{max-width:72rem;margin:auto;padding:1.15rem 1.5rem;display:flex;align-items:center;justify-content:space-between}
+.settings-layout{max-width:72rem;margin:0 auto;padding:0 1.5rem 3rem;display:grid;grid-template-columns:13rem minmax(0,1fr);align-items:start;gap:1.5rem}
+.settings-nav{position:sticky;top:1rem;display:grid;gap:.15rem;padding:.55rem;background:var(--color-card);border:1px solid var(--color-line);border-radius:.65rem}
+.settings-nav a{padding:.52rem .65rem;border-radius:.38rem;color:var(--color-text-muted);text-decoration:none}
+.settings-nav a:hover,.settings-nav a[aria-current]{background:var(--color-surface-hover);color:var(--color-text)}
+.settings-nav a[aria-current]{font-weight:650}
+.settings-content{display:grid;gap:.9rem;min-width:0}
+.settings-content section{background:var(--color-card);border:1px solid var(--color-line);border-radius:.75rem;padding:1.2rem 1.35rem;scroll-margin-top:1rem}
+.settings-content h1,.settings-content h2{font-size:1.15rem;margin:0 0 .7rem;color:var(--color-text)}
+.settings-content p{margin:.55rem 0;line-height:1.5}
+.settings-content p:empty,.settings-content [hidden]{display:none}
+.settings-content .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.settings-check{display:flex;align-items:center;gap:.45rem}
+.settings-content input[type=checkbox]{accent-color:var(--color-success);margin:0}
+.settings-note{font-size:.85rem;color:var(--color-text-muted)}
+.settings-good{color:var(--color-success);font-weight:650}
+.settings-dirty{color:var(--color-warning-text)}
+.settings-error{color:var(--color-danger-text)}
+.settings-banner{padding:.55rem .7rem;border:1px solid currentColor;border-radius:.4rem}
+.settings-password-fields{display:grid;gap:.55rem .8rem;grid-template-columns:max-content minmax(10rem,17rem) minmax(0,1fr);align-items:center;margin-top:.9rem}
+.settings-password-fields input:not([type=checkbox]),#rg-search{box-sizing:border-box;width:100%;min-width:0;padding:.45rem .58rem;color:var(--color-text);border:1px solid var(--color-line-strong);background:var(--color-card);border-radius:.4rem;font:inherit}
+.settings-password-fields input[aria-invalid=true]{border-color:var(--color-danger)}
+.settings-show{grid-column:2;color:var(--color-text-muted);font-size:.86rem}
+.settings-actions{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.85rem}
+.settings-actions button:not(.primary-action){padding:.45rem .7rem;border:1px solid var(--color-line-strong);border-radius:.48rem;background:var(--color-card);color:var(--color-text);cursor:pointer}
+.settings-actions button:not(.primary-action):hover:not(:disabled){background:var(--color-surface-hover)}
+.settings-content button:disabled{opacity:.65;cursor:default}
+.settings-spacer{flex:1}
+.settings-chips{display:flex;gap:.4rem;flex-wrap:wrap;margin:.6rem 0 .8rem}
+.settings-chips button{font-size:.82rem;padding:.23rem .5rem;border:1px solid var(--color-danger);border-radius:999px;background:var(--color-card);color:var(--color-danger-text);cursor:pointer}
+.settings-chips button:hover:not(:disabled){background:var(--color-surface-hover)}
+.settings-region-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.15rem .55rem;max-height:12rem;overflow:auto;min-height:2.5rem;margin-top:.55rem;padding:.4rem;border:1px solid var(--color-line);border-radius:.4rem}
+.settings-region-list label{padding:.26rem .25rem;border-radius:.3rem}
+.settings-region-list label:hover{background:var(--color-surface-hover)}
+.settings-about{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:.5rem 1rem;margin:.6rem 0 0}
+.settings-about dt{color:var(--color-text-muted)}
+.settings-about dd{margin:0;overflow-wrap:anywhere}
+@media(max-width:56rem){.settings-layout{grid-template-columns:minmax(0,1fr);gap:.8rem}.settings-nav{position:static;display:flex;flex-wrap:wrap}}
+@media(max-width:34rem){.settings-layout,.settings-header{padding-inline:.8rem}.settings-content section{padding:1rem}.settings-password-fields{grid-template-columns:minmax(0,1fr);gap:.3rem}.settings-password-fields label:not(:first-child){margin-top:.35rem}.settings-show{grid-column:1}.settings-region-list{grid-template-columns:1fr}}

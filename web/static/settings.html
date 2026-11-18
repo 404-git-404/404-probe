@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="color-scheme" content="light dark">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>404-probe · 设置</title>
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/settings.css">
+</head>
+<body class="settings-page">
+  <header class="settings-header"><a class="back" href="/">← 返回面板</a><button class="theme-toggle" data-theme-toggle type="button" aria-label="主题">☀</button></header>
+  <main class="settings-layout">
+    <nav class="settings-nav" aria-label="设置目录">
+      <a href="#update" aria-current="location">检查新版本</a>
+      <a href="#password">修改密码</a>
+      <a href="#regions">YouTube 无广告地区</a>
+      <a href="#about">关于</a>
+    </nav>
+    <div class="settings-content">
+      <section id="update" aria-labelledby="update-title">
+        <h1 id="update-title">检查新版本</h1>
+        <label class="settings-check"><input id="update-check-enabled" type="checkbox" disabled> 每 12 小时访问一次 GitHub，看看有没有新版本</label>
+        <p class="settings-note">只读取版本号，不上传任何信息；关闭后不再访问。<span id="update-result"></span> <span id="update-saved" class="settings-good" role="status" hidden>✓ 已保存</span></p>
+        <p id="update-check-error" class="settings-error" role="alert"></p>
+      </section>
+      <section id="password" aria-labelledby="password-title">
+        <h2 id="password-title">修改密码</h2>
+        <p>改好后，其他已登录的浏览器会自动退出；这个浏览器保持登录。</p>
+        <p id="pw-banner" class="settings-banner" role="status" hidden></p>
+        <form id="password-form" method="post" action="/api/v1/web/settings/password">
+          <div class="settings-password-fields">
+            <label for="pw-current">当前密码</label><input id="pw-current" type="password" autocomplete="current-password" required aria-describedby="pw-current-msg"><span id="pw-current-msg" class="settings-note" aria-live="polite"></span>
+            <label for="pw-new">新密码</label><input id="pw-new" type="password" autocomplete="new-password" required aria-describedby="pw-new-msg"><span id="pw-new-msg" class="settings-note" aria-live="polite">至少 16 个字符</span>
+            <label for="pw-confirm">再输一次新密码</label><input id="pw-confirm" type="password" autocomplete="new-password" required aria-describedby="pw-confirm-msg"><span id="pw-confirm-msg" class="settings-note" aria-live="polite"></span>
+            <label class="settings-check settings-show"><input id="pw-show" type="checkbox"> 显示密码</label>
+          </div>
+          <div class="settings-actions"><button id="pw-save" class="primary-action" type="submit" disabled>修改密码</button></div>
+        </form>
+        <p class="settings-note">忘记密码时：在 Server 上以 root 运行 <code>404-probe-install web-password reset</code>，所有浏览器都会退出。</p>
+      </section>
+      <section id="regions" aria-labelledby="regions-title">
+        <h2 id="regions-title">YouTube 无广告地区</h2>
+        <p>名单里的地区，卡片和列表上的 YouTube 地区显示为红色，左侧“YouTube 无广告地区”分组也按这份名单。只能从下面的列表里选，不能手填。</p>
+        <p>已选 <strong id="rg-count">—</strong> 个 <span id="rg-dirty" class="settings-dirty" hidden>· 有未保存的修改</span></p>
+        <div id="rg-chips" class="settings-chips" aria-label="已选地区"></div>
+        <label class="sr-only" for="rg-search">搜索国家/地区</label>
+        <input id="rg-search" type="search" placeholder="搜索国家/地区名称或代码，例如 澳门、MO" disabled>
+        <div id="rg-list" class="settings-region-list" role="group" aria-label="国家/地区"></div>
+        <div class="settings-actions"><button id="rg-reset" type="button" disabled>恢复默认 15 个</button><span class="settings-spacer"></span><button id="rg-undo" type="button" disabled>撤销修改</button><button id="rg-save" class="primary-action" type="button" disabled>保存</button></div>
+        <p id="rg-status" role="status" class="settings-note"></p>
+      </section>
+      <section id="about" aria-labelledby="about-title">
+        <h2 id="about-title">关于</h2>
+        <dl class="settings-about">
+          <dt>版本</dt><dd id="ab-version">—</dd>
+          <dt>提交</dt><dd><code id="ab-commit">—</code></dd>
+          <dt>数据库版本</dt><dd id="ab-schema">—</dd>
+          <dt>项目主页</dt><dd><a href="https://github.com/404-git-404/404-probe" target="_blank" rel="noopener noreferrer">github.com/404-git-404/404-probe ↗</a></dd>
+          <dt>本版说明</dt><dd><span id="ab-notes-missing">—</span><a id="ab-notes" target="_blank" rel="noopener noreferrer" hidden></a></dd>
+        </dl>
+      </section>
+    </div>
+  </main>
+  <script src="/management.js" defer></script>
+  <script src="/settings.js" defer></script>
+  <script src="/theme-toggle.js" defer></script>
+</body>
+</html>

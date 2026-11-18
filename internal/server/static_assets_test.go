@@ -378,9 +378,8 @@ func TestStaticAssetsStartupOnlyAndPerAppIsolation(t *testing.T) {
 		}
 	}
 	t.Logf("startup directory: legacy=%d immutable=%d page aliases=%d retained bytes=%d", len(b.legacy), len(b.immutable), len(b.pages), retained)
-	// Dashboard/theme assets plus the banner's script and stylesheet. Keep the original
-	// 3 MiB retention bound, startup-only reads, and per-App isolation checks.
-	if len(b.legacy) != 337 || retained > 3<<20 {
+	// The settings page, script and stylesheet add three entries to the asset directory.
+	if len(b.legacy) != 340 || retained > 3<<20 {
 		t.Fatal("unexpected resource footprint")
 	}
 }

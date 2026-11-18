@@ -9,7 +9,7 @@ async function open(browser,{width=1920,height=1080,theme='light',n=28,preferenc
  await page.addInitScript(({theme,preferences})=>{localStorage.setItem('404-probe.theme.v1',theme);if(preferences&&!localStorage.getItem('404-probe.dashboard.v1'))localStorage.setItem('404-probe.dashboard.v1',JSON.stringify({version:1,...preferences}));},{theme,preferences});
  await context.route('**/*',async r=>{
   const u=new URL(r.request().url()),method=r.request().method();if(u.origin!==f.base)return r.abort();
-  if(u.pathname==='/api/v1/web/version')return r.fulfill({json:{version:'v1.0.10',upgrade_eligible:true,one_click_install:true,update:state.update}});
+  if(u.pathname==='/api/v1/web/version')return r.fulfill({json:{version:'v1.0.10',commit:'1'.repeat(40),schema_version:38,upgrade_eligible:true,one_click_install:true,update:state.update}});
   if(u.pathname==='/api/v1/web/agent-enrollments'){
    state.enrollments++;state.name=r.request().postDataJSON().name;
    state.command=`curl -fsSL https://github.com/404-git-404/404-probe/releases/download/v1.0.10/install.sh | PROBE_404_ROLE=agent PROBE_404_SERVER='${f.base}' PROBE_404_ENROLL_TOKEN='${state.token}' PROBE_404_AGENT_NAME='${state.name}' bash`;

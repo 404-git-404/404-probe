@@ -71,12 +71,9 @@
   get('panel-more-toggle').addEventListener('click',()=>{const open=get('panel-more').classList.toggle('more-open');get('panel-more-toggle').setAttribute('aria-expanded',String(open));});
   for(const [id,key]of [['panel-health','health'],['panel-renewal','renewal']])get(id).addEventListener('click',()=>apply(key));
   layout();
-  const settings=el('dialog');settings.id='panel-settings-dialog';
-  settings.innerHTML='<div class="shell-content"><label><input id="update-check-enabled" type="checkbox"> 检查新版本（每 12 小时访问一次 GitHub）</label><p>只读取版本号，不上传任何信息；关闭后不再访问。</p><p id="update-check-error" role="alert"></p></div><div class="shell-actions"><button id="update-check-cancel" type="button">取消</button><button id="update-check-save" class="primary-action" type="button">保存</button></div>';
-  doc.body.append(settings);const settingsShell=root.DialogShell.attach(settings,{size:'small',title:'设置'});
-  let versionData=null,versionReadAt=0,versionBusy=false,settingsBusy=false,closed=false;
+  let versionReadAt=0,versionBusy=false,closed=false;
   function updateVersion(view){
-   versionData=view?.update||{};
+   const versionData=view?.update||{};
    const latest=versionData.latest,valid=typeof latest==='string'&&/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(latest)&&latest===latest.trim()&&root.AgentState.compareStableVersions(latest,latest)===0;
    const link=get('panel-update');link.hidden=!(versionData.newer===true&&valid);
    link.removeAttribute('href');if(!link.hidden){link.href='https://github.com/404-git-404/404-probe/releases/tag/'+latest;link.querySelector('span').textContent='有新版本 '+latest+' · 说明';link.title='有新版本 '+latest+' · 说明';}
@@ -85,17 +82,6 @@
    if(versionBusy||closed||(!force&&Date.now()-versionReadAt<30*60*1000))return;
    versionBusy=true;versionReadAt=Date.now();try{const view=await read('/api/v1/web/version');if(!closed)updateVersion(view);}catch{}finally{versionBusy=false;}
   }
-  get('panel-settings').addEventListener('click',async e=>{
-   get('update-check-error').textContent='';get('update-check-enabled').checked=versionData?.enabled===true;settingsShell.open(e.currentTarget);
-   try{const view=await read('/api/v1/web/version');if(closed)return;updateVersion(view);if(!settingsBusy)get('update-check-enabled').checked=versionData.enabled===true;}catch{get('update-check-error').textContent='读取设置失败，仍可重新保存。';}
-  });
-  get('update-check-cancel').addEventListener('click',settingsShell.close);
-  get('update-check-save').addEventListener('click',async()=>{
-   if(settingsBusy)return;settingsBusy=true;get('update-check-save').disabled=true;get('update-check-error').textContent='';
-   try{const update=await root.Management.write('/api/v1/web/settings/update-check',{method:'PUT',csrf:csrf(),payload:{enabled:get('update-check-enabled').checked},unauthorized:()=>root.location.assign('/login')});if(!closed){updateVersion({update});settingsShell.close();}}
-   catch(error){get('update-check-error').textContent=error.status===403?'保存被拒绝（CSRF 校验失败或页面已过期），请刷新后重试。':'保存失败，请重试。';}
-   finally{settingsBusy=false;get('update-check-save').disabled=false;}
-  });
   const countryNames=typeof Intl.DisplayNames==='function'?new Intl.DisplayNames(['zh-CN'],{type:'region'}):null;
   const country=code=>code==='unknown'?'未知':(()=>{try{return countryNames?.of(code)||code;}catch{return code;}})();
   function optionRows(key,rows){
@@ -122,7 +108,7 @@
    return model;
   }
   return {preferences,effectiveView:()=>p.viewMode==='list'&&phone.matches?'cards':p.viewMode,update,apply,clear,sortBy,setSlot(slot){p.latencySlot=slot;change();},updateVersion,refreshVersion,collapse(id){toggle('collapsed',id,!p.collapsed.includes(id));},
-   close(){closed=true;tagResize.disconnect();if(tagFrame)root.cancelAnimationFrame(tagFrame);settingsShell.close();narrow.removeEventListener('change',breakpoint);phone.removeEventListener('change',breakpoint);panel.removeEventListener('click',closeOnChoice);mobileShell.close();},snapshot:()=>({state:{...p}})};
+   close(){closed=true;tagResize.disconnect();if(tagFrame)root.cancelAnimationFrame(tagFrame);narrow.removeEventListener('change',breakpoint);phone.removeEventListener('change',breakpoint);panel.removeEventListener('click',closeOnChoice);mobileShell.close();},snapshot:()=>({state:{...p}})};
  }
  root.DashboardView={create};
 })(globalThis);

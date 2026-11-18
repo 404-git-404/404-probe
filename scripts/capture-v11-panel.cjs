@@ -13,7 +13,7 @@ async function shot(p,name){await p.screenshot({path:path.join(out,name+'.png')}
    }
    await p.setViewportSize({width:1920,height:1080});await shot(p,theme==='light'?'D1-actual':'D4-actual');
    await p.locator('#panel-collapse').click();await shot(p,`${theme}-update-collapsed`);if(theme==='dark')await shot(p,'D8-actual');await p.locator('#panel-collapse').click();
-   await p.locator('#panel-settings').click();await p.waitForSelector('#panel-settings-dialog[open]');await shot(p,`${theme}-settings`);await p.keyboard.press('Escape');
+   await p.locator('#panel-settings').click();await p.locator('#update-check-enabled').waitFor();await shot(p,`${theme}-settings`);await p.locator('.settings-header .back').click();await p.waitForFunction(()=>dashboardData.ready());
    await p.setViewportSize({width:390,height:844});await shot(p,`${theme}-C1-actual`);await p.locator('#panel-mobile-open').click();await shot(p,`${theme}-C2-actual`);await p.keyboard.press('Escape');
    await p.setViewportSize({width:1440,height:1000});
    await p.clock.install();await p.locator('#add-agent').click();await p.locator('#add-agent-choice-name').fill('Alpine-TYO-1G · 合成长名称');await shot(p,`${theme}-E1-actual`);await p.locator('#add-agent-next').click();await p.waitForSelector('#oneclick-result:not(.hidden)');await shot(p,`${theme}-E2-actual`);await shot(p,`${theme}-E3-alternative`);

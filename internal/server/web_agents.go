@@ -328,7 +328,10 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		return webAgentDetailView{}, err
 	}
 	view.GoogleStatus = webGoogleStatusView{Supported: supported, Pending: pending, Stale: record.Agent.Revoked || record.Agent.DisabledAt != nil || !record.Online}
-	view.YouTubeAdFreeRegions = youtubeAdFreeRegions[:]
+	view.YouTubeAdFreeRegions, err = a.store.YouTubeAdFreeRegions(ctx)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
 	view.GoogleStatus.ManualRegion, err = a.store.YouTubeManualRegion(ctx, agentID)
 	if err != nil {
 		return webAgentDetailView{}, err
@@ -509,15 +512,21 @@ type webVersionView struct {
 	Update          updatecheck.State `json:"update"`
 	Version         string            `json:"version"`
 	Commit          string            `json:"commit,omitempty"`
+	SchemaVersion   int               `json:"schema_version"`
 	Dirty           bool              `json:"dirty"`
 	UpgradeEligible bool              `json:"upgrade_eligible"`
 	// OneClickInstall: the Server is a clean release build (stable, beta or rc) whose release installer can be fetched by exact version.
 	OneClickInstall bool `json:"one_click_install"`
 }
 
-func (a *App) handleGetWebVersion(w http.ResponseWriter, _ *http.Request) {
+func (a *App) handleGetWebVersion(w http.ResponseWriter, r *http.Request) {
+	schemaVersion, err := a.store.SchemaVersion(r.Context())
+	if err != nil {
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not read database version")
+		return
+	}
 	info := a.buildInfo
-	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible(), OneClickInstall: webOneClickAvailable(info), Update: a.updateCheck.Snapshot()})
+	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, SchemaVersion: schemaVersion, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible(), OneClickInstall: webOneClickAvailable(info), Update: a.updateCheck.Snapshot()})
 }
 
 func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *webAgentStateView {

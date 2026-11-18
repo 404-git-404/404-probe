@@ -20,8 +20,9 @@ type DashboardRecord struct {
 	TrafficTotals                  *TrafficTotals
 }
 type DashboardData struct {
-	Catalog OrganizationCatalog
-	Records []DashboardRecord
+	Catalog              OrganizationCatalog
+	Records              []DashboardRecord
+	YouTubeAdFreeRegions []string
 }
 type dashboardScanner interface{ Scan(...any) error }
 
@@ -39,6 +40,10 @@ func (s *Store) ReadDashboardData(ctx context.Context, now time.Time, offlineTim
 	}
 	defer tx.Rollback()
 	out.Catalog, err = organizationCatalogTx(ctx, tx)
+	if err != nil {
+		return out, err
+	}
+	out.YouTubeAdFreeRegions, err = readYouTubeAdFreeRegions(ctx, tx)
 	if err != nil {
 		return out, err
 	}
