@@ -27,8 +27,23 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 	}
 }
 
+func rewindWebSettingsFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	dropColumnIfPresent(t, db, "agent_plans", "renewal_url")
+	for _, q := range []string{
+		`DROP TABLE IF EXISTS web_youtube_ad_free_regions`,
+		`DROP TABLE IF EXISTS web_admin_credential`,
+		`DELETE FROM schema_migrations WHERE version=38`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func rewindHostHealthFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
+	rewindWebSettingsFixture(t, db)
 	dropColumnIfPresent(t, db, "agent_state", "host_health_json")
 	for _, q := range []string{`DROP TABLE IF EXISTS agent_youtube_region_manual`, `DELETE FROM schema_migrations WHERE version=37`} {
 		if _, err := db.Exec(q); err != nil {

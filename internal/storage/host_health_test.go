@@ -40,7 +40,7 @@ func TestMigration37RollsBackAndRetries(t *testing.T) {
 			if err := s.migrate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if version, err := s.SchemaVersion(ctx); err != nil || version != 37 {
+			if version, err := s.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
 				t.Fatalf("schema=%d err=%v", version, err)
 			}
 			if _, err := s.db.Exec(`UPDATE agent_state SET host_health_json='invalid' WHERE agent_id=?`, id); err == nil {
@@ -55,6 +55,7 @@ func TestMigration37RollsBackAndRetries(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, partial := range []string{`ALTER TABLE agent_state DROP COLUMN host_health_json`, `DROP TABLE agent_youtube_region_manual`} {
+				rewindWebSettingsFixture(t, s.db)
 				if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version=37; ` + partial); err != nil {
 					t.Fatal(err)
 				}
