@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -498,6 +499,37 @@ func TestWebLoginWrongPasswordsNeverLockOut(t *testing.T) {
 	response := postWebLogin(t, app, "test-password", origin)
 	if response.Code != http.StatusSeeOther || sessionCookieFromResponse(t, app, response) == nil {
 		t.Fatalf("correct password after 100 failures: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWebLoginRequestBodyLimit(t *testing.T) {
+	app, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	for _, size := range []int{webLoginFormBytes, webLoginFormBytes + 1} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			cookie, token, _ := webLoginPage(t, app)
+			// Empty form segments add bytes without adding or changing form fields.
+			body := url.Values{"csrf_token": {token}, "password": {"test-password"}}.Encode()
+			body += strings.Repeat("&", size-len(body))
+			if len(body) != size {
+				t.Fatalf("body bytes=%d, want %d", len(body), size)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(body))
+			request.Host = app.webAuth.publicOrigin.Host
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			request.Header.Set("Origin", app.webAuth.publicOrigin.String())
+			request.Header.Set("Sec-Fetch-Site", "same-origin")
+			request.AddCookie(cookie)
+			response := httptest.NewRecorder()
+			app.Handler().ServeHTTP(response, request)
+			want := http.StatusSeeOther
+			if size > webLoginFormBytes {
+				want = http.StatusBadRequest
+			}
+			if response.Code != want {
+				t.Fatalf("login body bytes=%d: status=%d, want %d", size, response.Code, want)
+			}
+		})
 	}
 }
 
