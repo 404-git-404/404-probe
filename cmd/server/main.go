@@ -398,10 +398,7 @@ func serve(args []string) error {
 		}
 		appOptions = append(appOptions, appserver.WithWebAuthentication(appserver.WebAuthenticationConfig{
 			PasswordHash: passwordFile.PasswordHash, PublicOrigin: *webPublicOrigin, AllowInsecureHTTP: *webAllowInsecureHTTP,
-			PasswordFileSHA256: func() (string, error) {
-				file, err := readWebPasswordFile(*webPasswordHashFile)
-				return file.FileSHA256, err
-			},
+			PasswordFileSHA256: passwordFile.FileSHA256,
 		}))
 	}
 	app, err := appserver.NewApp(store, *offline, slog.Default(), appOptions...)

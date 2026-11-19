@@ -45,14 +45,14 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 
 type WebAuthenticationConfig struct {
 	PasswordHash       string
-	PasswordFileSHA256 func() (string, error)
+	PasswordFileSHA256 string
 	PublicOrigin       string
 	AllowInsecureHTTP  bool
 }
 
 type webAuthenticator struct {
 	passwordHash       string
-	passwordFileSHA256 func() (string, error)
+	passwordFileSHA256 string
 	publicOrigin       *url.URL
 	secureCookie       bool
 	store              *storage.Store

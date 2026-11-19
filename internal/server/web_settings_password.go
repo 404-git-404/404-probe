@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -27,6 +25,7 @@ func (w *webAuthenticator) currentCredential(ctx context.Context) (storage.WebCr
 	}
 	if credential.Revision == 0 {
 		credential.PasswordHash = w.passwordHash
+		credential.FileSHA256 = w.passwordFileSHA256
 	}
 	return credential, nil
 }
@@ -148,15 +147,10 @@ func (a *App) handleChangeWebPassword(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", generic)
 		return
 	}
-	fileDigest, err := wa.currentPasswordFileDigest()
-	if err != nil {
-		writeJobError(w, http.StatusInternalServerError, "internal_error", generic)
-		return
-	}
 	now := a.now()
 	plain, replacement, err := newWebSession(now, session.origin, session.policyRev, 0)
 	if err == nil {
-		err = wa.replacePassword(r.Context(), session, replacement, hash, fileDigest, now)
+		err = wa.replacePassword(r.Context(), session, replacement, hash, credential.FileSHA256, now)
 	}
 	if errors.Is(err, storage.ErrWebCredentialConflict) {
 		writeJobError(w, http.StatusConflict, "credential_changed", generic)
@@ -168,14 +162,6 @@ func (a *App) handleChangeWebPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	wa.setSessionCookie(w, plain, now)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (w *webAuthenticator) currentPasswordFileDigest() (string, error) {
-	if w.passwordFileSHA256 != nil {
-		return w.passwordFileSHA256()
-	}
-	digest := sha256.Sum256([]byte(w.passwordHash))
-	return hex.EncodeToString(digest[:]), nil
 }
 
 func (w *webAuthenticator) recordPasswordFailure(session *webSession) int {

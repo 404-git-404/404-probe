@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"404-probe/internal/auth"
+	"404-probe/internal/storage"
 )
 
 const passwordSettingsPath = "/api/v1/web/settings/password"
@@ -234,16 +236,31 @@ func TestWebPasswordAdoptionInvalidatesSessions(t *testing.T) {
 func TestWebPasswordChangeCASRejectsConcurrentAdoption(t *testing.T) {
 	a, store, _ := newWebAuthenticationTestApp(t)
 	defer store.Close()
-	cookie, session := passwordTestSession(t, a)
-	adoptHash := webTestPasswordHash(t)
-	a.webAuth.passwordFileSHA256 = func() (string, error) {
-		return "adopted", store.AdoptWebCredential(context.Background(), adoptHash, "adopted", a.now())
+	_, session := passwordTestSession(t, a)
+	credential, err := a.webAuth.currentCredential(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	res := passwordChange(t, a, cookie, session.csrfToken, "test-password", "fresh password here", "fresh password here")
-	expectPasswordError(t, res, http.StatusConflict, "credential_changed")
-	credential, err := store.WebCredential(context.Background())
-	if err != nil || credential.Revision != 1 || credential.PasswordHash != adoptHash || len(res.Result().Cookies()) != 0 {
+	_, replacement, err := newWebSession(a.now(), session.origin, session.policyRev, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Adoption commits after the handler reads its expected credential and
+	// before replacePassword performs the conditional write.
+	adoptHash := webTestPasswordHash(t)
+	if err := store.AdoptWebCredential(context.Background(), adoptHash, "adopted", a.now()); err != nil {
+		t.Fatal(err)
+	}
+	err = a.webAuth.replacePassword(context.Background(), session, replacement, adoptHash, credential.FileSHA256, a.now())
+	if !errors.Is(err, storage.ErrWebCredentialConflict) {
+		t.Fatalf("concurrent adoption error=%v", err)
+	}
+	credential, err = store.WebCredential(context.Background())
+	if err != nil || credential.Revision != 1 || credential.PasswordHash != adoptHash || credential.FileSHA256 != "adopted" {
 		t.Fatal("concurrent adoption was overwritten or a session was issued", err)
+	}
+	if a.webAuth.sessions[replacement.key] != nil {
+		t.Fatal("conflicting change issued a replacement session")
 	}
 }
 
