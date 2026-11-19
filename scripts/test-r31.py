@@ -489,6 +489,34 @@ class BaseGenerationTests(unittest.TestCase):
                 Path(str(self.out)+'.schema37.json').unlink()
                 self.assertFalse(Path(str(self.out)+'.json').exists())
 
+    def test_snapshot_rejects_finished_file_below_size_floor(self):
+        self.out.write_bytes(b'small fixture')
+        base = dict(rows={}, schema_sha256='fixture', page_size=4096, page_count=1,
+                    freelist_count=0, verify=dict(integrity='ok', schema_version=37))
+        with mock.patch.object(gen, 'generate_base', return_value=base):
+            with self.assertRaisesRegex(ValueError, 'snapshot fixture below 500,000,000 bytes'):
+                gen.generate(self.base/'404-probe-server-linux-amd64', self.out, 'snapshot')
+        self.assertFalse(Path(str(self.out)+'.json').exists())
+
+    def test_compact_rejects_free_pages(self):
+        self.out.write_bytes(b'small fixture')
+        base = dict(rows={}, schema_sha256='fixture', page_size=4096, page_count=2,
+                    freelist_count=1, verify=dict(integrity='ok', schema_version=37))
+        with mock.patch.object(gen, 'generate_base', return_value=base):
+            with self.assertRaisesRegex(ValueError, 'compact fixture contains free pages'):
+                gen.generate(self.base/'404-probe-server-linux-amd64', self.out, 'compact')
+        self.assertFalse(Path(str(self.out)+'.json').exists())
+
+    def test_compact_accepts_small_file_without_free_pages(self):
+        self.out.write_bytes(b'small fixture')
+        base = dict(rows={}, schema_sha256='fixture', page_size=4096, page_count=1,
+                    freelist_count=0, verify=dict(integrity='ok', schema_version=37))
+        with mock.patch.object(gen, 'generate_base', return_value=base):
+            result = gen.generate(self.base/'404-probe-server-linux-amd64', self.out, 'compact')
+        self.assertLess(result['file_bytes'], 500_000_000)
+        self.assertEqual(result['freelist_count'], 0)
+        self.assertTrue(Path(str(self.out)+'.json').exists())
+
 
 class StartingVersionIntegrationTests(unittest.TestCase):
     def test_registered_start_official_migration_and_post_audit(self):
@@ -550,6 +578,9 @@ class StartingVersionIntegrationTests(unittest.TestCase):
         self.assertEqual(snapshot['schema_sha256'], compact['schema_sha256'])
         self.assertEqual(snapshot['rows'], compact['rows'])
         self.assertEqual(compact['freelist_count'], 0)
+        self.assertGreaterEqual(snapshot['file_bytes'], 500_000_000)
+        if (Path(directory)/'full120.db.json').exists():
+            self.assertGreaterEqual(fixture('full')['file_bytes'], 500_000_000)
 
 
 class RehearsalAssetPathTests(unittest.TestCase):
