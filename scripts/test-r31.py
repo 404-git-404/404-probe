@@ -382,7 +382,7 @@ class RegisteredReleaseTests(unittest.TestCase):
     def test_unknown_start_and_unregistered_target_schema(self):
         with self.assertRaisesRegex(ValueError,'unregistered'):
             gen.generate('/does/not/exist','/unused','tiny',start_version='v1.1.2')
-        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.3.0')
+        with self.assertRaisesRegex(ValueError,'expected-schema'): releases.expected_schema('v1.3.1')
         self.assertEqual(releases.expected_schema('v1.0.10',36),36)
         self.assertEqual(releases.expected_schema('v1.2.0',37),37)
         with self.assertRaises(ValueError): releases.expected_schema('v1.2.0',36)
@@ -415,7 +415,10 @@ class RegisteredReleaseTests(unittest.TestCase):
 
     def test_schema37_registry_and_old_format_or_base_rejection(self):
         doc = releases.registry()
-        self.assertEqual(list(sorted(doc['versions'])), ['v1.2.0', 'v1.2.1'])
+        self.assertEqual(list(sorted(doc['versions'])), ['v1.2.0', 'v1.2.1', 'v1.3.0'])
+        self.assertEqual(doc['versions']['v1.3.0']['schema'],38)
+        self.assertEqual(doc['versions']['v1.3.0']['commit'],'e8962afd0067b21d8b8400eeaeed7e0e98934be1')
+        self.assertEqual(doc['versions']['v1.3.0']['added_tables'],['web_admin_credential','web_youtube_ad_free_regions'])
         base = releases.registered('v1.2.0')
         self.assertEqual(base, dict(commit='36aa47afdc0c27c81632ab9b7fff4124d62e2cf3',
             schema=37, previous_version=None, added_tables=[], removed_tables=[], generation_chain=[]))
@@ -623,7 +626,7 @@ class PreflightTests(unittest.TestCase):
         import types
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
         self.old=fake_assets(self.root/'old','v1.2.1');self.base=fake_assets(self.root/'base','v1.2.0')
-        self.new=fake_assets(self.root/'new','v1.3.0','d'*40)
+        self.new=fake_assets(self.root/'new','v1.3.1','d'*40)
         self.work=self.root/'work';self.work.mkdir(mode=0o700)
         for name in ('evidence','results'):(self.work/name).mkdir(mode=0o700)
         paths=[self.root/p for p in ['var/lib/404-probe','etc/404-probe','usr/local/bin/404-probe-server',
@@ -637,7 +640,7 @@ class PreflightTests(unittest.TestCase):
         self.m=types.SimpleNamespace(PATHS=paths,CANDIDATES=[self.root/'candidate'],BINARY=paths[2],DB=paths[0]/'404-probe.db',SERVICE='example.service',
              systemctl=lambda *a:self.control_calls.append(a) or types.SimpleNamespace(returncode=0),
              preflight_filesystems=lambda *a:None,instrument=upgrade.instrument)
-        self.raw=dict(from_version='v1.2.1',to_version='v1.3.0',from_assets=str(self.old),to_assets=str(self.new),base_assets=str(self.base),work_dir=str(self.work),scale='tiny',expected_schema=37)
+        self.raw=dict(from_version='v1.2.1',to_version='v1.3.1',from_assets=str(self.old),to_assets=str(self.new),base_assets=str(self.base),work_dir=str(self.work),scale='tiny',expected_schema=37)
         self.config=self.root/'config.json';self.config.write_text(json.dumps(self.raw))
         self.doc=preflight.configuration(self.config)
         def output(args):
@@ -678,7 +681,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_operator_summary_is_automatic_and_rejects_incomplete_result(self):
         (self.work/'run-started').touch()
-        valid=dict(status='passed',restored=True,restore_errors=[],restore_warnings=[],from_version='v1.2.1',to_version='v1.3.0',post_upgrade_verification=dict(schema_version=37,integrity='ok'))
+        valid=dict(status='passed',restored=True,restore_errors=[],restore_warnings=[],from_version='v1.2.1',to_version='v1.3.1',post_upgrade_verification=dict(schema_version=37,integrity='ok'))
         (self.work/'results/result.json').write_text(json.dumps(valid));(self.work/'evidence/frozen-compare.json').write_text('{"equal":true}')
         with mock.patch.object(preflight.sys,'platform','linux'),mock.patch.object(preflight.os,'geteuid',return_value=0,create=True),mock.patch.object(preflight.sys.stdin,'isatty',return_value=True),mock.patch.object(preflight.sys.stdout,'isatty',return_value=True):
             self.assertEqual(preflight.operator_run(self.doc),0)

@@ -17,6 +17,14 @@
       "added_tables": [],
       "removed_tables": [],
       "generation_chain": ["v1.2.1"]
+    },
+    "v1.3.0": {
+      "commit": "e8962afd0067b21d8b8400eeaeed7e0e98934be1",
+      "schema": 38,
+      "previous_version": "v1.2.1",
+      "added_tables": ["web_admin_credential", "web_youtube_ad_free_regions"],
+      "removed_tables": [],
+      "generation_chain": ["v1.2.1", "v1.3.0"]
     }
   }
 }
