@@ -30,14 +30,6 @@
 
 ## 收尾事项（不属于某个版本）
 
-### R21 删除 v1.3.0、v1.2.1、v1.2.0 以外的全部 GitHub release（施工方：Claude Code）
-- 维护者 2026-11-20 决定保留这三版：v1.2.0 仍是 v1.3.0 支持的升级起点，而且 R31 大库演练的底座要用 v1.2.0 的正式产物。
-- 已下载备份一部分（v0.9.1–v1.0.4，`D:\Claude-Github\release-archive\`），尚未校验；v0.2.0–v0.9.0 尚未下载；没有删除任何 release。
-- 删除前，把全部 release 产物下载备份到 `D:\Claude-Github\release-archive\` 并校验。
-- 只删 release，保留 git tag。
-- 每删一个之前先由维护者确认。
-- 维护者 2026-11-14 决定扩大范围（原为删除 v1.0.5 之前）；由 v1.3.0 的策划安排。
-
 ### R50 公开仓库既有样本与环境标识整理（评审方单独评审；施工方：待定）
 - 来源：v1.1.1 发布 B 段评审 B1、S2；均为既有内容，非本版新增，不改 v1.1.1 的 tag 或资产。
 - 梳理扫描器来源 IP fixture（`internal/securitycollector/testdata/reality-overlapping-export.jsonl` 及其 README，转换器、来源说明、fixture 游标和计数断言同步）、历史验收文档的主机 / 厂商描述（`docs/server-upgrade-v0.9.1-acceptance.md`、`docs/server-upgrade-v0.9.2-acceptance.md`），以及浏览器合成样本里沿用的真实测试设备名称（`scripts/capture-v11-panel.cjs:19`、`scripts/lib/v109-task-two-browser.cjs:76`）。
