@@ -173,7 +173,7 @@
   // Existing controllers may continue using showModal/close; no request logic moves here.
   dialog.showModal=()=>open();dialog.close=close;
   function heading(text=title,device=subtitle){title=text;let head=dialog.querySelector(':scope > .shell-head');if(!head){head=doc.createElement('div');head.className='shell-head';const group=doc.createElement('div'),h=doc.createElement('h2'),p=doc.createElement('p');h.id=dialog.id+'-shell-title';dialog.setAttribute('aria-labelledby',h.id);group.append(h,p);head.append(group);dialog.prepend(head);}head.querySelector('h2').textContent=text;head.querySelector('p').textContent=device;head.querySelector('p').title=device;}
-  if(title)heading();
+  if(title&&decorate)heading();
   return dialog._shell={open,close,heading,requestClose:dismiss,markSaved,setGuard,setOrigin:n=>{origin=n;}};
  }
  function confirm({title,device='',message,messageTitle='',cancelText='取消',confirmText='确认',danger=false,trigger=null}={}){
