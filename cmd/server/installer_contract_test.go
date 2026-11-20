@@ -192,6 +192,11 @@ func TestInstallerWebPasswordResetContract(t *testing.T) {
 		t.Fatal("missing rendered helper dispatch")
 	}
 	body := source[start : start+end]
+	for _, required := range []string{`Enter my own (at least 12 characters)`, `$(utf8_length "${password}") < 12`, `The password must be at least 12 characters.`} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("missing 12-code-point install/reset contract %q", required)
+		}
+	}
 	last := -1
 	for _, step := range []string{
 		"acquire_server_operation_lock",

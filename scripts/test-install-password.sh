@@ -64,16 +64,16 @@ run_case 2 "${good}" "${good}"
 ! grep -Fq -- "${good}" "${temporary}/screen"
 printf 'PASS own password accepted\n'
 
-# Too short (15 characters) is rejected and the prompt repeats; then a good one is taken.
-run_case 2 "123456789012345" "${good}" "${good}"
-grep -Fq 'at least 16 characters' "${temporary}/screen"
+# Too short (11 characters) is rejected and the prompt repeats; then a good one is taken.
+run_case 2 "12345678901" "${good}" "${good}"
+grep -Fq 'at least 12 characters' "${temporary}/screen"
 [[ "$(cat "${temporary}/stdin")" == "${good}" ]]
 printf 'PASS short password rejected\n'
 
-# Exactly 16 characters is fine.
-run_case 2 "1234567890123456" "1234567890123456"
-[[ "$(cat "${temporary}/stdin")" == 1234567890123456 ]]
-printf 'PASS 16 characters accepted\n'
+# Exactly 12 characters is fine.
+run_case 2 "123456789012" "123456789012"
+[[ "$(cat "${temporary}/stdin")" == 123456789012 ]]
+printf 'PASS 12 characters accepted\n'
 
 # Mismatched confirmation is rejected.
 run_case 2 "${good}" "different password here" "${good}" "${good}"
@@ -91,17 +91,17 @@ if run_case 3; then printf 'invalid choice accepted\n' >&2; exit 1; fi
 [[ ! -s "${temporary}/argv" ]]
 printf 'PASS invalid choice refused\n'
 
-# Multi-byte passwords are counted in characters, in any locale: 15 characters are 45 bytes but still too short.
+# Multi-byte passwords are counted in characters, in any locale: 11 characters are 45 bytes but still too short.
 export LC_ALL=C
 cjk() { local n="$1" out="" i; for ((i = 0; i < n; i++)); do out+="密"; done; printf '%s' "${out}"; }
-run_case 2 "$(cjk 15)" "${good}" "${good}"
-grep -Fq 'at least 16 characters' "${temporary}/screen"
+run_case 2 "$(cjk 11)" "${good}" "${good}"
+grep -Fq 'at least 12 characters' "${temporary}/screen"
 [[ "$(cat "${temporary}/stdin")" == "${good}" ]]
-printf 'PASS 15 multi-byte characters are rejected by the installer itself\n'
-run_case 2 "$(cjk 16)" "$(cjk 16)"
-[[ "$(cat "${temporary}/stdin")" == "$(cjk 16)" ]]
-! grep -Fq 'at least 16 characters' "${temporary}/screen"
-printf 'PASS 16 multi-byte characters are accepted\n'
+printf 'PASS 11 multi-byte characters are rejected by the installer itself\n'
+run_case 2 "$(cjk 12)" "$(cjk 12)"
+[[ "$(cat "${temporary}/stdin")" == "$(cjk 12)" ]]
+! grep -Fq 'at least 12 characters' "${temporary}/screen"
+printf 'PASS 12 multi-byte characters are accepted\n'
 [[ "$(utf8_length "$(cjk 7)")" == 7 && "$(utf8_length 'abc')" == 3 && "$(utf8_length '')" == 0 ]]
 printf 'PASS utf8_length counts code points\n'
 
@@ -131,7 +131,7 @@ fi
 printf 'PASS invalid confirmation retries and repeated invalid passwords abort without hashing\n'
 
 # A supplementary-plane character counts as one code point, and caller locale is not changed.
-unicode_password="$(printf '🙂%.0s' {1..16})"
+unicode_password="$(printf '🙂%.0s' {1..12})"
 run_case 2 "${unicode_password}" "${unicode_password}"
 [[ "$(cat "${temporary}/stdin")" == "${unicode_password}" && "${LC_ALL}" == C ]]
 if command -v locale >/dev/null 2>&1 && locale -a | grep -Fxi 'C.utf8' >/dev/null; then

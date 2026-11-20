@@ -1739,7 +1739,7 @@ utf8_valid() {
 obtain_web_password_hash() {
   local choice hash attempt acknowledge
   local +x password confirmation
-  tty_write $'Web administrator password:\n  [1] Generate a random password (default)\n  [2] Enter my own (at least 16 characters)\nChoice [1]: '
+  tty_write $'Web administrator password:\n  [1] Generate a random password (default)\n  [2] Enter my own (at least 12 characters)\nChoice [1]: '
   tty_read choice
   choice="${choice:-1}"
   case "${choice}" in
@@ -1761,8 +1761,8 @@ obtain_web_password_hash() {
           tty_write $'The password must be valid UTF-8. Please enter it again. (密码必须是有效的 UTF-8，请重新输入。)\n'
           continue
         fi
-        if (( $(utf8_length "${password}") < 16 )); then
-          tty_write $'The password must be at least 16 characters.\n'
+        if (( $(utf8_length "${password}") < 12 )); then
+          tty_write $'The password must be at least 12 characters.\n'
           continue
         fi
         tty_write 'Confirm password: '

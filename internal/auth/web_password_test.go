@@ -19,7 +19,10 @@ func TestNewWebPasswordValidatesUnicodeAndControls(t *testing.T) {
 		{"C1 control", "invalid_chars", []byte(pass + "\u0085")},
 		{"exact byte limit", "", bytes.Repeat([]byte("ab"), 512)},
 		{"above byte limit", "too_long", bytes.Repeat([]byte("a"), 1025)},
-		{"short code point count", "too_short", []byte(strings.Repeat("密", 15))},
+		{"short code point count", "too_short", []byte(strings.Repeat("密", 11))},
+		{"11 ASCII", "too_short", []byte(strings.Repeat("a", 11))},
+		{"12 ASCII", "", []byte(strings.Repeat("a", 12))},
+		{"12 Unicode", "", []byte(strings.Repeat("密", 12))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := ValidateNewWebPassword(tc.value, tc.value, nil)

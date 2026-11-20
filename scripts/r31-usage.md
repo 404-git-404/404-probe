@@ -78,7 +78,7 @@ sudo bash /path/to/404-probe/scripts/r31-rehearse.sh --config /var/lib/404-probe
 2. `Web public origin`：回车，采用测试回环默认值。
 3. `Allowed root domain suffixes`：回车，留空。
 4. 管理员密码方式 `Choice [1]`：输入 `2`。
-5. 自己输入至少 16 字符的**临时测试密码**，在 `Confirm password` 再输入一次。密码只输入交互终端。
+5. 自己输入至少 12 字符的**临时测试密码**，在 `Confirm password` 再输入一次。密码只输入交互终端。
 6. 第一次 `Proceed with this Server upgrade?`：核对配置中的起始版→目标版，输入 `y`。
 7. 等待工具在迁移、二进制替换后故意 `exit 87`，安装器自动回滚；这是预期步骤，不要中断恢复。
 8. 第二次升级确认：再次核对版本，输入 `y`，等待成功路径检查及原安装恢复。

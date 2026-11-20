@@ -39,7 +39,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 {{if .Failed}}<div class="login-error" role="alert">登录失败，请稍后重试。</div>{{end}}
 {{if .Expired}}<div class="login-error" role="alert">登录请求已过期，请重新登录。</div>{{end}}
 {{if .Busy}}<div class="login-error" role="alert" data-error="busy">服务器正忙，请稍后重试。</div>{{end}}
-<form method="post" action="/login"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<form method="post" action="/login"><input type="text" autocomplete="username" value="404-probe" hidden tabindex="-1" aria-hidden="true"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <label for="password">密码</label><input id="password" name="password" type="password" maxlength="1024" required autocomplete="current-password" autofocus>
 <button type="submit">登录</button></form></article></main></body></html>`))
 

@@ -123,14 +123,14 @@ func TestWebPasswordChangeValidation(t *testing.T) {
 	cookie, session := passwordTestSession(t, a)
 	for _, tc := range []struct{ code, new, confirmation string }{
 		{"mismatch", "several words here", "different words here"},
-		{"too_short", strings.Repeat("密", 15), strings.Repeat("密", 15)},
+		{"too_short", strings.Repeat("密", 11), strings.Repeat("密", 11)},
 		{"too_long", strings.Repeat("a", 1025), strings.Repeat("a", 1025)},
 		{"same_as_current", old, old},
 		{"invalid_chars", "a new password\u0085here", "a new password\u0085here"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			got := expectPasswordError(t, passwordChange(t, a, cookie, session.csrfToken, old, tc.new, tc.confirmation), http.StatusBadRequest, tc.code)
-			if tc.code == "too_short" && (got.Characters == nil || *got.Characters != 15) {
+			if tc.code == "too_short" && (got.Characters == nil || *got.Characters != 11) {
 				t.Fatal("missing Unicode code point count")
 			}
 		})
@@ -165,16 +165,12 @@ func TestWebPasswordChangeRotatesAllSessions(t *testing.T) {
 			t.Fatal("previous session SSE was not cancelled immediately")
 		}
 	}
-	replacement := sessionCookieFromResponse(t, a, changed)
-	if replacement.Value == current.Value {
-		t.Fatal("reused old session token")
+	cookies := changed.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != a.webAuth.sessionCookieName() || cookies[0].Value != "" || cookies[0].MaxAge >= 0 {
+		t.Fatalf("expected only an expired session cookie, got %v", cookies)
 	}
-	view := webRequest(a, http.MethodGet, path, nil, replacement)
-	var payload struct {
-		CSRF string `json:"csrf_token"`
-	}
-	if err := json.Unmarshal(view.Body.Bytes(), &payload); err != nil || view.Code != http.StatusOK || payload.CSRF == "" || payload.CSRF == session.csrfToken {
-		t.Fatalf("replacement session status=%d err=%v; expected new CSRF token", view.Code, err)
+	if len(a.webAuth.sessions) != 0 {
+		t.Fatal("password change issued or retained a session")
 	}
 	for _, cookie := range []*http.Cookie{current, other} {
 		if view := webRequest(a, http.MethodGet, path, nil, cookie); view.Code != http.StatusUnauthorized {
@@ -251,7 +247,7 @@ func TestWebPasswordChangeCASRejectsConcurrentAdoption(t *testing.T) {
 	if err := store.AdoptWebCredential(context.Background(), adoptHash, "adopted", a.now()); err != nil {
 		t.Fatal(err)
 	}
-	err = a.webAuth.replacePassword(context.Background(), session, replacement, adoptHash, credential.FileSHA256, a.now())
+	err = a.webAuth.replacePassword(context.Background(), session, adoptHash, credential.FileSHA256, a.now())
 	if !errors.Is(err, storage.ErrWebCredentialConflict) {
 		t.Fatalf("concurrent adoption error=%v", err)
 	}
@@ -282,4 +278,23 @@ func TestWebPasswordChangeRejectsControlTokenAndDatabaseFailure(t *testing.T) {
 	}
 	res := passwordChange(t, a, cookie, session.csrfToken, "test-password", "fresh password here", "fresh password here")
 	expectPasswordError(t, res, http.StatusForbidden, "forbidden")
+}
+
+func TestWebPasswordChangeTwelveCodePointBoundary(t *testing.T) {
+	for _, value := range []string{strings.Repeat("a", 11), strings.Repeat("a", 12), strings.Repeat("密", 11), strings.Repeat("密", 12)} {
+		t.Run(value, func(t *testing.T) {
+			a, store, _ := newWebAuthenticationTestApp(t)
+			defer store.Close()
+			cookie, session := passwordTestSession(t, a)
+			changed := passwordChange(t, a, cookie, session.csrfToken, "test-password", value, value)
+			if len([]rune(value)) == 11 {
+				result := expectPasswordError(t, changed, http.StatusBadRequest, "too_short")
+				if result.Characters == nil || *result.Characters != 11 {
+					t.Fatal("missing code point count")
+				}
+			} else if changed.Code != http.StatusNoContent {
+				t.Fatalf("12 code points rejected: %d %s", changed.Code, changed.Body)
+			}
+		})
+	}
 }

@@ -70,7 +70,7 @@ test('settings saves region edits explicitly and refreshes an already open dashb
   } finally { await session.close(); }
 });
 
-test('settings password errors, rotated CSRF, lockout delay and narrow layout', async () => {
+test('settings password errors, all-session logout, lockout delay and narrow layout', async () => {
   let code = 'wrong_current';
   let token = 'synthetic-csrf';
   const posts = [];
@@ -99,14 +99,17 @@ test('settings password errors, rotated CSRF, lockout delay and narrow layout', 
       await submit();
       await page.waitForFunction(({field,pattern}) => new RegExp(pattern).test(document.querySelector('#pw-'+field+'-msg').textContent), {field,pattern:pattern.source});
     }
+    await page.clock.install();
     code = 'ok';
     await submit();
-    await page.waitForFunction(() => document.querySelector('#pw-banner').textContent.includes('已修改') && !document.querySelector('#pw-save').disabled);
+    await page.waitForFunction(() => document.querySelector('#pw-banner').textContent.includes('所有浏览器都已退出') && document.querySelector('#pw-save').disabled);
     assert.equal(await page.locator('#pw-new').inputValue(), '');
     assert.equal(await page.locator('#ab-schema').textContent(), '38');
     assert.equal(await page.getByText('构建时间').count(), 0);
     await page.setViewportSize({width:430,height:900});
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    assert.equal(posts.at(-1), 'synthetic-csrf');
+    await page.reload();
     await page.clock.install();
     await page.route('**/login', route => route.fulfill({contentType:'text/html',body:'<title>登录</title>'}));
     code = 'locked_out';

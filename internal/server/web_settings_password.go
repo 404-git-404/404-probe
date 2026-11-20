@@ -148,10 +148,7 @@ func (a *App) handleChangeWebPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := a.now()
-	plain, replacement, err := newWebSession(now, session.origin, session.policyRev, 0)
-	if err == nil {
-		err = wa.replacePassword(r.Context(), session, replacement, hash, credential.FileSHA256, now)
-	}
+	err = wa.replacePassword(r.Context(), session, hash, credential.FileSHA256, now)
 	if errors.Is(err, storage.ErrWebCredentialConflict) {
 		writeJobError(w, http.StatusConflict, "credential_changed", generic)
 		return
@@ -160,7 +157,7 @@ func (a *App) handleChangeWebPassword(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", generic)
 		return
 	}
-	wa.setSessionCookie(w, plain, now)
+	wa.clearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -177,20 +174,18 @@ func (w *webAuthenticator) recordPasswordFailure(session *webSession) int {
 	return webPasswordAttemptLimit - session.passwordFailures
 }
 
-func (w *webAuthenticator) replacePassword(ctx context.Context, current, replacement *webSession, hash, digest string, now time.Time) error {
+func (w *webAuthenticator) replacePassword(ctx context.Context, current *webSession, hash, digest string, now time.Time) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.sessions[current.key] != current || !now.Before(sessionDeadline(current)) {
 		return storage.ErrWebCredentialConflict
 	}
-	revision, err := w.store.ReplaceWebCredential(ctx, current.credRev, hash, digest, now)
+	_, err := w.store.ReplaceWebCredential(ctx, current.credRev, hash, digest, now)
 	if err != nil {
 		return err
 	}
 	for _, session := range w.sessions {
 		w.removeSessionLocked(session)
 	}
-	replacement.credRev = revision
-	w.sessions[replacement.key] = replacement
 	return nil
 }

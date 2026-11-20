@@ -974,7 +974,7 @@ func TestLoadControlTokenHashRejectsBroadUnixPermissions(t *testing.T) {
 	}
 }
 
-func TestWebPasswordHashReadsStdinAndRequiresSixteenCharacters(t *testing.T) {
+func TestWebPasswordHashReadsStdinAndRequiresTwelveCharacters(t *testing.T) {
 	run := func(input string) (string, error) {
 		reader, writer, err := os.Pipe()
 		if err != nil {
@@ -989,12 +989,12 @@ func TestWebPasswordHashReadsStdinAndRequiresSixteenCharacters(t *testing.T) {
 		err = webPasswordHash(reader, &output, io.Discard, false)
 		return output.String(), err
 	}
-	for _, short := range []string{"", "\n", "123456789012345\n", strings.Repeat("密", 15) + "\n"} {
+	for _, short := range []string{"", "\n", "12345678901\n", strings.Repeat("密", 11) + "\n"} {
 		if output, err := run(short); err == nil || output != "" {
 			t.Fatalf("short password %q accepted: output=%q err=%v", short, output, err)
 		}
 	}
-	for _, good := range []string{"1234567890123456\n", "1234567890123456", strings.Repeat("密", 16) + "\n"} {
+	for _, good := range []string{"123456789012\n", "123456789012", strings.Repeat("密", 12) + "\n"} {
 		output, err := run(good)
 		if err != nil || !strings.HasPrefix(output, "$argon2id$") {
 			t.Fatalf("good password %q: output=%q err=%v", good, output, err)

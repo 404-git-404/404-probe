@@ -103,7 +103,7 @@
     switch (details.code) {
       case 'wrong_current': passwordMessage('current', `当前密码不对。再错 ${details.remaining} 次会退出登录。`); break;
       case 'mismatch': passwordMessage('confirm', '两次输入的新密码不一样'); break;
-      case 'too_short': passwordMessage('new', `太短了：至少 16 个字符，现在 ${details.characters} 个`); break;
+      case 'too_short': passwordMessage('new', `太短了：至少 12 个字符，现在 ${details.characters} 个`); break;
       case 'too_long': passwordMessage('new', '新密码不能超过 1024 字节'); break;
       case 'same_as_current': passwordMessage('new', '新密码不能和当前密码一样'); break;
       case 'invalid_chars': passwordMessage('new', '密码必须是有效文本，不能包含控制字符'); break;
@@ -128,7 +128,7 @@
     passwordButton.disabled = true;
     passwordStatus('');
     passwordMessage('current', '', false);
-    passwordMessage('new', '至少 16 个字符', false);
+    passwordMessage('new', '至少 12 个字符', false);
     passwordMessage('confirm', '', false);
     const [current_password, new_password, confirm_password] = passwordFields.map(field => field.value);
     try {
@@ -136,8 +136,11 @@
       passwordForm.reset();
       for (const field of passwordFields) field.type = 'password';
       csrf = '';
-      passwordStatus('✓ 密码已修改。其他浏览器已退出登录，这个浏览器不受影响。', true);
-      await readSession();
+      locked = true;
+      check.disabled = true;
+      updateRegions();
+      passwordStatus('密码已修改。所有浏览器都已退出，3 秒后跳到登录页。', true);
+      setTimeout(() => location.assign('/login'), 3000);
     } catch (error) {
       showPasswordError(error);
     } finally {

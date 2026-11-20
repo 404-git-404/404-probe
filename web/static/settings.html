@@ -26,12 +26,13 @@
       </section>
       <section id="password" aria-labelledby="password-title">
         <h2 id="password-title">修改密码</h2>
-        <p>改好后，其他已登录的浏览器会自动退出；这个浏览器保持登录。</p>
+        <p>改好后，所有浏览器（包括这个）都会退出，要用新密码重新登录。</p>
         <p id="pw-banner" class="settings-banner" role="status" hidden></p>
         <form id="password-form" method="post" action="/api/v1/web/settings/password">
+          <input type="text" autocomplete="username" value="404-probe" hidden tabindex="-1" aria-hidden="true">
           <div class="settings-password-fields">
             <label for="pw-current">当前密码</label><input id="pw-current" type="password" autocomplete="current-password" required aria-describedby="pw-current-msg"><span id="pw-current-msg" class="settings-note" aria-live="polite"></span>
-            <label for="pw-new">新密码</label><input id="pw-new" type="password" autocomplete="new-password" required aria-describedby="pw-new-msg"><span id="pw-new-msg" class="settings-note" aria-live="polite">至少 16 个字符</span>
+            <label for="pw-new">新密码</label><input id="pw-new" type="password" autocomplete="new-password" required aria-describedby="pw-new-msg"><span id="pw-new-msg" class="settings-note" aria-live="polite">至少 12 个字符</span>
             <label for="pw-confirm">再输一次新密码</label><input id="pw-confirm" type="password" autocomplete="new-password" required aria-describedby="pw-confirm-msg"><span id="pw-confirm-msg" class="settings-note" aria-live="polite"></span>
             <label class="settings-check settings-show"><input id="pw-show" type="checkbox"> 显示密码</label>
           </div>

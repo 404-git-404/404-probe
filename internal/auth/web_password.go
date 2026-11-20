@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-const WebPasswordMinRunes = 16
+const WebPasswordMinRunes = 12
 const WebPasswordMaxBytes = 1024
 
 type WebPasswordError struct {
