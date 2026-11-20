@@ -6,7 +6,7 @@ scripts/r31-rehearse.sh 只能在 `CLAUDE.local.md` 登记的测试 Server 上�
 
 `scripts/r31-versions.json` 用格式 2 登记正式起始版本，记录 GitHub tag 对应的完整提交、schema、上一版及相对上一版的表增删。v1.2.0 是 schema 37 底座，`previous_version` 为 `null`，`generation_chain` 为空。v1.2.1 同为 schema 37，上一版为 v1.2.0，无表增删，`generation_chain` 为 `["v1.2.1"]`。工具拒绝格式 1、旧底座及任何未登记起点。
 
-v1.3.0 的发布演练起点是 v1.2.0 和 v1.2.1，两份起点库均为 schema 37。目标 schema 由发布任务确认。
+v1.3.0 的发布演练起点是 v1.2.0 和 v1.2.1，两份起点库均为 schema 37。目标 schema 为 38。
 
 每次正式发布后，在下一版准备工作中将该版补入登记表，并核对正式 tag、schema 和表增删；不要把开发分支提交或未发布候选写进去。
 
@@ -41,7 +41,7 @@ Linux amd64/arm64，root、systemd、既有 Server 用户/组，以及已安装�
 1. 干净源码中的 scripts/r31-rehearse.sh、r31-preflight.py、r31-run-with-evidence.py、r31-upgrade.py、r31-generate.py、r31lib.py、r31-versions.json 保持同一套版本；直接引用该源码目录，或将这几件文件一起复制到仓库外工具目录。
 2. 准备正式 v1.2.0 底座、所选起始版及目标版的七件产物。起始版已安装，二进制必须与其产物完全相同。
 3. 仓库外的 root 私有0700工作目录及全新的空 `evidence/`、`results/`（均0700）；没有 run-started、operator-exit.txt、operator-summary.json 或上次恢复残留。
-4. 以下配置以 **v1.2.1 → v1.3.0** 为例。执行前把 `expected_schema` 的占位文字替换成发布任务确认的整数，并填写本地路径。
+4. 以下配置以 **v1.2.1 → v1.3.0** 为例。执行前填写本地路径；v1.3.0 的 `expected_schema` 为 38。
 
 ```json
 {
@@ -52,7 +52,7 @@ Linux amd64/arm64，root、systemd、既有 Server 用户/组，以及已安装�
   "base_assets": "/var/lib/404-probe-rehearsal/assets-v1.2.0",
   "work_dir": "/var/lib/404-probe-rehearsal/run",
   "scale": "snapshot",
-  "expected_schema": "由发布任务确认"
+  "expected_schema": 38
 }
 ```
 
@@ -72,7 +72,7 @@ sudo bash /path/to/404-probe/scripts/r31-rehearse.sh --config /var/lib/404-probe
 
 入口要求 root、交互TTY和 /dev/tty；先用 flock 加锁再预检，用 noclobber 原子创建 run-started，只接受一次启动。普通启动预检失败时，工作目录也会留下 `rehearsal.lock`；该文件无害，不影响重跑。`--check` 仍是只读预检，不创建这个文件。预检检查起始版身份/哈希、数据库 schema/integrity、服务 active/enabled、没有 pending/candidate/drop-in/混装 Agent/恢复工作区，检查至少8 GiB空间及全新0700证据/结果目录。`--confirm-test-host` 由入口自动填本机主机名，不能防止在另一台装着同版本的正式机上误跑；防误跑由发布任务的门禁负责。Linux验收完成记录等发布专用门禁由发布任务自行检查，不写死在工具里。
 
-### 维护者逐条回答的提示（已对照 v1.2.1 安装器）
+### 维护者逐条回答的提示（已对照 v1.3.0 安装器）
 
 1. `Select a role [1-2]`：输入 `1`，选择 Server。
 2. `Web public origin`：回车，采用测试回环默认值。
