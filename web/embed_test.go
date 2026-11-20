@@ -75,7 +75,7 @@ func TestAgentEnrollmentUIUsesShownOnceDOMFlow(t *testing.T) {
 		`'X-CSRF-Token': mutationCSRFToken`,
 		`manualCredential = enrollment.enrollment_value`,
 		`createdEnrollment.textContent = ''`,
-		`addAgentDialog.addEventListener('close', clearEnrollmentDialog)`,
+		`onclose:clearEnrollmentDialog`,
 	} {
 		if !strings.Contains(javascript, required) {
 			t.Fatalf("dashboard script missing enrollment behavior %q", required)

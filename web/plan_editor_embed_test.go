@@ -16,6 +16,9 @@ func TestPlanEditorEmbeddedAssetsAndRetainedFormFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(page)
+	if strings.Contains(html, `id="plan-cancel"`) {
+		t.Fatal("plan close icon must be absent")
+	}
 	for _, asset := range []string{"plan-editor.js", "plan-editor.css"} {
 		data, err := fs.ReadFile(static, asset)
 		if err != nil || len(data) == 0 {
@@ -29,7 +32,7 @@ func TestPlanEditorEmbeddedAssetsAndRetainedFormFields(t *testing.T) {
 		t.Fatal("editor must load before app")
 	}
 	for _, id := range []string{
-		"plan-dialog", "plan-form", "plan-save", "plan-cancel", "plan-dismiss", "plan-clear", "plan-error",
+		"plan-dialog", "plan-form", "plan-save", "plan-dismiss", "plan-clear", "plan-error",
 		"plan-traffic-enabled", "plan-traffic-mode", "plan-quota-value", "plan-quota-unit", "plan-cycle-kind", "plan-cycle-count", "plan-cycle-anchor",
 		"plan-timezone", "plan-calibration-value", "plan-calibration-unit", "plan-bandwidth-value", "plan-bandwidth-unit", "plan-currency",
 		"plan-purchase-price", "plan-purchase-period", "plan-renewal-price", "plan-renewal-period", "plan-purchase-date", "plan-renewal-date", "plan-expiry-date", "plan-country-code",

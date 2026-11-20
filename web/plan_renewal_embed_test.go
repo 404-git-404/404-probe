@@ -16,6 +16,9 @@ func TestPlanRenewalEmbeddedLocalAssetsAndNativeDialog(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(page)
+	if strings.Contains(html, `id="renewal-cancel"`) || strings.Contains(html, `id="renewal-payment"`) {
+		t.Fatal("renewal close icon and payment step must be absent")
+	}
 	for _, asset := range []string{"plan-renewal.js", "plan-renewal.css"} {
 		data, err := fs.ReadFile(static, asset)
 		if err != nil || len(data) == 0 || !strings.Contains(html, `"/`+asset+`"`) {
@@ -25,7 +28,7 @@ func TestPlanRenewalEmbeddedLocalAssetsAndNativeDialog(t *testing.T) {
 	if !strings.Contains(html, `<dialog id="renewal-dialog"`) {
 		t.Fatal("renewal must use native dialog")
 	}
-	for _, id := range []string{"dialog", "title", "name", "cancel", "dismiss", "field", "confirm", "from", "to", "dates", "detail", "anchor", "warning", "error", "loading", "result", "refresh", "edit", "undo", "undo-note", "recovery", "request-id", "copy", "verify"} {
+	for _, id := range []string{"dialog", "title", "name", "go", "dismiss", "field", "confirm", "from", "to", "dates", "detail", "anchor", "warning", "error", "loading", "result", "refresh", "edit", "undo", "undo-note", "recovery", "request-id", "copy", "verify"} {
 		if strings.Count(html, `id="renewal-`+id+`"`) != 1 {
 			t.Fatalf("missing or duplicate renewal-%s", id)
 		}
