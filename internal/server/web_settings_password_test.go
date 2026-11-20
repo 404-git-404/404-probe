@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/html"
+
 	"404-probe/internal/auth"
 	"404-probe/internal/storage"
 )
@@ -294,6 +296,53 @@ func TestWebPasswordChangeTwelveCodePointBoundary(t *testing.T) {
 				}
 			} else if changed.Code != http.StatusNoContent {
 				t.Fatalf("12 code points rejected: %d %s", changed.Code, changed.Body)
+			}
+		})
+	}
+}
+
+func TestWebPasswordFormsHaveNonSubmittingUsername(t *testing.T) {
+	a, store, _ := newWebAuthenticationTestApp(t)
+	defer store.Close()
+	cookie, _ := passwordTestSession(t, a)
+	for _, path := range []string{"/login", "/settings.html"} {
+		t.Run(path, func(t *testing.T) {
+			var credential *http.Cookie
+			if path != "/login" {
+				credential = cookie
+			}
+			response := webRequest(a, http.MethodGet, path, nil, credential)
+			if response.Code != http.StatusOK {
+				t.Fatalf("form status %d", response.Code)
+			}
+			document, err := html.Parse(strings.NewReader(response.Body.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			var walk func(*html.Node)
+			walk = func(n *html.Node) {
+				if n.Type == html.ElementNode && n.Data == "input" {
+					attrs := map[string]string{}
+					for _, a := range n.Attr {
+						attrs[a.Key] = a.Val
+					}
+					if attrs["autocomplete"] == "username" {
+						count++
+						_, hidden := attrs["hidden"]
+						_, named := attrs["name"]
+						if attrs["value"] != "404-probe" || attrs["tabindex"] != "-1" || attrs["aria-hidden"] != "true" || !hidden || named {
+							t.Fatal("username must be fixed, hidden, ignored by assistive navigation, and excluded from submission")
+						}
+					}
+				}
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					walk(c)
+				}
+			}
+			walk(document)
+			if count != 1 {
+				t.Fatalf("username inputs=%d", count)
 			}
 		})
 	}
