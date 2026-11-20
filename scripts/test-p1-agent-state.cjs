@@ -83,10 +83,10 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
       if(route) {const value=route(url,options); if(value !== undefined) Promise.resolve(value).then(d.resolve,d.reject);}
       return d.promise;
     },EventSource:class {constructor(){this.listeners=new Map();sources.push(this);}close(){this.closed=true;}addEventListener(type,f){this.listeners.set(type,f);}}};
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){},setGuard(){},markSaved(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/dashboard-model.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/management.js'),'utf8'),sandbox,{filename:'management.js'});
-  sandbox.DialogShell={attach:()=>({heading(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};
+  sandbox.DialogShell={attach:()=>({heading(){},setGuard(){},markSaved(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/selector.js'),'utf8'),sandbox,{filename:'selector.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/network-quality-core.js'),'utf8'),sandbox,{filename:'network-quality-core.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/network-quality.js'),'utf8'),sandbox,{filename:'network-quality.js'});
@@ -478,13 +478,8 @@ test('P5b actual clear only explicit same-dialog confirmation writes existing em
  write.resolve(response({error:{message:'synthetic uncertain failure'}},503));await clearing;assert.equal(app.nodes.get('#plan-dialog').open,true);assert.equal(app.nodes.get('#plan-currency').value,'EUR');assert.match(app.nodes.get('#plan-error').textContent,/synthetic uncertain failure/);assert.equal(app.nodes.get('#plan-save').disabled,false);
 });
 
-test('P5b actual close dirty uses current values, country search is not persisted data and reverted input closes clean',async()=>{
- const app=dashboard();seed(app.state);app.eval(`openPlanDialog(agents.get('${A}'))`);
- app.nodes.get('#plan-currency').value='EUR';await app.nodes.get('#plan-cancel').emit('click');assert.equal(app.nodes.get('#plan-dialog').open,true);assert.equal(app.eval('planEditor.snapshot().confirmation'),'close');
- await app.nodes.get('#plan-continue').emit('click');assert.equal(app.nodes.get('#plan-dialog').open,true);
- app.nodes.get('#plan-currency').value='USD';app.nodes.get('#plan-country-search').value='germany';await app.nodes.get('#plan-cancel').emit('click');assert.equal(app.nodes.get('#plan-dialog').open,false);
- app.eval(`openPlanDialog(agents.get('${A}'))`);app.nodes.get('#plan-traffic-enabled').checked=!app.nodes.get('#plan-traffic-enabled').checked;
- await app.nodes.get('#plan-dismiss').emit('click');assert.equal(app.nodes.get('#plan-dialog').open,true);await app.nodes.get('#plan-discard').emit('click');assert.equal(app.nodes.get('#plan-dialog').open,false);assert.equal(app.requests.filter(r=>r.url.endsWith('/plan')).length,0);
+test('P5b cancel discards edits directly without issuing a write',async()=>{
+ const app=dashboard();seed(app.state);app.eval(`openPlanDialog(agents.get('${A}'))`);app.nodes.get('#plan-currency').value='EUR';await app.nodes.get('#plan-dismiss').emit('click');assert.equal(app.nodes.get('#plan-dialog').open,false);assert.equal(app.requests.filter(r=>r.url.endsWith('/plan')).length,0);
 });
 
 const omittedDetail = () => {

@@ -104,7 +104,7 @@ for (const theme of ['dark', 'light']) {
           assert.doesNotMatch(await dialog.locator('.details-disk-health').textContent(), /未变只读|配置问题/);
         }
         if (name) await capture(name, figure);
-        await dialog.locator('.details-close').click();
+        await page.keyboard.press('Escape');
       };
       await details(0, /异常 · 写入失败（I\/O 错误）.*ext4 错误记录 3 次/, '03-detail', 4);
       await details(2, /正常 · 1 分钟前检查/);

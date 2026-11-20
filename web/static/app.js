@@ -187,6 +187,7 @@ async function openUpgradeAgentDialog(agent) {
     document.querySelector('#upgrade-release-label').hidden=soleStable;
     upgradeReleaseSelect.disabled=upgradeReleaseTargets.length<2;
     refreshUpgradeSelection();
+    upgradeShell.markSaved();
     if (!upgradeReleaseTargets.length) {
       const option = document.createElement('option');
       option.textContent = AgentState.upgradeReasonDisplay({reason_code:catalog.message_code,reason:catalog.message}) || AgentState.upgradeReasonDisplay({reason_code:'server_build_ineligible'});
@@ -237,6 +238,7 @@ upgradeAgentForm.addEventListener('submit', async event => {
 // One-click install: the dialog first asks how to install; the command it shows is never kept after closing.
 const enrollmentDialog = AgentEnrollment.createController({
   els: {
+    dialog: addAgentDialog,
     choice: document.querySelector('#add-agent-choice'), manual: addAgentCreate, manualResult: addAgentResult,
     oneclick: document.querySelector('#oneclick-pane'), oneclickResult: document.querySelector('#oneclick-result'),
     choiceName: document.querySelector('#add-agent-choice-name'), next: document.querySelector('#add-agent-next'),
@@ -254,6 +256,9 @@ const enrollmentDialog = AgentEnrollment.createController({
 });
 
 let manualEnrollmentGeneration=0,manualCredential='';
+addShell.setGuard({read:()=>[document.querySelector('#add-agent-choice-name').value,document.querySelector('#add-agent-choose-oneclick').getAttribute('aria-checked')],busy:()=>addAgentSubmit.disabled||enrollmentDialog.busy});
+upgradeShell.setGuard({busy:()=>!!pendingUpgradeAgentID&&agentState.busy(pendingUpgradeAgentID,'upgrade')});
+removeShell.setGuard({busy:()=>removeAgentInput.disabled});
 for(const node of document.querySelectorAll('[data-agent-server]'))node.textContent=location.origin;
 document.querySelector('#show-enrollment').addEventListener('click',e=>{const show=e.currentTarget.getAttribute('aria-pressed')!=='true';createdEnrollment.textContent=show?manualCredential:'••••••••••••••••••••••••';e.currentTarget.setAttribute('aria-pressed',String(show));e.currentTarget.textContent=show?'隐藏':'显示';});
 function clearEnrollmentDialog() {
@@ -279,7 +284,7 @@ document.querySelector('#add-agent-next').addEventListener('click', () => { if(d
 
 document.querySelector('#add-agent-cancel').addEventListener('click', () => addAgentDialog.close());
 document.querySelector('#add-agent-done').addEventListener('click', () => addAgentDialog.close());
-addAgentDialog.addEventListener('close', clearEnrollmentDialog);
+
 
 addAgentForm.addEventListener('submit', async event => {
   event.preventDefault();
@@ -303,7 +308,8 @@ addAgentForm.addEventListener('submit', async event => {
     if(generation!==manualEnrollmentGeneration||!addAgentDialog.open)return;
     createdInstallCommand.textContent = enrollment.install_available ? enrollment.install_command : (enrollment.install_message || '当前 Server 构建无法生成安全安装命令');
 	copyInstallCommand.disabled = !enrollment.install_available;
-    manualCredential = enrollment.enrollment_value;createdEnrollment.textContent='••••••••••••••••••••••••';
+    manualCredential = enrollment.enrollment_value;
+    addShell.markSaved();createdEnrollment.textContent='••••••••••••••••••••••••';
     addAgentCreate.classList.add('hidden');
     addAgentResult.classList.remove('hidden');
     await refresh();
@@ -331,7 +337,7 @@ function openRemoveAgentDialog(agent) {
 
 removeAgentInput.addEventListener('input',()=>{removeAgentConfirm.disabled=removeAgentInput.disabled||!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);});
 document.querySelector('#remove-agent-cancel').addEventListener('click', () => removeAgentDialog.close());
-removeAgentDialog.addEventListener('close', clearRemoveAgentDialog);
+removeAgentDialog.addEventListener('close',()=>{if(!removeAgentDialog.open)clearRemoveAgentDialog();});
 
 removeAgentForm.addEventListener('submit', async event => {
   event.preventDefault();

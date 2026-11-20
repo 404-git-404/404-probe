@@ -166,13 +166,13 @@
   function create({document:doc=root.document,state=root.AgentState,agents,coordinator,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Plot=root.uPlot,Resize=root.ResizeObserver,
     management=()=>null,overview=()=>null,upgradeTargets=()=>{},resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},conceal=()=>{}}={}) {
-    const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={},shell=root.DialogShell?.attach(dialog,{decorate:false});
+    const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={},shell=root.DialogShell?.attach(dialog,{decorate:false,read:()=>[from.value,to.value],requestClose:()=>close()});
     let current=null,tab='overview',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
     let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,plots=[],selected=0;
     const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
     const button=(text,action,cls='')=>{const n=el('button',cls,text);n.type='button';n.addEventListener('click',action);return n;};
     const header=el('header','details-header'),title=el('h2','','设备详情'),machine=el('div','details-machine');title.id='device-details-title';
-    const heading=el('div','details-heading'),closeButton=button('×',()=>close(),'details-close');closeButton.setAttribute('aria-label','关闭');header.append(heading,closeButton);heading.append(title,machine);
+    const heading=el('div','details-heading');header.append(heading);heading.append(title,machine);
     const tablist=el('div','details-tabs');tablist.setAttribute('role','tablist');tablist.setAttribute('aria-label','设备详情类别');
     const body=el('div','details-body');
     for(const [key,label]of [['overview','概览'],['resources','资源'],['security','安全'],['management','管理']]){
@@ -188,7 +188,7 @@
     const custom=el('form','details-custom'),from=el('input'),to=el('input'),rangeError=el('span','details-range-error');
     from.type=to.type='datetime-local';from.step=to.step='1';from.setAttribute('aria-label','自定义开始时间');to.setAttribute('aria-label','自定义结束时间');
     const label=(text,input)=>{const n=el('label','',text);n.append(input);return n;};const applyButton=el('button','','应用自定义范围');applyButton.type='submit';custom.append(label('开始',from),label('结束',to),applyButton,rangeError);
-    custom.addEventListener('submit',e=>{e.preventDefault();try{apply(H.range(from.value,to.value));rangeError.textContent='';}catch(err){rangeError.textContent=err.message;}});
+    custom.addEventListener('submit',e=>{e.preventDefault();try{apply(H.range(from.value,to.value));shell?.markSaved();rangeError.textContent='';}catch(err){rangeError.textContent=err.message;}});
     output.tabIndex=0;output.setAttribute('aria-label','分钟观测详情，左右方向键浏览');output.setAttribute('aria-live','polite');
     output.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();select(e.key==='Home'?0:e.key==='End'?(data?.points.length||1)-1:selected+(e.key==='ArrowLeft'?-1:1));});
     const resourceInfo=el('div','details-resource-facts');panes.resources.append(controls,custom,chart,resourceInfo,output);note.hidden=true;custom.hidden=true;controls.append(button('自定义时间…',()=>{custom.hidden=!custom.hidden;if(!custom.hidden)from.focus();}));controls.append(status);
@@ -239,7 +239,7 @@
       if(current!==id){conceal();leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';rangeError.textContent='';current=id;}
       if(trigger||current!==origin?.id)origin={node:trigger,id,key:trigger?.dataset?.focusKey||'manage'};
       const opening=!dialog.open;if(opening){opened=true;if(shell)shell.open(trigger);else{scroll=[root.scrollX||0,root.scrollY||0];overflow=doc.body.style.overflow;doc.body.style.overflow='hidden';dialog.showModal();}}
-      updateTitle();activate(key);if(opening)closeButton.focus({preventScroll:true});
+      updateTitle();activate(key);if(opening)tabs[tab].focus({preventScroll:true});
     }
     function close({restoreFocus=true}={}){if(!opened)return;opened=false;conceal();leave();release();pending=false;data=null;error='';if(dialog.open)dialog.close();if(!shell)doc.body.style.overflow=overflow;
       if(!shell&&restoreFocus&&origin&&agents.has(origin.id)){const trigger=origin.node?.isConnected?origin.node:doc.querySelector(`.agent-card[data-agent-id="${origin.id}"] [data-focus-key="${origin.key}"]`);trigger?.focus({preventScroll:true});}
@@ -289,9 +289,9 @@
     const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);};
     const pointerDown=e=>{backdropPress=e.button===0&&e.isPrimary!==false&&outside(e);};
     const pointerCancel=()=>{backdropPress=false;};
-    const backdropClick=e=>{const dismiss=backdropPress&&outside(e);backdropPress=false;if(dismiss)close();};
+    const backdropClick=e=>{if(shell)return;const dismiss=backdropPress&&outside(e);backdropPress=false;if(dismiss)close();};
     dialog.addEventListener('pointerdown',pointerDown);dialog.addEventListener('pointercancel',pointerCancel);dialog.addEventListener('click',backdropClick);
-    dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',closed);doc.addEventListener('visibilitychange',visibility);
+    if(!shell)dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',closed);doc.addEventListener('visibilitychange',visibility);
     return {open,close,update,active,
       sync(){if(current&&!agents.has(current)){close({restoreFocus:false});current=null;data=null;}},
       shutdown(){close({restoreFocus:false});dead=true;release();root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);dialog.removeEventListener('pointerdown',pointerDown);dialog.removeEventListener('pointercancel',pointerCancel);dialog.removeEventListener('click',backdropClick);current=null;data=null;},

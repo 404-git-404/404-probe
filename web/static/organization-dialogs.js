@@ -15,13 +15,14 @@
   assignment.body.append(groupLabel,groupRow,newGroup,el('p','dashboard-dialog-note','不选分组就放在“未分组”里。'),tagLabel,tagBox,existing,note,automatic);
   const assignmentActions=el('div','shell-actions'),save=button('保存',saveAssignment,'primary-action');assignmentActions.append(button('取消',assignment.shell.close),save);assignment.node.append(assignmentActions);
   let chosen=[];
+  assignment.shell.setGuard({busy:()=>assignmentBusy,read:()=>[group.value,newGroup.hidden?'':newGroup.value,tagInput.value,chosen.map(t=>t.id||t.name).sort()]});
   function tagChips(){selected.replaceChildren(...chosen.map(t=>button(t.name+' ×',()=>{chosen=chosen.filter(x=>x!==t);tagChips();},'dashboard-chip')));existing.replaceChildren(el('span','dashboard-dialog-note','已有标签：'),...(catalog?.tags||[]).filter(t=>!chosen.some(x=>x.id===t.id)).map(t=>button('+ '+t.name,()=>addTag(t.name),'organization-existing-tag')));}
   function addTag(raw){const name=N.normalize(raw);if(!N.valid(raw,20)){showError(assignment,'标签名称需为 1–20 个字，不能含不可见控制字符。');return false;}const key=N.fold(name);if(chosen.some(t=>N.fold(t.name)===key)){tagInput.value='';return true;}if(chosen.length>=20){showError(assignment,'每台设备最多添加 20 个标签。');return false;}const found=catalog.tags.find(t=>N.fold(t.name)===key);chosen.push(found?{id:found.id,name:found.name}:{name});tagInput.value='';showError(assignment,'');tagChips();return true;}
   tagInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(tagInput.value.trim())addTag(tagInput.value);}});
   async function loadAssignment(serial=assignmentSerial,message=''){
    showError(assignment,'正在读取…');
    try{let c,value;for(let i=0;i<3;i++){[c,value]=await Promise.all([api.catalog(),read('/api/v1/web/agents/'+current+'/organization')]);if(c.revision===value.revision)break;if(i===2)throw Error('资料正在变化，请关闭后重新打开。');}
-    if(serial!==assignmentSerial||!assignment.node.open)return;catalog=c;group.replaceChildren(new Option('未分组',''),...c.groups.map(g=>new Option(g.name,g.id)));group.value=value.item.group_id||'';newGroup.hidden=true;newGroup.value='';tagInput.value='';chosen=value.item.tag_ids.map(id=>c.tags.find(t=>t.id===id)).filter(Boolean).map(t=>({id:t.id,name:t.name}));tagChips();showError(assignment,message);
+    if(serial!==assignmentSerial||!assignment.node.open)return;catalog=c;group.replaceChildren(new Option('未分组',''),...c.groups.map(g=>new Option(g.name,g.id)));group.value=value.item.group_id||'';newGroup.hidden=true;newGroup.value='';tagInput.value='';chosen=value.item.tag_ids.map(id=>c.tags.find(t=>t.id===id)).filter(Boolean).map(t=>({id:t.id,name:t.name}));tagChips();assignment.shell.markSaved();showError(assignment,message);
    }catch{if(serial===assignmentSerial)showError(assignment,message||'归属资料读取失败，请关闭后重试。');}
   }
   async function openAssignment(id,trigger){if(!agents.has(id))return;current=id;const serial=++assignmentSerial;assignment.shell.heading('分组和标签',agents.get(id).name);assignment.shell.open(trigger);await loadAssignment(serial);if(serial===assignmentSerial&&assignment.node.open)group.focus({preventScroll:true});}
@@ -33,12 +34,13 @@
    catch(error){state.finishMutation(mutation);if(serial===assignmentSerial){if(error.status===409){await refresh();await loadAssignment(serial,error.message);}else showError(assignment,error.message);}}
    finally{state.finishMutation(mutation);assignmentBusy=false;save.disabled=false;}
   }
-  assignment.node.addEventListener('close',()=>{assignmentSerial++;catalog=null;});
+  assignment.node.addEventListener('close',()=>{if(assignment.node.open)return;assignmentSerial++;catalog=null;});
   // Management changes retain the revision loaded into this dialog, independent
   // of dashboard/SSE updates. Conflicts always reload, never replay a write.
   const tabs=el('div','organization-tabs'),tabsByKey={};tabs.setAttribute('role','tablist');
   for(const key of ['groups','tags']){const b=button('',()=>{tab=key;editing=deleting=null;renderManage();});b.setAttribute('role','tab');b.addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();tab=key==='groups'?'tags':'groups';editing=deleting=null;renderManage();tabsByKey[tab].focus();}});tabsByKey[key]=b;tabs.append(b);}
   const createRow=el('div','organization-create-row'),createInput=el('input'),createButton=button('',()=>mutateCreate(),'organization-create-button'),confirm=el('div','organization-delete-confirm'),rows=el('div','organization-manage-rows'),manageNote=el('p','dashboard-dialog-note');createInput.id='organization-create-name';createInput.setAttribute('aria-label','新建名称');createRow.append(createInput,createButton);manage.body.append(tabs,createRow,confirm,rows,manageNote);const manageActions=el('div','shell-actions');manageActions.append(button('关闭',manage.shell.close));manage.node.append(manageActions);
+  manage.shell.setGuard({busy:()=>manageBusy,dirty:()=>!!createInput.value||[...rows.querySelectorAll('input')].some(n=>n.value!==(manageCatalog?.[tab]||[]).find(v=>v.id===n.dataset.rename)?.name)});
   createInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();mutateCreate();}});
   const count=(kind,id)=>(manageCatalog.items||[]).filter(a=>kind==='groups'?a.group_id===id:(a.tag_ids||[]).includes(id)).length;
   function renderManage(){if(!manageCatalog)return;for(const b of manage.node.querySelectorAll('button'))b.disabled=false;const isGroups=tab==='groups',items=manageCatalog[tab];
@@ -55,7 +57,7 @@
    for(const b of manage.node.querySelectorAll('button'))if(manageBusy)b.disabled=true;
   }
   function validName(raw,limit){if(!N.valid(raw,limit)||(tab==='groups'&&N.normalize(raw)==='未分组')){showError(manage,`名称需为 1–${limit} 个字，不能含不可见控制字符；“未分组”不能作为分组名称。`);return false;}return true;}
-  async function loadManage(serial=manageSerial,message=''){try{const value=await api.catalog();if(serial!==manageSerial||!manage.node.open)return;manageCatalog=value;editing=deleting=null;renderManage();showError(manage,message);}catch{if(serial===manageSerial)showError(manage,'分组和标签读取失败，请关闭后重试。');}}
+  async function loadManage(serial=manageSerial,message=''){try{const value=await api.catalog();if(serial!==manageSerial||!manage.node.open)return;manageCatalog=value;editing=deleting=null;renderManage();manage.shell.markSaved();showError(manage,message);}catch{if(serial===manageSerial)showError(manage,'分组和标签读取失败，请关闭后重试。');}}
   async function openManage(key,trigger){tab=key==='tags'?'tags':'groups';createInput.value='';manageCatalog=null;const serial=++manageSerial;showError(manage,'正在读取…');manage.shell.open(trigger);await loadManage(serial);if(serial===manageSerial&&manage.node.open)createInput.focus({preventScroll:true});}
   async function mutate(method,path,body){if(manageBusy||!manageCatalog)return;manageBusy=true;const serial=manageSerial,mutations=[...agents.keys()].map(id=>state.beginMutation(id,['organization']));renderManage();
    const finish=()=>mutations.forEach(token=>state.finishMutation(token));
@@ -65,7 +67,7 @@
   }
   function mutateCreate(){if(!validName(createInput.value,tab==='groups'?40:20))return;mutate('POST',tab,{name:N.normalize(createInput.value)});}
   function reorder(index,delta){const ids=manageCatalog.groups.map(g=>g.id);[ids[index],ids[index+delta]]=[ids[index+delta],ids[index]];mutate('PUT','groups/order',{ids});}
-  manage.node.addEventListener('close',()=>{manageSerial++;manageCatalog=null;});
+  manage.node.addEventListener('close',()=>{if(manage.node.open)return;manageSerial++;manageCatalog=null;});
   return {openAssignment,openManage,close(){assignment.shell.close();manage.shell.close();}};
  }
  root.OrganizationDialogs={create};

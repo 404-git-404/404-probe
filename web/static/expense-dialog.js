@@ -16,6 +16,7 @@
   body.append(error,scopes,totals,table,el('p','dashboard-dialog-note','月付、季付、半年付、年付统一折成每月。'),deviceDetails,excluded,rates);dialog.append(body);const actions=el('div','shell-actions'),save=button('保存汇率',saveRates,'primary-action');actions.append(button('关闭',shell.close),save);dialog.append(actions);
   const updatedFormatter=new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'});
   let scope='all',catalog=null,estimate=null,serial=0,estimateSerial=0,busy=false;const inputs=new Map();
+  shell.setGuard({busy:()=>busy,read:()=>[currency.value,[...inputs].map(([code,{input}])=>[code,input.value]).sort()]});
   function showError(text){error.textContent=text;error.hidden=!text;}
   function setScope(value){scope=value;loadEstimate();}
   async function loadEstimate(retry=true){const generation=++estimateSerial,owner=serial;all.setAttribute('aria-pressed',String(scope==='all'));filtered.setAttribute('aria-pressed',String(scope==='filtered'));monthly.textContent=yearly.textContent='正在读取…';
@@ -36,12 +37,12 @@
   function renderRates(){const updated=Math.max(0,...catalog.exchange_rates.map(r=>r.updated_at||0));rateNote.textContent='只用于估算，不联网获取。'+(updated?'上次修改 '+updatedFormatter.format(new Date(updated))+'。':'')+'缺汇率的币种不计入合计；美元固定为 1。';inputs.clear();rateRows.replaceChildren();const codes=new Set();for(const row of catalog.items||[])if(/^[A-Z]{3}$/.test(row.plan?.currency||''))codes.add(row.plan.currency);for(const rate of catalog.exchange_rates||[])codes.add(rate.currency);for(const code of [...codes].sort()){const saved=catalog.exchange_rates.find(r=>r.currency===code);addRate(code,saved?.units_per_usd||'',!!saved);}}
   function addCurrency(){const code=currency.value.trim().toUpperCase();if(!/^[A-Z]{3}$/.test(code)||code==='USD'){showError('请输入美元以外的三位币种代码，例如 EUR。');return;}addRate(code);currency.value='';inputs.get(code)?.input.focus();showError('');}
   currency.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addCurrency();}});
-  async function load(message=''){const owner=serial;showError('正在读取…');try{const data=await api.catalog();if(owner!==serial||!dialog.open)return;catalog=data;renderRates();await loadEstimate();if(owner===serial)showError(message);}catch{if(owner===serial)showError(message||'汇率资料读取失败，请关闭后重试。');}}
+  async function load(message=''){const owner=serial;showError('正在读取…');try{const data=await api.catalog();if(owner!==serial||!dialog.open)return;catalog=data;renderRates();currency.value='';shell.markSaved();await loadEstimate();if(owner===serial)showError(message);}catch{if(owner===serial)showError(message||'汇率资料读取失败，请关闭后重试。');}}
   async function open(trigger){scope='all';estimate=null;catalog=null;serial++;deviceDetails.open=false;monthly.textContent=yearly.textContent='正在读取…';shell.open(trigger);await load();}
   function setBusy(value){busy=value;save.disabled=value;for(const {input,label}of inputs.values()){input.disabled=value;label.querySelector('button').disabled=value;}add.disabled=value;currency.disabled=value;}
   async function saveRates(){if(busy||!catalog)return;const values=[];for(const [code,v]of inputs){const value=v.input.value.trim();if(!value&&!v.saved)continue;if(!/^(?:[1-9]\d{0,11}|0)(?:\.\d{1,12})?$/.test(value)||!/[1-9]/.test(value)){showError('汇率须大于 0，整数和小数各最多 12 位；请用普通小数填写。');v.input.focus();return;}values.push({currency:code,units_per_usd:value});}if(!values.length){showError('请先填写至少一种汇率。');return;}const owner=serial;setBusy(true);try{await api.request('PUT','exchange-rates',{expected_revision:catalog.revision,rates:values});await refresh();if(owner===serial)await load('汇率已保存。');}catch(e){if(owner===serial){if(e.status===409)await load(e.message);else showError(e.message);}}finally{setBusy(false);}}
   async function removeRate(code){if(busy||!catalog)return;const row=inputs.get(code);if(!row.saved){row.label.remove();inputs.delete(code);return;}const owner=serial;setBusy(true);try{await api.request('DELETE','exchange-rates/'+code,null,catalog.revision);await refresh();if(owner===serial)await load('汇率已删除；该币种现在不计入合计。');}catch(e){if(owner===serial){if(e.status===409)await load(e.message);else showError(e.message);}}finally{setBusy(false);}}
-  dialog.addEventListener('close',()=>{serial++;estimateSerial++;catalog=null;});
+  dialog.addEventListener('close',()=>{if(dialog.open)return;serial++;estimateSerial++;catalog=null;});
   return {open,close:shell.close};
  }
  root.ExpenseDialog={create};

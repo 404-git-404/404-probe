@@ -29,7 +29,7 @@
  }
  function create({document:doc=root.document,window:win=root,agents,canWrite,csrf,begin,finish,edit,opening=()=>{},changed=()=>{},write=(...args)=>root.Management.write(...args),now=()=>Date.now(),crypto=root.crypto,position=root.PlanEditor.position}={}){
   const get=id=>doc.querySelector('#renewal-'+id),dialog=get('dialog'),field=get('field'),confirm=get('confirm');
-  dialog.classList?.add('dialog-shell','dialog-small');root.DialogShell?.attach(dialog,{decorate:false});
+  dialog.classList?.add('dialog-shell','dialog-small');root.DialogShell?.attach(dialog,{decorate:false,busy:()=>!!(id&&record(id).owner),guard:false});
   const records=new Map();let id=null,origin=null,scroll=null,generation=0,preview=null,previewFacts='',previewController=null,loading=false,undoAsk=false,dead=false;
   const record=key=>{if(!records.has(key))records.set(key,{unknown:null,latest:null,revision:'',facts:'',error:'',message:'',owner:null,controller:null,serverUndo:null});return records.get(key);};
   const live=(key,serial)=>!dead&&id===key&&generation===serial&&dialog.open&&agents.has(key);
@@ -38,11 +38,9 @@
   function draw(){if(!dialog.open||!id||dead)return;const r=record(id),busy=!!r.owner;
    get('name').textContent=agents.get(id)?.name||agents.get(id)?.state?.hostname||'未命名设备';
    const {url}=Management.parseRenewalURL(agents.get(id)?.plan?.renewal_url);
-   get('payment').hidden=undoAsk;
-   get('payment-link').hidden=!url;
-   get('no-url').hidden=!!url;
+   get('go').hidden=!url||undoAsk;
    if(url)get('go').href=url.href;else get('go').removeAttribute('href');
-   get('domain').textContent=url?`${url.hostname} · 新标签页打开`:'';
+   get('go').title=url?`${url.hostname} · 新标签页打开`:'';
    get('error').textContent=r.error;get('error').hidden=!r.error;
    get('result').textContent=r.message;get('result').hidden=!r.message;
    get('recovery').hidden=!r.unknown;get('request-id').textContent=r.unknown?.dto.request_id||'';get('request-id').title=r.unknown?.dto.request_id||'';
@@ -61,7 +59,7 @@
     get('warning').textContent=preview.new_overdue?'新日期仍已过期；确认只从原日期顺延一期，不自动补齐。':preview.due_today?'新日期今天到期；仍从原日期顺延一期。':'';
     get('anchor').textContent=preview.anchor_source==='current_date'?'以原当前日期为锚点；没有可兼容的购买日，不猜测未知历史月末。':'沿原购买日锚定，月末或闰日按服务端夹取。';
    }else{get('detail').textContent=preview?(reasons[preview.reason]+' 请编辑套餐后再登记。'):'';get('warning').textContent='';get('anchor').textContent='';}
-   if(preview?.eligible&&!undoAsk){get('detail').title=get('detail').textContent+' '+get('anchor').textContent;const label=preview.field==='renewal_date'?'下次续费日':'到期日';get('detail').textContent=`② 付款后，${label}顺延${({monthly:'一个月',quarterly:'三个月',semiannual:'六个月',yearly:'一年'})[preview.period]}：`;}get('anchor').hidden=true;
+   if(preview?.eligible&&!undoAsk){get('detail').title=get('detail').textContent+' '+get('anchor').textContent;const label=preview.field==='renewal_date'?'下次续费日':'到期日';get('detail').textContent='';}get('anchor').hidden=true;
    confirm.textContent=undoAsk?'确认撤销此次登记':'确认已续费';
    confirm.disabled=busy||loading||!!r.unknown||!canWrite(id)||(undoAsk?!undoAvailable(r):!preview?.eligible);
    get('undo-note').hidden=!undoAsk;place();
@@ -80,7 +78,7 @@
    }catch(error){if(live(key,serial)&&error.name!=='AbortError')r.error=error.message||'预览失败，请显式重新预览。';}
    finally{if(live(key,serial)){loading=false;previewController=null;draw();}}
   }
-  function open(key,trigger=null){if(dead||!agents.has(key))return;if(dialog.open)close();opening(key);id=key;origin=trigger;scroll=[win.scrollX||0,win.scrollY||0];generation++;preview=null;undoAsk=false;loading=false;dialog.showModal();draw();get('cancel').focus({preventScroll:true});if(!record(key).unknown)load();}
+  function open(key,trigger=null){if(dead||!agents.has(key))return;if(dialog.open)close();opening(key);id=key;origin=trigger;scroll=[win.scrollX||0,win.scrollY||0];generation++;preview=null;undoAsk=false;loading=false;dialog.showModal();draw();(get('go').hidden?get('dismiss'):get('go')).focus({preventScroll:true});if(!record(key).unknown)load();}
   async function submit(kind,dto){const key=id;if(!key||dead||!canWrite(key))return;const r=record(key);if(r.owner)return;
    const mutation=begin(key);if(!mutation)return;
    const owner={},controller=new AbortController(),serial=generation;r.owner=owner;r.controller=controller;
@@ -119,9 +117,9 @@
   get('verify').addEventListener('click',()=>{const p=id&&record(id).unknown;if(p)return submit(p.kind,p.dto);});
   get('copy').addEventListener('click',async()=>{const key=id,serial=generation,p=key&&record(key).unknown;if(!p)return;try{await win.navigator.clipboard.writeText(p.dto.request_id);(root.PublicEgressCheck||Copy).copyFeedback(get('copy'),true);}catch(_){(root.PublicEgressCheck||Copy).copyFeedback(get('copy'),false);if(live(key,serial)){record(key).error='复制失败，请展开核实信息后手动复制。';draw();}}});
   get('edit').addEventListener('click',()=>{const key=id,trigger=origin;if(!key||record(key).unknown||record(key).owner)return;close();edit(key,trigger);});
-  for(const name of ['cancel','dismiss'])get(name).addEventListener('click',close);
+  get('dismiss').addEventListener('click',close);
   // Native close events are queued: an earlier close must not end a reopened modal.
-  dialog.addEventListener('cancel',e=>{e.preventDefault();close();});dialog.addEventListener('close',()=>{if(!dialog.open)end();});win.addEventListener('resize',place);
+  if(!root.DialogShell)dialog.addEventListener('cancel',e=>{e.preventDefault();close();});dialog.addEventListener('close',()=>{if(!dialog.open)end();});win.addEventListener('resize',place);
   return {open,close,load,confirm:confirmAction,verify(){const p=id&&record(id).unknown;return p?submit(p.kind,p.dto):undefined;},unconfirmed:key=>!!records.get(key)?.unknown,
    invalidate(key){const r=records.get(key);if(r){const hadReceipt=!!r.latest;r.latest=null;r.serverUndo=null;r.revision='';r.message=hadReceipt?'套餐已编辑，原登记不再可撤销。':id===key?'套餐资料已改变，请重新预览。':'';}if(id===key){preview=null;undoAsk=false;draw();}},
    sync(){for(const key of records.keys())if(!agents.has(key)){records.get(key).controller?.abort();records.delete(key);if(id===key)close();}

@@ -59,7 +59,7 @@
   }
   function apply(key){if(!p.quick.includes(key))p.quick.push(key);change();}
   const panel=get('dashboard-panel'),app=doc.querySelector('.dashboard-app'),mobile=get('panel-mobile-dialog');
-  const mobileShell=root.DialogShell.attach(mobile,{decorate:false});
+  const mobileShell=root.DialogShell.attach(mobile,{decorate:false,guard:false});
   const narrow=root.matchMedia('(max-width:80rem)'),phone=root.matchMedia('(max-width:44rem)');
   let manualExpanded=false;
   function layout(){

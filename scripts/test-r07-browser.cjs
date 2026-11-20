@@ -64,9 +64,9 @@ test('M1 (Chromium): a clean dialog shows no question; each question appears alo
     assert.deepEqual(await visibleGuards(page),['开启后会开始检测这些目标。请仅检测你有权检测的目标。']);
     await page.click('[data-nq-field="guard-cancel"]');
     assert.deepEqual(await visibleGuards(page), []);
-    await page.click('[data-nq-field="close"]');
-    assert.deepEqual(await visibleGuards(page), ['放弃修改？']);
-    await page.click('[data-nq-field="guard-keep"]');
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog',{name:'放弃修改？'}).waitFor();
+    await page.getByRole('button',{name:'继续编辑',exact:true}).click();
     assert.deepEqual(await visibleGuards(page), []);
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
@@ -83,7 +83,7 @@ test('M2 (Chromium): with the master switch disabled the focus still starts insi
     await page.evaluate(() => document.querySelector('.nq-link').focus());
     await page.keyboard.press('Tab');
     assert.equal(await inDialog(page), true);
-    await page.click('[data-nq-field="close"]');
+    await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.activeElement.classList.contains('nq-link')), true, 'back on the button that opened it');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }

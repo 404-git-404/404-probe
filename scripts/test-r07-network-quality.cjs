@@ -116,12 +116,12 @@ test('switching off is a draft until the single save serializes config and enabl
 test('closing: clean closes, dirty asks, the question has two answers', async () => {
   const f = setup({raw: load('v4-saved-off')});
   let panel = await f.open();
-  f.field('close').click();
+  f.field('cancel').click();
   assert.equal(f.panel(), undefined, 'a clean dialog closes at once');
   panel = await f.open();
   f.type('mobile-host', 'example.net');
   for (const how of ['button', 'escape', 'outside']) {
-    if (how === 'button') f.field('close').click();
+    if (how === 'button') f.field('cancel').click();
     if (how === 'escape') f.doc.dispatch('keydown', {key: 'Escape', preventDefault() {}});
     if(how==='outside'){panel.dispatch('pointerdown',{target:panel,button:0,clientX:0,clientY:0});panel.dispatch('click',{target:panel,clientX:0,clientY:0});}
     assert.ok(f.panel(), `${how}: still open`);
@@ -131,7 +131,7 @@ test('closing: clean closes, dirty asks, the question has two answers', async ()
     f.byText(guard, '继续编辑').click();
     assert.equal(panel.all().filter(n => n.className === 'nq-status nq-guard' && !n.hidden).length, 0);
   }
-  f.field('close').click();
+  f.field('cancel').click();
   f.byText(panel.all().find(n => n.className === 'nq-status nq-guard' && !n.hidden), '放弃修改').click();
   assert.equal(f.panel(), undefined);
   assert.equal(f.writes.length, 0);
@@ -285,7 +285,7 @@ test('cards: the v5 answer is read for the shown family; blocks come from it, a 
   const relabelled = clone(f.raw()); relabelled.settings_revision = inc(relabelled.settings_revision);
   relabelled.slots[0].region = '浙江'; relabelled.slots[0].isp = 'unicom';
   f.setRaw(relabelled);
-  await f.open(); f.field('close').click(); await flush();
+  await f.open(); f.field('cancel').click(); await flush();
   assert.equal(f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-label').textContent, '浙江联通', 'row label follows the slot labels');
   assert.deepEqual(f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-blocks').querySelectorAll('.nq7-b'), cells, 'the same twenty cells, not rebuilt');
   // A new settings revision (the threshold may have changed) reads the judgement again.
@@ -337,7 +337,7 @@ test('hostile labels and addresses are text everywhere: card, tooltips, dialog f
     const panel = await f.open();
     assert.equal(f.field('telecom-region-text').value, evil); assert.equal(f.field('telecom-host').value, evil);
     for (const n of panel.all()) assert.ok(allowedTags.has(n.tagName), `${n.tagName} appeared in the dialog`);
-    f.field('close').click();
+    f.field('cancel').click();
     const list = f.ui.historyTargets(AGENT).filter(t => t.slot === 'telecom');
     assert.ok(list.length && list.every(t => t.label.startsWith(expected)));
     const t = list.find(x => x.protocol === 'tcp' && x.family === 'ipv4');
@@ -459,10 +459,8 @@ test('M1: the guards are hidden unless asked for, and the stylesheet lets hidden
   assert.deepEqual(guards(f),['开启后会开始检测这些目标。请仅检测你有权检测的目标。']);
   f.byText(f.panel(), '取消').click();
   assert.deepEqual(guards(f), []);
-  f.field('close').click();
-  assert.deepEqual(guards(f), ['放弃修改？']);
-  f.field('guard-keep').click();
-  assert.deepEqual(guards(f), []);
+  f.field('cancel').click();
+  assert.equal(f.panel(),null, 'cancel discards directly; shared backdrop guard is covered in Chromium');
 });
 
 test('M2: the focus starts inside the dialog even when the master switch is disabled, and Tab brings stray focus back in', async () => {
@@ -479,7 +477,7 @@ test('M2: the focus starts inside the dialog even when the master switch is disa
   const reachable = f.panel().querySelectorAll('button,input,select').filter(n => !n.disabled && !n.hidden && !n.parentNode?.hidden);
   f.doc.activeElement = reachable.at(-1); keydown(f, 'Tab'); assert.equal(f.doc.activeElement, reachable[0]);
   keydown(f, 'Tab', {shiftKey: true}); assert.equal(f.doc.activeElement, reachable.at(-1));
-  f.field('close').click(); assert.ok(!f.panel());
+  f.field('cancel').click(); assert.ok(!f.panel());
   assert.equal(f.doc.activeElement, f.node.querySelector('.nq-link'), 'closing returns to the button that opened it');
 });
 

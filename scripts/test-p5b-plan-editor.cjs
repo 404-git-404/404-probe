@@ -15,13 +15,15 @@ function fixture(){
   close(){this.open=false;this.emit('close');}
   getBoundingClientRect(){return this.rect;}
  }
- for(const id of ['plan-dialog','plan-save','plan-clear','plan-confirmation','plan-confirm-note','plan-continue','plan-discard','plan-cancel','plan-dismiss'])nodes.set(id,new Element());
+ for(const id of ['plan-dialog','plan-save','plan-clear','plan-confirmation','plan-confirm-note','plan-continue','plan-discard','plan-title','plan-dismiss'])nodes.set(id,new Element());
  for(const id of agents.keys()){const card=new Element();card.trigger=new Element();cards.set(id,card);}
  const win={innerWidth:1366,innerHeight:900,scrollX:2,scrollY:340,scrollCalls:[],scrollTo(...args){this.scrollCalls.push(args);},addEventListener(type,fn){listeners.set(type,fn);},removeEventListener(type,fn){if(listeners.get(type)===fn)listeners.delete(type);}};
  let values={text:'',number:'',select:'auto',checkbox:false,country:''},closes=0,clears=0;
+ let decide=null;globalThis.DialogShell={attach(dialog,options){return {setGuard(){},requestClose(){if(options.busy())return Promise.resolve(false);if(!options.dirty()){options.requestClose();return Promise.resolve(true);}return new Promise(resolve=>{decide=accepted=>{decide=null;if(accepted)options.requestClose();resolve(accepted);};});}};}};
  const editor=PlanEditor.create({document:doc,window:win,agents,read:()=>({...values}),onclose:()=>closes++,onclear:()=>clears++});
+ delete globalThis.DialogShell;
  const open=(id='a',initial={})=>editor.open(id,cards.get(id).trigger,()=>{values={text:'old',number:'1',select:'auto',checkbox:false,country:'',...initial};});
- return{editor,open,nodes,cards,agents,doc,win,listeners,set:(key,value)=>values[key]=value,values:()=>({...values}),closes:()=>closes,clears:()=>clears};
+ return{editor,open,respond:accepted=>decide?.(accepted),asking:()=>!!decide,nodes,cards,agents,doc,win,listeners,set:(key,value)=>values[key]=value,values:()=>({...values}),closes:()=>closes,clears:()=>clears};
 }
 test('production geometry stays centered at 560px and bounds narrow viewports',()=>{
  assert.deepEqual(PlanEditor.position({left:100,top:80,bottom:380,width:450},400,{width:1366,height:900}),{left:403,top:250,width:560});
@@ -34,28 +36,20 @@ test('every persisted value is dirty, reversion is clean, unrelated focus and se
  for(const [key,value] of Object.entries({text:'new',number:'2',select:'monthly',checkbox:true,country:'DE'})){f.set(key,value);assert.equal(f.editor.dirty(),true,key);f.set(key,original[key]);assert.equal(f.editor.dirty(),false,key);}
  f.nodes.get('plan-clear').focus();f.doc.search='Germany';f.doc.foldOpen=true;assert.equal(f.editor.dirty(),false);f.editor.requestClose();assert.equal(f.nodes.get('plan-dialog').open,false);
 });
-for(const path of ['plan-cancel','plan-dismiss','escape'])test(`${path} shares inline protection, continue preserves draft and discard closes`,()=>{
- const f=fixture();f.open();f.set('text','draft');f.cards.get('a').trigger.focus();
- if(path==='escape')assert.equal(f.nodes.get('plan-dialog').emit('cancel').prevented,true);else f.nodes.get(path).emit('click');
- assert.equal(f.editor.snapshot().confirmation,'close');assert.equal(f.nodes.get('plan-dialog').open,true);assert.equal(f.doc.activeElement,f.nodes.get('plan-continue'));
- f.nodes.get('plan-continue').emit('click');assert.equal(f.values().text,'draft');assert.equal(f.editor.snapshot().confirmation,null);
- f.editor.requestClose();f.nodes.get('plan-discard').emit('click');assert.equal(f.nodes.get('plan-dialog').open,false);assert.equal(f.closes(),1);
-});
-test('escape from confirmation returns to editing without losing draft',()=>{
- const f=fixture();f.open();f.set('number','9');f.nodes.get('plan-clear').focus();f.editor.requestClose();f.nodes.get('plan-dialog').emit('cancel');assert.equal(f.editor.snapshot().confirmation,null);assert.equal(f.editor.snapshot().open,true);assert.equal(f.doc.activeElement,f.nodes.get('plan-clear'));assert.equal(f.values().number,'9');
+test('cancel closes changed inputs directly; shared guard preserves declined drafts',async()=>{
+ const f=fixture();f.open();f.set('text','draft');const pending=f.editor.requestClose();assert(f.asking());f.respond(false);assert.equal(await pending,false);assert.equal(f.values().text,'draft');assert.equal(f.editor.snapshot().open,true);
+ f.nodes.get('plan-dismiss').emit('click');assert.equal(f.editor.snapshot().open,false);assert.equal(f.asking(),false);
 });
 test('clear requires explicit inline confirmation and cancellation never calls the mutation',()=>{
  const f=fixture();f.open();f.nodes.get('plan-clear').emit('click');assert.equal(f.editor.snapshot().confirmation,'clear');assert.match(f.nodes.get('plan-confirm-note').textContent,/保留：流量配额、统计周期、计费方向、对账状态、时区和出口地区/);assert.equal(f.clears(),0);
  f.nodes.get('plan-continue').emit('click');assert.equal(f.clears(),0);f.nodes.get('plan-clear').emit('click');f.nodes.get('plan-discard').emit('click');assert.equal(f.clears(),1);assert.equal(f.editor.snapshot().open,true);
 });
-test('dirty device switch waits for consent and initializes the next device only once',()=>{
- const f=fixture();f.open();f.set('text','draft-a');f.open('b',{text:'stored-b'});assert.equal(f.editor.snapshot().id,'a');assert.equal(f.values().text,'draft-a');assert.equal(f.editor.snapshot().confirmation,'switch');
- f.nodes.get('plan-discard').emit('click');assert.equal(f.editor.snapshot().id,'b');assert.equal(f.values().text,'stored-b');assert.equal(f.editor.dirty(),false);assert.equal(f.closes(),1);
+test('dirty device switch waits for shared consent and initializes next device once',async()=>{
+ const f=fixture();f.open();f.set('text','draft-a');f.open('b',{text:'stored-b'});assert.equal(f.editor.snapshot().id,'a');assert(f.asking());f.respond(true);await Promise.resolve();await Promise.resolve();assert.equal(f.editor.snapshot().id,'b');assert.equal(f.values().text,'stored-b');assert.equal(f.editor.dirty(),false);assert.equal(f.closes(),1);
 });
-test('pending submission cannot repeat or clear; close warning is honest; old finish cannot unlock new pending',()=>{
- const f=fixture();f.open();const old=f.editor.begin();assert.equal(f.editor.begin(),null);assert.equal(f.nodes.get('plan-save').disabled,true);assert.equal(f.nodes.get('plan-clear').disabled,true);
- f.nodes.get('plan-clear').emit('click');assert.equal(f.editor.snapshot().confirmation,null);f.editor.requestClose();assert.match(f.nodes.get('plan-confirm-note').textContent,/关闭不代表未写入/);
- f.nodes.get('plan-discard').emit('click');f.open('b');const current=f.editor.begin();f.editor.finish(old);assert.equal(f.editor.snapshot().busy,true);assert.equal(f.nodes.get('plan-save').disabled,true);f.editor.finish(current);assert.equal(f.editor.snapshot().busy,false);
+test('pending submission cannot repeat, clear or dismiss; old finish cannot unlock a new submission',async()=>{
+ const f=fixture();f.open();const old=f.editor.begin();assert.equal(f.editor.begin(),null);assert.equal(f.nodes.get('plan-save').disabled,true);assert.equal(f.nodes.get('plan-clear').disabled,true);assert.equal(await f.editor.requestClose(),false);f.nodes.get('plan-dismiss').emit('click');assert.equal(f.editor.snapshot().open,true);assert.equal(f.asking(),false);
+ f.editor.close();f.open('b');const current=f.editor.begin();f.editor.finish(old);assert.equal(f.editor.snapshot().busy,true);f.editor.finish(current);assert.equal(f.editor.snapshot().busy,false);
 });
 test('SSE identity replacement and resize change positioning only; closing restores current trigger and original scroll',()=>{
  const f=fixture();f.open();f.set('country','JP');f.nodes.get('plan-clear').focus();const old=f.cards.get('a');old.trigger.isConnected=false;const replacement={rect:{left:800,top:200,bottom:650,width:420},trigger:{focus(){f.doc.activeElement=this;}},getBoundingClientRect(){return this.rect;}};f.cards.set('a',replacement);
@@ -64,5 +58,5 @@ test('SSE identity replacement and resize change positioning only; closing resto
 });
 test('agent removal closes without restoring another agent focus; shutdown removes lifecycle listeners',()=>{
  const f=fixture();f.open();f.agents.delete('a');f.editor.sync();assert.equal(f.editor.snapshot().open,false);assert.notEqual(f.doc.activeElement,f.cards.get('b').trigger);
- f.open('b');f.editor.shutdown();assert.equal(f.listeners.has('resize'),false);assert.equal(f.nodes.get('plan-dialog').handlers.get('cancel').size,0);assert.equal(f.nodes.get('plan-dialog').handlers.get('close').size,0);f.open('b');assert.equal(f.editor.snapshot().open,false);assert.equal(f.editor.canSubmit(),false);
+ f.open('b');f.editor.shutdown();assert.equal(f.listeners.has('resize'),false);assert.equal((f.nodes.get('plan-dialog').handlers.get('cancel')?.size||0),0);assert.equal(f.nodes.get('plan-dialog').handlers.get('close').size,0);f.open('b');assert.equal(f.editor.snapshot().open,false);assert.equal(f.editor.canSubmit(),false);
 });

@@ -8,7 +8,7 @@
  function create({document:doc=root.document,window:win=root,agents,read,onclose=()=>{},onclear=()=>{}}){
   const get=id=>doc.querySelector('#'+id),dialog=get('plan-dialog'),save=get('plan-save'),clear=get('plan-clear');
   const confirmation=get('plan-confirmation'),note=get('plan-confirm-note'),resume=get('plan-continue'),discard=get('plan-discard');
-  dialog.classList?.add('dialog-shell');const shell=root.DialogShell?.attach(dialog,{decorate:false,requestClose:()=>cancel({preventDefault(){}})});
+  dialog.classList?.add('dialog-shell');const shell=root.DialogShell?.attach(dialog,{decorate:false,title:'编辑套餐',dirty:()=>dirty(),busy:()=>busy,requestClose:()=>close()});
   let id=null,origin=null,baseline='',generation=0,busy=false,action=null,scroll=null,dead=false;
   const dirty=()=>JSON.stringify(read())!==baseline;
   const buttons=()=>{save.disabled=clear.disabled=busy;};
@@ -17,7 +17,7 @@
    const p=position(rect,dialog.getBoundingClientRect().height,{width:win.innerWidth||1366,height:win.innerHeight||900});
    dialog.style.left=p.left+'px';dialog.style.top=p.top+'px';dialog.style.width=p.width+'px';
   }
-  function ended(){if(id===null)return;const last=id,trigger=origin;id=null;origin=null;generation++;busy=false;hide();buttons();onclose();
+  function ended(){if(id===null||dialog.open)return;const last=id,trigger=origin;id=null;origin=null;generation++;busy=false;hide();buttons();onclose();
    if(agents.has(last)){const n=trigger?.isConnected?trigger:doc.querySelector(`.agent-card[data-agent-id="${last}"] [data-focus-key="plan"]`);n?.focus({preventScroll:true});}
    if(scroll)win.scrollTo?.(...scroll);scroll=null;
   }
@@ -26,19 +26,19 @@
    note.textContent=kind==='clear'?'将清除：价格、购买记录、下次续费、到期日、带宽和续费网址。保留：流量配额、统计周期、计费方向、对账状态、时区和出口地区；设备累计与历史不会删除。':busy?'提交可能仍在服务器执行。关闭不代表未写入；再次打开后核对实际资料。':'有未保存的修改。放弃后不会自动保存。';
    discard.textContent=kind==='clear'?'确认清除套餐资料':'放弃修改';resume.focus({preventScroll:true});
   }
-  function requestClose(){if(!dialog.open)return;if(dirty()||busy)ask('close');else close();}
+  function requestClose(){return shell?shell.requestClose():close();}
   function open(nextId,trigger,initialize){if(dead||!agents.has(nextId))return;
-   if(dialog.open){if(dirty()||busy){ask('switch',()=>open(nextId,trigger,initialize));return;}close();}
-   id=nextId;origin=trigger;generation++;busy=false;scroll=[win.scrollX||0,win.scrollY||0];initialize();baseline=JSON.stringify(read());hide();buttons();dialog.showModal();place();get('plan-cancel').focus({preventScroll:true});
+   if(dialog.open){if(dirty()||busy){requestClose()?.then(closed=>{if(closed)open(nextId,trigger,initialize);});return;}close();}
+   id=nextId;origin=trigger;generation++;busy=false;scroll=[win.scrollX||0,win.scrollY||0];initialize();shell?.setGuard({title:get('plan-title').textContent==='流量配额'?'流量配额':'编辑套餐'});baseline=JSON.stringify(read());hide();buttons();dialog.showModal();place();get('plan-dismiss').focus({preventScroll:true});
   }
   resume.addEventListener('click',()=>{const focus=action?.focus;hide();focus?.focus({preventScroll:true});});
   discard.addEventListener('click',()=>{const decision=action;if(!decision)return;hide();if(decision.kind==='clear'){if(!busy)return onclear();}else{close();decision.next?.();}});
-  get('plan-cancel').addEventListener('click',requestClose);get('plan-dismiss').addEventListener('click',requestClose);
+  get('plan-dismiss').addEventListener('click',()=>{if(!busy)close();});
   clear.addEventListener('click',()=>{if(!busy&&dialog.open)ask('clear');});
   const cancel=e=>{e.preventDefault();if(action){const focus=action.focus;hide();focus?.focus({preventScroll:true});}else requestClose();};
   if(!shell)dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',ended);win.addEventListener('resize',place);
   return{open,requestClose,close,dirty,place,
-   handoff(next){if(dead)return false;if(dialog.open&&(dirty()||busy)){const owner=generation,old=id;ask('switch',()=>{if(!dead&&generation===owner+1&&agents.has(old))next();});return false;}close();if(!dead)next();return true;},
+   handoff(next){if(dead)return false;if(dialog.open&&(dirty()||busy)){const owner=generation,old=id;requestClose()?.then(closed=>{if(closed&&!dead&&generation===owner+1&&agents.has(old))next();});return false;}close();if(!dead)next();return true;},
    canSubmit:()=>!dead&&dialog.open&&!busy&&agents.has(id),
    begin(){if(!this.canSubmit())return null;busy=true;hide();buttons();return generation;},
    finish(token){if(token===generation){busy=false;buttons();}},

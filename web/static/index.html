@@ -132,7 +132,7 @@
   </dialog>
   <dialog id="plan-dialog" class="plan-drawer plan-editor" aria-labelledby="plan-title">
     <form id="plan-form" autocomplete="off">
-      <div class="drawer-head shell-head"><div><h2 id="plan-title">套餐与续费</h2><p id="plan-agent-name"></p></div><button id="plan-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
+      <div class="drawer-head shell-head"><div><h2 id="plan-title">套餐与续费</h2><p id="plan-agent-name"></p></div></div>
       <div class="plan-editor-body">
         <section id="plan-information">
           <label>价格</label><div class="plan-price-row"><div class="plan-currency-field"><select id="plan-currency"><option value="USD">USD $</option><option value="CNY">CNY ¥</option><option value="EUR">EUR €</option><option value="HKD">HKD $</option><option value="JPY">JPY ¥</option><option value="GBP">GBP £</option><option value="__custom__">其他…</option></select><input id="plan-currency-custom" maxlength="3" pattern="[A-Za-z]{3}" aria-label="其他币种代码" placeholder="如 AUD" hidden></div><input id="plan-renewal-price" inputmode="decimal" aria-label="续费价格"><select id="plan-renewal-period" aria-label="续费价格周期"><option value="">未设置</option><option value="monthly">每月</option><option value="quarterly">每季</option><option value="semiannual">每半年</option><option value="yearly">每年</option><option value="once">一次性</option></select></div>
@@ -164,13 +164,8 @@
   </dialog>
   <datalist id="timezone-hints"><option value="UTC"><option value="Asia/Shanghai"><option value="Asia/Hong_Kong"><option value="America/Los_Angeles"><option value="Europe/London"></datalist>
   <dialog id="renewal-dialog" class="plan-renewal" aria-labelledby="renewal-title">
-    <div class="drawer-head shell-head"><div><h2 id="renewal-title">续费</h2><p id="renewal-name"></p></div><button id="renewal-cancel" class="icon-button" type="button" aria-label="关闭">×</button></div>
+    <div class="drawer-head shell-head"><div><h2 id="renewal-title">续费</h2><p id="renewal-name"></p></div></div>
     <div class="renewal-body">
-      <section id="renewal-payment" class="renewal-payment">
-        <p>① 先去服务商付款：</p>
-        <div id="renewal-payment-link" class="renewal-payment-link" hidden><a id="renewal-go" target="_blank" rel="noopener noreferrer">去续费 ↗</a><small id="renewal-domain" class="field-note"></small></div>
-        <small id="renewal-no-url" class="field-note">还没填续费网址。在“编辑套餐”里填上，这里就能直接跳过去。</small>
-      </section>
       <select id="renewal-field" hidden aria-label="登记日期"><option value="renewal_date">下次续费</option><option value="expiry_date">到期日期</option></select>
       <p id="renewal-loading" role="status"></p>
       <p id="renewal-detail"></p>
@@ -182,9 +177,9 @@
     </div>
     <section id="renewal-recovery" class="renewal-recovery" aria-label="核实原操作" hidden><p>结果尚未确认，请核实上次操作。离开本页会丢失核实信息，请先复制留存；不会自动重试。</p><details><summary>核实信息</summary><code id="renewal-request-id"></code></details><div><button id="renewal-copy" type="button">复制核实信息</button><button id="renewal-verify" type="button">核实原操作</button></div></section>
     <div id="renewal-error" class="renewal-error" role="alert" hidden></div>
-    <div class="drawer-actions"><button id="renewal-dismiss" type="button">取消</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认已续费</button></div>
+    <div class="drawer-actions"><a id="renewal-go" class="renewal-go" target="_blank" rel="noopener noreferrer" hidden>去续费 ↗</a><button id="renewal-dismiss" type="button">取消</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认已续费</button></div>
   </dialog>
-  <dialog id="panel-mobile-dialog" aria-label="控制面板"><button id="panel-mobile-close" type="button" aria-label="关闭控制面板">×</button><div id="panel-mobile-body"></div></dialog>
+  <dialog id="panel-mobile-dialog" aria-label="控制面板"><div id="panel-mobile-body"></div><button id="panel-mobile-close" type="button">关闭</button></dialog>
   <dialog id="network-quality-history" class="nq-history" aria-labelledby="nq-history-title"></dialog>
   <dialog id="device-details" class="device-details" aria-labelledby="device-details-title"></dialog>
   <script src="/agent-state.js" defer></script>

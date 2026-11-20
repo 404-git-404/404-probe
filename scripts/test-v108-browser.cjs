@@ -105,7 +105,7 @@ test('R33 special states, hover/title and native outbound dialog: draft, per-gro
   assert.equal(await switches.first().isDisabled(),false);assert.equal(await switches.nth(1).isDisabled(),true);
   await shot(page,'outbound-dialog-draft','body');
   const p1=await page.locator('.selector-dialog').boundingBox();await page.evaluate(()=>{document.body.style.minHeight='2000px';window.scrollTo(0,500);});const p2=await page.locator('.selector-dialog').boundingBox();assert.equal(p1.y,p2.y);
-  await page.keyboard.press('Escape');assert.equal(await page.locator('.selector-trigger').evaluate(e=>e===document.activeElement),true);
+  await page.keyboard.press('Escape');await page.getByRole('button',{name:'放弃修改',exact:true}).click();await page.locator('#action-confirm').waitFor({state:'detached'});await page.waitForFunction(()=>!document.querySelector('.selector-dialog').open);assert.equal(await page.locator('.selector-trigger').evaluate(e=>e===document.activeElement),true);
   await page.click('.selector-trigger');await page.mouse.click(2,2);assert.equal(await page.locator('.selector-dialog').evaluate(e=>e.open),false);
   await page.click('.selector-trigger');await page.locator('.selector-options select').first().selectOption('WARP');await switches.first().click();
   await page.waitForFunction(()=>document.querySelector('.selector-error'));

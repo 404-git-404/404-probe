@@ -140,6 +140,7 @@
         displayCommand(view.command);
         status('运行命令后，新机器会出现在首页。');
         show('oneclickResult');
+        els.dialog?._shell?.markSaved();
         render();
         timer=setTimer(render,1000);
         return true;
@@ -203,7 +204,7 @@
     els.copy.addEventListener('click',copy);
     els.revoke.addEventListener('click',revoke);
     reset();
-    return {reset,close,chooseOneClick,chooseManual,submit,copy,revoke,back,tick:render,get hasCommand(){return Boolean(state&&!state.ended);}};
+    return {reset,close,chooseOneClick,chooseManual,submit,copy,revoke,back,tick:render,get busy(){return submitting||revoking;},get hasCommand(){return Boolean(state&&!state.ended);}};
   }
 
   const api={createController,countdownText,createErrorText};

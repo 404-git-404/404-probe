@@ -244,11 +244,11 @@
     function ensure() {
       if (panel) return;
       panel = el('dialog', '', 'selector-dialog'); panel.id = 'selector-popover';
-      if(root.DialogShell)root.DialogShell.attach(panel,{size:'medium'});
+      if(root.DialogShell)root.DialogShell.attach(panel,{size:'medium',title:'出站选择',requestClose:()=>hide(),dirty:()=>!!activeID&&(state.agents.get(activeID)?.outbounds?.selectors||[]).some(s=>{const g=controller.group(activeID,s.name);return g.draft!==null&&g.draft!==s.current;}),busy:()=>!!activeID&&!!controller.model(activeID).active});
       panel.setAttribute('aria-labelledby', 'selector-dialog-title');
       panel.setAttribute('aria-describedby', 'selector-dialog-device');
-      panel.addEventListener('cancel', event => { event.preventDefault(); hide(); });
-      panel.addEventListener('close', hide);
+      if(!root.DialogShell)panel.addEventListener('cancel', event => { event.preventDefault(); hide(); });
+      panel.addEventListener('close',()=>{if(!panel.open)hide();});
       panel.addEventListener('click', event => {
         if(root.DialogShell||event.target!==panel)return;
         const r=panel.getBoundingClientRect();
@@ -307,7 +307,7 @@
       const content=el('div','');
       const heading=el('h2','出站选择');heading.id='selector-dialog-title';
       const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device');device.id='selector-dialog-device';device.title=device.textContent;
-      const header=el('div','','shell-head'),group=el('div',''),x=el('button','×');x.type='button';x.dataset.selectorKind='close';x.setAttribute('aria-label','关闭');group.append(heading,device);header.append(group,x);content.append(header);
+      const header=el('div','','shell-head'),group=el('div','');group.append(heading,device);header.append(group);content.append(header);
       const out=agent.outbounds||{},blocked=reason(agent,csrf());
       let index=0;
       for(const selector of out.selectors||[]){

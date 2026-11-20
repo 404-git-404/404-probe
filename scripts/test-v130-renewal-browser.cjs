@@ -74,7 +74,7 @@ test('renewal URL is validated and links follow the actual renewal deadline', as
     await page.locator('#renewal-dates').waitFor();
     assert.equal(await page.locator('#renewal-go').getAttribute('href'), payment);
     assert.equal(await page.locator('#renewal-go').getAttribute('rel'), 'noopener noreferrer');
-    assert.match(await page.locator('#renewal-detail').textContent(), /顺延一年/);
+    assert.equal(await page.locator('#renewal-detail').textContent(), '');
     await page.locator('#renewal-confirm').click();
     await page.waitForFunction(id => agents.get(id).plan.renewal_date !== document.querySelector('#renewal-from').textContent, target);
     await page.locator('#renewal-dismiss').click();
