@@ -287,8 +287,16 @@ func TestWebPasswordChangeTwelveCodePointBoundary(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			a, store, _ := newWebAuthenticationTestApp(t)
 			defer store.Close()
+			// Existing passwords are allowed to be shorter than the new-password minimum.
+			hash, err := auth.HashPassword([]byte("old"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.AdoptWebCredential(context.Background(), hash, "fixture-file", a.now()); err != nil {
+				t.Fatal(err)
+			}
 			cookie, session := passwordTestSession(t, a)
-			changed := passwordChange(t, a, cookie, session.csrfToken, "test-password", value, value)
+			changed := passwordChange(t, a, cookie, session.csrfToken, "old", value, value)
 			if len([]rune(value)) == 11 {
 				result := expectPasswordError(t, changed, http.StatusBadRequest, "too_short")
 				if result.Characters == nil || *result.Characters != 11 {
