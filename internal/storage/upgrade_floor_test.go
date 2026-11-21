@@ -17,6 +17,11 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 	if !strings.Contains(ErrSchemaTooOld.Error(), "if that installer also reports that your version is too old, follow its instructions to upgrade step by step") {
 		t.Fatal("schema floor rejection is missing step-by-step upgrade guidance")
 	}
+	for _, version := range []string{"v1.2.1", "v1.3.0"} {
+		if !strings.Contains(ErrSchemaTooOld.Error(), "PROBE_404_VERSION="+version) {
+			t.Fatalf("schema floor rejection is missing supported version %s", version)
+		}
+	}
 	ctx := context.Background()
 	for _, version := range []int{34, 35, 36, 37, 38, 39} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
