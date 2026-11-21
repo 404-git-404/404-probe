@@ -73,9 +73,19 @@ class Element {
 }
 function loadApp() {
   const nodes = new Map(), node = key => {if (!nodes.has(key)) nodes.set(key, new Element()); return nodes.get(key);};
+  // The VM boots the dashboard, whose deliberately unresolved fixture reads
+  // leave timeout/retry handles behind. Own and clear only this fixture's timers.
+  const timers = new Set();
+  const schedule = (fn, ms, ...args) => {
+    const handle = setTimeout(() => { timers.delete(handle); fn(...args); }, ms);
+    timers.add(handle);
+    return handle;
+  };
+  const cancel = handle => { timers.delete(handle); clearTimeout(handle); };
+  test.after(() => { for (const handle of timers) clearTimeout(handle); timers.clear(); });
   const sandbox = {ResizeObserver:class{observe(){} disconnect(){}},AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
     document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
-    location: {search: '', assign() {}}, setInterval() {}, setTimeout, clearTimeout, queueMicrotask, addEventListener() {},
+    location: {search: '', assign() {}}, setInterval() {}, setTimeout: schedule, clearTimeout: cancel, queueMicrotask, addEventListener() {},
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
   sandbox.DialogShell={attach:()=>({heading(){},setGuard(){},markSaved(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
