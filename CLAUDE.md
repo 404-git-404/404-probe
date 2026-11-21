@@ -29,6 +29,7 @@ go test ./... -count=1
 - `scripts/test-p1-agent-state.cjs`（24 过 51 败）、`scripts/test-p2c-google-ui.cjs`（3 过 2 败）、`scripts/test-n3-network-quality.cjs`（10 过 4 败）是旧测试套件的基线失败（测试沙箱没有加载 `latency-mini.js` 等），v1.2.1 发布时对照确认，v1.3.0 发布准备时数字完全相同（`p1-agent-state` 需 `--test-force-exit`，断言完成后进程不退出），不是回归。`scripts/test-p4b2-traffic-chart.cjs` 曾是基线失败（8 过 7 败，v1.0.3 上相同），v1.3.0 发布准备时为 6 过 0 败，不再失败；`scripts/test-p5a2-device-details.cjs` 已不再是基线失败（v1.2.1、v1.3.0 均为 13 过 0 败）。
 - `scripts/test-m02-real-chain.cjs`：R37 将旧 radio 操作改为 `selectOption` 后，受控真实链路实测由改前 0 过 6 败变为 5 过 1 败；切换、刷新/重启持久化、目标拒绝和请求校验均通过。剩余 R33 的 30 轮滚动/焦点检查在改前也失败（关闭后 `Control+Home` 等待 150ms 时滚动位置未稳定为 0）；本轮 `pageerror` 为空，不归因为 `latency-mini.js` 未加载。保留为旧套件基线失败，首次结果和改前/改后计数照实报告；v1.2.1、v1.3.0 发布时均为 6 过 1 败（仍是同一项 R33，`errors` 为空）。
 - v1.3.0 发布记录（A 段，评审 B 段后补证）：`-race` 要覆盖本版所有改动的 Go 包，包括只改了测试的包（`git diff --name-only <上一个正式 tag> <发布提交> -- '*.go'` 取目录）；v1.3.0 A 段第一轮漏了 `cmd/server`、`internal/auth`、`internal/updater`、`web`，B 段指出后补跑通过（均首次通过，没有数据竞争）。本版没有新登记的偶发。内置浏览器窗格的真机截图输出只有 800 px 宽，满足不了 2560×1440 的原规格；v1.3.0 由维护者接受该偏差，界面细节以施工阶段的原尺寸合成数据截图为准。
+- v1.3.1 发布记录（三条操作教训）：（1）Windows 上构建时，产物目录必须用 ASCII 正斜杠路径；用反斜杠路径时 `sha256sum` 会在摘要前加 `\`，构建脚本报 `malformed installer digest`（`write-installer-checksum.sh` 对反斜杠路径的处理留作后续事项）。（2）给 root 隔离夹具传环境变量时，不能把宿主的路径变量（`GOTMPDIR`、`TMPDIR` 等）带进去，否则测试还没跑到检查就退出。（3）真机升级前的审计脚本必须显式关闭 SQLite 连接，否则安装器的“数据库不得有打开句柄”检查会正确拒绝备份并自动恢复。
 - `scripts/test-agent-upgrade-systemd.sh` 可以使用（R04 已参数化）：`sudo bash scripts/test-agent-upgrade-systemd.sh <起始版本> <目标版本> <起始资产目录> <目标资产目录> <源码 git 目录> <go 路径>`，在隔离的 systemd 环境里演练一次 Agent 升级（官方起始 Agent → 目标 Server → 受控 updater → 官方目标 Agent）。**只接受正式版本号**（`vX.Y.Z`），不支持 beta/rc、同版本覆盖和降级；两个资产目录各需 `build-release-assets.sh` 输出的 7 个文件；只在 Linux amd64/arm64 且有 root 的机器上运行。它不覆盖官方 updater 本身、Web 操作入口和 GitHub release 的可用性发现，这些由 Web 升级真机验证补上。v1.2.1 起的新用法和提醒：演练用同 uid / gid 与不同身份对照 Agent 健康上报（同身份应报 healthy，只同组应 unreachable，身份不符应 identity_mismatch）；资产目录里的文件要有可执行权限，所有路径写绝对路径且不含空格；演练被 SIGTERM 打断后，清理约 80 秒才完成，别在清理中途再起一轮。
 - 文档、说明和提交信息用中文或英文均可，提交信息采用 `type(scope): subject`，作者邮箱用 `305518817+404-git-404@users.noreply.github.com`。
 
@@ -41,7 +42,7 @@ go test ./... -count=1
 
 ## 发布流程（v1.0.2、v1.0.3 的做法）
 
-**升级支持策略**：每个版本只支持从前 1–2 个正式版升级；v1.3.0 支持从 v1.2.1、v1.2.0 升级（两者都是 schema 37，`minimumUpgradeSchemaVersion` 为 37；本版新增 schema 38 迁移）。发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。版本窗口只由安装器保证；手动替换二进制不保证（数据库层另有 schema 门槛：schema 36 及更早的库会在打开时被拒绝，但这不等于窗口内的测试保证），发布说明也必须写明这一限制。
+**升级支持策略**：每个版本只支持从前 1–2 个正式版升级；v1.3.1 支持从 v1.3.0、v1.2.1 升级（`minimumUpgradeSchemaVersion` 为 37；本版没有新迁移，schema 仍是 38：v1.3.0 起点保持 38，v1.2.1 起点执行 v1.3.0 引入的 37 → 38 迁移）。发布说明的“升级前必读”一节必须有“支持从 vA、vB 升级”一行，列出该版支持的正式起点。版本窗口只由安装器保证；手动替换二进制不保证（数据库层另有 schema 门槛：schema 36 及更早的库会在打开时被拒绝，但这不等于窗口内的测试保证），发布说明也必须写明这一限制。
 
 ### 发布分档（v1.2.0 起，维护者 2026-11-11 确认）
 
@@ -83,7 +84,7 @@ go test ./... -count=1
 
 理由：Agent 以 root 运行，版本不能降级，安装器出错可能连修复版都装不上，所以涉及 Go、安装器、schema 的版本不能靠“发出去有问题再修”。
 
-1. **发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本）都放在**一个**发布准备提交里。发布准备提交还必须“按升级支持策略更新版本窗口”：`internal/storage` 的 `minimumUpgradeSchemaVersion`、`install.sh` 的 `require_supported_server_version` 版本、三处提示（`database_schema_too_old`、`server_version_too_old`、`server_version_unrecognized`）里的版本号、`internal/storage/upgrade_floor_test.go`、`scripts/test-upgrade-floor.sh`。README 的升级说明、迁移链描述和 v1.0.1 桥接节在发布 A 段统一改写。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
+1. **发布前不改代码。** 版本号、安装器默认版本、README、`RELEASE_NOTES_vX.Y.Z.md` 以及硬编码版本的测试（`install.sh` 的 `DEFAULT_VERSION`、`cmd/server/installer_contract_test.go`、`cmd/release-metadata/main_test.go`、`scripts/test-install-banner.sh`、`scripts/test-release-build-gates.sh`、`scripts/build-release-assets.sh` 的默认版本、`cmd/server/installer_version_digits_test.go`）都放在**一个**发布准备提交里；`installer_version_digits_test.go` 的升级、降级、同版本三种情况要跟着窗口往后挪（v1.3.1 发布时漏了它，到 root harness 才失败）。发布准备提交还必须“按升级支持策略更新版本窗口”：`internal/storage` 的 `minimumUpgradeSchemaVersion`、`install.sh` 的 `require_supported_server_version` 版本、三处提示（`database_schema_too_old`、`server_version_too_old`、`server_version_unrecognized`）里的版本号、`internal/storage/upgrade_floor_test.go`、`scripts/test-upgrade-floor.sh`。README 的升级说明、迁移链描述和 v1.0.1 桥接节在发布 A 段统一改写。准备提交之后不再有代码提交；任何改动都意味着重建产物并重做真机验证。
 2. **发布前做独立 High 评审**（发布-轻量不设，发布-中按‘发布分档’），并在 Linux 上通过 `go vet ./...`、`go test ./... -count=1`，以及相关用例的 `-count=20 -timeout=60m`。
 3. **从精确的、干净的发布提交构建产物，输出目录放在仓库外：**
 
@@ -138,6 +139,7 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
 使用规则：
 - 只做 404-probe 的安装和验证，不改动与本项目无关的系统配置和服务；改防火墙、重启机器要先问。**测试必需的工具（例如 bubblewrap、strace）可以直接在登记的测试机上安装：只限登记的测试机，只用系统官方软件源，装了什么写进报告；正式环境一律不装。**（维护者 2026-11-13 决定；其他系统软件仍要先问。）
 - 安装器的角色选择和管理员密码从 `/dev/tty` 读取。管理员密码由维护者自己输入，不要代填。交互安装 Agent 时粘贴的 enrollment value（`404-probe-install enroll <名字>` 生成，是 Agent 的永久凭据）同样由维护者自己输入，不在对话中明文显示。
+- 测试机随机管理员密码（维护者 2026-11-21 决定）：测试 Server 全新安装时可以用安装器自动生成的随机管理员密码；测试面板需要登录时，可以用 `404-probe-install web-password reset` 设随机密码。密码都存在测试 Server 上 root 才能读的文件里（`0600`，例如 `/root/404-probe-test-web-password`），不写进日志、报告或聊天。**只限测试机，正式环境照旧由维护者亲手输入**；重置后维护者浏览器里保存的旧测试面板密码会失效。
 - 注册 token：在 CLAUDE.local.md 列出的测试 Server 上，Claude Code 可以自己用 `404-probe-install oneclick-token <名称>` 生成，用于一键安装和注册验证；绝不用于任何正式环境。
   - 它生成与面板相同的一次性 token（30 分钟、绑定名称、计入"同时最多 10 条未使用"的上限），不能用 `enroll`：`enroll` 给的是 Agent 的永久凭据，不能用于一键安装（`PROBE_404_ENROLL_TOKEN` 要求 43 个字符的注册 token）。
   - token 只存在权限 600 的文件里：命令把它写到 `/root/oneclick-token-<名称>.token`（`--output <绝对路径>` 可改），终端只输出文件路径、名称和过期时间，不打印 token。在 Server 上生成后，用 `scp` 拷到目标测试机（同样 600），通过 `PROBE_404_ENROLL_TOKEN_FILE` 交给安装器。
@@ -162,7 +164,7 @@ Codex 无法调用 `release-decider`，遇到这类决策时把问题和可选�
 9. 修复攒成一批再提交评审，不逐条来回。
 10. 只有真正复杂的任务才分阶段授权和验收。
 11. 会话命名：每个施工或评审会话都有名字，格式“v<版本无点>-<CC 或 CX>-<用途>”，例如 v107-CC-后端、v107-CX-评审。报告和评审记录保存在 `D:\Claude-Github\release-records\<版本>\`，文件名以会话名开头。
-12. 发布由施工方完成到打 tag 之前；发布前的独立评审由另一方开新会话完成；评审通过后，再由施工方推送、打 tag、建 release，并完成后续步骤。发布-轻量不设独立评审，见‘发布分档’。
+12. （维护者 2026-11-21 决定）发布（A、C 段）、测试机的安装 / 升级 / 真机验证由 **Claude Code** 负责，维护者已全部授权，尽量全自动；Codex 只负责任务明确的施工；发布前独立评审（B 段）由哪一方、哪个会话做，由策划在每个版本的第一份任务书里写明。发布-轻量不设独立评审，见‘发布分档’。
 13. 模型强度：Codex（gpt-6.1-sol）施工严格档 high、轻量档 medium；Claude Code（Sonnet 5.5）评审严格档 high、轻量档 medium。
 
 ## 对维护者的回复格式
