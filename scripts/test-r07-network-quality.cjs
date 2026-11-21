@@ -113,28 +113,9 @@ test('switching off is a draft until the single save serializes config and enabl
  const f=setup({raw:load('v4-running'),save:saved,enable:toggled});await f.open();f.type('unicom-port','81');f.check('enabled',false);await flush();assert.equal(f.writes.length,0);assert.equal(f.ui.snapshot().panel.dirty,true);f.field('save-bottom').click();await flush();assert.deepEqual(f.writes.map(w=>w.kind),['save','enable']);assert.deepEqual(f.writes[1].body,{expected_revision:'3',enabled:false});assert.equal(f.raw().slots[1].port,81);assert.equal(f.ui.snapshot().panel.dirty,false);
 });
 
-test('closing: clean closes, dirty asks, the question has two answers', async () => {
-  const f = setup({raw: load('v4-saved-off')});
-  let panel = await f.open();
-  f.field('cancel').click();
-  assert.equal(f.panel(), undefined, 'a clean dialog closes at once');
-  panel = await f.open();
-  f.type('mobile-host', 'example.net');
-  for (const how of ['button', 'escape', 'outside']) {
-    if (how === 'button') f.field('cancel').click();
-    if (how === 'escape') f.doc.dispatch('keydown', {key: 'Escape', preventDefault() {}});
-    if(how==='outside'){panel.dispatch('pointerdown',{target:panel,button:0,clientX:0,clientY:0});panel.dispatch('click',{target:panel,clientX:0,clientY:0});}
-    assert.ok(f.panel(), `${how}: still open`);
-    const guard = panel.all().find(n => n.className === 'nq-status nq-guard' && !n.hidden);
-    assert.match(guard.textContent, /放弃修改？/);
-    assert.deepEqual(guard.querySelectorAll('button').map(b => b.textContent), ['放弃修改', '继续编辑']);
-    f.byText(guard, '继续编辑').click();
-    assert.equal(panel.all().filter(n => n.className === 'nq-status nq-guard' && !n.hidden).length, 0);
-  }
-  f.field('cancel').click();
-  f.byText(panel.all().find(n => n.className === 'nq-status nq-guard' && !n.hidden), '放弃修改').click();
-  assert.equal(f.panel(), undefined);
-  assert.equal(f.writes.length, 0);
+test('closing: explicit cancel discards clean or edited inputs without a write; shared Esc/backdrop guard is covered in Chromium',async()=>{
+ const f=setup({raw:load('v4-saved-off')});
+ for(const edit of [false,true]){await f.open();const original=f.field('mobile-host').value;if(edit)f.type('mobile-host','example.net');f.field('cancel').click();assert.equal(f.panel(),undefined);assert.equal(f.ui.snapshot().panel,null);assert.equal(f.writes.length,0);await f.open();assert.equal(f.field('mobile-host').value,original);f.field('cancel').click();}
 });
 
 test('literal families stay constrained; free labels change kind without losing address, port or ticks', async () => {
@@ -460,7 +441,7 @@ test('M1: the guards are hidden unless asked for, and the stylesheet lets hidden
   f.byText(f.panel(), '取消').click();
   assert.deepEqual(guards(f), []);
   f.field('cancel').click();
-  assert.equal(f.panel(),null, 'cancel discards directly; shared backdrop guard is covered in Chromium');
+  assert.equal(f.panel(),undefined, 'cancel discards directly; shared backdrop guard is covered in Chromium');
 });
 
 test('M2: the focus starts inside the dialog even when the master switch is disabled, and Tab brings stray focus back in', async () => {

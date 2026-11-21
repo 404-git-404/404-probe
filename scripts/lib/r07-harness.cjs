@@ -68,7 +68,7 @@ function dom() {
   }
   doc.body = new Element('body');
   doc.createElement = t => new Element(t);
-  const dialog = new Element('dialog'); doc.body.append(dialog); doc.querySelector = () => dialog;
+  const dialog = new Element('dialog'); dialog.id='network-quality-history';doc.body.append(dialog);doc.querySelector = selector => selector==='#network-quality-history'?dialog:selector==='#action-confirm[open]'?doc.body.all().find(n=>n.id==='action-confirm'&&n.open):doc.body.querySelector(selector);
   doc.addEventListener = (t, f) => { const a = doc.listeners.get(t) || []; a.push(f); doc.listeners.set(t, a); };
   doc.removeEventListener = (t, f) => doc.listeners.set(t, (doc.listeners.get(t) || []).filter(x => x !== f));
   doc.dispatch = (t, event = {}) => { for (const f of doc.listeners.get(t) || []) f(event); };
