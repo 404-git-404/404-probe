@@ -168,7 +168,7 @@
     management=()=>null,overview=()=>null,upgradeTargets=()=>{},resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},conceal=()=>{}}={}) {
     const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={},shell=root.DialogShell?.attach(dialog,{decorate:false,read:()=>[from.value,to.value],requestClose:()=>close()});
     let current=null,tab='overview',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
-    let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,plots=[],selected=0;
+    let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,plots=[],selected=0,savedCustom=['',''];
     const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;};
     const button=(text,action,cls='')=>{const n=el('button',cls,text);n.type='button';n.addEventListener('click',action);return n;};
     const header=el('header','details-header'),title=el('h2','','设备详情'),machine=el('div','details-machine');title.id='device-details-title';
@@ -188,7 +188,7 @@
     const custom=el('form','details-custom'),from=el('input'),to=el('input'),rangeError=el('span','details-range-error');
     from.type=to.type='datetime-local';from.step=to.step='1';from.setAttribute('aria-label','自定义开始时间');to.setAttribute('aria-label','自定义结束时间');
     const label=(text,input)=>{const n=el('label','',text);n.append(input);return n;};const applyButton=el('button','','应用自定义范围');applyButton.type='submit';custom.append(label('开始',from),label('结束',to),applyButton,rangeError);
-    custom.addEventListener('submit',e=>{e.preventDefault();try{apply(H.range(from.value,to.value));shell?.markSaved();rangeError.textContent='';}catch(err){rangeError.textContent=err.message;}});
+    custom.addEventListener('submit',e=>{e.preventDefault();try{apply(H.range(from.value,to.value));savedCustom=[from.value,to.value];shell?.markSaved();rangeError.textContent='';}catch(err){rangeError.textContent=err.message;}});
     output.tabIndex=0;output.setAttribute('aria-label','分钟观测详情，左右方向键浏览');output.setAttribute('aria-live','polite');
     output.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();select(e.key==='Home'?0:e.key==='End'?(data?.points.length||1)-1:selected+(e.key==='ArrowLeft'?-1:1));});
     const resourceInfo=el('div','details-resource-facts');panes.resources.append(controls,custom,chart,resourceInfo,output);note.hidden=true;custom.hidden=true;controls.append(button('自定义时间…',()=>{custom.hidden=!custom.hidden;if(!custom.hidden)from.focus();}));controls.append(status);
@@ -236,12 +236,12 @@
 
     }
     function open(id,key='overview',trigger=null){if(dead||!agents.has(id))return;
-      if(current!==id){conceal();leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';rangeError.textContent='';current=id;}
+      if(current!==id){conceal();leave();release();data=null;error='';query={hours:1};metric='traffic';metricSelect.value=metric;from.value=to.value='';savedCustom=['',''];rangeError.textContent='';current=id;}
       if(trigger||current!==origin?.id)origin={node:trigger,id,key:trigger?.dataset?.focusKey||'manage'};
       const opening=!dialog.open;if(opening){opened=true;if(shell)shell.open(trigger);else{scroll=[root.scrollX||0,root.scrollY||0];overflow=doc.body.style.overflow;doc.body.style.overflow='hidden';dialog.showModal();}}
       updateTitle();activate(key);if(opening)tabs[tab].focus({preventScroll:true});
     }
-    function close({restoreFocus=true}={}){if(!opened)return;opened=false;conceal();leave();release();pending=false;data=null;error='';if(dialog.open)dialog.close();if(!shell)doc.body.style.overflow=overflow;
+    function close({restoreFocus=true}={}){if(!opened)return;opened=false;conceal();leave();release();pending=false;data=null;error='';[from.value,to.value]=savedCustom;if(dialog.open)dialog.close();if(!shell)doc.body.style.overflow=overflow;
       if(!shell&&restoreFocus&&origin&&agents.has(origin.id)){const trigger=origin.node?.isConnected?origin.node:doc.querySelector(`.agent-card[data-agent-id="${origin.id}"] [data-focus-key="${origin.key}"]`);trigger?.focus({preventScroll:true});}
       if(!shell&&scroll)root.scrollTo?.(...scroll);}
     function apply(next){release();query=next;data=null;error='';pending=false;renderPlot();request();}

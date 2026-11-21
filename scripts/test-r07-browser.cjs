@@ -271,3 +271,13 @@ test('Scroll (Chromium): a change elsewhere in the configuration neither closes 
 test('R09 card lines have no button semantics or history opening on click',{skip:!available},async()=>{
  const {page}=await open(load('v4-running'),{dialog:false});try{const row=page.locator('.nq7-row').first();assert.equal(await row.evaluate(n=>n.tagName),'DIV');assert.equal(await row.getAttribute('title'),null);await row.click();assert.equal(await page.locator('#network-quality-history').evaluate(n=>n.open),false);}finally{await page.close();}
 });
+
+
+test('v131 standalone history uses the shared shell: no close icon, Esc, backdrop and original Close button', {skip: !available && 'Playwright/Chromium not available'}, async()=>{
+ const raw=load('v4-running'),history={card:narrowRange()},x=await open(raw,{dialog:false,history});const p=x.page;
+ try{const d=p.locator('#network-quality-history');const show=async()=>{assert.equal(await openHistory(p,laneId(raw)),true);await d.waitFor({state:'visible'});};
+  await show();assert.equal(await d.evaluate(n=>!!n._shell),true);assert.equal(await d.locator('button').evaluateAll(ns=>ns.filter(n=>/^[×✕]$/.test(n.textContent.trim())).length),0);await p.keyboard.press('Escape');await d.waitFor({state:'hidden'});
+  await show();const r=await d.boundingBox();await p.mouse.click(Math.max(1,r.x-4),Math.max(1,r.y-4));await d.waitFor({state:'hidden'});
+  await show();await d.getByRole('button',{name:'关闭',exact:true}).click();await d.waitFor({state:'hidden'});assert.deepEqual(x.errors,[]);
+ }finally{await p.close();}
+});

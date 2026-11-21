@@ -11,6 +11,7 @@
     const cards=new Map(),queue=coordinator||C.coordinator({now}),dialogOwner={};
     let closed=false,panel=null,history=null,plot=null,resize=null,timer=null,wasHidden=doc.hidden;
     const dialog=doc.querySelector('#network-quality-history');
+    const historyShell=!historyHost&&root.DialogShell?.attach(dialog,{decorate:false,guard:false,requestClose:()=>closeHistory()});
     const historyContainer=()=>historyHost?historyHost.container():dialog;
     const historyActive=h=>!doc.hidden&&(!historyHost||historyHost.active(h.card.id));
     // Every user-supplied string (labels, host) reaches the page through textContent, value or title only.
@@ -359,12 +360,12 @@
       }catch(error){if(configurationSaved&&panel===p){p.saving=false;p.partial='线路配置已保存；启用状态未确认。';p.message=p.partial+'正在读取实际状态。';if(error.status===409&&error.code==='revision_conflict')p.guard='conflict';renderPanel();loadConfig(p.card,true);}else failed(p,error);}
     }
     function destroyPlot(){resize?.disconnect();resize=null;plot?.destroy();plot=null;}
-    function closeHistory(){if(!history)return;const old=history;history=null;queue.release(dialogOwner);destroyPlot();if(historyHost){historyContainer()?.replaceChildren();return;}if(dialog.open)dialog.close();doc.body.style.overflow=old.overflow;old.trigger?.isConnected&&old.trigger.focus();root.scrollTo?.(old.scrollX,old.scrollY);}
+    function closeHistory(){if(!history)return;const old=history;history=null;queue.release(dialogOwner);destroyPlot();if(historyHost){historyContainer()?.replaceChildren();return;}if(dialog.open)dialog.close();if(!historyShell){doc.body.style.overflow=old.overflow;old.trigger?.isConnected&&old.trigger.focus();root.scrollTo?.(old.scrollX,old.scrollY);}}
     function openHistory(card,target,kind,trigger) {
       if(!target.id)return;
       closeHistory();if(historyHost)historyHost.open(card.id,trigger,{target:target.id,family:target.family,kind});
       history={card,target,kind,hours:1,generation:0,data:null,error:'',loading:false,trigger,overflow:doc.body.style.overflow,scrollX:root.scrollX||0,scrollY:root.scrollY||0};
-      if(!historyHost)doc.body.style.overflow='hidden';renderHistory();if(!historyHost)dialog.showModal();requestHistory();
+      if(!historyHost&&!historyShell)doc.body.style.overflow='hidden';renderHistory();if(!historyHost){if(historyShell)historyShell.open(trigger);else dialog.showModal();}requestHistory();
     }
     function changeHistory(key,value){if(!history||history[key]===value)return;history[key]=value;history.generation++;history.data=null;history.loading=false;history.error='';queue.release(dialogOwner);destroyPlot();renderHistory();requestHistory();}
     async function requestHistory(){
@@ -443,10 +444,10 @@
     const themeChanged=()=>{if(history&&historyActive(history))renderHistory();};
     root.addEventListener?.('404-probe:themechange',themeChanged);
     const cancelDialog=event=>{event.preventDefault();closeHistory();};
-    const dialogClosed=()=>closeHistory();const backdrop=event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeHistory();}};
+    const dialogClosed=()=>{if(!dialog.open)closeHistory();};const backdrop=event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeHistory();}};
     doc.addEventListener('keydown',keydown);doc.addEventListener('visibilitychange',visibility);
     if(!observer){root.addEventListener?.('scroll',fallbackVisibility,{passive:true});root.addEventListener?.('resize',fallbackVisibility,{passive:true});}
-    dialog.addEventListener('cancel',cancelDialog);dialog.addEventListener('close',dialogClosed);dialog.addEventListener('click',backdrop);
+    if(!historyShell){dialog.addEventListener('cancel',cancelDialog);dialog.addEventListener('click',backdrop);}dialog.addEventListener('close',dialogClosed);
     if(!doc.hidden)timer=interval(tick,30000);
     return {mount,sync,
       // Face A reads the v5 answer only while it is shown; the shared configuration stays live on either face.

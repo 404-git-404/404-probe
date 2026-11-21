@@ -255,14 +255,15 @@ const enrollmentDialog = AgentEnrollment.createController({
   unauthorized: () => location.assign('/login'),
 });
 
-let manualEnrollmentGeneration=0,manualCredential='';
-addShell.setGuard({read:()=>[document.querySelector('#add-agent-choice-name').value,document.querySelector('#add-agent-choose-oneclick').getAttribute('aria-checked')],busy:()=>addAgentSubmit.disabled||enrollmentDialog.busy});
+let manualEnrollmentGeneration=0,manualCredential='',manualEnrollmentPending=false;
+addShell.setGuard({read:()=>[document.querySelector('#add-agent-choice-name').value,document.querySelector('#add-agent-choose-oneclick').getAttribute('aria-checked')],busy:()=>manualEnrollmentPending||enrollmentDialog.busy});
 upgradeShell.setGuard({busy:()=>!!pendingUpgradeAgentID&&agentState.busy(pendingUpgradeAgentID,'upgrade')});
 removeShell.setGuard({busy:()=>removeAgentInput.disabled});
 for(const node of document.querySelectorAll('[data-agent-server]'))node.textContent=location.origin;
 document.querySelector('#show-enrollment').addEventListener('click',e=>{const show=e.currentTarget.getAttribute('aria-pressed')!=='true';createdEnrollment.textContent=show?manualCredential:'••••••••••••••••••••••••';e.currentTarget.setAttribute('aria-pressed',String(show));e.currentTarget.textContent=show?'隐藏':'显示';});
 function clearEnrollmentDialog() {
   manualEnrollmentGeneration++;
+  manualEnrollmentPending=false;
   createdInstallCommand.textContent = '';
 	copyInstallCommand.disabled = true;
   createdEnrollment.textContent = '';manualCredential='';document.querySelector('#show-enrollment').setAttribute('aria-pressed','false');document.querySelector('#show-enrollment').textContent='显示';
@@ -290,6 +291,7 @@ addAgentForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (!mutationCSRFToken || addAgentSubmit.disabled) return;
   const generation=manualEnrollmentGeneration;
+  manualEnrollmentPending=true;
   addAgentSubmit.disabled = true;
   addAgentError.classList.add('hidden');
   try {
@@ -309,6 +311,7 @@ addAgentForm.addEventListener('submit', async event => {
     createdInstallCommand.textContent = enrollment.install_available ? enrollment.install_command : (enrollment.install_message || '当前 Server 构建无法生成安全安装命令');
 	copyInstallCommand.disabled = !enrollment.install_available;
     manualCredential = enrollment.enrollment_value;
+    manualEnrollmentPending=false;
     addShell.markSaved();createdEnrollment.textContent='••••••••••••••••••••••••';
     addAgentCreate.classList.add('hidden');
     addAgentResult.classList.remove('hidden');
@@ -317,6 +320,8 @@ addAgentForm.addEventListener('submit', async event => {
     if(generation!==manualEnrollmentGeneration)return;
     addAgentError.classList.remove('hidden');
     addAgentSubmit.disabled = false;
+  } finally {
+    if(generation===manualEnrollmentGeneration)manualEnrollmentPending=false;
   }
 });
 
