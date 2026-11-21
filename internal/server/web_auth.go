@@ -335,7 +335,7 @@ func (a *App) requireWebSession(next http.Handler, api bool) http.Handler {
 		session := a.webAuth.authenticate(cookie.Value, a.now())
 		if !target.matchesSession(session) {
 			// An older background response can arrive after a password change
-			// has set the replacement cookie. Clear stale cookies on page loads.
+			// has revoked all sessions. Clear stale cookies on page loads.
 			if !api {
 				a.webAuth.clearSessionCookie(w)
 			}
