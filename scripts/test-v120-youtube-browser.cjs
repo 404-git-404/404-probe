@@ -84,7 +84,9 @@ test('R52 saves and clears on an unsupported Agent and protects an open selectio
     await page.evaluate(id => deviceDetails.open(id, 'management'), ID(2));
     const select = page.locator('[data-focus-key=detail-youtube-region]');
     const egress = page.locator('[data-focus-key=detail-country]');
-    const description = page.locator('.details-action-row').filter({hasText: 'YouTube 地区检测'}).locator('.details-note').first();
+    const description = page.locator('.details-action-row').filter({
+      has: page.getByRole('checkbox', {name: 'YouTube 检测', exact: true})
+    }).locator('.details-note').first();
     assert.equal(await select.inputValue(), 'MO');
     assert.equal(await select.locator('option').first().textContent(), '自动（按检测结果）');
     assert.deepEqual(await select.locator('option').evaluateAll(o => o.map(n => n.value)),
