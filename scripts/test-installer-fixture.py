@@ -227,7 +227,7 @@ class FixtureBoundaryTests(unittest.TestCase):
             root = Path(directory)
             (root / 'installer-fixture-shell-harness.sh').write_text('source /work/source/scripts/installer-fixture-entry.sh\nprintf shell-body > /work/fixture/shell-body\n', encoding='utf-8')
             body = '''set -Eeuo pipefail
-mkdir /work/fixture/child
+mkdir -m 0755 /work/fixture/child
 python3 -B /work/source/scripts/installer-fixture.py --root /work/fixture/child -- bash -c 'printf go-body > /work/fixture/child/go-body; chmod 755 /work/fixture/child/go-body; pwd > /work/fixture/child/pwd'
 bash /work/fixture/installer-fixture-shell-harness.sh
 '''
