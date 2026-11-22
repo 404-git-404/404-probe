@@ -450,7 +450,13 @@ func TestConvertedOverlappingExportFixture(t *testing.T) {
 		t.Fatalf("batch status=%s events=%d tracked=%d sources=%d reason=%s", parsed.batch.Status, parsed.batch.TotalEvents, parsed.batch.TrackedSources, len(parsed.batch.Sources), parsed.batch.Reason)
 	}
 	main := parsed.batch.Sources[0]
-	if main.IP != "64.83.31.13" || main.Count != 2573 || len(main.Classifications) != 1 || main.Classifications[0] != protocol.SecurityPersistent {
+	first := start.Add(6 * time.Second).UnixMilli()
+	last := start.Add(10*time.Hour + 49*time.Minute + 34*time.Second).UnixMilli()
+	if main.IP != "192.0.2.1" || main.Count != 2573 || main.FirstSeen != first || main.LastSeen != last ||
+		len(main.Classifications) != 1 || main.Classifications[0] != protocol.SecurityPersistent {
 		t.Fatalf("main source=%+v", main)
+	}
+	if other := parsed.batch.Sources[1]; other.IP != "192.0.2.2" || other.Count != 13 {
+		t.Fatalf("second source=%+v", other)
 	}
 }

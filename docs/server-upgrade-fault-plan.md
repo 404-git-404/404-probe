@@ -1,6 +1,6 @@
 # Server upgrade fault-injection plan
 
-Run these cases first against an isolated Debian systemd service and a copy of a real test database. Record the original binary/config/unit/database hashes, owners and modes, Server active/enabled state, Agent count and IDs, and connected-Agent recovery time. Never point the harness at the formal DediRock service.
+Run these cases first against an isolated Debian systemd service and a copy of a real test database. Record the original binary/config/unit/database hashes, owners and modes, Server active/enabled state, Agent count and IDs, and connected-Agent recovery time. Never point the harness at the production service.
 
 For each failure point, test both an originally active+enabled Server and an inactive+disabled Server. After failure and again after rerunning the installer, assert the expected binary version, database schema/integrity, absence of mixed old-binary/new-database startup, original service state, unchanged credentials/configuration/listen origin, and retained root-only recovery material.
 

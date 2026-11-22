@@ -127,6 +127,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/api/v1/agent/outbounds", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/security", a.handleAgentSecurity)
 	mux.HandleFunc("/api/v1/agent/security", requirePost)
+	mux.HandleFunc("POST "+protocol.StartupDiskFailurePath, a.handleStartupDiskFailure)
+	mux.HandleFunc(protocol.StartupDiskFailurePath, requirePost)
 	mux.HandleFunc("POST /api/v1/agent/jobs/claim", a.handleClaimJob)
 	mux.HandleFunc("/api/v1/agent/jobs/claim", requirePost)
 	mux.HandleFunc("POST /api/v1/agent/control/claim", a.handleClaimControl)
@@ -286,6 +288,9 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if accepted {
 		a.publishReportedState(state, owner, received)
+		if state.ClearedStartupDiskFailure {
+			a.publishDashboardChange(authenticatedID, "startup-disk-failure", false)
+		}
 		// A separate transaction after the report committed: a failure here never undoes the ACK, and
 		// the next report that carries the evidence retries it.
 		if err := a.store.ReconcileQualityAuthorization(r.Context(), authenticatedID, storage.QualityNegotiationFromReport(report), received); err != nil {

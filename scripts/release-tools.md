@@ -12,7 +12,8 @@ python -B scripts/release.py all --version v1.4.0 --from-version v1.3.1 --out D:
 - 升级起点从 R31 注册表读取，校对本地 tag 和 schema。v1.4.0 只支持从 v1.3.1 开始。测试候选可用临时正式格式版本。
 - `build` 调用现有构建脚本。 `verify` 校对七个文件、LF、SHA-256、ELF 的 Go 版本和 Git 构建信息。单步重跑，例如 `python -B scripts/release.py verify --out D:/release-v140`。构建重跑把上一批文件保存在相邻目录。
 - `go` 运行全仓 vet 和测试，`race` 用上个 tag 到候选提交的 Go 文件选包，`node` 沿脚本引用选取相关套件。浏览器套件沿用本地 Playwright/Chromium 配置。若测试要求候选 Server，请按套件提示设置其运行参数。日志与 `results.md` 保留首次结果及单步重跑。平台跳过、历史基线和可选夹具须在验收记录说明。
-- Linux 使用非 root 并启用 IPv6 回环。动态安装器步骤需要 `sudo`、`bubblewrap`、`strace`、Python 和无 404-probe 安装的 Linux 测试运行器。Windows 原生执行会将 Linux 动态夹具标为跳过。有本地 WSL 2 环境时可给同一命令加 `--wsl <发行版>`；也可在隔离的 Linux 运行器执行。
+- 为 Linux 运行器创建具备 `sudo` 权限的非 root 用户，用该用户运行发布命令，并启用 IPv6 回环。动态安装器步骤还需要 `bubblewrap`、`strace`、Python 和无 404-probe 安装的 Linux 测试运行器。2 核机器上安装器步骤约需 1 小时，中途长时间没有输出是正常的。Windows 原生执行会将 Linux 动态夹具标为跳过。有本地 WSL 2 环境时可给同一命令加 `--wsl <发行版>`，也可在隔离的 Linux 运行器执行。
+- 浏览器套件使用 `M02_PLAYWRIGHT` 指向 Playwright 或 Playwright Core 1.55 及以上版本。
 - 准备命令只操作本地。发布时从干净候选克隆取准确提交，按 CLAUDE.md 推送、建 tag 和 release。
 
 ## 测试机

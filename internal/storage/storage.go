@@ -20,7 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 39
+const currentSchemaVersion = 40
 
 // 每个版本发布前按升级支持策略更新。v1.2.1 uses schema 37; v1.3.0 and v1.3.1 use schema 38.
 const minimumUpgradeSchemaVersion = 37
@@ -111,6 +111,9 @@ type State struct {
 	ContinuityPartial      bool                               `json:"-"`
 	// Live observation only; deliberately not persisted or added to schema 35.
 	AgentUpdaterHealth *protocol.UpdaterHealth `json:"agent_updater_health,omitempty"`
+
+	// Set only on the accepted report that cleared the persistent alert.
+	ClearedStartupDiskFailure bool `json:"-"`
 }
 
 type HistoryPoint struct {
@@ -951,6 +954,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 39: %w", err)
 		}
 	}
+	if version < 40 && !migration34Skip {
+		if err := migrateStartupDiskFailure40Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 40: %w", err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1374,6 +1382,15 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	if err := aggregateMinuteTx(ctx, tx, state); err != nil {
 		return State{}, false, "", err
 	}
+	cleared, err := tx.ExecContext(ctx, `DELETE FROM agent_startup_disk_failures WHERE agent_id=? AND received_at<=?`, authenticatedID, received.UnixMilli())
+	if err != nil {
+		return State{}, false, "", err
+	}
+	n, err := cleared.RowsAffected()
+	if err != nil {
+		return State{}, false, "", err
+	}
+	state.ClearedStartupDiskFailure = n == 1
 	if err := tx.Commit(); err != nil {
 		return State{}, false, "", err
 	}

@@ -37,6 +37,8 @@
 .banner-disk-status{font-weight:700;white-space:nowrap}
 .banner-disk-status[data-tone=crit]{color:var(--color-warning-text)}
 .banner-disk-status[data-tone=warn]{color:var(--color-warning-text)}
+.banner-row:is([data-lifecycle=offline],[data-lifecycle=paused])>.banner-cell.startup-disk-failure:not(:first-child){opacity:1}
+.startup-disk-failure .banner-disk-status{display:block;color:var(--color-danger-text);white-space:normal}
 .banner-cell .banner-renewal-line{display:flex;align-items:baseline;gap:.35rem}
 .banner-renewal-line>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .banner-renewal-link{flex:none;margin-left:auto;color:var(--color-accent-text);font-weight:650;white-space:nowrap}

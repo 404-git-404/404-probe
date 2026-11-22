@@ -10,8 +10,8 @@ const dashboardFixture = a => ({items:[{...a,accumulated_traffic:a.traffic,traff
 let browser,server,base,scenario='normal',posts=[],requests=[];
 const now=()=>Date.now();
 function config(){const v=load(scenario==='real'?'v4-saved-off':'v4-running');if(scenario==='real')return v;v.slots.forEach((s,i)=>{s.kind='builtin';s.region=['上海','广州','北京'][i];s.isp=C.slots[i];s.slot_enabled=true;s.ipv4_tcp=true;s.ipv4_icmp=true;});v.lanes.forEach((l,i)=>{if(l.family==='ipv4'){l.status=scenario==='special'&&l.slot==='unicom'&&l.protocol==='tcp'?'inactive':'active';l.target_id||=(i+1).toString(16).padStart(32,'0');l.slot_revision='2';}});return v;}
-function agent(){const n=now();const a={agent_id:ID,name:'DediRock-LAX-1',created_at:n-52*DAY,online:true,last_seen:n,revoked:false,disabled_at:null,country_code:'US',country_source:'manual',version:'v1.0.7',upgrade_capable:true,
- state:{collected_at:n,uptime:52*86400,os:'linux',platform:'debian',platform_version:'13.6',hostname:'DediRock-LAX-1',cpu_percent:scenario==='special'?12.4:1.3,ram_percent:scenario==='special'?83.2:15.9,disk_percent:scenario==='special'?92.1:19.3,cpu_cores:1,load1:.09,load5:.06,load15:.01,cpu_steal_percent:0,ram_used:234*2**20,ram_total:1.44*2**30,swap_used:0,swap_total:512*2**20,disk_used:4.49*2**30,disk_total:24.5*2**30,disk_read_rate:12*1024,disk_write_rate:48*1024,disk_busy_percent:1,rx_rate:369,tx_rate:265},
+function agent(){const n=now();const a={agent_id:ID,name:'Synthetic-LAX-1',created_at:n-52*DAY,online:true,last_seen:n,revoked:false,disabled_at:null,country_code:'US',country_source:'manual',version:'v1.0.7',upgrade_capable:true,
+ state:{collected_at:n,uptime:52*86400,os:'linux',platform:'debian',platform_version:'13.6',hostname:'Synthetic-LAX-1',cpu_percent:scenario==='special'?12.4:1.3,ram_percent:scenario==='special'?83.2:15.9,disk_percent:scenario==='special'?92.1:19.3,cpu_cores:1,load1:.09,load5:.06,load15:.01,cpu_steal_percent:0,ram_used:234*2**20,ram_total:1.44*2**30,swap_used:0,swap_total:512*2**20,disk_used:4.49*2**30,disk_total:24.5*2**30,disk_read_rate:12*1024,disk_write_rate:48*1024,disk_busy_percent:1,rx_rate:369,tx_rate:265},
  traffic:{rx_total:79.3e9,tx_total:79.1e9,started_at:new Date(2026,8,30).getTime()},usage_24h:{rx:1.3e9,tx:.9e9,coverage_ms:DAY},
  plan:scenario==='special'?{renewal_date:'2026-10-30'}:{currency:'USD',renewal_price:'6.85',renewal_price_period:'yearly',renewal_date:'2026-12-01',traffic_mode:'sum',cycle_kind:'monthly',cycle_count:1,cycle_anchor:'2026-10-01',cycle_start:n-9*DAY,cycle_end:n+21*DAY,cycle_rx_bytes:20.1e9,cycle_tx_bytes:16.5e9,usage_bytes:36.6e9,quota_bytes:5e12,quota_value:'5',quota_unit:'TB',bandwidth_value:'1',bandwidth_unit:'Gbps'},
  outbounds:{configured:true,available:true,status:'connected',order_source:'config',selectors:[{name:'出站主组',current:'直连',choices:['直连','WARP','自定义']},{name:'出站备用组',current:'备用',choices:['备用','备用二']}]}};
@@ -93,7 +93,7 @@ test('R33 special states, hover/title and native outbound dialog: draft, per-gro
   assert.equal(await page.locator('.nq7-tip span').evaluate(n=>getComputedStyle(n).fontWeight),'400');
   await shot(page,'A-special-tooltip');await page.mouse.move(0,0);
   await page.click('.selector-trigger');await page.waitForSelector('dialog.selector-dialog[open]');
-  assert.equal(await page.locator('.selector-device').textContent(),'DediRock-LAX-1');
+  assert.equal(await page.locator('.selector-device').textContent(),'Synthetic-LAX-1');
   assert.equal(await page.locator('#selector-dialog-title').textContent(),'出站选择');
   assert.equal(await page.locator('.selector-options select').first().inputValue(),'直连');
   assert.equal(await page.locator('.selector-options select').nth(1).inputValue(),'备用');

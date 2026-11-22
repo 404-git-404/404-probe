@@ -4,6 +4,39 @@ let browser;before(async()=>browser=await launch());after(async()=>browser?.clos
 const row=(p,i)=>p.locator(`.banner-row[data-agent-id="${ID(i)}"]`),settle=p=>p.waitForFunction(()=>!renderFrame);
 async function ui(run,options={}){const f=await open(browser,{height:1200,preferences:{viewMode:'list'},...options});try{await f.page.waitForFunction(()=>document.querySelectorAll('.banner-row').length===agents.size&&!renderFrame);await run(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
 const order=p=>p.locator('.banner-row').evaluateAll(nodes=>nodes.map(n=>n.dataset.agentId));
+test('startup disk failure stays red offline in the list and card until recovery',()=>ui(async({page:p,f})=>{
+ const label='磁盘故障 · Agent 无法启动',agent=f.state.items[0],id=agent.agent_id;
+ const healthy={...agent,resources:{...agent.resources,cpu_percent:5,ram_percent:5,disk_percent:5},network:{known:true,active:false}};
+ Object.assign(agent,healthy);
+ await p.evaluate(()=>dashboardData.reload());
+ const overview=p.locator('#overview-health-stat'),before=await overview.textContent();
+ const count=text=>Number(text.match(/(\d+) 台需要关注/)?.[1]||0);
+ const publish=()=>f.publish('dashboard',{agent_id:id,kind:'startup-disk-failure'});
+ Object.assign(agent,{online:false,state:null,startup_disk_failure:true});
+ publish();
+ const disk=row(p,0).locator('[data-column=disk]'),badge=disk.getByText(label,{exact:true});
+ await badge.waitFor();
+ assert.equal(await disk.evaluate(n=>getComputedStyle(n).opacity),'1');
+ const danger=n=>{
+  const sample=document.createElement('span');
+  sample.style.color='var(--color-danger-text)';n.parentElement.append(sample);
+  const matches=getComputedStyle(n).color===getComputedStyle(sample).color;sample.remove();
+  return matches;
+ };
+ assert.ok(await badge.evaluate(danger));
+ assert.equal(count(await overview.textContent()),count(before)+1);
+ await p.setViewportSize({width:390,height:844});
+ const card=p.locator(`.agent-card[data-agent-id="${id}"]`),cardBadge=card.getByText(label,{exact:true});
+ await cardBadge.waitFor();
+ assert.ok(await cardBadge.evaluate(danger));
+ Object.assign(agent,healthy,{startup_disk_failure:false});
+ publish();
+ await cardBadge.waitFor({state:'hidden'});
+ await p.setViewportSize({width:1920,height:1200});
+ await row(p,0).waitFor();
+ assert.equal(await badge.count(),0);
+ assert.equal(await overview.textContent(),before);
+},{n:1}));
 test('all columns, resource tones, batch-only data and 200 rows',()=>ui(async({page:p,f})=>{
  assert.equal(await p.locator('.banner-row').count(),200);assert.equal(await p.locator('.banner-header .banner-cell').count(),12);assert.equal(await p.locator('#agent-list table').count(),0);
  assert.match(await row(p,0).textContent(),/↑.*↓/);assert.match(await row(p,0).textContent(),/21 ms/);

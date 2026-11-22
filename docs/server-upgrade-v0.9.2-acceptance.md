@@ -3,8 +3,8 @@
 Date: 2026-09-09 (America/Los_Angeles)
 
 Scope: local Windows verification plus an isolated Debian 12 amd64 rehearsal on
-the existing CloudCone test Server. The CloudCone primary service, its database,
-Agents, Cloudflare configuration, the formal DediRock environment, tags, and
+the existing test Server. The primary service, its database,
+Agents, Cloudflare configuration, the production environment, tags, and
 published releases were not changed.
 
 ## Candidate identity
@@ -79,7 +79,7 @@ rows and database integrity:
   upgrade, proving that absence is restored before a fresh retry.
 
 All rehearsal resources were removed by the harness. Before and after the run,
-the CloudCone primary Server remained active and enabled with unchanged PID
+the primary Server remained active and enabled with unchanged PID
 `319622`, listening only on `127.0.0.1:33333`.
 
 ## Remaining limits

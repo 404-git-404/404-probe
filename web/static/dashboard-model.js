@@ -3,6 +3,7 @@
  const State=root.AgentState||(typeof require==='function'?require('./agent-state.js'):null);
  const KEY='404-probe.dashboard.v1',QUICK={offline:'离线',disk:'磁盘异常',network:'网络异常',resources:'资源吃紧',traffic:'流量将满',renewal:'7 天内续费',health:'需要关注',upgrade:'待升级'};
  const STATUS={online:'在线',offline:'离线',paused:'暂停'};
+ const STARTUP_DISK_FAILURE_LABEL='磁盘故障 · Agent 无法启动';
  const ALL_GROUPS='__all_groups',UNGROUPED='__ungrouped',AD_FREE='ad-free';
  const OVERVIEW_FILTERS=['health','renewal','upgrade'];
  // Client display window: 10s telemetry throttle, 15s calibration, read latency
@@ -57,6 +58,7 @@
   return h;
  }
  function diskTone(a,now=Date.now()){
+  if(a.startup_disk_failure)return 'crit';
   const h=diskReport(a,now);
   if(h?.disk.status==='error')return 'crit';
   return h?.disk.status==='ok'&&h.last_fault_at>(a.disk_fault_acknowledged_at||0)&&h.last_fault_at<=now&&now-h.last_fault_at<=7*86400000?'warn':'';
@@ -175,5 +177,5 @@
   }
   return {list,sections,segmented,youtubeFreeCount,summary:aggregate(agents,server,now)};
  }
- const api={KEY,QUICK,STATUS,ALL_GROUPS,UNGROUPED,AD_FREE,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,renewal,diskReport,diskTone,diskFaults,diskHints,diskTime,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,STARTUP_DISK_FAILURE_LABEL,ALL_GROUPS,UNGROUPED,AD_FREE,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,renewal,diskReport,diskTone,diskFaults,diskHints,diskTime,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);

@@ -10,6 +10,7 @@ import (
 
 type DashboardRecord struct {
 	AgentControls
+	StartupDiskFailure             bool
 	NetworkSlots                   [3]DashboardNetworkSlot
 	Snapshot                       AgentSnapshot
 	Plan                           *AgentPlan

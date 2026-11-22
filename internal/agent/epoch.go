@@ -10,15 +10,20 @@ import (
 	"strings"
 )
 
+type epochWriteError struct{ cause error }
+
+func (e *epochWriteError) Error() string { return e.cause.Error() }
+func (e *epochWriteError) Unwrap() error { return e.cause }
+
 func nextEpoch(path string) (uint64, error) {
 	path = filepath.Clean(path)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return 0, fmt.Errorf("create state directory: %w", err)
+		return 0, &epochWriteError{fmt.Errorf("create state directory: %w", err)}
 	}
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		return 0, fmt.Errorf("open state lock: %w", err)
+		return 0, &epochWriteError{fmt.Errorf("open state lock: %w", err)}
 	}
 	defer lock.Close()
 	if err := lockFile(lock); err != nil {
@@ -45,7 +50,7 @@ func nextEpoch(path string) (uint64, error) {
 	}
 	next := current + 1
 	if err := writeEpoch(path, dir, next); err != nil {
-		return 0, err
+		return 0, &epochWriteError{err}
 	}
 	return next, nil
 }

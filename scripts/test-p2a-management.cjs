@@ -28,8 +28,8 @@ test('R09 country-only full plan payload preserves every hidden configuration an
 
 
 test('revoke device name confirmation preserves case and interior whitespace, permits paste and trim',()=>{
- assert.equal(require('../web/static/management.js').matchesDeviceName(' DediRock-LAX-1 ','DediRock-LAX-1'),true);
- for(const value of ['', 'dedirock-lax-1','DediRock-LAX-2'])assert.equal(require('../web/static/management.js').matchesDeviceName(value,'DediRock-LAX-1'),false);
+ assert.equal(require('../web/static/management.js').matchesDeviceName(' Synthetic-LAX-1 ','Synthetic-LAX-1'),true);
+ for(const value of ['', 'synthetic-lax-1','Synthetic-LAX-2'])assert.equal(require('../web/static/management.js').matchesDeviceName(value,'Synthetic-LAX-1'),false);
  assert.equal(require('../web/static/management.js').matchesDeviceName('A B','A  B'),false);assert.equal(require('../web/static/management.js').matchesDeviceName('   ',' '),false);
 });
 

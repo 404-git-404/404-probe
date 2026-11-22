@@ -56,6 +56,7 @@ type dashboardSummary struct {
 	NetworkSlots [3]storage.DashboardNetworkSlot `json:"network_slots"`
 	webAgentSummaryView
 	storage.AgentControls
+	StartupDiskFailure   bool                             `json:"startup_disk_failure"`
 	Lifecycle            string                           `json:"lifecycle"`
 	Hostname             string                           `json:"hostname"`
 	CountryCode          string                           `json:"country_code"`
@@ -287,6 +288,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		record := a.withUpdaterHealth(raw.Snapshot)
 		v := dashboardSummary{webAgentSummaryView: newWebAgentSummaryView(record), Lifecycle: "unknown", CountryCode: raw.CountryCode, CountrySource: raw.CountrySource, TagIDs: []string{}, OrganizationRevision: data.Catalog.Revision, Plan: raw.Plan, MaskedIPs: []string{}, SearchFields: []string{record.Agent.Name}, Renewal: renewalSummary(raw.Plan, now), Traffic: dashboardTraffic{QuotaState: "unconfigured", Stale: true}}
 		v.AgentControls = raw.AgentControls
+		v.StartupDiskFailure = raw.StartupDiskFailure
 		switch {
 		case record.Agent.Revoked:
 			v.Lifecycle = "revoked"

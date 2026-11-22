@@ -1121,7 +1121,7 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
 let youtubeRegionKey='',youtubeRegionGeneration=0;
-function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1371,7 +1371,7 @@ function createAgentCard(initialAgent) {
     status.dataset.agentState = stateName;
     status.textContent = lifecycleLabels[stateName];
     // Online shows nothing and offline is the dimmed card; the other states are named in front of the system line.
-    status.hidden = stateName === 'online' || stateName === 'offline';
+    status.hidden = stateName === 'online' || (stateName === 'offline' && !agent.startup_disk_failure);
     const system = CardMetrics.os(state.os);
     const logo = systemLogo(state.os);
     logo.alt = '';
@@ -1411,10 +1411,12 @@ function createAgentCard(initialAgent) {
         for(const [,name] of key){const n=document.createElement('span');n.textContent=name;n.title=name;tags.append(n);}
       }
       const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
-      const reason=tone==='crit'?DashboardModel.diskFaults(health.disk,{short:true})[0]:'';
-      const label=tone==='crit'?`⚠ 磁盘异常${reason?' · '+reason:''}`:tone==='warn'?`⚠ 磁盘曾出错 · ${DashboardModel.diskTime(health.last_fault_at)}`:'';
+      const reason=tone==='crit'?DashboardModel.diskFaults(health?.disk,{short:true})[0]:'';
+      const label=agent.startup_disk_failure?DashboardModel.STARTUP_DISK_FAILURE_LABEL:
+        tone==='crit'?`⚠ 磁盘异常${reason?' · '+reason:''}`:tone==='warn'?`⚠ 磁盘曾出错 · ${DashboardModel.diskTime(health.last_fault_at)}`:'';
       const error=diskAckError(agent);
       setCardText(diskLabel,label+(tone==='warn'&&error?' · '+error:''));diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
+      diskBadge.classList.toggle('startup-disk-failure',!!agent.startup_disk_failure);
       diskAck.hidden=tone!=='warn';diskAck.disabled=!canEditAgentControl(agent,'disk');
       tags.hidden=!key.length;
       systemFailure.hidden=!health?.os_read_failed;
@@ -1539,7 +1541,7 @@ function createAgentCard(initialAgent) {
     const offlinePill = document.createElement('span'); offlinePill.className = 'c7-offline-pill'; offlinePill.textContent = '离线';
     const offlineNote = document.createElement('span'); offlineNote.className = 'c7-offline-note';
     offline.append(offlinePill, offlineNote);
-    const showOffline = () => { offline.hidden = cardLifecycle(agent) !== 'offline'; setCardText(offlineNote, '最后在线 ' + Card.agoText(agent.last_seen)); };
+    const showOffline = () => { offline.hidden = cardLifecycle(agent) !== 'offline' || agent.startup_disk_failure; setCardText(offlineNote, '最后在线 ' + Card.agoText(agent.last_seen)); };
     showOffline();
     card.append(offline);
 
@@ -1554,7 +1556,7 @@ function createAgentCard(initialAgent) {
       card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
       status.className = `status ${stateName}`; status.dataset.agentState = stateName;
       setCardText(status, lifecycleLabels[stateName]);
-      status.hidden = stateName === 'online' || stateName === 'offline';
+      status.hidden = stateName === 'online' || (stateName === 'offline' && !agent.startup_disk_failure);
       const system = CardMetrics.os(state.os);
       if (logo.getAttribute('src') !== `/vendor/card-icons/${system.icon}.svg`) logo.src = `/vendor/card-icons/${system.icon}.svg`;
       setReadableText(systemText, system.text);

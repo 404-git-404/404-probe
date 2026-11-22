@@ -90,7 +90,7 @@
     name: 'name', revoked: 'lifecycle', disabled_at: 'lifecycle', created_at: 'lifecycle',
     country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country', country_lookup_enabled: 'country',
     plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', youtube_check_enabled: 'google',
-    public_egress_check: 'egress', detail_public_egress: 'egress', disk_fault_acknowledged_at: 'disk',
+    public_egress_check: 'egress', detail_public_egress: 'egress', disk_fault_acknowledged_at: 'disk', startup_disk_failure: 'disk',
     security: 'security', management: 'management', traffic: 'traffic', removal: 'removal',
     group_id:'organization', tag_ids:'organization', organization_revision:'organization',
     renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', masked_egress:'summary', dashboard_loaded:'summary', dashboard_received_at:'summary', network:'summary', network_slots:'summary',

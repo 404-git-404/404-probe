@@ -324,6 +324,9 @@ class Release:
 
 
 def main():
+    if sys.platform == "linux" and os.geteuid() == 0:
+        print("Linux 发布工具拒绝以 root 运行。请用非 root 用户 + sudo 运行。", file=sys.stderr)
+        return 1
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("stage", choices=("all", *STAGES))
     parser.add_argument("--out", type=Path, required=True)

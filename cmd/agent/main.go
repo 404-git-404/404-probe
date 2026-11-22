@@ -174,12 +174,14 @@ func run() error {
 	enableRemoteRemoval := flag.Bool("enable-remote-removal", remoteRemovalEnabled, "enable remote Agent removal only after isolated acceptance")
 	flag.Parse()
 	_, legacyClashSecret := os.LookupEnv("PROBE_404_SING_BOX_CLASH_SECRET")
-	runner, err := agent.New(agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode, EnableRemoteRemoval: *enableRemoteRemoval}, slog.Default())
-	if err != nil {
-		return fmt.Errorf("configuration: %w", err)
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	config := agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode, EnableRemoteRemoval: *enableRemoteRemoval}
+	runner, err := agent.New(config, slog.Default())
+	if err != nil {
+		agent.ReportStartupFailure(ctx, config, slog.Default(), err)
+		return fmt.Errorf("configuration: %w", err)
+	}
 	return runner.Run(ctx)
 }
 

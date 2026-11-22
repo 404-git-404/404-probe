@@ -5,7 +5,7 @@ const out=path.resolve(process.argv[2]),mocks=path.resolve(process.argv[3]),mani
  const f=await open(browser,{width:1440,height:900,theme,preferences:{viewMode:'list'}}),p=f.page;
  const snap=async name=>{await p.waitForFunction(()=>!renderFrame);await p.screenshot({path:path.join(out,theme+'-'+name+'.png')});manifest.push(theme+'-'+name+'.png');};
  try{
-  await p.evaluate(()=>{for(const a of agents.values()){if(a.name==='Vultr-NRT-1'){a.resources.cpu_percent=a.state.cpu_percent=94;}if(a.name==='DediRock-LAX-1')a.plan.usage_bytes=4.3e12;}render();});
+  await p.evaluate(()=>{for(const a of agents.values()){if(a.name==='Synthetic-NRT-1'){a.resources.cpu_percent=a.state.cpu_percent=94;}if(a.name==='Synthetic-LAX-1')a.plan.usage_bytes=4.3e12;}render();});
   await snap('F1-actual');
   const comparison=await browser.newPage({viewport:{width:2880,height:870}}),reference=fs.readFileSync(path.join(mocks,`F1-标签栏-配色-离线行-${theme==='light'?'浅色':'深色'}.png`)).toString('base64'),actual=fs.readFileSync(path.join(out,theme+'-F1-actual.png')).toString('base64');
   await comparison.setContent(`<style>body{margin:0;background:${theme==='light'?'#f7f4ef':'#0e1012'}}header{font:20px system-ui;height:30px;color:${theme==='light'?'#26221e':'#ddd'};display:flex}header span{width:1440px}main{display:flex;height:840px;overflow:hidden}img{width:1440px;height:900px;flex:none}</style><header><span>F1（裁去底部设计说明）</span><span>实际界面</span></header><main><img src="data:image/png;base64,${reference}"><img src="data:image/png;base64,${actual}"></main>`);await comparison.screenshot({path:path.join(out,theme+'-F1-compare.png')});manifest.push(theme+'-F1-compare.png');await comparison.close();

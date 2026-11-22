@@ -56,7 +56,7 @@ baseline rather than accepted as v0.9.1 regressions.
 
 ## Isolated systemd acceptance
 
-The rehearsal ran on the CloudCone Debian 12 amd64 test Server in the dedicated
+The rehearsal ran on the Debian 12 amd64 test Server in the dedicated
 unit `404-probe-upgrade-rehearsal.service`, bound to `127.0.0.1:33444`, with
 separate binary, configuration, database, lock, and transaction paths. It did
 not use the production unit, database, port, or Agent services.
@@ -104,6 +104,6 @@ generated fixture directory was also removed after recording its hashes.
 - Native ARM64 execution was not performed.
 - A published v0.9.1 URL and its final release bytes do not exist yet, so the
   new-version public-download end-to-end path was not tested.
-- The formal DediRock environment and Cloudflare configuration were not touched.
-- The CloudCone primary service was deliberately not normalized or upgraded in
+- The production environment and Cloudflare configuration were not touched.
+- The primary service was deliberately not normalized or upgraded in
   place because its installed test commit is not an official release mapping.
