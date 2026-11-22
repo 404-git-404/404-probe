@@ -26,7 +26,9 @@ async function audit({source=path.resolve(__dirname,'../..'),onResult=()=>{}}={}
    const n=kind==='theme'?p.locator(selector+'[aria-pressed=false]'):controls;
    await n.scrollIntoViewIfNeeded();const r=await n.boundingBox(),before=await snapshot();
    // Alternate center and padded area to cover the button, not just its glyph.
-   await p.mouse.move(r.x+r.width*(i%2?.5:.25),r.y+r.height*.5);await p.mouse.down();await p.waitForTimeout(50+(i%3)*50);await p.mouse.up();
+   // Let the browser settle on the hit target before holding the real mouse down.
+   await n.hover({position:{x:r.width*(i%2?.5:.25),y:r.height*.5}});
+   await p.mouse.down();await p.waitForTimeout(50+(i%3)*50);await p.mouse.up();
    const after=await snapshot();hits+=after.hits-before.hits;
    if(kind==='theme')effects+=after.theme!==before.theme;
    if(kind==='quick'||kind==='renewal')effects+=after.quick!==before.quick;
