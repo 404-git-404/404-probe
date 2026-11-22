@@ -127,7 +127,9 @@ for(const theme of ['dark','light']){
       third.country_code='DE';
       third.renewal={type:'overdue',days:-2,field:'expiry_date',date:'2026-11-20',timezone:'UTC'};
       await page.evaluate(()=>dashboardData.reload());
+      await page.locator('#dashboard-all').click();
       await settle(page);
+      assert.equal(await page.locator('.agent-card h2').first().getAttribute('aria-label'),'Synthetic-001');
       assert(await card(page,0).locator('.dashboard-disk-warning').isVisible());
       assert.equal(await card(page,0).locator('.c7-ring').first().getAttribute('data-tone'),'warn');
       assert.equal(await card(page,0).locator('.c7-quota').getAttribute('data-tone'),'warn');

@@ -103,6 +103,7 @@
       for(const key of ['groups','countries','statuses','youtubeRegions','quick']) p[key]=[];
       p.sort = sort.value = 'name';
       p.sortDir = 'asc';
+      order.reset();
       showDirection();
       navigate('devices',{closeMobile:true});
       change();

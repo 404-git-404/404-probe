@@ -32,7 +32,8 @@ body{background:var(--color-page);color:var(--color-text)}
 .panel-item .dashboard-options{min-width:0}
 .panel-item small,.panel-item .panel-summary{margin-left:auto;color:var(--color-text-muted);font-size:.75rem}
 .panel-item .panel-summary,.dashboard-option span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.panel-item .panel-summary{color:var(--color-accent-text)}
+.panel-item .panel-summary{flex:1 1 0;color:var(--color-accent-text);text-align:right}
+.dashboard-panel summary.panel-item{white-space:nowrap}
 details[open]>summary .panel-summary{visibility:hidden}
 .panel-scroll hr{margin:.35rem .35rem;border:0;border-top:1px solid var(--color-line)}
 .dashboard-panel :is(summary,.overview-row)::after{content:'';box-sizing:border-box;width:.44rem;height:.44rem;margin:0 .16rem 0 auto;border:solid var(--color-text-muted);border-width:0 1.5px 1.5px 0;transform:rotate(-45deg);flex:none}
