@@ -20,7 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 41
+const currentSchemaVersion = 42
 
 // 每个版本发布前按升级支持策略更新。v1.2.1 uses schema 37; v1.3.0 and v1.3.1 use schema 38.
 const minimumUpgradeSchemaVersion = 37
@@ -42,6 +42,7 @@ var (
 type Store struct {
 	dashboardSlots     dashboardSlotCache
 	db                 *sql.DB
+	networkStatusDB    *sql.DB
 	databasePath       string
 	qualityBudgetMu    sync.Mutex
 	qualityBudgetCache qualityBudget
@@ -102,6 +103,8 @@ type State struct {
 	CountryCode            string                             `json:"country_code,omitempty"`
 	RXBytes                uint64                             `json:"raw_rx"`
 	TXBytes                uint64                             `json:"raw_tx"`
+	RateUnavailable        bool                               `json:"-"`
+	QualityClockOffsetMS   *int64                             `json:"quality_clock_offset_ms"`
 	RXRate                 float64                            `json:"rx_rate"`
 	TXRate                 float64                            `json:"tx_rate"`
 	RXTotal                uint64                             `json:"rx_total"`
@@ -119,18 +122,19 @@ type State struct {
 }
 
 type HistoryPoint struct {
-	Timestamp   int64   `json:"timestamp"`
-	CPU         float64 `json:"cpu"`
-	RAMPercent  float64 `json:"ram_percent"`
-	SwapPercent float64 `json:"swap_percent"`
-	DiskPercent float64 `json:"disk_percent"`
-	Load1       float64 `json:"load1"`
-	Load5       float64 `json:"load5"`
-	Load15      float64 `json:"load15"`
-	RXRate      float64 `json:"rx_rate"`
-	TXRate      float64 `json:"tx_rate"`
-	RXTotal     uint64  `json:"rx_total"`
-	TXTotal     uint64  `json:"tx_total"`
+	Timestamp       int64   `json:"timestamp"`
+	CPU             float64 `json:"cpu"`
+	RAMPercent      float64 `json:"ram_percent"`
+	SwapPercent     float64 `json:"swap_percent"`
+	DiskPercent     float64 `json:"disk_percent"`
+	Load1           float64 `json:"load1"`
+	Load5           float64 `json:"load5"`
+	Load15          float64 `json:"load15"`
+	RateUnavailable bool    `json:"-"`
+	RXRate          float64 `json:"rx_rate"`
+	TXRate          float64 `json:"tx_rate"`
+	RXTotal         uint64  `json:"rx_total"`
+	TXTotal         uint64  `json:"tx_total"`
 }
 
 type OutboundSnapshot struct {
@@ -200,6 +204,22 @@ func openDatabase(ctx context.Context, path string, minimumSchema int) (*Store, 
 		db.Close()
 		return nil, fmt.Errorf("prune expired Agent removal receipts: %w", err)
 	}
+	if databasePath != "" {
+		readerPath, err := filepath.Abs(databasePath)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		reader, err := sql.Open("sqlite", sqliteReadOnlyDSN(readerPath)+"&_pragma=busy_timeout%285000%29")
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		// A fleet read may scan several days of buckets. WAL readers must
+		// not occupy the only connection that accepts Agent reports.
+		reader.SetMaxOpenConns(1)
+		s.networkStatusDB = reader
+	}
 	return s, nil
 }
 
@@ -223,7 +243,12 @@ func sqliteOpenDSN(path string) string {
 	return path + separator + pragmas
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.networkStatusDB != nil {
+		return errors.Join(s.networkStatusDB.Close(), s.db.Close())
+	}
+	return s.db.Close()
+}
 
 func sqliteReadOnlyDSN(abs string) string {
 	return "file:" + (&url.URL{Path: filepath.ToSlash(abs)}).EscapedPath() + "?mode=ro"
@@ -966,6 +991,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 41: %w", err)
 		}
 	}
+	if version < 42 && !migration34Skip {
+		if err := migrateNetworkStatus42Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 42: %w", err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1282,6 +1312,10 @@ func (s *Store) Authenticate(ctx context.Context, token string) (string, error) 
 }
 
 func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r protocol.Report, received time.Time) (State, bool, string, error) {
+	return s.ProcessReportWithOfflineTimeout(ctx, authenticatedID, r, received, 30*time.Second)
+}
+
+func (s *Store) ProcessReportWithOfflineTimeout(ctx context.Context, authenticatedID string, r protocol.Report, received time.Time, offlineTimeout time.Duration) (State, bool, string, error) {
 	if authenticatedID != r.AgentID {
 		return State{}, false, "agent ID does not match token", ErrUnauthorized
 	}
@@ -1361,7 +1395,13 @@ func (s *Store) ProcessReport(ctx context.Context, authenticatedID string, r pro
 	} else {
 		state.PublicEgress = blankEgressState()
 	}
+	if r.Epoch == previous.Epoch && r.SessionID == previous.SessionID {
+		state.QualityClockOffsetMS = previous.QualityClockOffsetMS
+	}
 	if err := writeStateTx(ctx, tx, state); err != nil {
+		return State{}, false, "", err
+	}
+	if err := recordPresenceReportTx(ctx, tx, authenticatedID, received, offlineTimeout); err != nil {
 		return State{}, false, "", err
 	}
 	if err := saveAgentManagementCapabilitiesTx(ctx, tx, authenticatedID, r, received); err != nil {
@@ -1412,6 +1452,7 @@ func exceedsInt64(r protocol.Report) bool {
 func calculateState(name string, old State, exists bool, r protocol.Report, received time.Time) (State, error) {
 	rxTotal, txTotal := old.RXTotal, old.TXTotal
 	var rxRate, txRate float64
+	rateUnavailable := true
 	rxDelta, txDelta, continuityPartial, counterVersion, counters := calculateTrafficDelta(old, exists, r)
 	if exists {
 		max := uint64(math.MaxInt64)
@@ -1421,7 +1462,8 @@ func calculateState(name string, old State, exists bool, r protocol.Report, rece
 		rxTotal += rxDelta
 		txTotal += txDelta
 		dt := float64(received.UnixMilli()-old.LastSeen) / 1000
-		if dt > 0 {
+		if dt > 0 && !continuityPartial && old.Epoch == r.Epoch && old.SessionID == r.SessionID {
+			rateUnavailable = false
 			rxRate = float64(rxDelta) / dt
 			txRate = float64(txDelta) / dt
 		}
@@ -1441,7 +1483,7 @@ func calculateState(name string, old State, exists bool, r protocol.Report, rece
 		Load1:      r.Load1, Load5: r.Load5, Load15: r.Load15, RAMUsed: r.RAMUsed, RAMTotal: r.RAMTotal, RAMPercent: r.RAMPercent,
 		SwapUsed: r.SwapUsed, SwapTotal: r.SwapTotal, SwapPercent: r.SwapPercent, DiskUsed: r.DiskUsed, DiskTotal: r.DiskTotal, DiskPercent: r.DiskPercent,
 		DiskReadRate: r.DiskReadRate, DiskWriteRate: r.DiskWriteRate, DiskBusyPercent: r.DiskBusyPercent, CountryCode: r.CountryCode,
-		RXBytes: r.RXBytes, TXBytes: r.TXBytes, RXRate: rxRate, TXRate: txRate, RXTotal: rxTotal, TXTotal: txTotal,
+		RXBytes: r.RXBytes, TXBytes: r.TXBytes, RXRate: rxRate, TXRate: txRate, RateUnavailable: rateUnavailable, RXTotal: rxTotal, TXTotal: txTotal,
 		CollectedAt: r.CollectedAt, LastSeen: received.UnixMilli(), NetworkCountersVersion: counterVersion,
 		NetworkCounters: counters, ContinuityPartial: continuityPartial,
 	}, nil
@@ -1530,7 +1572,10 @@ func validateStoredNetworkCounters(version int64, raw string, rxBytes, txBytes u
 	}
 }
 
-const stateColumns = `epoch,session_id,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,agent_upgrade_v2,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,COALESCE(country_code,''),network_counters_version,network_counters_json,host_health_json`
+const stateColumns = `epoch,session_id,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,agent_upgrade_v2,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,observed_rx_rate,observed_tx_rate,rx_total,tx_total,collected_at,last_seen,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,COALESCE(country_code,''),network_counters_version,network_counters_json,host_health_json,(
+		SELECT received_at-sample_at FROM quality_clock_estimates q WHERE q.agent_id=agent_state.agent_id
+		AND q.epoch=agent_state.epoch AND q.session_id=agent_state.session_id
+	)`
 
 func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool, error) {
 	s := State{AgentID: id, Name: name}
@@ -1538,9 +1583,10 @@ func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool,
 	var networkCountersJSON string
 	var rawHealth sql.NullString
 	var upgradeCapable, upgradeV2 int
-	var cpuSteal, diskReadRate, diskWriteRate, diskBusy sql.NullFloat64
+	var cpuSteal, diskReadRate, diskWriteRate, diskBusy, rxRate, txRate sql.NullFloat64
+	var clockOffset sql.NullInt64
 	err := tx.QueryRowContext(ctx, `SELECT `+stateColumns+` FROM agent_state WHERE agent_id=?`, id).Scan(
-		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &upgradeV2, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON, &rawHealth)
+		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &upgradeV2, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &rxRate, &txRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON, &rawHealth, &clockOffset)
 	if errors.Is(err, sql.ErrNoRows) {
 		return State{}, false, nil
 	}
@@ -1563,6 +1609,11 @@ func readStateTx(ctx context.Context, tx *sql.Tx, id, name string) (State, bool,
 	s.DiskReadRate = nullableFloat(diskReadRate)
 	s.DiskWriteRate = nullableFloat(diskWriteRate)
 	s.DiskBusyPercent = nullableFloat(diskBusy)
+	s.RXRate, s.TXRate = rxRate.Float64, txRate.Float64
+	s.RateUnavailable = !rxRate.Valid || !txRate.Valid
+	if clockOffset.Valid {
+		s.QualityClockOffsetMS = &clockOffset.Int64
+	}
 	s.PublicEgress, err = readPublicEgressTx(ctx, tx, id)
 	if err != nil {
 		return State{}, false, err
@@ -1630,10 +1681,18 @@ func writeStateTx(ctx context.Context, tx *sql.Tx, s State) error {
 		}
 		healthJSON = string(encoded)
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,agent_upgrade_v2,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,epoch,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,country_code,network_counters_version,network_counters_json,host_health_json)
-	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,sequence=excluded.sequence,boot_id=excluded.boot_id,hostname=excluded.hostname,os=excluded.os,arch=excluded.arch,agent_version=excluded.agent_version,agent_upgrade_capable=excluded.agent_upgrade_capable,agent_upgrade_v2=excluded.agent_upgrade_v2,uptime=excluded.uptime,cpu=excluded.cpu,cpu_cores=excluded.cpu_cores,load1=excluded.load1,load5=excluded.load5,load15=excluded.load15,ram_used=excluded.ram_used,ram_total=excluded.ram_total,ram_percent=excluded.ram_percent,swap_used=excluded.swap_used,swap_total=excluded.swap_total,swap_percent=excluded.swap_percent,disk_used=excluded.disk_used,disk_total=excluded.disk_total,disk_percent=excluded.disk_percent,raw_rx=excluded.raw_rx,raw_tx=excluded.raw_tx,rx_rate=excluded.rx_rate,tx_rate=excluded.tx_rate,rx_total=excluded.rx_total,tx_total=excluded.tx_total,collected_at=excluded.collected_at,last_seen=excluded.last_seen,epoch=excluded.epoch,cpu_steal=excluded.cpu_steal,disk_read_rate=excluded.disk_read_rate,disk_write_rate=excluded.disk_write_rate,disk_busy=excluded.disk_busy,country_code=excluded.country_code,network_counters_version=excluded.network_counters_version,network_counters_json=excluded.network_counters_json,host_health_json=excluded.host_health_json`,
-		s.AgentID, s.SessionID, s.CollectedAt, int64(s.Sequence), s.BootID, s.Hostname, s.OS, s.Arch, s.AgentVersion, boolInt(s.AgentUpgradeCapable), boolInt(s.AgentUpgradeV2), int64(s.Uptime), s.CPUPercent, int64(s.CPUCores), s.Load1, s.Load5, s.Load15, int64(s.RAMUsed), int64(s.RAMTotal), s.RAMPercent, int64(s.SwapUsed), int64(s.SwapTotal), s.SwapPercent, int64(s.DiskUsed), int64(s.DiskTotal), s.DiskPercent, int64(s.RXBytes), int64(s.TXBytes), s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), s.CollectedAt, s.LastSeen, int64(s.Epoch), s.CPUStealPercent, s.DiskReadRate, s.DiskWriteRate, s.DiskBusyPercent, nullable(s.CountryCode), int64(s.NetworkCountersVersion), countersJSON, healthJSON)
+	_, err := tx.ExecContext(ctx, `INSERT INTO agent_state(agent_id,session_id,session_started_at,sequence,boot_id,hostname,os,arch,agent_version,agent_upgrade_capable,agent_upgrade_v2,uptime,cpu,cpu_cores,load1,load5,load15,ram_used,ram_total,ram_percent,swap_used,swap_total,swap_percent,disk_used,disk_total,disk_percent,raw_rx,raw_tx,rx_rate,tx_rate,rx_total,tx_total,collected_at,last_seen,epoch,cpu_steal,disk_read_rate,disk_write_rate,disk_busy,country_code,network_counters_version,network_counters_json,host_health_json,observed_rx_rate,observed_tx_rate)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,sequence=excluded.sequence,boot_id=excluded.boot_id,hostname=excluded.hostname,os=excluded.os,arch=excluded.arch,agent_version=excluded.agent_version,agent_upgrade_capable=excluded.agent_upgrade_capable,agent_upgrade_v2=excluded.agent_upgrade_v2,uptime=excluded.uptime,cpu=excluded.cpu,cpu_cores=excluded.cpu_cores,load1=excluded.load1,load5=excluded.load5,load15=excluded.load15,ram_used=excluded.ram_used,ram_total=excluded.ram_total,ram_percent=excluded.ram_percent,swap_used=excluded.swap_used,swap_total=excluded.swap_total,swap_percent=excluded.swap_percent,disk_used=excluded.disk_used,disk_total=excluded.disk_total,disk_percent=excluded.disk_percent,raw_rx=excluded.raw_rx,raw_tx=excluded.raw_tx,rx_rate=excluded.rx_rate,tx_rate=excluded.tx_rate,rx_total=excluded.rx_total,tx_total=excluded.tx_total,collected_at=excluded.collected_at,last_seen=excluded.last_seen,epoch=excluded.epoch,cpu_steal=excluded.cpu_steal,disk_read_rate=excluded.disk_read_rate,disk_write_rate=excluded.disk_write_rate,disk_busy=excluded.disk_busy,country_code=excluded.country_code,network_counters_version=excluded.network_counters_version,network_counters_json=excluded.network_counters_json,host_health_json=excluded.host_health_json,observed_rx_rate=excluded.observed_rx_rate,observed_tx_rate=excluded.observed_tx_rate`,
+		s.AgentID, s.SessionID, s.CollectedAt, int64(s.Sequence), s.BootID, s.Hostname, s.OS, s.Arch, s.AgentVersion, boolInt(s.AgentUpgradeCapable), boolInt(s.AgentUpgradeV2), int64(s.Uptime), s.CPUPercent, int64(s.CPUCores), s.Load1, s.Load5, s.Load15, int64(s.RAMUsed), int64(s.RAMTotal), s.RAMPercent, int64(s.SwapUsed), int64(s.SwapTotal), s.SwapPercent, int64(s.DiskUsed), int64(s.DiskTotal), s.DiskPercent, int64(s.RXBytes), int64(s.TXBytes), s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), s.CollectedAt, s.LastSeen, int64(s.Epoch), s.CPUStealPercent, s.DiskReadRate, s.DiskWriteRate, s.DiskBusyPercent, nullable(s.CountryCode), int64(s.NetworkCountersVersion), countersJSON, healthJSON, ObservedRate(s.RXRate, s.RateUnavailable), ObservedRate(s.TXRate, s.RateUnavailable))
 	return err
+}
+
+// ObservedRate distinguishes a missing interval from an observed zero rate.
+func ObservedRate(rate float64, unavailable bool) *float64 {
+	if unavailable {
+		return nil
+	}
+	return &rate
 }
 
 func aggregateMinuteTx(ctx context.Context, tx *sql.Tx, s State) error {
@@ -1641,9 +1700,9 @@ func aggregateMinuteTx(ctx context.Context, tx *sql.Tx, s State) error {
 		return err
 	}
 	bucket := (s.LastSeen / 60000) * 60000
-	_, err := tx.ExecContext(ctx, `INSERT INTO minute_metrics(agent_id,bucket,samples,cpu_sum,ram_sum,swap_sum,disk_sum,load1_sum,load5_sum,load15_sum,rx_rate_sum,tx_rate_sum,rx_total,tx_total) VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?,?)
-	ON CONFLICT(agent_id,bucket) DO UPDATE SET samples=samples+1,cpu_sum=cpu_sum+excluded.cpu_sum,ram_sum=ram_sum+excluded.ram_sum,swap_sum=swap_sum+excluded.swap_sum,disk_sum=disk_sum+excluded.disk_sum,load1_sum=load1_sum+excluded.load1_sum,load5_sum=load5_sum+excluded.load5_sum,load15_sum=load15_sum+excluded.load15_sum,rx_rate_sum=rx_rate_sum+excluded.rx_rate_sum,tx_rate_sum=tx_rate_sum+excluded.tx_rate_sum,rx_total=excluded.rx_total,tx_total=excluded.tx_total`,
-		s.AgentID, bucket, s.CPUPercent, s.RAMPercent, s.SwapPercent, s.DiskPercent, s.Load1, s.Load5, s.Load15, s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal))
+	_, err := tx.ExecContext(ctx, `INSERT INTO minute_metrics(agent_id,bucket,samples,cpu_sum,ram_sum,swap_sum,disk_sum,load1_sum,load5_sum,load15_sum,rx_rate_sum,tx_rate_sum,rx_total,tx_total,rate_samples) VALUES(?,?,1,?,?,?,?,?,?,?,?,?,?,?,?)
+	ON CONFLICT(agent_id,bucket) DO UPDATE SET samples=samples+1,cpu_sum=cpu_sum+excluded.cpu_sum,ram_sum=ram_sum+excluded.ram_sum,swap_sum=swap_sum+excluded.swap_sum,disk_sum=disk_sum+excluded.disk_sum,load1_sum=load1_sum+excluded.load1_sum,load5_sum=load5_sum+excluded.load5_sum,load15_sum=load15_sum+excluded.load15_sum,rx_rate_sum=rx_rate_sum+excluded.rx_rate_sum,tx_rate_sum=tx_rate_sum+excluded.tx_rate_sum,rate_samples=COALESCE(rate_samples,samples)+excluded.rate_samples,rx_total=excluded.rx_total,tx_total=excluded.tx_total`,
+		s.AgentID, bucket, s.CPUPercent, s.RAMPercent, s.SwapPercent, s.DiskPercent, s.Load1, s.Load5, s.Load15, s.RXRate, s.TXRate, int64(s.RXTotal), int64(s.TXTotal), boolInt(!s.RateUnavailable))
 	return err
 }
 
@@ -1687,7 +1746,7 @@ func (s *Store) ListStates(ctx context.Context) ([]State, error) {
 }
 
 func (s *Store) History(ctx context.Context, id string, since time.Time) ([]HistoryPoint, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT bucket,cpu_sum/samples,ram_sum/samples,swap_sum/samples,disk_sum/samples,load1_sum/samples,load5_sum/samples,load15_sum/samples,rx_rate_sum/samples,tx_rate_sum/samples,rx_total,tx_total FROM minute_metrics WHERE agent_id=? AND bucket>=? ORDER BY bucket`, id, since.UnixMilli())
+	rows, err := s.db.QueryContext(ctx, `SELECT bucket,cpu_sum/samples,ram_sum/samples,swap_sum/samples,disk_sum/samples,load1_sum/samples,load5_sum/samples,load15_sum/samples,rx_rate_sum/NULLIF(COALESCE(rate_samples,samples),0),tx_rate_sum/NULLIF(COALESCE(rate_samples,samples),0),rx_total,tx_total FROM minute_metrics WHERE agent_id=? AND bucket>=? ORDER BY bucket`, id, since.UnixMilli())
 	if err != nil {
 		return nil, err
 	}

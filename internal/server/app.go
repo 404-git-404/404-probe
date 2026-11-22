@@ -274,7 +274,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if _, removing, lookupErr := a.store.GetAgentRemovalOperation(r.Context(), authenticatedID); removing || lookupErr != nil {
 		owner = trafficOwner{}
 	}
-	state, accepted, reason, err := a.store.ProcessReport(r.Context(), authenticatedID, report, received)
+	state, accepted, reason, err := a.store.ProcessReportWithOfflineTimeout(r.Context(), authenticatedID, report, received, a.offlineTimeout)
 	if err != nil {
 		if errors.Is(err, storage.ErrAgentRevoked) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
@@ -785,6 +785,8 @@ func (a *App) CleanupLoop() {
 	historyTicker := time.NewTicker(time.Hour)
 	walHealthTicker := time.NewTicker(a.walHealthInterval)
 	qualityTicker := time.NewTicker(30 * time.Second)
+	networkStatusTicker := time.NewTicker(15 * time.Second)
+	defer networkStatusTicker.Stop()
 	defer qualityTicker.Stop()
 	defer cleanupTicker.Stop()
 	defer historyTicker.Stop()
@@ -810,6 +812,8 @@ func (a *App) CleanupLoop() {
 			a.checkWALHealth()
 		case <-qualityTicker.C:
 			a.cleanupQuality()
+		case <-networkStatusTicker.C:
+			a.sweepNetworkStatus()
 		}
 	}
 }

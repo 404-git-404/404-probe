@@ -244,7 +244,7 @@ function draw(canvas, points, key, color, format) {
   const height = rect.height;
   const padding = 30;
   context.clearRect(0, 0, width, height);
-  const values = points.map(point => Number(point[key] || 0));
+  const values = points.map(point => point[key]);
   const maximum = Math.max(1, ...values) * 1.1;
   context.strokeStyle = colorToken('text-71');
   context.fillStyle = colorToken('text-72');
@@ -261,10 +261,13 @@ function draw(canvas, points, key, color, format) {
   context.strokeStyle = color;
   context.lineWidth = 2;
   context.beginPath();
+  let drawing = false;
   values.forEach((value, index) => {
+    if (!Number.isFinite(value)) { drawing = false; return; }
     const x = padding + (width - padding - 10) * index / (values.length - 1);
     const y = padding + (height - padding * 2) * (1 - value / maximum);
-    if (index) context.lineTo(x, y); else context.moveTo(x, y);
+    if (drawing) context.lineTo(x, y); else context.moveTo(x, y);
+    drawing = true;
   });
   context.stroke();
 }

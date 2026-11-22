@@ -94,7 +94,10 @@ func (s *Store) CleanupQualityBatch(ctx context.Context, now time.Time) (int64, 
 	if err := tx.Commit(); err != nil {
 		return 0, false, err
 	}
-	return total, more, nil
+	if !more {
+		err = s.cleanupNetworkStatus(ctx, now)
+	}
+	return total, more, err
 }
 
 func qualityReceiptFenceTx(ctx context.Context, tx *sql.Tx, session, seq, stamp int64) error {

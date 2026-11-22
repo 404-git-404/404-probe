@@ -199,9 +199,10 @@ func scanDashboardState(row dashboardScanner) (State, error) {
 	var networkCountersJSON string
 	var rawHealth sql.NullString
 	var upgradeCapable, upgradeV2 int
-	var cpuSteal, diskReadRate, diskWriteRate, diskBusy sql.NullFloat64
+	var cpuSteal, diskReadRate, diskWriteRate, diskBusy, rxRate, txRate sql.NullFloat64
+	var clockOffset sql.NullInt64
 	err := row.Scan(&s.AgentID,
-		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &upgradeV2, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &s.RXRate, &s.TXRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON, &rawHealth)
+		&epoch, &s.SessionID, &sequence, &s.BootID, &s.Hostname, &s.OS, &s.Arch, &s.AgentVersion, &upgradeCapable, &upgradeV2, &uptime, &s.CPUPercent, &cpuCores, &s.Load1, &s.Load5, &s.Load15, &ramUsed, &ramTotal, &s.RAMPercent, &swapUsed, &swapTotal, &s.SwapPercent, &diskUsed, &diskTotal, &s.DiskPercent, &rawRX, &rawTX, &rxRate, &txRate, &rxTotal, &txTotal, &s.CollectedAt, &s.LastSeen, &cpuSteal, &diskReadRate, &diskWriteRate, &diskBusy, &s.CountryCode, &networkCountersVersion, &networkCountersJSON, &rawHealth, &clockOffset)
 	if err != nil {
 		return State{}, err
 	}
@@ -221,5 +222,10 @@ func scanDashboardState(row dashboardScanner) (State, error) {
 	s.DiskReadRate = nullableFloat(diskReadRate)
 	s.DiskWriteRate = nullableFloat(diskWriteRate)
 	s.DiskBusyPercent = nullableFloat(diskBusy)
+	s.RXRate, s.TXRate = rxRate.Float64, txRate.Float64
+	s.RateUnavailable = !rxRate.Valid || !txRate.Valid
+	if clockOffset.Valid {
+		s.QualityClockOffsetMS = &clockOffset.Int64
+	}
 	return s, nil
 }

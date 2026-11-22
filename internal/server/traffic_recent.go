@@ -249,7 +249,7 @@ func (c *trafficCache) append(owner trafficOwner, state storage.State, received,
 	if !finiteTraffic(state.RXRate) || !finiteTraffic(state.TXRate) {
 		reason = 4
 	}
-	if state.ContinuityPartial && reason == 0 {
+	if state.RateUnavailable && reason == 0 {
 		reason = 2
 	}
 	trimTraffic(s, now)

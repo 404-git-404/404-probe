@@ -15,11 +15,12 @@
   }
   // Two series over one hour on one scale; a gap of more than a minute breaks the line.
   function paths(points,from,to) {
-    const peak=points.reduce((m,p)=>Math.max(m,p.rx_rate,p.tx_rate),0),top=Math.max(peak,1);
+    const rates=points.flatMap(p=>[p.rx_rate,p.tx_rate]).filter(Number.isFinite);
+    const peak=rates.length?Math.max(...rates):null,top=Math.max(peak??0,1);
     const x=t=>((t-from)/(to-from))*W,y=v=>HEIGHT-1-(v/top)*(HEIGHT-4);
     const build=key=>{let d='',fill='',run='',prev=null,first=0,last=0;
       const flush=()=>{if(run)fill+=run+`L${last.toFixed(1)},${HEIGHT-1}L${first.toFixed(1)},${HEIGHT-1}Z`;run='';};
-      for(const p of points){const px=x(p.timestamp),consecutive=prev!==null&&p.timestamp-prev===MINUTE;if(!consecutive){flush();first=px;}const part=`${consecutive?'L':'M'}${px.toFixed(1)},${y(p[key]).toFixed(1)}`;d+=part;run+=part;last=px;prev=p.timestamp;}flush();return {line:d,fill};};
+      for(const p of points){if(!Number.isFinite(p[key])){flush();prev=null;continue;}const px=x(p.timestamp),consecutive=prev!==null&&p.timestamp-prev===MINUTE;if(!consecutive){flush();first=px;}const part=`${consecutive?'L':'M'}${px.toFixed(1)},${y(p[key]).toFixed(1)}`;d+=part;run+=part;last=px;prev=p.timestamp;}flush();return {line:d,fill};};
     const rx=build('rx_rate'),tx=build('tx_rate');
     return {peak,rx:rx.line,tx:tx.line,rxFill:rx.fill,txFill:tx.fill};
   }

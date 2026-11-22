@@ -292,7 +292,7 @@
       }catch(err){if(generation===serial&&active('resources',id)&&err.name!=='AbortError'){error='读取失败，保留上次结果';statusText();}}
       finally{if(generation===serial){loading=false;statusText();}}
     }
-    function select(index){selected=Math.max(0,Math.min((data?.points.length||1)-1,index));const point=data?.points[selected];output.textContent=point?`${shortTime(point.timestamp,true)} · CPU ${point.cpu.toFixed(2)}% · 内存 ${point.ram_percent.toFixed(2)}% · ↓ ${root.TrafficChart?.bytes?.(point.rx_rate)||point.rx_rate+' B/s'} · ↑ ${root.TrafficChart?.bytes?.(point.tx_rate)||point.tx_rate+' B/s'}`:'';}
+    function select(index){selected=Math.max(0,Math.min((data?.points.length||1)-1,index));const point=data?.points[selected];output.textContent=point?`${shortTime(point.timestamp,true)} · CPU ${point.cpu.toFixed(2)}% · 内存 ${point.ram_percent.toFixed(2)}% · ↓ ${root.TrafficChart?.bytes?.(point.rx_rate)||(point.rx_rate==null?'—':point.rx_rate+' B/s')} · ↑ ${root.TrafficChart?.bytes?.(point.tx_rate)||(point.tx_rate==null?'—':point.tx_rate+' B/s')}`:'';}
     function renderPlot(){destroyPlot();statusText();if(!active('resources')||!data)return;
       if(!data.points.length||!Plot){chart.append(el('p','',!data.points.length?'暂无历史数据':'本地图表库未加载'));return;}
       const stats=H.statistics(data),peak=v=>{const parts=(root.TrafficChart?.bytes?.(v)||v+' B/s').replace(/\/s$/,'').split(' ');return v==null?'—':Number(parts[0])+' '+parts.slice(1).join(' ');},fmt=v=>v==null?'—':root.TrafficChart?.bytes?.(v)?.replace(/\/s$/,'')||v+' B',percent=v=>v?`平均 ${v.mean.toFixed(v.mean>=10?0:1)}% · 最高 ${v.max.toFixed(v.max>=10?0:1)}%`:'暂无数据';

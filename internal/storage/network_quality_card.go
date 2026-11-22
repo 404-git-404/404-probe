@@ -90,16 +90,17 @@ type QualityMarks struct {
 
 // qualityJudgeReader holds what one request knows. Lane timelines are built when first asked for.
 type qualityJudgeReader struct {
-	tx       *sql.Tx
-	id       string
-	cfg      protocol.QualityV4Config
-	evalEnd  int64
-	first    int64 // first minute index read
-	last     int64 // minute index after the last one read (exclusive): never beyond what the request needs
-	removing bool  // a removal of the device is pending: nothing is judged
-	opens    map[string]qualityOpenStart
-	gaps     []protocol.QualityGap
-	timeline map[string]qualityTimeline
+	tx           *sql.Tx
+	id           string
+	cfg          protocol.QualityV4Config
+	evalEnd      int64
+	first        int64 // first minute index read
+	last         int64 // minute index after the last one read (exclusive): never beyond what the request needs
+	removing     bool  // a removal of the device is pending: nothing is judged
+	opens        map[string]qualityOpenStart
+	gaps         []protocol.QualityGap
+	timeline     map[string]qualityTimeline
+	alertBuckets map[string]map[int64]qualityBucketData
 }
 
 type qualityOpenStart struct {
@@ -215,6 +216,9 @@ func (r *qualityJudgeReader) timelineOf(ctx context.Context, slot, family, proto
 	rows.Close()
 	if err != nil {
 		return qualityTimeline{}, false, err
+	}
+	if r.alertBuckets != nil {
+		r.alertBuckets[key] = buckets
 	}
 	tl := qualityBuildTimeline(frame, r.first, last, buckets, r.gaps)
 	if qualityTimelineHook != nil {

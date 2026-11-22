@@ -107,36 +107,38 @@ type webOutboundsView struct {
 }
 
 type webAgentStateView struct {
-	PublicEgress    webPublicEgress `json:"public_egress"`
-	Stale           bool            `json:"stale"`
-	Hostname        string          `json:"hostname"`
-	OS              string          `json:"os"`
-	HostHealth      *webHostHealth  `json:"host_health,omitempty"`
-	Arch            string          `json:"arch"`
-	Uptime          uint64          `json:"uptime"`
-	CPUPercent      float64         `json:"cpu_percent"`
-	CPUStealPercent *float64        `json:"cpu_steal_percent,omitempty"`
-	CPUCores        uint32          `json:"cpu_cores,omitempty"`
-	Load1           float64         `json:"load1"`
-	Load5           float64         `json:"load5"`
-	Load15          float64         `json:"load15"`
-	RAMUsed         uint64          `json:"ram_used"`
-	RAMTotal        uint64          `json:"ram_total"`
-	RAMPercent      float64         `json:"ram_percent"`
-	SwapUsed        uint64          `json:"swap_used"`
-	SwapTotal       uint64          `json:"swap_total"`
-	SwapPercent     float64         `json:"swap_percent"`
-	DiskUsed        uint64          `json:"disk_used"`
-	DiskTotal       uint64          `json:"disk_total"`
-	DiskPercent     float64         `json:"disk_percent"`
-	DiskReadRate    *float64        `json:"disk_read_rate,omitempty"`
-	DiskWriteRate   *float64        `json:"disk_write_rate,omitempty"`
-	DiskBusyPercent *float64        `json:"disk_busy_percent,omitempty"`
-	RXRate          float64         `json:"rx_rate"`
-	TXRate          float64         `json:"tx_rate"`
-	RXTotal         uint64          `json:"rx_total"`
-	TXTotal         uint64          `json:"tx_total"`
-	CollectedAt     int64           `json:"collected_at"`
+	PublicEgress         webPublicEgress `json:"public_egress"`
+	Stale                bool            `json:"stale"`
+	Hostname             string          `json:"hostname"`
+	OS                   string          `json:"os"`
+	HostHealth           *webHostHealth  `json:"host_health,omitempty"`
+	Arch                 string          `json:"arch"`
+	Uptime               uint64          `json:"uptime"`
+	CPUPercent           float64         `json:"cpu_percent"`
+	CPUStealPercent      *float64        `json:"cpu_steal_percent,omitempty"`
+	CPUCores             uint32          `json:"cpu_cores,omitempty"`
+	Load1                float64         `json:"load1"`
+	Load5                float64         `json:"load5"`
+	Load15               float64         `json:"load15"`
+	RAMUsed              uint64          `json:"ram_used"`
+	RAMTotal             uint64          `json:"ram_total"`
+	RAMPercent           float64         `json:"ram_percent"`
+	SwapUsed             uint64          `json:"swap_used"`
+	SwapTotal            uint64          `json:"swap_total"`
+	SwapPercent          float64         `json:"swap_percent"`
+	DiskUsed             uint64          `json:"disk_used"`
+	DiskTotal            uint64          `json:"disk_total"`
+	DiskPercent          float64         `json:"disk_percent"`
+	DiskReadRate         *float64        `json:"disk_read_rate,omitempty"`
+	DiskWriteRate        *float64        `json:"disk_write_rate,omitempty"`
+	DiskBusyPercent      *float64        `json:"disk_busy_percent,omitempty"`
+	RXRate               *float64        `json:"rx_rate"`
+	TXRate               *float64        `json:"tx_rate"`
+	QualityClockOffsetMS *int64          `json:"quality_clock_offset_ms"`
+	QualityClockSkewed   bool            `json:"quality_clock_skewed"`
+	RXTotal              uint64          `json:"rx_total"`
+	TXTotal              uint64          `json:"tx_total"`
+	CollectedAt          int64           `json:"collected_at"`
 }
 
 type webAgentCollectionView struct {
@@ -158,18 +160,18 @@ type webSecurityRecordView struct {
 }
 
 type webAgentHistoryPointView struct {
-	Timestamp   int64   `json:"timestamp"`
-	CPU         float64 `json:"cpu"`
-	RAMPercent  float64 `json:"ram_percent"`
-	SwapPercent float64 `json:"swap_percent"`
-	DiskPercent float64 `json:"disk_percent"`
-	Load1       float64 `json:"load1"`
-	Load5       float64 `json:"load5"`
-	Load15      float64 `json:"load15"`
-	RXRate      float64 `json:"rx_rate"`
-	TXRate      float64 `json:"tx_rate"`
-	RXTotal     uint64  `json:"rx_total"`
-	TXTotal     uint64  `json:"tx_total"`
+	Timestamp   int64    `json:"timestamp"`
+	CPU         float64  `json:"cpu"`
+	RAMPercent  float64  `json:"ram_percent"`
+	SwapPercent float64  `json:"swap_percent"`
+	DiskPercent float64  `json:"disk_percent"`
+	Load1       float64  `json:"load1"`
+	Load5       float64  `json:"load5"`
+	Load15      float64  `json:"load15"`
+	RXRate      *float64 `json:"rx_rate"`
+	TXRate      *float64 `json:"tx_rate"`
+	RXTotal     uint64   `json:"rx_total"`
+	TXTotal     uint64   `json:"tx_total"`
 }
 
 type webAgentEventView struct {
@@ -568,12 +570,13 @@ func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *w
 		SwapUsed: state.SwapUsed, SwapTotal: state.SwapTotal, SwapPercent: state.SwapPercent,
 		DiskUsed: state.DiskUsed, DiskTotal: state.DiskTotal, DiskPercent: state.DiskPercent,
 		DiskReadRate: state.DiskReadRate, DiskWriteRate: state.DiskWriteRate, DiskBusyPercent: state.DiskBusyPercent,
-		RXRate: state.RXRate, TXRate: state.TXRate, RXTotal: state.RXTotal, TXTotal: state.TXTotal,
+		RXRate: storage.ObservedRate(state.RXRate, state.RateUnavailable), TXRate: storage.ObservedRate(state.TXRate, state.RateUnavailable),
+		QualityClockOffsetMS: state.QualityClockOffsetMS, QualityClockSkewed: storage.QualityClockSkewed(state.QualityClockOffsetMS), RXTotal: state.RXTotal, TXTotal: state.TXTotal,
 		CollectedAt: state.CollectedAt,
 	}
 	if stale {
-		view.RXRate = 0
-		view.TXRate = 0
+		view.RXRate = storage.ObservedRate(0, state.RateUnavailable)
+		view.TXRate = storage.ObservedRate(0, state.RateUnavailable)
 		view.CPUStealPercent = nil
 		view.DiskReadRate = nil
 		view.DiskWriteRate = nil
@@ -606,6 +609,6 @@ func newWebAgentHistoryPointView(point storage.HistoryPoint) webAgentHistoryPoin
 		Timestamp: point.Timestamp, CPU: point.CPU, RAMPercent: point.RAMPercent,
 		SwapPercent: point.SwapPercent, DiskPercent: point.DiskPercent,
 		Load1: point.Load1, Load5: point.Load5, Load15: point.Load15,
-		RXRate: point.RXRate, TXRate: point.TXRate, RXTotal: point.RXTotal, TXTotal: point.TXTotal,
+		RXRate: storage.ObservedRate(point.RXRate, point.RateUnavailable), TXRate: storage.ObservedRate(point.TXRate, point.RateUnavailable), RXTotal: point.RXTotal, TXTotal: point.TXTotal,
 	}
 }

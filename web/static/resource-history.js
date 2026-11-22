@@ -51,7 +51,7 @@
       if(!point||!safe(point.timestamp)||point.timestamp%MINUTE!==0||point.timestamp<=previous||point.timestamp<value.bucket_from||point.timestamp>value.bucket_to)fail();
       previous=point.timestamp;const out={timestamp:point.timestamp};
       for(const key of ['rx_total','tx_total'])out[key]=Number.isSafeInteger(point[key])&&point[key]>=0?point[key]:null;
-      for(const key of fields){if(typeof point[key]!=='number'||!Number.isFinite(point[key])||point[key]<0)fail();out[key]=point[key];}return out;
+      for(const key of fields){const v=point[key];if(v===null&&(key==='rx_rate'||key==='tx_rate')){out[key]=null;continue;}if(typeof v!=='number'||!Number.isFinite(v)||v<0)fail();out[key]=v;}return out;
     });
     if(value.oldest_timestamp!==(points[0]?.timestamp??null)||value.last_timestamp!==(points.at(-1)?.timestamp??null))fail();
     return {agent_id:id,server_now:value.server_now,from:value.from,to:value.to,bucket_from:value.bucket_from,bucket_to:value.bucket_to,
@@ -84,7 +84,7 @@
     return {...parts[0],from,to,bucket_from:Math.floor(from/MINUTE)*MINUTE,bucket_to:Math.floor(to/MINUTE)*MINUTE,points:sorted,oldest_timestamp:sorted[0]?.timestamp??null,last_timestamp:sorted.at(-1)?.timestamp??null};
   }
   function statistics(data) {
-    const points=data?.points||[],aggregate=key=>{const values=points.map(p=>p[key]);return values.length?{mean:values.reduce((a,b)=>a+b,0)/values.length,max:Math.max(...values)}:null;};
+    const points=data?.points||[],aggregate=key=>{const values=points.map(p=>p[key]).filter(Number.isFinite);return values.length?{mean:values.reduce((a,b)=>a+b,0)/values.length,max:Math.max(...values)}:null;};
     const first=points[0],last=points.at(-1),total=key=>first&&last&&first[key]!=null&&last[key]!=null&&last[key]>=first[key]?last[key]-first[key]:null;
     return {cpu:aggregate('cpu'),memory:aggregate('ram_percent'),rx:aggregate('rx_rate'),tx:aggregate('tx_rate'),rx_total:points.length>1?total('rx_total'):null,tx_total:points.length>1?total('tx_total'):null,from:first?.timestamp,to:last?.timestamp};
   }

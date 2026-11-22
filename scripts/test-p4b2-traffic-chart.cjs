@@ -27,6 +27,14 @@ test('rates print with a unit and keep their digits',()=>{
  assert.equal(T.bytes(369),'369 B/s');assert.equal(T.bytes(1234),'1.23 KB/s');assert.equal(T.bytes(58000),'58.0 KB/s');assert.equal(T.bytes(null),'—');
 });
 
+test('unknown rates break the minute line and an observed zero still counts',()=>{
+ const pts=[{timestamp:NOW-3*M,rx_rate:0,tx_rate:0},{timestamp:NOW-2*M,rx_rate:null,tx_rate:null},{timestamp:NOW-M,rx_rate:5,tx_rate:0}];
+ const series=T.paths(pts,NOW-4*M,NOW);
+ assert.equal(series.peak,5);
+ assert.equal((series.rx.match(/M/g)||[]).length,2);
+ assert.equal(T.paths([pts[1]],NOW-4*M,NOW).peak,null);
+});
+
 test('one scale for both lines; a gap of more than a minute breaks the line; the peak is the largest minute mean',()=>{
  const pts=[{timestamp:NOW-3*M,rx_rate:100,tx_rate:50},{timestamp:NOW-2*M,rx_rate:400,tx_rate:50},{timestamp:NOW-M/2*0+0-M*10,rx_rate:10,tx_rate:0}].sort((a,b)=>a.timestamp-b.timestamp);
  const r=T.paths(pts,NOW-3600000,NOW);

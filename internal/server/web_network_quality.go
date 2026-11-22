@@ -9,6 +9,7 @@ import (
 )
 
 func (a *App) qualityRoutes(mux *http.ServeMux) {
+	a.networkStatusRoutes(mux)
 	mux.HandleFunc("POST /api/v1/agent/network-quality", a.handleAgentQuality)
 	mux.HandleFunc("POST /api/v1/agent/network-quality/config", a.handleAgentQualityConfig)
 	path := "/api/v1/web/agents/{agent_id}/network-quality/"

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -24,7 +25,7 @@ func (s *Store) ResourceHistory(ctx context.Context, id string, from, to time.Ti
 	}
 	lower = (lower / ResourceHistoryIntervalMS) * ResourceHistoryIntervalMS
 	upper = (upper / ResourceHistoryIntervalMS) * ResourceHistoryIntervalMS
-	rows, err := s.db.QueryContext(ctx, `SELECT bucket,cpu_sum/samples,ram_sum/samples,swap_sum/samples,disk_sum/samples,load1_sum/samples,load5_sum/samples,load15_sum/samples,rx_rate_sum/samples,tx_rate_sum/samples,rx_total,tx_total
+	rows, err := s.db.QueryContext(ctx, `SELECT bucket,cpu_sum/samples,ram_sum/samples,swap_sum/samples,disk_sum/samples,load1_sum/samples,load5_sum/samples,load15_sum/samples,rx_rate_sum/NULLIF(COALESCE(rate_samples,samples),0),tx_rate_sum/NULLIF(COALESCE(rate_samples,samples),0),rx_total,tx_total
  FROM minute_metrics WHERE agent_id=? AND bucket>=? AND bucket<=? ORDER BY bucket LIMIT 1441`, id, lower, upper)
 	if err != nil {
 		return nil, err
@@ -46,10 +47,13 @@ func (s *Store) ResourceHistory(ctx context.Context, id string, from, to time.Ti
 func scanHistoryPoint(row interface{ Scan(...any) error }) (HistoryPoint, error) {
 	var p HistoryPoint
 	var rx, tx int64
-	err := row.Scan(&p.Timestamp, &p.CPU, &p.RAMPercent, &p.SwapPercent, &p.DiskPercent, &p.Load1, &p.Load5, &p.Load15, &p.RXRate, &p.TXRate, &rx, &tx)
+	var rxRate, txRate sql.NullFloat64
+	err := row.Scan(&p.Timestamp, &p.CPU, &p.RAMPercent, &p.SwapPercent, &p.DiskPercent, &p.Load1, &p.Load5, &p.Load15, &rxRate, &txRate, &rx, &tx)
 	if err != nil {
 		return HistoryPoint{}, err
 	}
+	p.RXRate, p.TXRate = rxRate.Float64, txRate.Float64
+	p.RateUnavailable = !rxRate.Valid || !txRate.Valid
 	p.RXTotal = uint64(rx)
 	p.TXTotal = uint64(tx)
 	return p, nil

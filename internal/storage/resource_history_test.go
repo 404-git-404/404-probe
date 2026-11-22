@@ -27,7 +27,7 @@ func TestResourceHistoryOriginalMeansAndReadOnly(t *testing.T) {
 		if i == 2 {
 			r.RXBytes = 1
 			r.TXBytes = 2
-		} // Existing counter-reset zero remains in the mean.
+		} // The counter reset preserves the resource sample and excludes its rate.
 		if _, ok, reason, err := s.ProcessReport(ctx, id, r, at.Add(time.Duration(i)*10*time.Second)); err != nil || !ok {
 			t.Fatalf("%v %v %s", err, ok, reason)
 		}
@@ -40,7 +40,7 @@ func TestResourceHistoryOriginalMeansAndReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || !reflect.DeepEqual(got, before) || got[0].CPU != 20 || got[0].RXRate != 1000.0/3 || got[0].TXRate != 2000.0/3 {
+	if len(got) != 1 || !reflect.DeepEqual(got, before) || got[0].CPU != 20 || got[0].RXRate != 1000 || got[0].TXRate != 2000 {
 		t.Fatalf("means got=%+v legacy=%+v", got, before)
 	}
 	var samples int

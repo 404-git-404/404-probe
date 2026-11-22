@@ -56,7 +56,7 @@ func TestWebAgentDisableEnableLifecycleAndBoundary(t *testing.T) {
 	pausedDetailResponse := webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+agentID)
 	var pausedDetail webAgentDetailView
 	if pausedDetailResponse.Code != http.StatusOK || json.Unmarshal(pausedDetailResponse.Body.Bytes(), &pausedDetail) != nil ||
-		pausedDetail.State == nil || !pausedDetail.State.Stale || pausedDetail.State.RXRate != 0 || pausedDetail.State.TXRate != 0 {
+		pausedDetail.State == nil || !pausedDetail.State.Stale || pausedDetail.State.RXRate != nil || pausedDetail.State.TXRate != nil {
 		t.Fatalf("paused detail status=%d body=%s", pausedDetailResponse.Code, pausedDetailResponse.Body.String())
 	}
 	if response := postReport(t, app, token, reportFor(agentID, 2)); response.Code != http.StatusLocked || jobErrorCode(t, response) != "agent_disabled" {
@@ -83,7 +83,7 @@ func TestWebAgentDisableEnableLifecycleAndBoundary(t *testing.T) {
 	awaitingDetailResponse := webAgentResponse(t, app, http.MethodGet, webAgentPathPrefix+agentID)
 	var awaitingDetail webAgentDetailView
 	if awaitingDetailResponse.Code != http.StatusOK || json.Unmarshal(awaitingDetailResponse.Body.Bytes(), &awaitingDetail) != nil ||
-		awaitingDetail.State == nil || !awaitingDetail.State.Stale || awaitingDetail.State.RXRate != 0 || awaitingDetail.State.TXRate != 0 {
+		awaitingDetail.State == nil || !awaitingDetail.State.Stale || awaitingDetail.State.RXRate != nil || awaitingDetail.State.TXRate != nil {
 		t.Fatalf("resumed detail before fresh sample status=%d body=%s", awaitingDetailResponse.Code, awaitingDetailResponse.Body.String())
 	}
 	if response := postReport(t, app, token, reportFor(agentID, 2)); response.Code != http.StatusOK {

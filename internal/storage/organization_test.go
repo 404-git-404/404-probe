@@ -155,12 +155,23 @@ func TestMigration36PreservesAllLegacyDataAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := m35Fingerprint(t, s.db, "schema_migrations")
-	if err := s.migrate(ctx); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	after := m35Fingerprint(t, s.db, append(organizationTables, "schema_migrations", "agent_system_check_settings", "server_local_agent")...)
+	defer tx.Rollback()
+	if err := migrateOrganization36Tx(ctx, tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	after := m35Fingerprint(t, s.db, append(organizationTables, "schema_migrations")...)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("migration changed legacy rows or schema")
+	}
+	if err := s.migrate(ctx); err != nil {
+		t.Fatal(err)
 	}
 	first := m35Fingerprint(t, s.db)
 	if err := s.migrate(ctx); err != nil {

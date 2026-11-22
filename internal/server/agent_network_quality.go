@@ -155,3 +155,15 @@ func (a *App) qualityReportResponse(r *http.Request, response protocol.ReportRes
 	}
 	return response
 }
+
+func (a *App) sweepNetworkStatus() {
+	ctx, cancel := context.WithTimeout(a.shutdown, 10*time.Second)
+	defer cancel()
+	now := a.now()
+	if err := a.store.SweepPresence(ctx, now); err != nil && a.shutdown.Err() == nil {
+		a.logger.Error("record agent presence", "error", err)
+	}
+	if err := a.store.SweepNetworkAlerts(ctx, now); err != nil && a.shutdown.Err() == nil {
+		a.logger.Error("record network alerts", "error", err)
+	}
+}

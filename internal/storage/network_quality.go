@@ -93,6 +93,7 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 	}
 	rotated := false
 	rawCredit, minuteCredit := 0, 0
+	var latestFinished, latestSequence int64
 	for i, sample := range b.Samples {
 		ack := protocol.QualityAck{strconv.Itoa(i), sample.Sequence, "invalid"}
 		seq, err := protocol.QualityInteger(sample.Sequence)
@@ -313,6 +314,8 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 			minuteGlobal++
 		}
 		ack[2] = "committed"
+		latestFinished = max(latestFinished, sample.FinishedAt)
+		latestSequence = max(latestSequence, seq)
 		if rawCredit > 0 {
 			rawCredit--
 		}
@@ -362,6 +365,7 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 			}
 			gapsLocal++
 			ack[2] = "committed"
+
 		}
 		out.Gaps = append(out.Gaps, ack)
 	}
@@ -369,6 +373,14 @@ func (s *Store) SaveQualityBatch(ctx context.Context, id string, b protocol.Qual
 	wire, err := json.Marshal(out)
 	if err != nil || len(wire)+1 > protocol.QualityResponseLimit {
 		return protocol.QualityBatchResponse{}, errors.New("quality ACK exceeds budget")
+	}
+	if latestFinished > 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO quality_clock_estimates VALUES(?,?,?,?,?,?)
+			ON CONFLICT(agent_id) DO UPDATE SET epoch=excluded.epoch,session_id=excluded.session_id,seq=excluded.seq,sample_at=excluded.sample_at,received_at=excluded.received_at
+			WHERE excluded.epoch>epoch OR (excluded.epoch=epoch AND excluded.seq>seq)`,
+			id, epoch, b.SessionID, latestSequence, latestFinished, now.UnixMilli()); err != nil {
+			return out, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return protocol.QualityBatchResponse{}, err

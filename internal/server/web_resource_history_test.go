@@ -177,7 +177,7 @@ func TestResourceHistoryActualSQLRouteEdgesLimitAndNoSecurity(t *testing.T) {
 		t.Fatal(len(v.Points))
 	}
 	for i, p := range v.Points {
-		if p.Timestamp != base+int64(i)*60000 || p.CPU != 12 || p.RXRate != 1000 {
+		if p.Timestamp != base+int64(i)*60000 || p.CPU != 12 || (p.RXRate == nil || *p.RXRate != 1000) {
 			t.Fatal(i, p)
 		}
 	}

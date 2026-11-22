@@ -27,8 +27,28 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 	}
 }
 
+func rewindNetworkStatusFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, q := range []string{
+		`DROP TRIGGER IF EXISTS quality_target_history_close`, `DROP TRIGGER IF EXISTS quality_target_history_insert`,
+		`DROP TRIGGER IF EXISTS agent_presence_pause`, `DROP TRIGGER IF EXISTS agent_presence_resume`, `DROP TRIGGER IF EXISTS agent_presence_register`,
+		`DROP TABLE IF EXISTS quality_target_history`, `DROP TABLE IF EXISTS quality_alert_history`,
+		`DROP TABLE IF EXISTS quality_alert_cursor`, `DROP TABLE IF EXISTS quality_clock_estimates`,
+		`DROP TABLE IF EXISTS agent_presence_events`, `DROP TABLE IF EXISTS agent_presence`,
+		`DROP TABLE IF EXISTS agent_presence_anchor`, `DELETE FROM schema_migrations WHERE version=42`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dropColumnIfPresent(t, db, "minute_metrics", "rate_samples")
+	dropColumnIfPresent(t, db, "agent_state", "observed_rx_rate")
+	dropColumnIfPresent(t, db, "agent_state", "observed_tx_rate")
+}
+
 func rewindSystemChecksFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
+	rewindNetworkStatusFixture(t, db)
 	for _, q := range []string{`DROP TABLE IF EXISTS agent_system_check_settings`, `DROP TABLE IF EXISTS server_local_agent`, `DELETE FROM schema_migrations WHERE version=41`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
