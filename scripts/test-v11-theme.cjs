@@ -8,12 +8,13 @@ async function ui(run,options){const f=await open(browser,{...(process.env.V111_
 const theme=p=>p.evaluate(()=>({mode:ProbeTheme.get(),resolved:document.documentElement.dataset.theme}));
 const waitTheme=(p,value)=>p.waitForFunction(v=>document.documentElement.dataset.theme===v,value);
 test('two explicit modes alternate with current labels and persist through navigation/reload',()=>ui(async({page:p})=>{
- const button=p.locator('[data-theme-toggle]');
+ await scene(p,'Jobs');const button=p.locator('[data-theme-toggle]');
  for(const mode of ['light','dark','light','dark']){
   const label='当前：'+(mode==='dark'?'深色':'浅色');assert.deepEqual(await theme(p),{mode,resolved:mode});assert.equal(await button.getAttribute('aria-label'),label);assert.equal(await button.getAttribute('title'),label);assert.equal(await button.textContent(),mode==='dark'?'☾':'☀');await button.click();
  }
- await p.evaluate(()=>ProbeTheme.set('dark'));await p.reload();await waitTheme(p,'dark');assert.equal(await p.evaluate(()=>localStorage.getItem('404-probe.theme.v1')),'dark');
- for(const path of ['/history.html?id='+'1'.padStart(32,'0'),'/jobs.html','/schedules.html','/']){await p.goto(new URL(path,p.url()).href);assert.equal(await p.locator('[data-theme-toggle]').count(),1);assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});assert.equal(await p.locator('[data-theme-toggle]').getAttribute('title'),'当前：深色');assert.equal(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')))),false);}
+ await p.goto(new URL('/',p.url()).href);await p.evaluate(()=>ProbeTheme.set('dark'));await p.reload();await waitTheme(p,'dark');assert.equal(await p.evaluate(()=>localStorage.getItem('404-probe.theme.v1')),'dark');
+ assert.equal(await p.locator('[data-panel-theme=dark]').getAttribute('aria-pressed'),'true');
+ for(const path of ['/history.html?id='+'1'.padStart(32,'0'),'/jobs.html','/schedules.html']){await p.goto(new URL(path,p.url()).href);assert.equal(await p.locator('[data-theme-toggle]').count(),1);assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});assert.equal(await p.locator('[data-theme-toggle]').getAttribute('title'),'当前：深色');assert.equal(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')))),false);}
 }));
 test('legacy and absent preferences migrate once before paint; explicit preferences survive either OS appearance',async()=>{
  for(const os of ['light','dark'])for(const saved of [null,'system','light','dark']){
@@ -29,7 +30,7 @@ test('legacy and absent preferences migrate once before paint; explicit preferen
  }
 });
 test('same-origin tabs synchronize both themes and storage removal migrates to an explicit preference',()=>ui(async({page:p,context,f})=>{
- const other=await context.newPage();try{await other.goto(f.base);await other.waitForFunction(()=>typeof ProbeTheme!=='undefined');await p.evaluate(()=>ProbeTheme.set('dark'));await waitTheme(other,'dark');assert.equal(await other.locator('[data-theme-toggle]').getAttribute('title'),'当前：深色');await other.evaluate(()=>ProbeTheme.set('light'));await waitTheme(p,'light');await p.evaluate(()=>localStorage.removeItem('404-probe.theme.v1'));await other.waitForFunction(()=>ProbeTheme.get()==='light'&&localStorage.getItem('404-probe.theme.v1')==='light');await waitTheme(p,'light');}finally{await other.close();}
+ const other=await context.newPage();try{await other.goto(f.base);await other.waitForFunction(()=>typeof ProbeTheme!=='undefined');await p.evaluate(()=>ProbeTheme.set('dark'));await waitTheme(other,'dark');assert.equal(await other.locator('[data-panel-theme=dark]').getAttribute('aria-pressed'),'true');await other.evaluate(()=>ProbeTheme.set('light'));await waitTheme(p,'light');await p.evaluate(()=>localStorage.removeItem('404-probe.theme.v1'));await other.waitForFunction(()=>ProbeTheme.get()==='light'&&localStorage.getItem('404-probe.theme.v1')==='light');await waitTheme(p,'light');}finally{await other.close();}
 }));
 // Detects explicit white/near-white backgrounds, but cannot detect removal of the
 // theme.js inline dark canvas write when the early sample is transparent. True

@@ -114,6 +114,7 @@ func (a *App) handleWebPlanRenewal(w http.ResponseWriter, r *http.Request, actio
 		writeJSON(w, http.StatusOK, preview)
 		return
 	}
+	now := a.now()
 	var result storage.PlanRenewalResult
 	if action == "apply" {
 		var q webPlanRenewalApplyRequest
@@ -121,14 +122,14 @@ func (a *App) handleWebPlanRenewal(w http.ResponseWriter, r *http.Request, actio
 			writeJobError(w, http.StatusBadRequest, "invalid_request", "renewal confirmation requires all fields and both warning flags")
 			return
 		}
-		result, err = a.store.ApplyPlanRenewal(r.Context(), id, storage.PlanRenewalApply{RequestID: q.RequestID, ExpectedRevision: q.ExpectedRevision, Field: q.Field, FromDate: q.FromDate, ToDate: q.ToDate, NewOverdue: *q.NewOverdue, DueToday: *q.DueToday}, a.now())
+		result, err = a.store.ApplyPlanRenewal(r.Context(), id, storage.PlanRenewalApply{RequestID: q.RequestID, ExpectedRevision: q.ExpectedRevision, Field: q.Field, FromDate: q.FromDate, ToDate: q.ToDate, NewOverdue: *q.NewOverdue, DueToday: *q.DueToday}, now)
 	} else {
 		var q storage.PlanRenewalUndo
 		if err := decodePlanRenewalJSON(body, &q); err != nil || !validLowerHexID(q.RequestID, 32) || !validLowerHexID(q.ExpectedRevision, 32) || !validLowerHexID(q.OperationID, 32) {
 			writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid renewal undo")
 			return
 		}
-		result, err = a.store.UndoPlanRenewal(r.Context(), id, q, a.now())
+		result, err = a.store.UndoPlanRenewal(r.Context(), id, q, now)
 	}
 	if err != nil {
 		a.writePlanRenewalError(w, id, err)
@@ -141,7 +142,10 @@ func (a *App) handleWebPlanRenewal(w http.ResponseWriter, r *http.Request, actio
 			a.logger.Error("publish committed plan renewal", "agent_id", id, "error", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, struct {
+		storage.PlanRenewalResult
+		Renewal dashboardRenewal `json:"renewal"`
+	}{PlanRenewalResult: result, Renewal: renewalSummary(result.CurrentPlan, now)})
 }
 func (a *App) handleWebPlanRenewalMethod(w http.ResponseWriter, r *http.Request, action string) {
 	if !validPlanRenewalPath(r, action) {

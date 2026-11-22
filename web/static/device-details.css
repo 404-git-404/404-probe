@@ -99,3 +99,8 @@ html { scrollbar-gutter: stable; }
 .details-upgrade-failure{display:block;overflow-wrap:anywhere}
 .details-fact[hidden]{display:none}
 .details-renewal-url{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.device-details .details-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
+.device-details .details-machine{justify-content:flex-end;text-align:right;min-width:0}
+.device-details .details-title-line{justify-content:flex-end}
+.device-details .details-identity{justify-items:end}

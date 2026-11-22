@@ -13,18 +13,57 @@ test('native DOM panel health follows the deduplicated union when category count
 async function choose(page,key,label,value=true){const d=page.locator('#dashboard-'+key);if(key!=='tags'&&!await d.evaluate(n=>n.open))await d.locator('summary').click();const option=d.locator('.dashboard-option').filter({hasText:label});if(['groups','tags'].includes(key)){if((await option.getAttribute('aria-pressed')==='true')!==value)await option.click();}else await option.locator('input').setChecked(value);await settle(page);}
 async function assignment(page){await card(page,ID(0)).locator('.detail-toggle').click();await page.getByRole('tab',{name:'管理',exact:true}).click();await page.locator('#device-details').getByRole('button',{name:'分组和标签…'}).click();await page.waitForFunction(()=>document.querySelector('#organization-group')?.options.length>1);}
 test('native DOM 0/1/3/28/200: one dashboard batch, no initial detail/upgrade, panel and no overflow',async()=>{for(const n of [0,1,3,28,200])await ui(n,async(page,f)=>{const initial=f.requests.filter(r=>r.path==='/api/v1/web/dashboard').length;assert(initial>=1&&initial<=2,'initial snapshot plus optional first-open gap repair');assert.equal(f.requests.some(r=>/^\/api\/v1\/web\/agents\/[a-f0-9]{32}(?:\/upgrade)?$/.test(r.path)),false);assert.equal(await page.evaluate(()=>detailViews.size),0);assert.equal(await page.locator('#dashboard-panel').count(),1);assert.equal(await page.locator('#dashboard-sticky,#dashboard-expand').count(),0);await page.setViewportSize({width:390,height:844});await settle(page);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),JSON.stringify({n,...await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,offenders:[...document.querySelectorAll('body *')].filter(e=>!e.closest('dialog')&&e.getBoundingClientRect().right>innerWidth+1).slice(0,12).map(e=>[e.tagName,e.id,e.className,e.getBoundingClientRect().right])}))}));});});
-test('native DOM combined multi-select and preference persistence keep total overview independent',async()=>ui(28,async(page)=>{
- const before=await page.locator('#overview-online').textContent();await choose(page,'groups','常用');await choose(page,'groups','备用');await choose(page,'tags','GIA');await choose(page,'statuses','在线');assert.match(await page.locator('#dashboard-count').textContent(),/4 \/ 28/);assert.equal(await page.locator('#overview-online').textContent(),before);
- await page.reload();await page.waitForFunction(()=>dashboardData.ready());await settle(page);assert.match(await page.locator('#dashboard-count').textContent(),/4 \/ 28/);assert.equal(await page.locator('#dashboard-tags .dashboard-option[aria-pressed=true]').count(),1);await page.locator('#dashboard-clear').click();await settle(page);assert.match(await page.locator('#dashboard-count').textContent(),/28 \/ 28/);
+test('native DOM segmented selection is single-choice and persists with independent tags and status',async()=>ui(28,async(page)=>{
+ const before=await page.locator('#overview-online').textContent();
+ await page.locator('#dashboard-all-groups').click();
+ await settle(page);
+ assert.equal(await page.locator('.dashboard-group-header:visible').count(),3);
+ await choose(page,'groups','常用');
+ await choose(page,'groups','备用');
+ await choose(page,'tags','GIA');
+ await choose(page,'statuses','在线');
+ assert.equal(await page.locator('.dashboard-group-header:visible').count(),1);
+ assert.match(await page.locator('.dashboard-group-header:visible').textContent(),/备用/);
+ const count=await page.locator('#dashboard-count').textContent();
+ assert.equal(await page.locator('#overview-online').textContent(),before);
+ await page.reload();
+ await page.waitForFunction(()=>dashboardData.ready()&&!renderFrame);
+ assert.equal(await page.locator('#dashboard-count').textContent(),count);
+ await choose(page,'groups','备用',false);
+ assert.equal(await page.locator('.dashboard-group-header:visible').count(),0);
 }));
-test('native DOM deleted IDs are cleaned; active filters always expose clear control',async()=>ui(1,async(page)=>{
- assert.deepEqual(await page.evaluate(()=>dashboardUI.preferences.value.groups),[]);assert.deepEqual(await page.evaluate(()=>dashboardUI.preferences.value.tags),[]);await page.locator('#dashboard-search').fill('no-match');await settle(page);assert.equal(await page.locator('#dashboard-clear').isVisible(),true);await page.locator('#dashboard-clear').click();await settle(page);assert.equal(await page.locator('.agent-card').count(),1);
+test('native DOM drops missing catalog IDs and supports clearing the search input',async()=>ui(1,async(page)=>{
+ assert.deepEqual(await page.evaluate(()=>dashboardUI.preferences.value.groups),[]);
+ assert.deepEqual(await page.evaluate(()=>dashboardUI.preferences.value.tags),[]);
+ await page.locator('#dashboard-search').fill('no-match');
+ await settle(page);
+ assert.equal(await page.locator('.agent-card').count(),0);
+ await page.locator('#dashboard-search').clear();
+ await settle(page);
+ assert.equal(await page.locator('.agent-card').count(),1);
 },{preferences:{version:1,groups:['f'.repeat(32)],tags:['e'.repeat(32)],collapsed:['f'.repeat(32)]}}));
-test('native DOM the four overview actions apply removable filters or open accurate expense totals',async()=>ui(28,async(page)=>{
- for(const [id,count]of [['health',3],['renewal',2],['upgrade',2]]){await page.locator('#overview-'+id).click();await settle(page);assert.match(await page.locator('#dashboard-count').textContent(),new RegExp(count+' / 28'));assert.equal(await page.locator('.dashboard-chip').count(),1);await page.locator('#dashboard-clear').click();await settle(page);}
- await page.locator('#overview-expense').click();await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));assert.equal(await page.locator('#expense-monthly').textContent(),'$86.39');assert.equal(await page.locator('#expense-yearly').textContent(),'$1,036.72');assert.match(await page.locator('.expense-table tbody tr').filter({hasText:'CNY'}).textContent(),/\$29\.58/);await page.keyboard.press('Escape');assert.equal(await page.locator('#expense-dialog').isVisible(),false);
+test('native DOM overview filters are exclusive, reversible, composable and keep expense totals',async()=>ui(28,async(page)=>{
+ for(const [id,count] of [['health',3],['renewal',2],['upgrade',2]]){
+  await page.locator('#overview-'+id).click();
+  await settle(page);
+  assert.equal(await page.locator('#dashboard-count').textContent(),count+' / 28 台');
+  assert.equal(await page.locator('.panel-overview button[aria-pressed=true]:not([data-period])').count(),1);
+ }
+ await choose(page,'tags','GIA');
+ assert.equal(await page.locator('#dashboard-count').textContent(),'2 / 28 台');
+ await page.locator('#overview-upgrade').click();
+ await settle(page);
+ assert.equal(await page.locator('#dashboard-count').textContent(),'7 / 28 台');
+ await page.locator('#overview-expense').click();
+ await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));
+ assert.equal(await page.locator('#expense-monthly').textContent(),'$86.39');
+ assert.equal(await page.locator('#expense-yearly').textContent(),'$1,036.72');
+ assert.match(await page.locator('.expense-table tbody tr').filter({hasText:'CNY'}).textContent(),/\$29\.58/);
+ await page.keyboard.press('Escape');
+ assert.equal(await page.locator('#expense-dialog').isVisible(),false);
 }));
 test('native DOM collapsed groups unmount cards and issue no hidden card reads; detail survives filtering',async()=>ui(28,async(page,f)=>{
+ await page.locator('#dashboard-all-groups').click();await settle(page);
  await page.locator('.dashboard-group-header').filter({hasText:'常用'}).click();await settle(page);assert.equal(await card(page,ID(0)).count(),0);f.requests.length=0;f.publish('agent',{agent_id:ID(0),state:{cpu_percent:55}});await page.waitForTimeout(250);assert.equal(f.requests.some(r=>r.path.startsWith('/api/v1/web/agents/'+ID(0))),false);await page.locator('.dashboard-group-header').filter({hasText:'常用'}).click();await settle(page);assert.equal(await card(page,ID(0)).locator('.tc7').count(),1,'traffic chart survives group dormancy');assert.equal(await card(page,ID(0)).locator('.latency-mini').count(),1,'latency chart survives group dormancy');await card(page,ID(0)).locator('.detail-toggle').click();await settle(page);await page.evaluate(()=>{dashboardUI.preferences.value.search='no-match';render();});await settle(page);assert.equal(await page.locator('#device-details').isVisible(),true);assert.equal(await page.locator('.agent-card').count(),0);
 }));
 test('native DOM sticky toolbar stays visible and keeps its one search input focused',async()=>ui(28,async(page)=>{
@@ -46,7 +85,7 @@ test('native DOM realtime dirty IDs coalesce per frame; reconnect reloads the fu
  f.requests.length=0;f.state.items[0].name='同步后的名字';for(let i=0;i<20;i++)f.publish('dashboard',{event:'dashboard',kind:'name',agent_id:ID(i%2),revoked:false});await page.waitForFunction(()=>document.querySelector('[data-agent-id="00000000000000000000000000000001"]').textContent.includes('同步后的名字'));await settle(page);const partial=f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&r.query.includes('ids='));assert.equal(partial.length,1);assert.deepEqual(new URLSearchParams(partial[0].query).get('ids').split(',').sort(),[ID(0),ID(1)]);assert.equal(f.requests.some(r=>/\/agents\/[a-f0-9]{32}$/.test(r.path)),false);
  f.state.items[0].name='重连后的名字';f.disconnect();await page.waitForFunction(()=>document.querySelector('[data-agent-id="00000000000000000000000000000001"]').textContent.includes('重连后的名字'),null,{timeout:10000});assert.equal(f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&!r.query).length,1);
 }));
-test('native DOM all normal and all offline never confuse complete and insufficient health',async()=>{for(const offline of [false,true])await ui(28,async page=>{assert.match(await page.locator('#overview-health').textContent(),offline?/暂无已知异常/:/全部正常/);if(offline){assert.match(await page.locator('#overview-offline').textContent(),/离线 28/);assert.match(await page.locator('#overview-unknown').textContent(),/28/);}},{prepare(f){for(const a of f.state.items){a.online=!offline;a.disabled_at=null;a.resources={...a.resources,known:true,stale:offline,cpu_percent:1,ram_percent:20,disk_percent:20};a.network={...a.network,active:false,known:!offline};}}});});
+test('native DOM all normal and all offline never confuse complete and insufficient health',async()=>{for(const offline of [false,true])await ui(28,async page=>{assert.match(await page.locator('#overview-health').textContent(),offline?/暂无已知异常/:/全部正常/);if(offline){assert.match(await page.locator('#overview-offline').textContent(),/离线 28/);assert(await page.locator('#overview-health').isDisabled());}},{prepare(f){for(const a of f.state.items){a.online=!offline;a.disabled_at=null;a.resources={...a.resources,known:true,stale:offline,cpu_percent:1,ram_percent:20,disk_percent:20};a.network={...a.network,active:false,known:!offline};}}});});
 test('native DOM mobile twenty tags, long names/IPv6 and dialog focus stay bounded',async()=>ui(28,async(page,f)=>{
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.evaluate(id=>organizationDialogs.openAssignment(id),ID(0));await page.waitForFunction(()=>document.querySelectorAll('.organization-selected button').length===20);await page.locator('#organization-tag-input').fill('第二十一个');await page.keyboard.press('Enter');assert.match(await page.locator('#organization-dialog .dashboard-dialog-error').textContent(),/最多添加 20/);assert(await page.locator('#organization-dialog').evaluate(n=>n.scrollWidth<=n.clientWidth));await page.locator('#organization-dialog .shell-actions button').first().click();
  await page.locator('#panel-mobile-open').click();await page.locator('#overview-expense').click();await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));const dialog=page.locator('#expense-dialog');assert(await dialog.evaluate(n=>n.scrollWidth<=n.clientWidth));await dialog.locator('.shell-actions button').first().focus();await page.keyboard.press('Shift+Tab');assert(await dialog.evaluate(n=>n.contains(document.activeElement)));await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('#expense-dialog .shell-actions button')),true);await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'panel-mobile-open');
@@ -54,10 +93,10 @@ test('native DOM mobile twenty tags, long names/IPv6 and dialog focus stay bound
 
 test('native DOM segmented expense period, accessible explanations, missing prices and neutral renewal',async()=>ui(28,async(page,f)=>{
  await page.locator('#overview-period [data-period="yearly"]').click();assert.equal(await page.locator('#overview-period [data-period="yearly"]').getAttribute('aria-pressed'),'true');assert.match(await page.locator('#overview-money').textContent(),/年/);
- f.state.items.forEach(a=>{a.plan=null;a.renewal={type:'missing'};});await page.evaluate(()=>dashboardData.reload());await settle(page);assert.equal(await page.locator('#overview-money').textContent(),'—');assert.match(await page.locator('#overview-money-note').textContent(),/未设置价格 28 台/);assert.equal(await page.locator('#overview-renewal').evaluate(n=>n.classList.contains('attention')),false);
+ f.state.items.forEach(a=>{a.plan=null;a.renewal={type:'missing'};});await page.evaluate(()=>dashboardData.reload());await settle(page);assert.equal(await page.locator('#overview-money').textContent(),'—');assert(await page.locator('#overview-renewal').isDisabled());
 }));
 test('native DOM panel filters stay independent; dialogs read only directory',async()=>ui(28,async(page,f)=>{
- const group=page.locator('#dashboard-groups');await group.locator('.dashboard-option').first().click();await settle(page);assert.equal(await group.evaluate(n=>n.open),true);await page.locator('#dashboard-clear').click();
+ const group=page.locator('#dashboard-groups');await group.locator('.dashboard-option').first().click();await settle(page);assert.equal(await group.evaluate(n=>n.open),true);await page.locator('#dashboard-all').click();
  f.requests.length=0;await page.locator('#overview-expense').click();await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));assert(f.requests.some(r=>r.path==='/api/v1/web/organization/catalog'));assert(!f.requests.some(r=>r.path==='/api/v1/web/dashboard'));assert.equal(await page.locator('.expense-devices summary').textContent(),'按设备查看');assert.match(await page.locator('.expense-table tbody tr').filter({hasText:'CNY'}).textContent(),/CNY [0-9]/);
 }));
 test('native DOM telemetry updates runtime immediately without immediate summary read and only dirties its card',async()=>ui(200,async(page,f)=>{

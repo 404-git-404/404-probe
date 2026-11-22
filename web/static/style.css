@@ -901,3 +901,11 @@ body #upgrade-agent-dialog.dialog-shell>.upgrade-versions{padding:0;margin:18px 
 
 /* Native popup surfaces must be opaque, including selects inside dialogs. */
 select option,select optgroup{background-color:var(--color-card);color:var(--color-text)}
+
+/* Keep device identity in the trailing side of each dialog heading. */
+.shell-head>div:has(>.dialog-device-name){display:flex;flex:1;align-items:baseline;justify-content:space-between;gap:1rem;min-width:0}
+body dialog .shell-head .dialog-device-name{min-width:0;margin:0;text-align:right}
+.shell-head .dialog-device-name:empty{display:none}
+.nq-history-device{display:flex;align-items:baseline;gap:.7rem;min-width:0;text-align:right}
+.nq-history-device .nq-machine{min-width:0;margin:0}
+.nq-history-device button{flex:none}

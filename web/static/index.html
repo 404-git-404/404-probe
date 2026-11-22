@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="/plan-renewal.css">
   <link rel="stylesheet" href="/overview.css">
   <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/settings.css">
   <link rel="stylesheet" href="/dashboard-dialogs.css">
   <link rel="stylesheet" href="/banner.css">
 </head>
@@ -22,41 +23,131 @@
   <div class="dashboard-app">
   <aside id="dashboard-panel" class="dashboard-panel" aria-label="控制面板">
     <div class="panel-brand"><h1>404-probe</h1><small id="server-version">读取中</small><button id="panel-collapse" type="button" aria-label="收起面板" title="收起面板">«</button></div>
-    <nav class="panel-views" aria-label="设备视图">
-      <button id="panel-view" data-view="cards" class="panel-view" type="button" aria-label="设备卡片" title="设备卡片" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="8" height="11" rx="2"/><rect x="14" y="3" width="7" height="6" rx="2"/><rect x="3" y="17" width="8" height="4" rx="1"/><rect x="14" y="12" width="7" height="9" rx="2"/></svg><span>设备卡片</span></button>
-      <button data-view="list" class="panel-view" type="button" aria-label="设备列表" title="设备列表" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 5h13M8 12h13M8 19h13"/><circle cx="3" cy="5" r="1"/><circle cx="3" cy="12" r="1"/><circle cx="3" cy="19" r="1"/></svg><span>设备列表</span></button>
-      <button data-view="network" class="panel-view" type="button" aria-label="网络状态" title="网络状态" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M1 12h5l3-8 5 16 3-8h6"/></svg><span>网络状态</span></button>
-    </nav>
-    <div class="panel-mini"><span id="panel-online" title="在线设备" aria-label="在线设备"></span><button id="panel-health" type="button" title="需要关注" aria-label="需要关注"></button><button id="panel-renewal" type="button" title="7 天内续费" aria-label="7 天内续费"></button></div>
-    <div class="panel-scroll">
-    <section class="panel-overview" aria-label="总览"><small id="overview-scope">正在读取</small>
-      <section class="overview-groups" aria-label="全部设备总览">
-        <section class="overview-group"><h2>设备 <button type="button" data-overview-info aria-label="设备说明" aria-controls="overview-info-0" aria-expanded="false">ⓘ</button><span id="overview-info-0" class="overview-info" role="note" hidden>统计全部未撤销设备；待升级只比较正式版本，不代表现在可以升级。</span></h2><div class="overview-device"><strong id="overview-online">等待读取</strong><span>在线</span></div><small><span id="overview-offline"></span> <button id="overview-upgrade" class="overview-link" type="button">待升级 0 台</button></small><small id="overview-versions"></small></section>
-        <section class="overview-group"><h2>健康 <button type="button" data-overview-info aria-label="健康说明" aria-controls="overview-info-1" aria-expanded="false">ⓘ</button><span id="overview-info-1" class="overview-info" role="note" hidden>统计磁盘异常、网络异常、资源吃紧和流量将满，同一台设备只算一次；暂无最新数据时单独提示。</span></h2><button id="overview-health" class="overview-stat" type="button">等待读取</button><small id="overview-health-note"></small><small id="overview-unknown"></small></section>
-        <section class="overview-group"><h2>续费与费用 <button type="button" data-overview-info aria-label="续费与费用说明" aria-controls="overview-info-2" aria-expanded="false">ⓘ</button><span id="overview-info-2" class="overview-info" role="note" hidden>0–7 天含今天属于即将续费；已到期单独统计。支出按套餐价格与手动汇率估算，不执行付款。</span></h2><div class="overview-renewal"><button id="overview-renewal" class="overview-stat" type="button">等待读取</button><span id="overview-overdue"></span></div><small id="overview-nearest"></small><div class="overview-expense">支出 <strong id="overview-money">—</strong><small id="overview-money-note"></small><div id="overview-period" class="overview-period" role="group" aria-label="支出周期"><button type="button" data-period="monthly" aria-pressed="true">月</button><button type="button" data-period="yearly" aria-pressed="false">年</button></div><button id="overview-expense" class="overview-link" type="button">明细</button></div></section>
-      </section>
-
-    </section>
-    <section id="panel-attention" class="panel-section"><h2>需要关注</h2><div id="dashboard-quick" class="dashboard-quick"></div></section>
-    <section id="dashboard-filters" aria-label="设备筛选">
-      <details id="dashboard-groups" class="panel-section" open><summary>自定义分组</summary><div class="dashboard-menu"><button id="dashboard-all" type="button">全部设备 <small></small></button><div class="dashboard-options"></div></div></details>
-      <button id="manage-groups" class="dashboard-manage" type="button">管理分组…</button>
-      <details id="dashboard-countries" class="panel-section" open><summary>国家/地区</summary><div class="dashboard-options"></div></details>
-      <details id="dashboard-statuses" class="panel-section" open><summary>状态</summary><div class="dashboard-options"></div></details>
-      <details id="dashboard-youtubeRegions" class="panel-section" open><summary>YouTube 无广告地区</summary><div class="dashboard-options"></div></details>
-    </section>
-    <nav class="panel-links" aria-label="其他页面"><a href="/jobs.html">Probe Jobs ↗</a><a href="/schedules.html">Schedules ↗</a><a href="/history.html">历史 ↗</a></nav>
+    <div id="dashboard-search-slot" class="panel-search">
+      <button id="panel-search-open" type="button" aria-label="搜索设备" title="搜索设备 (Ctrl K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
+      <label class="sr-only" for="dashboard-search">搜索设备</label><input id="dashboard-search" type="search" placeholder="搜索名称、主机名、地址…" autocomplete="off" aria-keyshortcuts="Control+K"><kbd>Ctrl K</kbd>
     </div>
+    <nav class="panel-scroll" aria-label="控制面板导航">
+      <details id="dashboard-devices" class="panel-drawer" open>
+        <summary class="panel-row" aria-label="设备"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="8" height="11" rx="2"/><rect x="14" y="3" width="7" height="6" rx="2"/><rect x="3" y="17" width="8" height="4" rx="1"/><rect x="14" y="12" width="7" height="9" rx="2"/></svg><span>设备</span></summary>
+        <div class="panel-items">
+          <button id="dashboard-all" class="panel-item" type="button" aria-pressed="true">全部设备 <small></small></button>
+          <details id="dashboard-groups">
+            <summary class="panel-item">自定义分组 <span class="panel-summary"></span></summary>
+            <div class="panel-items">
+              <button id="dashboard-all-groups" class="panel-item" type="button" aria-pressed="false">全部分组 <small></small></button>
+              <div class="dashboard-options"></div>
+              <button id="manage-groups" class="panel-item dashboard-manage" type="button">管理分组…</button>
+            </div>
+          </details>
+          <details id="dashboard-countries">
+            <summary class="panel-item">国家/地区 <span class="panel-summary"></span></summary>
+            <div class="panel-items">
+              <div class="dashboard-options"></div>
+              <hr>
+              <label class="panel-item dashboard-option"><input id="dashboard-youtube-free" type="checkbox"><i class="panel-youtube-dot" aria-hidden="true"></i><span>YouTube 无广告地区</span><small id="dashboard-youtube-count"></small></label>
+            </div>
+          </details>
+          <details id="dashboard-statuses">
+            <summary class="panel-item">状态 <span class="panel-summary"></span></summary>
+            <div class="panel-items dashboard-options"></div>
+          </details>
+        </div>
+      </details>
+      <button id="dashboard-network" class="panel-row" type="button" aria-label="网络状态" aria-pressed="false" title="网络状态"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M1 12h5l3-8 5 16 3-8h6"/></svg><span>网络状态</span></button>
+      <hr>
+      <details id="dashboard-settings" class="panel-drawer">
+        <summary class="panel-row" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 2-.7 2.8-2 .9-2.5-1.4-2.5 4.3 2 2.1v2.6l-2 2.1 2.5 4.3 2.5-1.4 2 .9L10 22h4l.7-2.8 2-.9 2.5 1.4 2.5-4.3-2-2.1v-2.6l2-2.1-2.5-4.3-2.5 1.4-2-.9L14 2z"/></svg><span>设置</span></summary>
+        <div class="panel-items">
+          <button class="panel-item" data-settings="update" type="button">检查新版本</button>
+          <button class="panel-item" data-settings="password" type="button">修改密码</button>
+          <button class="panel-item" data-settings="regions" type="button">YouTube 无广告地区名单</button>
+          <div class="panel-item panel-appearance">外观 <span class="panel-theme" role="group" aria-label="外观"><button type="button" data-panel-theme="dark">深色</button><button type="button" data-panel-theme="light">浅色</button></span></div>
+          <button class="panel-item" data-settings="about" type="button">关于</button>
+          <hr>
+          <button id="logout" class="panel-item" type="button" disabled>退出登录</button>
+        </div>
+      </details>
+    </nav>
     <div class="panel-bottom">
-      <a id="panel-update" hidden target="_blank" rel="noopener noreferrer" aria-label="新版本说明" title="新版本说明"><b>⬆</b><span></span></a>
-      <div class="panel-actions"><button id="add-agent" class="primary-action" type="button" disabled aria-label="添加 Agent" title="添加 Agent">+ <span>添加 Agent</span></button><button class="theme-toggle" data-theme-toggle type="button" title="当前：浅色" aria-label="当前：浅色">☀</button><a id="panel-settings" href="/settings.html" aria-label="设置" title="设置">⚙</a><button id="logout" type="button" disabled aria-label="退出" title="退出">⏻</button></div>
-      <span id="stream" class="stream" role="status">正在连接</span>
+      <section class="panel-overview" aria-label="总览">
+        <small id="overview-scope">正在读取</small>
+        <div class="overview-device"><strong id="overview-online">—</strong><span>在线</span></div>
+        <small><span id="overview-offline"></span> <button id="overview-upgrade" class="overview-link" type="button" disabled>待升级 0 台</button></small>
+        <button id="overview-health" class="overview-row panel-item" type="button" disabled><span class="overview-stat" id="overview-health-stat">等待读取</span></button>
+        <button id="overview-renewal" class="overview-row panel-item" type="button" disabled><span class="overview-stat" id="overview-renewal-stat"><strong>—</strong> 台 7 天内续费</span></button>
+        <div class="overview-expense">支出 <strong id="overview-money">—</strong><div id="overview-period" class="overview-period" role="group" aria-label="支出周期"><button type="button" data-period="monthly" aria-pressed="true">月</button><button type="button" data-period="yearly" aria-pressed="false">年</button></div><button id="overview-expense" class="overview-link" type="button">明细</button></div>
+      </section>
+      <div class="panel-status"><a id="panel-update" hidden target="_blank" rel="noopener noreferrer"><span></span></a><span id="stream" class="stream" role="status">正在连接</span></div>
     </div>
   </aside>
   <main id="dashboard-main">
-    <div id="dashboard-toolbar" class="dashboard-toolbar"><button id="panel-mobile-open" type="button" aria-label="打开控制面板" title="控制面板">☰</button><div id="dashboard-search-slot"><label class="sr-only" for="dashboard-search">搜索设备</label><input id="dashboard-search" type="search" placeholder="搜索名称、主机名、地址…" autocomplete="off"></div><div id="dashboard-chips" class="dashboard-chips"></div><button id="dashboard-clear" type="button" hidden>清空</button><span id="dashboard-count"></span><label class="sr-only" for="dashboard-sort">排序</label><select id="dashboard-sort"><option value="group">排序：分组</option><option value="name">排序：名称</option><option value="renewal">排序：续费</option></select><span id="phone-view-note" hidden>手机上以卡片显示</span><div id="dashboard-tags" class="dashboard-tagbar" aria-label="标签筛选"><span data-filter-label>标签 · 匹配任一</span><div class="dashboard-options"></div><details id="dashboard-tags-more"><summary aria-label="更多标签">+0</summary><div class="dashboard-tag-overflow"></div></details><button id="dashboard-tags-clear" type="button" hidden>清空</button></div></div>
+    <div class="dashboard-top">
+    <button id="panel-mobile-open" type="button" aria-label="打开控制面板" title="控制面板">☰</button>
+    <div id="dashboard-toolbar" class="dashboard-toolbar">
+      <div id="dashboard-tags" class="dashboard-tagbar" aria-label="标签筛选">
+        <button id="manage-tags" type="button">管理标签</button><button id="dashboard-tags-clear" type="button" aria-pressed="true">全部</button>
+        <div class="dashboard-options"></div>
+        <details id="dashboard-tags-more" hidden><summary aria-label="更多标签">+0</summary><div class="dashboard-tag-overflow"></div></details>
+      </div>
+      <div class="dashboard-toolbar-actions">
+        <span id="dashboard-count"></span>
+        <label class="sr-only" for="dashboard-sort">排序</label><select id="dashboard-sort"><option value="name">排序：名称</option></select><button id="dashboard-direction" type="button"></button>
+        <div class="dashboard-views" role="group" aria-label="设备视图"><button id="panel-view" data-view="cards" type="button" aria-pressed="true">卡片</button><button data-view="list" type="button" aria-pressed="false">列表</button></div>
+        <button id="add-agent" class="primary-action" type="button" disabled aria-label="添加 Agent">＋ 添加 Agent</button>
+      </div>
+    </div>
+    </div>
+    <p id="phone-view-note" hidden>手机上以卡片显示</p>
     <section id="network-placeholder" hidden><h2>网络状态</h2><p>这个视图将在后续版本提供</p></section>
-    <div id="empty" class="empty">尚无活动 Agent</div><section id="agents" class="dashboard-groups" aria-live="polite"></section></main>
+    <div id="dashboard-settings-content" class="settings-content" hidden>
+      <section id="update" hidden aria-labelledby="update-title">
+        <h2 id="update-title">检查新版本</h2>
+        <label class="settings-check"><input id="update-check-enabled" type="checkbox" disabled> 每 12 小时访问一次 GitHub，看看有没有新版本</label>
+        <p class="settings-note">只读取版本号，不上传任何信息；关闭后不再访问。<span id="update-result"></span> <span id="update-saved" class="settings-good" role="status" hidden>✓ 已保存</span></p>
+        <p id="update-check-error" class="settings-error" role="alert"></p>
+      </section>
+      <section id="password" hidden aria-labelledby="password-title">
+        <h2 id="password-title">修改密码</h2>
+        <p>改好后，所有浏览器（包括这个）都会退出，要用新密码重新登录。</p>
+        <p id="pw-banner" class="settings-banner" role="status" hidden></p>
+        <form id="password-form" method="post" action="/api/v1/web/settings/password">
+          <label class="sr-only" for="pw-username">用户名</label><input class="sr-only" id="pw-username" name="username" type="text" autocomplete="username" value="404-probe" tabindex="-1">
+          <div class="settings-password-fields">
+            <label for="pw-current">当前密码</label><input id="pw-current" name="current_password" type="password" autocomplete="current-password" required aria-describedby="pw-current-msg"><span id="pw-current-msg" class="settings-note" aria-live="polite"></span>
+            <label for="pw-new">新密码</label><input id="pw-new" name="new_password" type="password" autocomplete="new-password" required aria-describedby="pw-new-msg"><span id="pw-new-msg" class="settings-note" aria-live="polite">至少 12 个字符</span>
+            <label for="pw-confirm">再输一次新密码</label><input id="pw-confirm" name="confirm_password" type="password" autocomplete="new-password" required aria-describedby="pw-confirm-msg"><span id="pw-confirm-msg" class="settings-note" aria-live="polite"></span>
+            <label class="settings-check settings-show"><input id="pw-show" type="checkbox"> 显示密码</label>
+          </div>
+          <div class="settings-actions"><button id="pw-save" class="primary-action" type="submit" disabled>修改密码</button></div>
+        </form>
+        <p class="settings-note">忘记密码时：在 Server 上以 root 运行 <code>404-probe-install web-password reset</code>，所有浏览器都会退出。</p>
+      </section>
+      <section id="regions" hidden aria-labelledby="regions-title">
+        <h2 id="regions-title">YouTube 无广告地区</h2>
+        <p>名单里的地区，卡片和列表上的 YouTube 地区显示为红色，左侧“YouTube 无广告地区”筛选也按这份名单。只能从下面的列表里选，不能手填。</p>
+        <p>已选 <strong id="rg-count">—</strong> 个 <span id="rg-dirty" class="settings-dirty" hidden>· 有未保存的修改</span></p>
+        <div id="rg-chips" class="settings-chips" aria-label="已选地区"></div>
+        <label class="sr-only" for="rg-search">搜索国家/地区</label>
+        <input id="rg-search" type="search" placeholder="搜索国家/地区名称或代码，例如 澳门、MO" disabled>
+        <div id="rg-list" class="settings-region-list" role="group" aria-label="国家/地区"></div>
+        <div class="settings-actions"><button id="rg-reset" type="button" disabled>恢复默认 15 个</button><span class="settings-spacer"></span><button id="rg-undo" type="button" disabled>撤销修改</button><button id="rg-save" class="primary-action" type="button" disabled>保存</button></div>
+        <p id="rg-status" role="status" class="settings-note"></p>
+      </section>
+      <section id="about" hidden aria-labelledby="about-title">
+        <h2 id="about-title">关于</h2>
+        <dl class="settings-about">
+          <dt>版本</dt><dd id="ab-version">—</dd>
+          <dt>提交</dt><dd><code id="ab-commit">—</code></dd>
+          <dt>数据库版本</dt><dd id="ab-schema">—</dd>
+          <dt>项目主页</dt><dd><a href="https://github.com/404-git-404/404-probe" target="_blank" rel="noopener noreferrer">github.com/404-git-404/404-probe ↗</a></dd>
+          <dt>本版说明</dt><dd><span id="ab-notes-missing">—</span><a id="ab-notes" target="_blank" rel="noopener noreferrer" hidden></a></dd>
+        </dl>
+      </section>
+    </div>
+    <div id="empty" class="empty">尚无活动 Agent</div>
+    <section id="agents" class="dashboard-groups" aria-live="polite"></section>
+  </main>
   </div>
   <dialog id="add-agent-dialog" class="agent-dialog" aria-labelledby="add-agent-title">
     <ol class="enrollment-steps" aria-label="安装步骤"><li data-step="1" aria-current="step"><span class="step-circle">1</span>选择方式</li><li data-step="2"><span class="step-circle">2</span>运行命令</li><li data-step="3"><span class="step-circle">3</span>等待接入</li></ol>
@@ -132,7 +223,7 @@
   </dialog>
   <dialog id="plan-dialog" class="plan-drawer plan-editor" aria-labelledby="plan-title">
     <form id="plan-form" autocomplete="off">
-      <div class="drawer-head shell-head"><div><h2 id="plan-title">套餐与续费</h2><p id="plan-agent-name"></p></div></div>
+      <div class="drawer-head shell-head"><div><h2 id="plan-title">编辑套餐</h2><p id="plan-agent-name" class="dialog-device-name"></p></div></div>
       <div class="plan-editor-body">
         <section id="plan-information">
           <label>价格</label><div class="plan-price-row"><div class="plan-currency-field"><select id="plan-currency"><option value="USD">USD $</option><option value="CNY">CNY ¥</option><option value="EUR">EUR €</option><option value="HKD">HKD $</option><option value="JPY">JPY ¥</option><option value="GBP">GBP £</option><option value="__custom__">其他…</option></select><input id="plan-currency-custom" maxlength="3" pattern="[A-Za-z]{3}" aria-label="其他币种代码" placeholder="如 AUD" hidden></div><input id="plan-renewal-price" inputmode="decimal" aria-label="续费价格"><select id="plan-renewal-period" aria-label="续费价格周期"><option value="">未设置</option><option value="monthly">每月</option><option value="quarterly">每季</option><option value="semiannual">每半年</option><option value="yearly">每年</option><option value="once">一次性</option></select></div>
@@ -164,7 +255,7 @@
   </dialog>
   <datalist id="timezone-hints"><option value="UTC"><option value="Asia/Shanghai"><option value="Asia/Hong_Kong"><option value="America/Los_Angeles"><option value="Europe/London"></datalist>
   <dialog id="renewal-dialog" class="plan-renewal" aria-labelledby="renewal-title">
-    <div class="drawer-head shell-head"><div><h2 id="renewal-title">续费</h2><p id="renewal-name"></p></div></div>
+    <div class="drawer-head shell-head"><div><h2 id="renewal-title">续费</h2><p id="renewal-name" class="dialog-device-name"></p></div></div>
     <div class="renewal-body">
       <select id="renewal-field" hidden aria-label="登记日期"><option value="renewal_date">下次续费</option><option value="expiry_date">到期日期</option></select>
       <p id="renewal-loading" role="status"></p>
@@ -179,7 +270,7 @@
     <div id="renewal-error" class="renewal-error" role="alert" hidden></div>
     <div class="drawer-actions"><a id="renewal-go" class="renewal-go" target="_blank" rel="noopener noreferrer" hidden>去续费 ↗</a><button id="renewal-dismiss" type="button">取消</button><button id="renewal-confirm" class="primary-action" type="button" disabled>确认已续费</button></div>
   </dialog>
-  <dialog id="panel-mobile-dialog" aria-label="控制面板"><div id="panel-mobile-body"></div><button id="panel-mobile-close" type="button">关闭</button></dialog>
+  <dialog id="panel-mobile-dialog" aria-label="控制面板"><div id="panel-mobile-body"></div></dialog>
   <dialog id="network-quality-history" class="nq-history" aria-labelledby="nq-history-title"></dialog>
   <dialog id="device-details" class="device-details" aria-labelledby="device-details-title"></dialog>
   <script src="/agent-state.js" defer></script>
@@ -213,5 +304,6 @@
   <script src="/app.js" defer></script>
   <script src="/theme-toggle.js" defer></script>
   <script src="/session.js" defer></script>
+  <script src="/settings.js" defer></script>
 </body>
 </html>

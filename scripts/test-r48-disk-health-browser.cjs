@@ -60,7 +60,7 @@ for (const theme of ['dark', 'light']) {
 
       const redraw = () => page.evaluate(async () => {await dashboardData.reload(); await new Promise(requestAnimationFrame);});
       const select = (i, child) => page.locator(`${card(i)} ${child}`);
-      const disk = '.disk-health-badge';
+      const disk = '.dashboard-disk-warning';
       const capture = async (name, figure) => {
         if (!output) return;
         fs.mkdirSync(output, {recursive: true});
@@ -74,23 +74,19 @@ for (const theme of ['dark', 'light']) {
       await redraw();
       await select(0, disk).waitFor();
       assert.match(await select(0, disk).textContent(), /磁盘异常 · 写入失败/);
-      assert.equal(await select(0, '.dashboard-card-tags').evaluate(n => n.firstElementChild.className), 'disk-health-badge');
-      assert.equal(await page.locator(card(0)).evaluate(n => n.classList.contains('disk-health-critical')), true);
-      assert.equal(await select(0, '.c7-ring').nth(2).getAttribute('data-tone'), 'crit');
+      assert.equal(await select(0, disk).evaluate(n => n.closest('[data-module]').dataset.module), 'machine');
+      assert.equal(await select(0, '.c7-ring').nth(2).getAttribute('data-tone'), 'warn');
       assert.equal(await select(0, '.disk-os-failed').isVisible(), true);
       assert.match(await select(1, disk).textContent(), /磁盘曾出错 · \d\d-\d\d \d\d:\d\d/);
-      assert.equal(await page.locator(card(1)).evaluate(n => n.classList.contains('disk-health-critical')), false);
-      assert.notEqual(await select(1, '.c7-ring').nth(2).getAttribute('data-tone'), 'crit');
+      assert.notEqual(await select(1, '.c7-ring').nth(2).getAttribute('data-tone'), 'warn');
       for (const i of [2, 3, 4, 5]) assert.equal(await select(i, disk).isVisible(), false);
       assert.match(await page.locator('#overview-health').textContent(), /1 台需要关注/);
-      assert.match(await page.locator('#overview-health-note').textContent(), /磁盘异常 1/);
-      assert.equal(await page.locator('#dashboard-quick [data-quick]').nth(1).getAttribute('data-quick'), 'disk');
       await capture('01-cards');
 
-      await page.locator('[data-quick=disk]').click();
+      await page.locator('#overview-health').click();
       await page.waitForFunction(() => document.querySelectorAll('.agent-card').length === 1);
       assert.equal(await page.locator(card(0)).isVisible(), true);
-      await page.locator('[data-quick=disk]').click();
+      await page.locator('#overview-health').click();
       await select(1, disk).waitFor();
 
       const details = async (i, expected, name, figure) => {
@@ -126,7 +122,7 @@ for (const theme of ['dark', 'light']) {
       f.publish('agent', {...red, sequence: 20});
       await page.waitForFunction(s => {
         const n = document.querySelector(s);
-        return n?.querySelector('.dashboard-card-tags').children.length === 1;
+        return n?.querySelector('.dashboard-card-tags').hidden && !n.querySelector('.dashboard-disk-warning').hidden;
       }, card(0));
       assert.equal(await page.evaluate(() => r48Card.isConnected && r48Button === r48Card.querySelector('.c7-detail')), true);
       assert.match(await select(0, disk).textContent(), /磁盘异常 · 写入失败/);
@@ -136,16 +132,16 @@ for (const theme of ['dark', 'light']) {
       await page.locator('[data-view=list]').click();
       await page.locator(`${row(0)} .banner-disk-status`).waitFor();
       assert.match(await page.locator(`${row(0)} .banner-disk-status`).textContent(), /异常/);
-      assert.equal(await page.locator(`${row(0)} [data-column=disk] .banner-metric`).getAttribute('data-tone'), 'crit');
+      assert.equal(await page.locator(`${row(0)} [data-column=disk] .banner-metric`).getAttribute('data-tone'), 'warn');
       assert.match(await page.locator(`${row(1)} .banner-disk-status`).textContent(), /曾出错/);
-      assert.notEqual(await page.locator(`${row(1)} [data-column=disk] .banner-metric`).getAttribute('data-tone'), 'crit');
+      assert.notEqual(await page.locator(`${row(1)} [data-column=disk] .banner-metric`).getAttribute('data-tone'), 'warn');
       await capture('02-list');
 
       red.online = false;
       normal.state.host_health.disk.checked_at = now - 180000;
       await redraw();
       assert.equal(await page.locator(`${row(0)} .banner-disk-status`).textContent(), '');
-      assert.match(await page.locator('#overview-health-note').textContent(), /磁盘异常 0/);
+      assert(await page.locator('#overview-health').isDisabled());
       assert.deepEqual(x.errors, []);
     } finally {
       await x.close();

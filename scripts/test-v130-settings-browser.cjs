@@ -37,19 +37,22 @@ test('settings saves region edits explicitly and refreshes an already open dashb
     Object.assign(unknown, {online:false, disabled_at:null, google_status:auto('MO')});
     await panel.evaluate(() => dashboardData.reload());
     await panel.waitForFunction(() => !renderFrame);
-    const options = panel.locator('#dashboard-youtubeRegions .dashboard-option');
-    assert.deepEqual(await options.allTextContents(), ['澳门 MO2','中国 CN1','其他地区1','未识别2']);
-    const mo = options.filter({hasText:'MO'}).locator('input');
-    await mo.check();
-    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '显示 2 / 6 台');
-    assert.match(await panel.locator('#dashboard-chips').textContent(), /YouTube：.*MO/);
+    await panel.locator('#dashboard-countries > summary').click();
+    const youtube = panel.locator('#dashboard-youtube-free');
+    assert.equal(await panel.locator('#dashboard-youtube-count').textContent(),'3');
+    await youtube.check();
+    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '3 / 6 台');
     await panel.reload();
-    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '显示 2 / 6 台');
-    assert.equal(await panel.locator(`.agent-card[data-agent-id="${ID(1)}"] .check-result`).getAttribute('data-region-tone'), 'crit');
+    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '3 / 6 台');
+    assert(await youtube.isChecked());
+    assert.equal(await panel.locator('.agent-card[data-agent-id="'+ID(1)+'"] .check-result').getAttribute('data-region-tone'), 'crit');
 
     const settings = await context.newPage();
-    await settings.goto(f.base + '/settings.html');
+    await settings.goto(f.base + '/settings.html#regions');
     await settings.locator('#rg-search').fill('澳');
+    assert.equal(new URL(settings.url()).hash,'#regions');
+    const ordered = await settings.locator('#rg-chips button').allTextContents();
+    assert.deepEqual(ordered.map(label=>label.split(' ').at(-2)),defaults);
     const check = settings.locator('#rg-list input[value=MO]');
     await check.uncheck();
     assert.equal(await settings.locator('#rg-count').textContent(), '14');
@@ -61,7 +64,9 @@ test('settings saves region edits explicitly and refreshes an already open dashb
     await settings.locator('#rg-save').click();
     await settings.waitForFunction(() => document.querySelector('#rg-status').textContent.includes('已保存'));
     await panel.waitForFunction(() => !dashboardData.catalog().youtube_ad_free_regions.includes('MO') && !renderFrame);
-    assert.equal(await panel.locator('#dashboard-chips').textContent(), '');
+    assert(await youtube.isChecked());
+    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '1 / 6 台');
+    await youtube.uncheck();
     assert.equal(await panel.locator(`.agent-card[data-agent-id="${ID(1)}"] .check-result`).getAttribute('data-region-tone'), 'ok');
     await settings.locator('#rg-reset').click();
     assert(await check.isChecked());
@@ -85,7 +90,11 @@ test('settings password errors, all-session logout, lockout delay and narrow lay
   }});
   try {
     const {page} = session;
-    await page.locator('#panel-settings').click();
+    await page.locator('#dashboard-settings > summary').click();
+    await page.locator('[data-settings=about]').click();
+    await page.waitForFunction(() => document.querySelector('#ab-schema').textContent === '38');
+    await page.locator('[data-settings=password]').click();
+    assert.equal(await page.locator('.settings-content > section:visible').count(),1);
     await page.locator('#pw-show').check();
     assert.equal(await page.locator('#pw-current').getAttribute('type'), 'text');
     const submit = async () => {
@@ -116,7 +125,7 @@ test('settings password errors, all-session logout, lockout delay and narrow lay
     await submit();
     await page.waitForFunction(() => document.querySelector('#pw-banner').textContent.includes('连续输错 5 次'));
     assert.equal(posts.at(-1), 'rotated-csrf');
-    assert.equal(new URL(page.url()).pathname, '/settings.html');
+    assert.equal(new URL(page.url()).hash, '#password');
     await page.clock.fastForward(3000);
     await page.waitForURL('**/login');
     assert.deepEqual(session.errors, []);

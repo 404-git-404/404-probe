@@ -310,7 +310,7 @@
       const shell=root.DialogShell?.attach(d,{title:'从其他设备复制',size:'small',subtitle:p.card.agent.name||'',busy:()=>copying});d.addEventListener('close',()=>{queue.release(p.copyOwner);if(p.copyDialog===d)p.copyDialog=null;d.remove();});if(shell)shell.open(p.copyButton);else d.showModal();choose.focus({preventScroll:true});
     }
     function buildPanel(p) {
-      const n=p.node;p.box=el('section','nq-dialog');const header=el('div','nq-dialog-head shell-head'),titleGroup=el('div'),title=el('h2','','网络质量设置'),subtitle=el('p','nq-device',p.card.agent.name||p.card.agent.state?.hostname||'未命名设备');title.id='nq-dialog-title';subtitle.title=subtitle.textContent;titleGroup.append(title,subtitle);
+      const n=p.node;p.box=el('section','nq-dialog');const header=el('div','nq-dialog-head shell-head'),titleGroup=el('div'),title=el('h2','','网络质量设置'),subtitle=el('p','nq-device dialog-device-name',p.card.agent.name||p.card.agent.state?.hostname||'未命名设备');title.id='nq-dialog-title';subtitle.title=subtitle.textContent;titleGroup.append(title,subtitle);
       header.append(titleGroup);
       p.guardConflict=el('div','nq-status nq-guard');p.guardConflict.setAttribute('role','alertdialog');p.loadLatest=button('载入最新配置',()=>{const latest=p.latest;if(!latest||p.saving||p.toggling)return;p.base=latest.settings_revision;replaceDraft(p,C.draftOf(latest),latest.enabled);p.guard=null;p.errors={};p.message='已载入最新配置，本页草稿已放弃';renderPanel();},'nq-link');p.loadLatest.dataset.nqField='guard-load-latest';const keepDraft=button('继续编辑',()=>{p.dismissed=p.latest?.settings_revision;p.guard=null;p.message='';renderPanel();},'nq-link');keepDraft.dataset.nqField='guard-conflict-cancel';p.guardConflict.append(el('p','',CONFLICT),p.loadLatest,keepDraft);
       p.guardEnable=el('div','nq-status nq-guard');p.guardEnable.setAttribute('role','alertdialog');const enable=button('保存并开启',()=>savePanel({confirmedEnable:true}),'nq-link'),enableCancel=button('取消',()=>{p.guard=null;renderPanel();},'nq-link');enable.dataset.nqField='guard-save-enable';enableCancel.dataset.nqField='guard-cancel';p.guardEnable.append(el('p','','开启后会开始检测这些目标。请仅检测你有权检测的目标。'),enable,enableCancel);
@@ -407,8 +407,10 @@
       if(!history||!historyActive(history))return;const dialog=historyContainer();if(!dialog)return;
       const h=history,focused=dialog.contains(doc.activeElement)?doc.activeElement?.dataset?.nqField:null;destroyPlot();
       const header=el('div','nq-history-head');const title=el('div');const heading=el('h2','',historyHost?'网络质量':'设备详情');heading.id='nq-history-title';
-      title.append(heading,el('p','nq-machine',h.card.agent.name||h.card.agent.state?.hostname||'未命名设备'),el('strong','',`网络质量 · ${C.slotLabel(h.card.config,h.target.slot)} · ${h.target.protocol.toUpperCase()} · ${h.target.family==='ipv4'?'V4':'V6'}`));
-      const close=button('关闭',historyHost?()=>historyHost.close():closeHistory,'nq-close');close.dataset.nqField='history-close';header.append(title,close);
+      const device=el('p','nq-machine dialog-device-name',h.card.agent.name||h.card.agent.state?.hostname||'未命名设备');
+      title.append(heading,el('strong','',`网络质量 · ${C.slotLabel(h.card.config,h.target.slot)} · ${h.target.protocol.toUpperCase()} · ${h.target.family==='ipv4'?'V4':'V6'}`));
+      const close=button('关闭',historyHost?()=>historyHost.close():closeHistory,'nq-close');close.dataset.nqField='history-close';
+      const right=el('div','nq-history-device');right.append(device,close);header.append(title,right);
       const controls=el('div','nq-history-controls');
       for(const [v,text]of [[1,'1 小时'],[24,'24 小时']]){const b=button(text,()=>changeHistory('hours',v));b.dataset.nqField=`hours-${v}`;b.setAttribute('aria-pressed',String(h.hours===v));controls.append(b);}
       for(const [kind,text]of [['latency','延迟'],['ratio',C.ratio({},h.target.protocol).label]]){const b=button(text,()=>changeHistory('kind',kind));b.dataset.nqField=`kind-${kind}`;b.setAttribute('aria-pressed',String(h.kind===kind));controls.append(b);}

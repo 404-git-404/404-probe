@@ -22,6 +22,13 @@ if (logout) {
   logout.addEventListener('click', async () => {
     if (!csrfToken) return;
     logout.disabled = true;
+    if (logout.closest('#dashboard-panel') && !await DialogShell.confirm({
+      title:'退出登录？',message:'退出后需要重新登录才能访问面板。',confirmText:'退出登录',danger:true,trigger:logout,
+    })) {
+      logout.disabled = false;
+      logout.focus();
+      return;
+    }
     try {
       const body = new URLSearchParams({csrf_token: csrfToken});
       const response = await fetch('/logout', {method: 'POST', body, redirect: 'follow'});

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,6 +34,12 @@ func TestWebAgentPlanRequiresMutationProofAndPersistsExactUnits(t *testing.T) {
 	response := webPlanPut(t, app, agentID, body, true)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"quota_value":"5"`) || !strings.Contains(response.Body.String(), `"quota_bytes":5000000000000`) || !strings.Contains(response.Body.String(), `"usage_bytes":1250000000000`) {
 		t.Fatalf("save status=%d body=%s", response.Code, response.Body.String())
+	}
+	var saved struct {
+		Renewal dashboardRenewal `json:"renewal"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &saved); err != nil || saved.Renewal.Date != "2027-01-31" || saved.Renewal.Timezone != "America/Los_Angeles" || saved.Renewal.Field != "renewal_date" || saved.Renewal.Days == nil {
+		t.Fatalf("save should return the computed renewal summary: %+v (%v)", saved.Renewal, err)
 	}
 	detail := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/agents/"+agentID)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"renewal_price":"49"`) {

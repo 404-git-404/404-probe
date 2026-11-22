@@ -51,6 +51,7 @@
     try {
       showUpdate(await request(settingsPath + 'update-check', 'PUT', {enabled: desired}));
       updateSaved.hidden = false;
+      dashboardUI.refreshVersion(true);
     } catch (error) {
       check.checked = !desired;
       updateError.textContent = error.status === 403 ? forbiddenSave : genericSave;
@@ -173,7 +174,7 @@
       checkbox.checked = selected.has(checkbox.value);
       checkbox.disabled = disabled;
     }
-    chips.replaceChildren(...[...selected].sort().map(code => {
+    chips.replaceChildren(...countries.filter(({code}) => selected.has(code)).map(({code}) => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.textContent = `${countryNames.get(code) || code} ${code} ×`;
@@ -216,6 +217,7 @@
       savedRegions = new Set(view.regions);
       selected = new Set(savedRegions);
       regionStatus.textContent = '✓ 已保存';
+      void dashboardData.reload();
     } catch (error) {
       regionStatus.textContent = error.status === 403 ? forbiddenSave : genericSave;
     } finally {
@@ -224,40 +226,32 @@
     }
   });
 
-  const links = [...document.querySelectorAll('.settings-nav a')];
-  const sections = links.map(link => get(link.hash.slice(1)));
-  function highlightSection() {
-    let index = 0;
-    for (let i = 0; i < sections.length; i++) {
-      if (sections[i].getBoundingClientRect().top <= 60) index = i;
+  let sessionReady, versionReady, regionsReady;
+  function initialize(section) {
+    if (!sessionReady) sessionReady = readSession().then(() => {
+      passwordButton.disabled = !csrf;
+      updateRegions();
+      if (versionReady) check.disabled = !csrf;
+    }, () => passwordStatus('读取会话失败，请刷新后重试。'));
+
+    if ((section === 'update' || section === 'about') && !versionReady) {
+      versionReady = request('/api/v1/web/version').then(view => {
+        showUpdate(view.update);
+        showAbout(view);
+      }, () => { updateError.textContent = '读取设置失败，仍可重新保存。'; });
+      void Promise.all([sessionReady, versionReady]).then(() => { check.disabled = !csrf; });
     }
-    if (scrollY > 0 && scrollY + innerHeight >= document.documentElement.scrollHeight - 2) index = sections.length - 1;
-    links.forEach((link, i) => {
-      if (i === index) link.setAttribute('aria-current', 'location');
-      else link.removeAttribute('aria-current');
-    });
-  }
-  addEventListener('scroll', highlightSection, {passive: true});
-  addEventListener('resize', highlightSection);
-  for (const link of links) link.addEventListener('click', () => requestAnimationFrame(highlightSection));
-
-  async function initialize() {
-    const sessionReady = readSession().then(() => { passwordButton.disabled = !csrf; updateRegions(); }, () => {
-      passwordStatus('读取会话失败，请刷新后重试。');
-    });
-    const versionReady = request('/api/v1/web/version').then(view => { showUpdate(view.update); showAbout(view); }, () => {
-      updateError.textContent = '读取设置失败，仍可重新保存。';
-    });
-    request(settingsPath + 'youtube-ad-free-regions').then(view => {
-      defaults = view.defaults;
-      savedRegions = new Set(view.regions);
-      selected = new Set(savedRegions);
-      showCountryList();
-    }, () => { regionStatus.textContent = '读取地区失败，请刷新后重试。'; });
-    await Promise.all([sessionReady, versionReady]);
-    check.disabled = !csrf;
-    highlightSection();
+    if (section === 'regions' && !regionsReady) {
+      regionsReady = request(settingsPath + 'youtube-ad-free-regions').then(view => {
+        defaults = view.defaults;
+        savedRegions = new Set(view.regions);
+        selected = new Set(savedRegions);
+        showCountryList();
+      }, () => { regionStatus.textContent = '读取地区失败，请刷新后重试。'; });
+    }
   }
 
-  initialize();
+  document.addEventListener('dashboard:settings', event => initialize(event.detail));
+  const section = dashboardUI.page();
+  if (section !== 'devices' && section !== 'network') initialize(section);
 })();

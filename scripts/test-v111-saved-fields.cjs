@@ -5,7 +5,7 @@ async function readSnapshot(p){await p.waitForFunction(()=>__savedCard!==null).c
 test('successful edits publish price, renewal, quota, manual region, YouTube, name and tags immediately in card and list',async()=>{
  const b=await launch();let f;
  try{f=await open(b,{n:1,handle:({req,url,body,json})=>{const a=f?.f.state.items[0];if(!a||req.method==='GET')return false;
- if(url.pathname.endsWith('/plan')&&req.method==='PUT'){a.plan={...a.plan,...body,quota_bytes:body.quota_value?Number(body.quota_value)*(body.quota_unit==='TB'?1e12:1e9):null};a.country_code=body.country_code_override||'US';a.country_source=body.country_code_override?'manual':'automatic';a.renewal={type:'upcoming',days:Math.round((Date.parse(a.plan.renewal_date)-Date.parse(new Date().toISOString().slice(0,10)))/86400000),date:a.plan.renewal_date,timezone:'UTC'};json(a.plan);return true;}
+ if(url.pathname.endsWith('/plan')&&req.method==='PUT'){a.plan={...a.plan,...body,quota_bytes:body.quota_value?Number(body.quota_value)*(body.quota_unit==='TB'?1e12:1e9):null};a.country_code=body.country_code_override||'US';a.country_source=body.country_code_override?'manual':'automatic';a.renewal={type:'upcoming',days:Math.round((Date.parse(a.plan.renewal_date)-Date.parse(new Date().toISOString().slice(0,10)))/86400000),date:a.plan.renewal_date,timezone:'UTC'};json({...a.plan,renewal:a.renewal});return true;}
  if(url.pathname.endsWith('/name')&&req.method==='PUT'){a.name=body.name;json({name:a.name});return true;}return false;}});
  const p=f.page;
  for(const view of ['cards','list']){

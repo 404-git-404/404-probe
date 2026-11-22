@@ -56,7 +56,7 @@ const agents = agentState.agents;
 let overviewReady = false;
 let organizationDialogs=null,expenseDialog=null;
 const dashboardUI=DashboardView.create({read:readJSON,onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
-const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(matchMedia('(max-width:42rem)').matches?document.querySelector('#panel-mobile-open'):trigger)});
+const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(matchMedia('(max-width:44rem)').matches?document.querySelector('#panel-mobile-open'):trigger)});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
   identity: agent => countryMark(agent?.country_code,agent?.country_source),
   management: agent => detailsFor(agent.agent_id)?.management,
@@ -543,7 +543,7 @@ function openPlanDialog(agent, trigger = null, mode='plan') {
   planRenewal.close();
   planOrigin=trigger;
   planEditor.open(agent.agent_id,trigger,()=>{
-  planDialogMode=mode;planDialog.dataset.mode=mode;document.querySelector('#plan-title').textContent=mode==='quota'?'流量配额':'套餐与续费';document.querySelector('#plan-information').hidden=mode==='quota';document.querySelector('#quota-information').hidden=mode!=='quota';document.querySelector('#plan-clear').hidden=mode==='quota';document.querySelector('#quota-decimal-note').hidden=mode!=='quota';quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;
+  planDialogMode=mode;planDialog.dataset.mode=mode;document.querySelector('#plan-title').textContent=mode==='quota'?'流量配额':'编辑套餐';document.querySelector('#plan-information').hidden=mode==='quota';document.querySelector('#quota-information').hidden=mode!=='quota';document.querySelector('#plan-clear').hidden=mode==='quota';document.querySelector('#quota-decimal-note').hidden=mode!=='quota';quotaOffConfirmed=true;document.querySelector('#quota-off-confirm').hidden=true;
   planEditGeneration++;
   pendingPlanAgentID = agent.agent_id;
   planForm.reset();
@@ -620,9 +620,10 @@ planForm.addEventListener('submit', async event => {
   const controller = new AbortController(); planWriteControllers.set(agentID, controller);
   planError.classList.add('hidden');
   try {
-    const plan = await savePlanPayload(agentID, payload, controller.signal);
+    const saved = await savePlanPayload(agentID, payload, controller.signal);
+    const {renewal=null, ...plan} = saved||{};
     planRenewal.invalidate(agentID);
-    if (!finishPlanResource(mutation, {plan})) return;
+    if (!finishPlanResource(mutation, {plan:saved?plan:null, renewal})) return;
     if (pendingPlanAgentID === agentID && planEditor.snapshot().generation===editorToken&&JSON.stringify(readPlanDraft())===submittedDraft) planDialog.close();
     if(!suspended)render();
   } catch (error) {
@@ -645,9 +646,9 @@ async function clearPlan() {
   const editorToken = planEditor.begin();
   const controller = new AbortController(); planWriteControllers.set(agentID, controller);
   try {
-    const plan=await savePlanPayload(agentID, Management.planSectionPayload(agents.get(agentID)?.plan||{},'clear'), controller.signal);
+    await savePlanPayload(agentID, Management.planSectionPayload(agents.get(agentID)?.plan||{},'clear'), controller.signal);
     planRenewal.invalidate(agentID);
-    if (!finishPlanResource(mutation, {plan})) return;
+    if (!finishPlanResource(mutation, {plan:null, renewal:null})) return;
     if (pendingPlanAgentID === agentID && planEditor.snapshot().generation===editorToken&&JSON.stringify(readPlanDraft())===submittedDraft) planDialog.close();
     if(!suspended)render();
   } catch (error) {
@@ -663,7 +664,6 @@ async function clearPlan() {
 }
 
 function finishPlanResource(token,patch={}) {
-  if(patch.plan)DashboardModel.savedPlan(patch.plan);
   if(patch.plan?.country_code_override&&token?.groups.includes('country'))patch={...patch,country_code:patch.plan.country_code_override,country_source:'manual'};
   return suspended ? agentState.finishMutation(token,patch) : finishResource(token,patch);
 }
@@ -813,20 +813,16 @@ function compactPrice(plan) {
   return CardMetrics.price(plan);
 }
 
-function planDeadline(plan) {
-  if (!plan) return {label: '未设续费日', tone: ''};
-  const date = plan.renewal_date || plan.expiry_date;
-  if (!date) return {label: '未设续费日', tone: ''};
-  const days = calendarDaysRemaining(date, plan.timezone || 'UTC');
-  const isRenewal = Boolean(plan.renewal_date);
+function planDeadline(agent) {
+  const {type,days,field}=DashboardModel.renewal(agent);
+  if (type==='invalid') return {label:'日期无效',tone:''};
+  if (!Number.isInteger(days)) return {label:'未设续费日',tone:''};
+  const renewal=field!=='expiry_date';
   let label;
-  if (days < 0) label = isRenewal ? `续费日已过 ${Math.abs(days)} 天` : `已到期 ${Math.abs(days)} 天`;
-  else if (days === 0) label = isRenewal ? '续费日已到' : '今天到期';
-  else label = isRenewal ? `${days} 天后续费` : `${days} 天后到期`;
-  return {
-    label,
-    tone: days <= 0 ? 'danger' : days <= 7 ? 'warn' : '',
-  };
+  if (days<0) label=renewal?'续费日已过 '+Math.abs(days)+' 天':'已到期 '+Math.abs(days)+' 天';
+  else if (days===0) label=renewal?'续费日已到':'今天到期';
+  else label=days+' 天后'+(renewal?'续费':'到期');
+  return {label,tone:type==='overdue'?'danger':type==='due_soon'?'warn':''};
 }
 
 function detailFact(label, value) {
@@ -1122,7 +1118,7 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
 let youtubeRegionKey='',youtubeRegionGeneration=0;
-function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.plan,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1133,10 +1129,12 @@ function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
   const catalog=dashboardData.catalog(),model=dashboardUI.update(agents,catalog,serverBuild,overviewReady),prefs={...dashboardUI.preferences.value,viewMode:dashboardUI.effectiveView()};
-  document.querySelector('#phone-view-note').hidden=!(dashboardUI.preferences.value.viewMode==='list'&&prefs.viewMode==='cards');
-  document.querySelector('#network-placeholder').hidden=prefs.viewMode!=='network';
-  container.hidden=prefs.viewMode==='network';
-  const cards=prefs.viewMode==='cards';container.hidden=!cards;if(prefs.viewMode==='list')ensureBanner();if(bannerHost)bannerHost.hidden=prefs.viewMode!=='list';
+  const devices=dashboardUI.page()==='devices';
+  document.querySelector('#phone-view-note').hidden=!(devices&&dashboardUI.preferences.value.viewMode==='list'&&prefs.viewMode==='cards');
+  const cards=devices&&prefs.viewMode==='cards',list=devices&&prefs.viewMode==='list';
+  container.hidden=!cards;
+  if(list) ensureBanner();
+  if(bannerHost) bannerHost.hidden=!list;
   overview.update(agents,overviewReady,{summary:model.summary,catalog,server:serverBuild});
   const allIds=[...agents.keys()],mounted=new Set();
   if(cards)for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
@@ -1148,17 +1146,17 @@ function renderDashboard(dirty=null) {
   for(const [id,view]of detailViews)if(!agents.has(id)){view.management.remove();view.overview.remove();detailViews.delete(id);}
   selectorView.refreshActive();
   empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
-  if(prefs.viewMode==='network')empty.classList.add('hidden');
-  if(prefs.viewMode==='list')for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,youtubeRegions:youtubeRegions(),deadline}))deferred.add(id);
-  const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([prefs.viewMode,prefs.sort,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
+  if(!devices)empty.classList.add('hidden');
+  if(list)for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,youtubeRegions:youtubeRegions(),deadline}))deferred.add(id);
+  const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([dashboardUI.page(),prefs.viewMode,model.segmented,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
   for(const [id,view]of groupViews)if(!liveGroups.has(id)){view.node.remove();groupViews.delete(id);}
   let groupPosition=container.firstElementChild;
   if(cards)for(const group of model.sections){
     let gv=groupViews.get(group.id);
     if(!gv){const node=document.createElement('section'),header=document.createElement('button'),body=document.createElement('div');node.className='dashboard-group';header.type='button';header.className='dashboard-group-header';header.addEventListener('click',()=>dashboardUI.collapse(group.id));body.className='dashboard-card-grid';node.append(header,body);gv={node,header,body};groupViews.set(group.id,gv);}
     const collapsed=prefs.collapsed.includes(group.id),counts={online:0,offline:0,paused:0,unknown:0};for(const a of group.items)counts[DashboardModel.lifecycle(a)]++;
-    const status=counts.online===group.items.length?'全部在线':Object.entries(counts).filter(([,n])=>n).map(([key,n])=>DashboardModel.STATUS[key]+' '+n).join(' · ');
-    const title=`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台`,headerKey=title+status;if(gv.header.dataset.key!==headerKey){gv.header.dataset.key=headerKey;let name=gv.header.querySelector('span'),note=gv.header.querySelector('small');if(!name){name=document.createElement('span');note=document.createElement('small');gv.header.append(name,note);}setCardText(name,title);setCardText(note,status);note.className=counts.online===group.items.length?'all-online':'';}gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=prefs.sort!=='group';gv.body.hidden=collapsed;
+    const status=counts.online===group.items.length?'全部在线':Object.entries(counts).filter(([,n])=>n).map(([key,n])=>(DashboardModel.STATUS[key]||'状态未知')+' '+n).join(' · ');
+    const title=`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台`,headerKey=title+status;if(gv.header.dataset.key!==headerKey){gv.header.dataset.key=headerKey;let name=gv.header.querySelector('span'),note=gv.header.querySelector('small');if(!name){name=document.createElement('span');note=document.createElement('small');gv.header.append(name,note);}setCardText(name,title);setCardText(note,status);note.className=counts.online===group.items.length?'all-online':'';}gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=!model.segmented;gv.body.hidden=collapsed;
     if(layout!==lastLayout){if(gv.node!==groupPosition){if(gv.node.parentNode===container&&container.moveBefore)container.moveBefore(gv.node,groupPosition);else container.insertBefore(gv.node,groupPosition);}groupPosition=gv.node.nextElementSibling;}
     if(collapsed)continue;
     let position=gv.body.firstElementChild;
@@ -1338,7 +1336,8 @@ function createAgentCard(initialAgent) {
     const runtime = document.createElement('small');
     runtime.className = 'card-runtime c7-runtime';
     setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
-    sub.append(status, logo, systemText, systemFailure, egress, runtime);
+    const version = document.createElement('small');
+    sub.append(status, logo, systemText, systemFailure, egress, runtime, version);
     let nameControl = agentNameControl(agent, state);
     const mark = countryMark(agent.country_code, agent.country_source);
     identity.append(nameControl, sub);
@@ -1346,30 +1345,31 @@ function createAgentCard(initialAgent) {
     card.classList.add(`state-${stateName}`);
     card.append(head);
     const tags=document.createElement('div');tags.className='dashboard-card-tags';
-    const diskBadge=document.createElement('span');diskBadge.className='disk-health-badge';tags.append(diskBadge);
+    const diskBadge=document.createElement('span');diskBadge.className='dashboard-warning dashboard-disk-warning';
     const updateTags=()=>{
       const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);
       const signature=JSON.stringify(key);
       if(tags.dataset.signature!==signature){
         tags.dataset.signature=signature;
-        while(tags.lastElementChild!==diskBadge)tags.lastElementChild.remove();
+        tags.replaceChildren();
         for(const [,name] of key){const n=document.createElement('span');n.textContent=name;n.title=name;tags.append(n);}
       }
       const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
       const reason=tone==='crit'?DashboardModel.diskFaults(health.disk,{short:true})[0]:'';
       const label=tone==='crit'?`⚠ 磁盘异常${reason?' · '+reason:''}`:tone==='warn'?`⚠ 磁盘曾出错 · ${DashboardModel.diskTime(health.last_fault_at)}`:'';
       setCardText(diskBadge,label);diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
-      tags.hidden=!tone&&!key.length;
+      tags.hidden=!key.length;
       systemFailure.hidden=!health?.os_read_failed;
-      card.classList.toggle('disk-health-critical',tone==='crit');
-      return tone==='crit';
+        return tone==='crit';
     };
+    let warnings=DashboardModel.flags(agent,serverBuild);
     const diskFault=updateTags();card.append(tags);
 
     // ---- machine ----
     const machine = Card.machineFaces(document);
-    machine.update(Card.machineView(agent, observed, oldMetrics, diskFault));
+    machine.update(Card.machineView(agent, observed, oldMetrics, diskFault, warnings.resources));
     const machineModule = Card.createModule({document, key: 'machine', label: '机器', host: document.createElement('section'), a: machine.a, b: machine.b});
+    machineModule.node.append(diskBadge);
 
     // ---- traffic ----
     const trafficNode = trafficCharts.mount(agent);
@@ -1377,7 +1377,7 @@ function createAgentCard(initialAgent) {
     const trafficFaces = Card.trafficFaces(document, {chart: trafficNode, onEditPlan: trigger => openPlanDialog(agent, trigger,'quota')});
     const updateTraffic = () => {
       const old = Boolean(!agent.online || agent.disabled_at || agent.state?.stale || cardObservations.observe(agent).stale);
-      trafficFaces.update(Card.trafficView(agent, {old, quotaDisplay: quotaDisplay(agent.plan)}), Card.trafficDetail(agent));
+      trafficFaces.update(Card.trafficView(agent, {old, quotaDisplay: quotaDisplay(agent.plan), quotaWarning: warnings.traffic}), Card.trafficDetail(agent));
       trafficFaces.emptyButton.disabled = trafficFaces.quotaButton.disabled = planActionBlocked(agent);
     };
     const trafficModule = Card.createModule({document, key: 'traffic', label: '流量', host: document.createElement('section'), a: trafficFaces.a, b: trafficFaces.b,
@@ -1388,6 +1388,17 @@ function createAgentCard(initialAgent) {
     const latencyNode = latencyCharts.mount(agent);
     const networkModule = Card.createModule({document, key: 'network', label: '网络', host: qualityNode, a: networkQuality.faceNode(agent.agent_id), b: latencyNode,
       onFace: face => { networkQuality.setFace(agent.agent_id, face); latencyCharts.setActive(agent.agent_id, face === 'B'); }});
+    const networkWarning = document.createElement('span');
+    networkWarning.className='dashboard-warning dashboard-network-warning';
+    networkWarning.textContent='⚠ 网络异常';
+    qualityNode.append(networkWarning);
+    function updateWarnings(){
+      networkWarning.hidden=!warnings.network;
+      version.className=warnings.upgrade?'dashboard-version-upgrade':'';
+      version.hidden=!warnings.upgrade;
+      setCardText(version,warnings.upgrade?(agent.version+' · 待升级'):'');
+    }
+    updateWarnings();
     updateTraffic();
     card.append(machineModule.node, trafficModule.node, qualityNode);
 
@@ -1433,7 +1444,7 @@ function createAgentCard(initialAgent) {
     detailToggle.addEventListener('click', () => {planRenewal.close();deviceDetails.open(agent.agent_id,'overview',detailToggle);});
     head.append(detailToggle);
 
-    const deadline = planDeadline(agent.plan);
+    const deadline = planDeadline(agent);
     const editPlan = document.createElement('button');
     editPlan.className = 'edit-plan c7-money';
     editPlan.type = 'button';
@@ -1505,14 +1516,16 @@ function createAgentCard(initialAgent) {
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }
       setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
-      machine.update(Card.machineView(agent, observed, oldMetrics, diskFault));
+      warnings=DashboardModel.flags(agent,serverBuild);
+      machine.update(Card.machineView(agent, observed, oldMetrics, diskFault, warnings.resources));
+      updateWarnings();
       updateTraffic();
       const charts=chartKey(agent);if(charts!==renderedCharts){renderedCharts=charts;trafficCharts.mount(agent);latencyCharts.mount(agent);networkQuality.mount(agent);}
       updateDisplay(googleTools.querySelector('.google-checks'), googleStatusPanel(agent));
       const nextTrigger = selectorView.trigger(agent);
       if (nextTrigger !== selectorTrigger) { selectorTrigger?.remove(); if (nextTrigger) googleTools.append(nextTrigger); selectorTrigger = nextTrigger; }
       selectorView.refresh(agent.agent_id);
-      const deadline = planDeadline(agent.plan); renewPlan.className = `renew-plan c7-money ${deadline.tone}`; setCardText(due, deadline.label);
+      const deadline = planDeadline(agent); renewPlan.className = `renew-plan c7-money ${deadline.tone}`; setCardText(due, deadline.label);
       setCardText(price, compactPrice(agent.plan));
       setCardText(editHint, agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎'); editPlan.title = agent.plan ? '编辑套餐' : '添加套餐';
       editPlan.disabled = planActionBlocked(agent);

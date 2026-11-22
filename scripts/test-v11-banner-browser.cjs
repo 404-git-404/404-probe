@@ -9,15 +9,16 @@ test('all columns, resource tones, batch-only data and 200 rows',()=>ui(async({p
  assert.match(await row(p,0).textContent(),/↑.*↓/);assert.match(await row(p,0).textContent(),/21 ms/);
  assert.equal(f.requests.some(r=>/^\/api\/v1\/web\/agents\//.test(r.path)),false);
  await p.evaluate(id=>{const a=agents.get(id);a.resources.cpu_percent=80;a.state.cpu_percent=80;a.resources.ram_percent=90;a.state.ram_percent=90;render(new Set([id]));},ID(0));await settle(p);
- assert.equal(await row(p,0).locator('[data-column=cpu] .banner-metric').getAttribute('data-tone'),'warn');assert.equal(await row(p,0).locator('[data-column=memory] .banner-metric').getAttribute('data-tone'),'crit');
+ assert.equal(await row(p,0).locator('[data-column=cpu] .banner-metric').getAttribute('data-tone'),'warn');assert.equal(await row(p,0).locator('[data-column=memory] .banner-metric').getAttribute('data-tone'),'warn');
  assert.equal(await row(p,3).locator('[data-column=cpu] small').textContent(),'—');
 },{n:200}));
 test('five latency states, target title and persisted global slot choice',()=>ui(async({page:p,f})=>{
  const states=['ok','stale','no_target','unsupported','no_data'];for(let i=0;i<5;i++){f.state.items[i].network_slots[0].state=states[i];f.state.items[i].network_slots[0].latest_ms=i<2?12.5:null;}await p.evaluate(()=>dashboardData.reload());await settle(p);
- for(const [i,text]of ['12.5 ms','12.5 ms · 过期','未设目标','不支持','暂无数据'].entries())assert.equal(await row(p,i).locator('[data-column=latency]').textContent(),text);
- assert.equal(await row(p,0).locator('[data-column=latency]').getAttribute('title'),'合成目标 1');await p.locator('.banner-slot').click();await p.locator('[data-slot="3"]').click();await p.waitForFunction(()=>document.querySelector('.banner-row [data-column=latency]').title==='合成目标 3');await p.reload();await p.waitForFunction(()=>document.querySelector('.banner-slot')?.textContent==='槽 3 ▾'&&!renderFrame);assert.equal(await row(p,0).locator('[data-column=latency]').textContent(),'23 ms');
+ for(const [i,text]of ['12.5 ms','12.5 ms · 过期','未设目标','不支持','暂无数据'].entries())assert.equal(await row(p,i).locator('[data-column=latency] > span').textContent(),text);
+ assert.equal(await row(p,0).locator('[data-column=latency]').getAttribute('title'),'合成目标 1');await p.locator('.banner-slot').click();await p.locator('[data-slot="3"]').click();await p.waitForFunction(()=>document.querySelector('.banner-row [data-column=latency]').title==='合成目标 3');await p.reload();await p.waitForFunction(()=>document.querySelector('.banner-slot')?.textContent==='槽 3 ▾'&&!renderFrame);assert.equal(await row(p,0).locator('[data-column=latency] > span').textContent(),'23 ms');
 }));
 test('groups collapse without extra reads and retain preference',()=>ui(async({page:p,f})=>{
+ await p.locator('#dashboard-all-groups').click();await settle(p);
  assert.equal(await p.locator('.banner-group').count(),3);await p.locator('.banner-group-header').first().click();await settle(p);assert.equal(await row(p,0).count(),0);assert.equal(await p.locator('.banner-group-header').first().getAttribute('aria-expanded'),'false');await p.reload();await p.waitForFunction(()=>dashboardData.ready()&&!renderFrame);assert.equal(await row(p,0).count(),0);await p.locator('.banner-group-header').first().click();await row(p,0).waitFor();assert.equal(await row(p,0).count(),1);
 }));
 test('header sort is global outside group mode and toggles direction',()=>ui(async({page:p})=>{
@@ -34,10 +35,14 @@ test('SSE, actual 15-second calibration and EventSource reconnect preserve order
  const reads=f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&!r.query).length;await p.waitForFunction(()=>document.querySelector('#stream').textContent==='实时连接');await p.waitForTimeout(15500);assert(f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&!r.query).length>reads);assert.deepEqual(await order(p),before);
  f.disconnect();await p.waitForTimeout(4000);assert.deepEqual(await order(p),before);assert.equal(await p.evaluate(()=>__rowNodes.every(n=>n===document.querySelector(`.banner-row[data-agent-id="${n.dataset.agentId}"]`))),true);assert.equal(await p.evaluate(()=>__rowMutations),0);
 }));
-test('new devices append to group end; removal and group-set change reconcile',()=>ui(async({page:p,f})=>{
+test('new devices append to the frozen order; grouping reprojects the sorted baseline',()=>ui(async({page:p,f})=>{
  await p.locator('[data-sort=name]').click();await settle(p);const before=await order(p),a=structuredClone(f.state.items[0]);a.agent_id=ID(999);a.name='AAA new';a.search_fields=[a.name];f.state.items.push(a);await p.evaluate(()=>dashboardData.reload());await settle(p);assert.deepEqual(await order(p),[...before,ID(999)]);
  f.state.items=f.state.items.filter(a=>a.agent_id!==ID(0));await p.evaluate(()=>dashboardData.reload());await settle(p);assert.equal(await row(p,0).count(),0);
- f.state.groups.push({id:ID(1000),name:'新分组',sort_order:2});f.state.revision++;await p.evaluate(()=>dashboardData.reload());await settle(p);assert.equal((await order(p))[0],ID(999));
+ f.state.groups.push({id:ID(1000),name:'新分组',sort_order:2});a.group_id=ID(1000);f.state.revision++;
+ await p.evaluate(()=>dashboardData.reload());await settle(p);
+ await p.locator('#dashboard-all-groups').click();await settle(p);
+ assert.equal(await p.locator('.banner-group-header').filter({hasText:'新分组'}).count(),1);
+ assert.equal(await row(p,999).count(),1);
 }));
 test('row key contains display fields; dirty coalescing and untouched rows stay untouched',()=>ui(async({page:p,f})=>{
  await p.evaluate(()=>{window.__changes=[];const original=BannerView.projection;window.__untouched=document.querySelector('.banner-row[data-agent-id="00000000000000000000000000000002"]');window.__w=new MutationObserver(m=>__changes.push(...m.map(x=>x.target.nodeName)));__w.observe(__untouched,{attributes:true,childList:true,subtree:true,characterData:true});});
@@ -56,19 +61,40 @@ test('YouTube region uses the Server list for CN and MO and keeps EU green',()=>
  for(const [youtube,code,tone]of [[{status:'not_cn',region:'US'},'US','ok'],[{status:'cn'},'CN','crit'],[{status:'unknown',error:{category:'consent_page'}},'EU','ok'],[{status:'not_cn',region:'MO'},'MO','crit']]){await p.evaluate(({id,youtube})=>{const a=agents.get(id);a.google_status={supported:true,result:{youtube},checked_at:Date.now(),next_due_at:Date.now()+86400000};render(new Set([id]));},{id:ID(0),youtube});await settle(p);assert.equal(await row(p,0).locator('.banner-youtube').textContent(),code);assert.equal(await row(p,0).locator('.banner-youtube').getAttribute('data-tone'),tone);assert.equal(await p.evaluate(id=>YouTubeStatus.view(agents.get(id)).code,ID(0)),code);}
 }));
 test('traffic modes and independent price/renewal formatter',()=>ui(async({page:p})=>{
- const values=await p.evaluate(id=>{const a=agents.get(id),base={...a,plan:null};return [BannerView.projection(base).traffic.text,BannerView.price({currency:'CNY',renewal_price:'88.48',renewal_price_period:'yearly'}),BannerView.price({renewal_price:'0'}),BannerView.renewal({...a,plan:{},renewal:null}),BannerView.projection({...a,plan:{traffic_mode:'sum',usage_bytes:100,quota_bytes:null},dashboard_traffic:{known:true}}).traffic.text,BannerView.projection({...a,dashboard_traffic:{known:true,stale:true}}).traffic.text];},ID(0));assert.deepEqual(values,['无流量套餐','¥88.48 / 年','免费','长期','100 B / 不限流量','数据陈旧']);assert(await row(p,1).locator('.due-soon').count());
+ const values=await p.evaluate(id=>{const a=agents.get(id),base={...a,plan:null};return [BannerView.projection(base).traffic.text,BannerView.price({currency:'CNY',renewal_price:'88.48',renewal_price_period:'yearly'}),BannerView.price({renewal_price:'0'}),BannerView.renewal({...a,plan:{},renewal:null}),BannerView.projection({...a,plan:{traffic_mode:'sum',usage_bytes:100,quota_bytes:null},dashboard_traffic:{known:true}}).traffic.text,BannerView.projection({...a,dashboard_traffic:{known:true,stale:true}}).traffic.text];},ID(0));assert.deepEqual(values,['无流量套餐','¥88.48 / 年','免费','长期','100 B / 不限流量','数据陈旧']);assert(await row(p,1).locator('[data-due=due_soon]').count());
 }));
 test('row opens unified details; width fits names then caps; all columns survive narrow sticky scroll',()=>ui(async({page:p})=>{
  await row(p,0).locator('.banner-name').click();assert(await p.locator('#device-details').isVisible());await p.keyboard.press('Escape');
  const getWidth=()=>row(p,0).locator('[data-column=name]').evaluate(n=>n.getBoundingClientRect().width);const original=await getWidth();await p.evaluate(()=>{for(const a of agents.values())a.name='a';render();});await settle(p);const short=await getWidth();assert(short<original);await p.evaluate(()=>{agents.values().next().value.name='long-name-'.repeat(40);render();});await settle(p);const capped=await getWidth();assert(capped<=183);assert(await row(p,0).locator('.banner-name').evaluate(n=>n.scrollWidth>n.clientWidth&&n.title.length>100));
+ await p.locator('#dashboard-all-groups').click();await settle(p);
  for(const width of [1440,1100,390]){await p.setViewportSize({width,height:1000});await p.locator('#agent-list').evaluate(n=>n.scrollLeft=250);assert(await row(p,0).locator('[data-column=name]').evaluate(n=>Math.abs(n.getBoundingClientRect().left-document.querySelector('#agent-list').getBoundingClientRect().left)<2));assert(await p.locator('.banner-group-header>span').first().evaluate(n=>n.getBoundingClientRect().left>=document.querySelector('#agent-list').getBoundingClientRect().left));assert.equal(await row(p,0).locator('.banner-cell').count(),12);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}
 }));
-test('navigation icons alignment network persistence group/tag buttons zero attention and progress circles',()=>ui(async({page:p})=>{
- assert.equal(await p.locator('.panel-views button').count(),3);assert.equal(await p.locator('.panel-views svg').count(),3);assert.equal(await p.locator('.panel-views button').first().evaluate(n=>getComputedStyle(n).textAlign),'left');assert.equal(await p.locator('#dashboard-groups input,#dashboard-tags input').count(),0);for(const id of ['dashboard-groups','dashboard-tags'])assert(await p.locator('#'+id).evaluate(n=>Math.abs((n.id==='dashboard-groups'?document.querySelector('#manage-groups'):n.querySelector('.dashboard-manage')).getBoundingClientRect().top-n.querySelector('[data-filter-label],summary').getBoundingClientRect().top)<8));
- await p.locator('#dashboard-groups .dashboard-option').first().click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'显示 3 / 28 台');await p.locator('#dashboard-clear').click();
- assert(await p.locator('.dashboard-quick-item.is-zero').count());assert.equal(await p.locator('.dashboard-quick-item.is-zero').first().evaluate(n=>getComputedStyle(n,'::before').backgroundColor),'rgba(0, 0, 0, 0)');
- await p.locator('[data-view=network]').click();await settle(p);assert(await p.locator('#network-placeholder').isVisible());await p.reload();await p.waitForFunction(()=>dashboardData.ready()&&!renderFrame);assert(await p.locator('#network-placeholder').isVisible());await p.locator('#panel-collapse').click();assert.equal(await p.locator('[data-view=network]').evaluate(n=>{const a=n.getBoundingClientRect(),b=n.parentNode.getBoundingClientRect();return Math.abs(a.left+a.width/2-b.left-b.width/2)<1;}),true);
- await p.locator('#add-agent').click();assert.equal(await p.locator('[data-step="1"] .step-circle').textContent(),'1');await p.locator('#add-agent-choice-name').fill('Synthetic');await p.locator('#add-agent-next').click();await p.waitForSelector('#oneclick-result:not(.hidden)');assert.equal(await p.locator('[data-step="1"] .step-circle').textContent(),'✓');assert.equal(await p.locator('[data-step="2"]').getAttribute('aria-current'),'step');assert.equal(await p.locator('[data-step="3"]').getAttribute('aria-current'),null);
+test('navigation shows grouped and flat rows, keeps the rail aligned and uses one toolbar',()=>ui(async({page:p})=>{
+ assert.equal(await p.locator('#dashboard-devices summary svg,#dashboard-network svg,#dashboard-settings summary svg').count(),3);
+ assert.equal(await p.locator('#dashboard-groups input,#dashboard-tags input').count(),0);
+ assert(await p.locator('#manage-tags').isVisible());
+ assert(await p.locator('#manage-groups').isVisible());
+ await p.locator('#dashboard-groups .dashboard-option').first().click();await settle(p);
+ assert.equal(await p.locator('#dashboard-count').textContent(),'3 / 28 台');
+ assert.equal(await p.locator('.banner-group-header:visible').count(),1);
+ await p.locator('#dashboard-all').click();await settle(p);
+ assert.equal(await p.locator('.banner-group-header:visible').count(),0);
+ await p.locator('#dashboard-network').click();await settle(p);
+ assert(await p.locator('#network-placeholder').isVisible());
+ assert.equal(await p.locator('#dashboard-toolbar').isVisible(),false);
+ await p.reload();await p.waitForFunction(()=>dashboardData.ready()&&!renderFrame);
+ assert(await p.locator('#network-placeholder').isVisible());
+ await p.locator('#panel-collapse').click();
+ assert(await p.locator('#dashboard-network svg').isVisible());
+ assert.equal(await p.locator('#dashboard-network span').isVisible(),false);
+ await p.keyboard.press('Control+k');await p.locator('#dashboard-search').fill('synthetic');
+ assert.equal(await p.locator('#network-placeholder').isVisible(),false);
+ await p.locator('#add-agent').click();assert.equal(await p.locator('[data-step="1"] .step-circle').textContent(),'1');
+ await p.locator('#add-agent-choice-name').fill('Synthetic');await p.locator('#add-agent-next').click();
+ await p.waitForSelector('#oneclick-result:not(.hidden)');
+ assert.equal(await p.locator('[data-step="1"] .step-circle').textContent(),'✓');
+ assert.equal(await p.locator('[data-step="2"]').getAttribute('aria-current'),'step');
+ assert.equal(await p.locator('[data-step="3"]').getAttribute('aria-current'),null);
 }));
 test('network_slots summary reply survives interleaved runtime telemetry barrier',()=>{
  const State=require('../web/static/agent-state.js'),state=State.create(),id=ID(0),context=state.beginRefresh();state.commitList(context,[{agent_id:id,name:'a',online:true,state:{cpu_percent:1}}]);state.endRefresh(context);const ticket=state.read(id,null,['summary','runtime']);state.event({agent_id:id,state:{cpu_percent:99}});assert(state.commitRead(ticket,{network_slots:[{slot:1,state:'ok',latest_ms:3}],state:{cpu_percent:1}}));assert.equal(state.agents.get(id).network_slots[0].latest_ms,3);assert.equal(state.agents.get(id).state.cpu_percent,99);

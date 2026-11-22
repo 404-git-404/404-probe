@@ -2,59 +2,92 @@ const {test,before,after}=require('node:test'),assert=require('node:assert/stric
 const {launch,open}=require('./lib/v11-panel-fixture.cjs');
 let browser;before(async()=>browser=await launch());after(async()=>browser?.close());
 async function ui(run,options){const f=await open(browser,options);try{await run(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
-test('panel collapse persists; automatic narrow collapse and a manual expansion lasts until breakpoint change',()=>ui(async({page:p})=>{
- await p.locator('#panel-collapse').click();assert.equal(await p.locator('.panel-collapsed').count(),1);await p.reload();await p.waitForFunction(()=>typeof dashboardUI!=='undefined');assert.equal(await p.locator('.panel-collapsed').count(),1);
- await p.locator('#panel-collapse').click();await p.setViewportSize({width:1100,height:1080});await p.waitForFunction(()=>document.querySelector('.panel-collapsed'));await p.locator('#panel-collapse').click();assert.equal(await p.locator('.panel-collapsed').count(),0);
- await p.setViewportSize({width:1440,height:1080});await p.setViewportSize({width:1100,height:1080});await p.waitForFunction(()=>document.querySelector('.panel-collapsed'));
- for(const id of ['add-agent','stream','logout','server-version','dashboard-search','dashboard-sort','dashboard-chips','dashboard-clear','dashboard-count'])assert.equal(await p.locator('#'+id).count(),1,id);
- for(const b of await p.locator('.dashboard-panel button:visible').all())assert(await b.getAttribute('aria-label')||await b.textContent());
+test('manual collapse persists and Ctrl K expands the icon rail',()=>ui(async({page:p})=>{
+ await p.locator('#panel-collapse').click();
+ assert.equal(await p.locator('.panel-collapsed').count(),1);
+ await p.reload();
+ await p.waitForFunction(()=>document.querySelector('.panel-collapsed'));
+ assert.equal(await p.locator('#dashboard-network svg:visible').count(),1);
+ assert.equal(await p.locator('#dashboard-network span:visible').count(),0);
+ await p.keyboard.press('Control+k');
+ assert.equal(await p.locator('.panel-collapsed').count(),0);
+ assert.equal(await p.evaluate(()=>document.activeElement.id),'dashboard-search');
 }));
-test('short windows scroll the sidebar and keep all four sections selectable',()=>ui(async({page:p})=>{
- await p.setViewportSize({width:1920,height:600});
- assert.equal(await p.locator('#dashboard-filters > details').count(),4);
- for(const id of ['#dashboard-tags','#dashboard-groups','#panel-attention','#dashboard-youtubeRegions'])assert(await p.locator(id).isVisible(),id);
+test('short windows scroll navigation independently and retain multiple expanded drawers',()=>ui(async({page:p})=>{
+ await p.setViewportSize({width:1920,height:500});
+ for(const id of ['dashboard-countries','dashboard-statuses','dashboard-settings']) await p.locator('#'+id+' > summary').click();
  assert(await p.locator('.panel-scroll').evaluate(n=>n.scrollHeight>n.clientHeight));
- const countries=p.locator('#dashboard-countries');
- await countries.locator('summary').click();
- await p.waitForFunction(()=>JSON.parse(localStorage.getItem('404-probe.dashboard.v1'))?.panelSectionsClosed?.includes('countries'));
- await p.reload();await p.waitForFunction(()=>dashboardData.ready());
- assert.equal(await countries.evaluate(n=>n.open),false);
- const groups=p.locator('#dashboard-groups');
- await groups.locator('summary').click();
+ const bottom=await p.locator('.panel-bottom').boundingBox();
+ await p.locator('.panel-scroll').evaluate(n=>n.scrollTop=n.scrollHeight);
+ assert.deepEqual(await p.locator('.panel-bottom').boundingBox(),bottom);
+ await p.reload();
+ await p.waitForFunction(()=>dashboardData.ready());
+ for(const id of ['dashboard-groups','dashboard-countries','dashboard-statuses','dashboard-settings']) assert(await p.locator('#'+id).evaluate(n=>n.open));
  await p.locator('#manage-groups').click();
- assert.equal(await groups.evaluate(n=>n.open),false);
  assert(await p.locator('#organization-manage-dialog').isVisible());
 }));
-test('mobile overlay traps focus, closes on Escape/selection, and shares stacked scroll locking',()=>ui(async({page:p})=>{
- assert.equal(await p.locator('#dashboard-panel').isVisible(),false);await p.locator('#panel-mobile-open').click();assert.equal(await p.locator('#panel-mobile-dialog').isVisible(),true);assert.equal(await p.evaluate(()=>document.body.style.overflow),'hidden');
- await p.locator('#panel-mobile-close').focus();await p.keyboard.press('Shift+Tab');assert(await p.locator('#panel-mobile-dialog').evaluate(n=>n.contains(document.activeElement)));await p.keyboard.press('Escape');assert.equal(await p.locator('#panel-mobile-dialog').isVisible(),false);assert.equal(await p.evaluate(()=>document.activeElement.id),'panel-mobile-open');assert.equal(await p.evaluate(()=>document.body.style.overflow),'');
- await p.locator('#panel-mobile-open').click();await p.locator('[data-quick=offline]').click();assert.equal(await p.locator('#panel-mobile-dialog').isVisible(),false);await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='显示 1 / 28 台');
- await p.locator('#panel-mobile-open').click();await p.locator('#add-agent').click();assert.equal(await p.locator('#add-agent-dialog').isVisible(),true);assert.equal(await p.locator('#panel-mobile-dialog').isVisible(),false);assert.equal(await p.evaluate(()=>document.body.style.overflow),'hidden');await p.keyboard.press('Escape');assert.equal(await p.evaluate(()=>document.body.style.overflow),'');
- // A second modal can also sit above an already-open overlay without unlocking it.
- await p.locator('#panel-mobile-open').click();await p.evaluate(()=>{const d=document.createElement('dialog');d.id='stack-probe';document.body.append(d);DialogShell.attach(d).open();});await p.keyboard.press('Escape');assert.equal(await p.evaluate(()=>document.body.style.overflow),'hidden');await p.keyboard.press('Escape');assert.equal(await p.evaluate(()=>document.body.style.overflow),'');
+test('390px overlay closes on backdrop, left swipe and Escape, preserving stacked scroll locking',()=>ui(async({page:p})=>{
+ const opener=p.locator('#panel-mobile-open'), dialog=p.locator('#panel-mobile-dialog');
+ assert.equal(await p.locator('#dashboard-panel').isVisible(),false);
+ await opener.click();
+ assert(await dialog.isVisible());
+ assert.equal(await p.evaluate(()=>document.body.style.overflow),'hidden');
+ assert((await dialog.boundingBox()).width<=390*.75);
+ assert.equal(await dialog.locator('#panel-mobile-close').count(),0);
+ await p.mouse.click(380,250);
+ assert.equal(await dialog.isVisible(),false);
+ await opener.click();
+ await dialog.evaluate(n=>{
+  for(const [type,x] of [['touchstart',215],['touchend',85]]){
+   const touch=new Touch({identifier:1,target:n,clientX:x,clientY:120});
+   n.dispatchEvent(new TouchEvent(type,{touches:type==='touchstart'?[touch]:[],changedTouches:[touch],bubbles:true}));
+  }
+ });
+ assert.equal(await dialog.isVisible(),false);
+ assert.equal(await p.evaluate(()=>document.activeElement.id),'panel-mobile-open');
+ await opener.click();
+ await p.keyboard.press('Shift+Tab');
+ assert(await dialog.evaluate(n=>n.contains(document.activeElement)));
+ await p.evaluate(()=>{const d=document.createElement('dialog');document.body.append(d);DialogShell.attach(d).open();});
+ await p.keyboard.press('Escape');
+ assert.equal(await p.evaluate(()=>document.body.style.overflow),'hidden');
+ await p.keyboard.press('Escape');
+ assert.equal(await p.evaluate(()=>document.body.style.overflow),'');
 },{width:390,height:844}));
-test('panel group/tag/country/status and attention selections drive chips and count without changing totals',()=>ui(async({page:p})=>{
+test('group, tag, country and status filters intersect and All Devices clears the left side',()=>ui(async({page:p})=>{
  const online=await p.locator('#overview-online').textContent();
- for(const [key,label]of [['groups','常用'],['tags','GIA'],['countries','美国'],['statuses','在线']]){
-  const host=p.locator('#dashboard-'+key);if(key!=='tags'&&!await host.evaluate(n=>n.open))await host.locator('summary').click();const option=host.locator('.dashboard-option').filter({hasText:label}).first();if(['groups','tags'].includes(key))await option.click();else await option.locator('input').check();
+ for(const [key,label] of [['groups','常用'],['tags','GIA'],['countries','美国'],['statuses','在线']]){
+  const host=p.locator('#dashboard-'+key);
+  if(key!=='tags'&&!await host.evaluate(n=>n.open)) await host.locator('summary').click();
+  const option=host.locator('.dashboard-option').filter({hasText:label}).first();
+  if(['groups','tags'].includes(key)) await option.click();
+  else await option.locator('input').check();
  }
- await p.waitForFunction(()=>document.querySelectorAll('.dashboard-chip').length===4);await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='显示 1 / 28 台');assert.equal(await p.locator('#overview-online').textContent(),online);await p.locator('#dashboard-clear').click();await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='显示 28 / 28 台');
+ await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='1 / 28 台');
+ assert.equal(await p.locator('#overview-online').textContent(),online);
+ await p.locator('#dashboard-countries summary').click();
+ assert.equal(await p.locator('#dashboard-countries .panel-summary').textContent(),'美国');
+ await p.locator('#dashboard-all').click();
+ await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='7 / 28 台');
+ assert.equal(await p.locator('#dashboard-all').getAttribute('aria-pressed'),'true');
+ await p.locator('#dashboard-tags-clear').click();
+ await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='28 / 28 台');
 }));
 test('release notice requires true newer and canonical stable version, never uses supplied URLs or cache age',()=>ui(async({page:p,state})=>{
  assert.equal(await p.locator('#panel-update').isVisible(),true);assert.equal(await p.locator('#panel-update').getAttribute('href'),'https://github.com/404-git-404/404-probe/releases/tag/v1.1.1');assert.equal(await p.locator('#panel-update').getAttribute('rel'),'noopener noreferrer');
  for(const latest of ['v1.1.1-rc.1','v01.2.3','javascript:alert(1)','v1.2.3/../../','v1.2.3\n']){await p.evaluate(latest=>dashboardUI.updateVersion({update:{newer:true,latest,html_url:'https://example.invalid/'}}),latest);assert.equal(await p.locator('#panel-update').isVisible(),false);}
  await p.evaluate(()=>dashboardUI.updateVersion({update:{newer:'true',latest:'v1.2.3'}}));assert.equal(await p.locator('#panel-update').isVisible(),false);
- await p.evaluate(()=>dashboardUI.updateVersion({update:{newer:true,latest:'v1.2.3',checked_at:1}}));await p.locator('#panel-collapse').click();assert.equal(await p.locator('#panel-update').isVisible(),true);assert.equal(await p.locator('#panel-update b').textContent(),'⬆');
+ await p.evaluate(()=>dashboardUI.updateVersion({update:{newer:true,latest:'v1.2.3',checked_at:1}}));assert(await p.locator('#panel-update').isVisible());await p.locator('#panel-collapse').click();assert.equal(await p.locator('#panel-update').isVisible(),false);
 }));
 test('settings page persists the version checkbox immediately with session/CSRF, and explains 403',()=>ui(async({page:p,state})=>{
- state.update={enabled:false,newer:false,latest:'',checked_at:0};await p.locator('#panel-settings').click();assert.equal(new URL(p.url()).pathname,'/settings.html');
+ state.update={enabled:false,newer:false,latest:'',checked_at:0};await p.locator('#dashboard-settings > summary').click();await p.locator('[data-settings=update]').click();assert.equal(new URL(p.url()).hash,'#update');
  await p.waitForFunction(()=>!document.querySelector('#update-check-enabled').disabled);
  state.failSettings=true;await p.locator('#update-check-enabled').check();await p.waitForFunction(()=>document.querySelector('#update-check-error').textContent.includes('CSRF'));
  assert.deepEqual(state.writes[0].body,{enabled:true});assert.equal(state.writes[0].headers['x-csrf-token'],'synthetic-csrf');assert.equal(state.writes[0].headers['sec-fetch-site'],'same-origin');assert.equal(state.writes[0].headers.origin,new URL(p.url()).origin);
  state.failSettings=false;await p.locator('#update-check-enabled').check();await p.locator('#update-saved').waitFor();assert.equal(state.update.enabled,true);
 }));
-test('theme control works inside the panel in both expanded and icon modes',()=>ui(async({page:p})=>{
- await p.locator('[data-theme-toggle]').click();assert.equal(await p.locator('html').getAttribute('data-theme'),'dark');await p.locator('#panel-collapse').click();await p.locator('[data-theme-toggle]').click();assert.equal(await p.evaluate(()=>ProbeTheme.get()),'light');
+test('theme control switches in place after opening settings from the icon rail',()=>ui(async({page:p})=>{
+ await p.locator('#panel-collapse').click();await p.locator('#dashboard-settings > summary').click();await p.locator('[data-panel-theme=dark]').click();assert.equal(await p.locator('html').getAttribute('data-theme'),'dark');assert.equal(await p.locator('[data-panel-theme=dark]').getAttribute('aria-pressed'),'true');await p.locator('[data-panel-theme=light]').click();assert.equal(await p.evaluate(()=>ProbeTheme.get()),'light');
 }));
 async function command(p){await p.locator('#add-agent').click();await p.locator('#add-agent-choice-name').fill('单次名称 · 测试');await p.locator('#add-agent-next').click();await p.waitForSelector('#oneclick-result:not(.hidden)');}
 test('one-click has one name input, visible address, masked multiline command and exact clipboard, then revoke',()=>ui(async({page:p,state})=>{

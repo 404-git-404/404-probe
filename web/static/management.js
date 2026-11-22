@@ -172,7 +172,7 @@
   dialog.addEventListener('cancel',e=>{e.preventDefault();dismiss();});dialog.addEventListener('close',end);
   // Existing controllers may continue using showModal/close; no request logic moves here.
   dialog.showModal=()=>open();dialog.close=close;
-  function heading(text=title,device=subtitle){title=text;let head=dialog.querySelector(':scope > .shell-head');if(!head){head=doc.createElement('div');head.className='shell-head';const group=doc.createElement('div'),h=doc.createElement('h2'),p=doc.createElement('p');h.id=dialog.id+'-shell-title';dialog.setAttribute('aria-labelledby',h.id);group.append(h,p);head.append(group);dialog.prepend(head);}head.querySelector('h2').textContent=text;head.querySelector('p').textContent=device;head.querySelector('p').title=device;}
+  function heading(text=title,device=subtitle){title=text;let head=dialog.querySelector(':scope > .shell-head');if(!head){head=doc.createElement('div');head.className='shell-head';const group=doc.createElement('div'),h=doc.createElement('h2'),p=doc.createElement('p');h.id=dialog.id+'-shell-title';dialog.setAttribute('aria-labelledby',h.id);group.append(h,p);head.append(group);dialog.prepend(head);}head.querySelector('h2').textContent=text;const caption=head.querySelector('p');caption.textContent=device;caption.title=device;caption.classList.toggle('dialog-device-name',!!device&&dialog.id!=='add-agent-dialog');}
   if(title&&decorate)heading();
   return dialog._shell={open,close,heading,requestClose:dismiss,markSaved,setGuard,setOrigin:n=>{origin=n;}};
  }

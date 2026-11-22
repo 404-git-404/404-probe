@@ -219,10 +219,13 @@ func TestJobPageUsesOnlyWebReadAPI(t *testing.T) {
 		strings.Contains(body, "method: 'POST'") || strings.Contains(body, "method: 'DELETE'") {
 		t.Fatalf("job script status=%d body=%s", script.Code, body)
 	}
-	for _, path := range []string{"/", "/schedules.html"} {
-		response := webAgentResponse(t, app, http.MethodGet, path)
-		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "/jobs.html") {
-			t.Fatalf("navigation path=%q status=%d body=%s", path, response.Code, response.Body.String())
+	for _, tc := range []struct {
+		path string
+		link bool
+	}{{"/", false}, {"/schedules.html", true}} {
+		response := webAgentResponse(t, app, http.MethodGet, tc.path)
+		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "/jobs.html") != tc.link {
+			t.Fatalf("navigation path=%q status=%d body=%s", tc.path, response.Code, response.Body.String())
 		}
 	}
 }

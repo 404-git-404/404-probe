@@ -306,7 +306,7 @@
       const focusedName = focus?.dataset?.selectorName, focusedKind = focus?.dataset?.selectorKind;
       const content=el('div','');
       const heading=el('h2','出站选择');heading.id='selector-dialog-title';
-      const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device');device.id='selector-dialog-device';device.title=device.textContent;
+      const device=el('p',agent.name||agent.state?.hostname||'未命名设备','selector-device dialog-device-name');device.id='selector-dialog-device';device.title=device.textContent;
       const header=el('div','','shell-head'),group=el('div','');group.append(heading,device);header.append(group);content.append(header);
       const out=agent.outbounds||{},blocked=reason(agent,csrf());
       let index=0;

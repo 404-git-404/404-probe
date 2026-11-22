@@ -57,10 +57,10 @@ test('table semantics, unique named details buttons, keyboard access, page-stick
 test('toolbar tags collapse +N, preserve OR/AND filtering and clear; list and cards share controls',()=>ui(async({page:p,f})=>{
  f.state.tags.push(...Array.from({length:16},(_,i)=>({id:ID(500+i),name:'长标签 '+i})));f.state.revision++;await p.evaluate(()=>dashboardData.reload());await settle(p);await p.waitForFunction(()=>!document.querySelector('#dashboard-tags-more').hidden);
  assert.equal(await p.locator('#dashboard-panel #dashboard-tags').count(),0);assert.equal(await p.locator('#dashboard-toolbar #dashboard-tags').count(),1);
- await p.locator('#dashboard-tags .dashboard-options .dashboard-option').filter({hasText:'GIA'}).click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'显示 7 / 28 台');
- await p.locator('#dashboard-tags-more summary').click();const extra=p.locator('.dashboard-tag-overflow .dashboard-option').last();await extra.click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'显示 7 / 28 台');
- await p.locator('#dashboard-tags-more summary').click();await p.locator('#dashboard-groups .dashboard-option').filter({hasText:'常用'}).click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'显示 3 / 28 台');
- await p.locator('#dashboard-tags-clear').click();await settle(p);assert.deepEqual(await p.evaluate(()=>dashboardUI.preferences.value.tags),[]);assert.equal(await p.locator('#dashboard-count').textContent(),'显示 3 / 28 台');
+ await p.locator('#dashboard-tags .dashboard-options .dashboard-option').filter({hasText:'GIA'}).click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'7 / 28 台');
+ await p.locator('#dashboard-tags-more summary').click();const extra=p.locator('.dashboard-tag-overflow .dashboard-option').last();await extra.click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'7 / 28 台');
+ await p.locator('#dashboard-tags-more summary').click();await p.locator('#dashboard-groups .dashboard-option').filter({hasText:'常用'}).click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'3 / 28 台');
+ await p.locator('#dashboard-tags-clear').click();await settle(p);assert.deepEqual(await p.evaluate(()=>dashboardUI.preferences.value.tags),[]);assert.equal(await p.locator('#dashboard-count').textContent(),'3 / 28 台');
  await p.locator('[data-view=cards]').click();assert(await p.locator('#dashboard-tags').isVisible());
 },{width:1440}));
 test('phone list preference renders cards then restores list on tablet; temporary panel expansion leaves saved collapse intact',()=>ui(async({page:p})=>{
@@ -70,13 +70,13 @@ test('phone list preference renders cards then restores list on tablet; temporar
 }));
 test('offline/paused rows dim only nonidentity cells and graph colors differ from body text; rem controls remain circular',()=>ui(async({page:p})=>{
  for(const theme of ['light','dark']){await p.evaluate(t=>ProbeTheme.set(t),theme);const offline=p.locator(`.banner-row[data-agent-id="${ID(3)}"]`);assert.match(await offline.locator('[data-column=name]').textContent(),/离线 10 分钟/);assert.equal(await offline.locator('[data-column=cpu]').evaluate(n=>getComputedStyle(n).opacity),'0.42');assert.equal(await offline.locator('[data-column=name]').evaluate(n=>getComputedStyle(n).opacity),'1');assert.equal(await offline.locator('.banner-dot').evaluate(n=>getComputedStyle(n).backgroundColor),theme==='light'?'rgb(179, 58, 42)':'rgb(234, 107, 87)');}
- for(const percent of [125,150]){await p.evaluate(s=>document.documentElement.style.fontSize=s+'%',percent);for(const id of ['.theme-toggle','#panel-settings','#logout'])assert(await p.locator(id).evaluate(n=>{const r=n.getBoundingClientRect();return Math.abs(r.width-r.height)<1;}));}
+ for(const percent of [125,150]){await p.evaluate(s=>document.documentElement.style.fontSize=s+'%',percent);for(const id of ['#panel-collapse'])assert(await p.locator(id).evaluate(n=>{const r=n.getBoundingClientRect();return Math.abs(r.width-r.height)<1;}));}
 }));
 test('quota bar always edits quota; plan links to quota; three interval labels and future start are visible',()=>ui(async({page:p,f})=>{
  await p.locator('[data-view=cards]').click();const card=p.locator(`.agent-card[data-agent-id="${ID(0)}"]`);await card.locator('.c7-quota').click();assert.equal(await p.locator('#plan-title').textContent(),'流量配额');
  for(const [kind,label,help]of [['monthly','每隔几个月','每月固定某日清零'],['yearly','每隔几年','按年给流量的套餐'],['days','每隔几天','从起点起每隔 N 天，不按日历月']]){await p.locator('#plan-cycle-kind').selectOption(kind);assert.equal(await p.locator('#quota-cycle-count-label').textContent(),label);assert.equal(await p.locator('#quota-cycle-help').textContent(),help);}
  await p.locator('#plan-cycle-kind').selectOption('monthly');await p.locator('#quota-cycle-day').fill('30');const want=await p.evaluate(()=>Management.monthlyQuotaAnchor(30,Date.now(),'UTC'));assert.equal(await p.locator('#plan-cycle-anchor').inputValue(),want);
  await p.locator('#plan-dismiss').click();if(await p.locator('#plan-confirmation').isVisible())await p.locator('#plan-discard').click();
- await card.locator('.edit-plan').click();assert.equal(await p.locator('#plan-title').textContent(),'套餐与续费');await p.locator('#plan-open-quota').click();assert.equal(await p.locator('#plan-title').textContent(),'流量配额');await p.locator('#plan-dismiss').click();
+ await card.locator('.edit-plan').click();assert.equal(await p.locator('#plan-title').textContent(),'编辑套餐');await p.locator('#plan-open-quota').click();assert.equal(await p.locator('#plan-title').textContent(),'流量配额');await p.locator('#plan-dismiss').click();
  await p.evaluate(id=>{const a=agents.get(id);a.plan={...a.plan,cycle_start:null,cycle_end:null,cycle_anchor:'2027-02-28'};render(new Set([id]));},ID(0));await settle(p);assert.match(await card.locator('.c7-quota-empty').textContent(),/周期 2 月 28 日开始 · 配额 5 TB/);await card.locator('.c7-quota-empty').click();assert.equal(await p.locator('#plan-title').textContent(),'流量配额');
 },{preferences:{viewMode:'cards'}}));

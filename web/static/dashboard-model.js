@@ -2,20 +2,50 @@
  'use strict';
  const State=root.AgentState||(typeof require==='function'?require('./agent-state.js'):null);
  const KEY='404-probe.dashboard.v1',QUICK={offline:'离线',disk:'磁盘异常',network:'网络异常',resources:'资源吃紧',traffic:'流量将满',renewal:'7 天内续费',health:'需要关注',upgrade:'待升级'};
- const STATUS={online:'在线',offline:'离线',paused:'暂停',unknown:'状态未知'};
- const YOUTUBE={other:'其他地区',unknown:'未识别'};
+ const STATUS={online:'在线',offline:'离线',paused:'暂停'};
+ const ALL_GROUPS='__all_groups',UNGROUPED='__ungrouped',AD_FREE='ad-free';
+ const OVERVIEW_FILTERS=['health','renewal','upgrade'];
  // Client display window: 10s telemetry throttle, 15s calibration, read latency
  // and margin. Two refresh cycles tolerate one failed read; the Server's 5s
  // computation TTL and resource max_age_ms remain independent.
  const NETWORK_SUMMARY_FRESH_MS=30000;
- const SORTS={group:'分组',name:'名称',system:'系统',cpu:'CPU',memory:'内存',disk:'磁盘',rate:'实时速率',traffic:'周期流量 %',latency:'延迟',price:'价格',renewal:'续费',upgrade:'待升级'};
- const defaults=()=>({version:1,search:'',groups:[],tags:[],countries:[],statuses:[],youtubeRegions:[],quick:[],sort:'group',collapsed:[],panelSectionsClosed:[],expensePeriod:'monthly',panelCollapsed:false,viewMode:'cards',sortDir:'asc',latencySlot:1});
+ const SORTS={name:'名称',system:'系统',cpu:'CPU',memory:'内存',disk:'磁盘',rate:'实时速率',traffic:'周期流量 %',latency:'延迟',price:'价格',renewal:'续费',upgrade:'待升级'};
+ const defaults=()=>({version:1,search:'',groups:[],tags:[],countries:[],statuses:[],youtubeRegions:[],quick:[],sort:'name',collapsed:[],panelSectionsClosed:['countries','statuses','settings'],expensePeriod:'monthly',panelCollapsed:false,viewMode:'cards',sortDir:'asc',latencySlot:1});
  function preferences(storage=()=>root.localStorage){
   let value=defaults();
-  try{const saved=JSON.parse(storage().getItem(KEY));if(saved?.version===1){for(const k of ['groups','tags','countries','statuses','youtubeRegions','quick','collapsed','panelSectionsClosed'])if(Array.isArray(saved[k]))value[k]=[...new Set(saved[k].filter(x=>typeof x==='string'))];if(typeof saved.search==='string')value.search=saved.search.slice(0,256);if(['group','name','renewal'].includes(saved.sort))value.sort=saved.sort;for(const k of ['panelCollapsed'])value[k]=saved[k]===true;if(saved.expensePeriod==='yearly')value.expensePeriod='yearly';}}catch{}
-  try{const saved=JSON.parse(storage().getItem(KEY));if(saved?.version===1){if(['cards','list','network'].includes(saved.viewMode))value.viewMode=saved.viewMode;if(Object.hasOwn(SORTS,saved.sort))value.sort=saved.sort;if(saved.sortDir==='desc')value.sortDir='desc';if([1,2,3].includes(saved.latencySlot))value.latencySlot=saved.latencySlot;}}catch{}
+  try {
+   const saved=JSON.parse(storage().getItem(KEY));
+   if(saved?.version===1){
+    for(const key of ['groups','tags','countries','statuses','quick','collapsed','panelSectionsClosed']){
+     if(Array.isArray(saved[key])) value[key]=[...new Set(saved[key].filter(item=>typeof item==='string'))];
+    }
+    // A previously chosen group is the first single selection. The former
+    // default group sort becomes the new default flat device view.
+    value.groups=value.groups.slice(0,1);
+    value.statuses=value.statuses.filter(key=>Object.hasOwn(STATUS,key));
+    value.quick=[...new Set(value.quick.map(key=>['disk','network','resources','traffic'].includes(key)?'health':key))]
+     .filter(key=>OVERVIEW_FILTERS.includes(key)).slice(0,1);
+    if(Array.isArray(saved.youtubeRegions)&&saved.youtubeRegions.includes(AD_FREE)) value.youtubeRegions=[AD_FREE];
+    if(typeof saved.search==='string') value.search=saved.search.slice(0,256);
+    if(Object.hasOwn(SORTS,saved.sort)) value.sort=saved.sort;
+    if(['cards','list'].includes(saved.viewMode)) value.viewMode=saved.viewMode;
+    if(saved.sortDir==='desc') value.sortDir='desc';
+    if([1,2,3].includes(saved.latencySlot)) value.latencySlot=saved.latencySlot;
+    value.panelCollapsed=saved.panelCollapsed===true;
+    if(saved.expensePeriod==='yearly') value.expensePeriod='yearly';
+   }
+  }catch{}
   const save=()=>{try{storage().setItem(KEY,JSON.stringify(value));}catch{}};
-  return {value,save,validate(catalog){let changed=false;for(const [key,allowed]of [['groups',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['tags',new Set(catalog.tags.map(t=>t.id))],['collapsed',new Set(['__ungrouped',...catalog.groups.map(g=>g.id)])],['statuses',new Set(Object.keys(STATUS))],['youtubeRegions',new Set([...Object.keys(YOUTUBE),...(catalog.youtube_ad_free_regions||[])])],['quick',new Set(Object.keys(QUICK))]]){const filtered=value[key].filter(id=>allowed.has(id));if(filtered.length!==value[key].length){value[key]=filtered;changed=true;}}if(changed)save();}};
+  return {value,save,validate(catalog){
+   const groups=[UNGROUPED,...catalog.groups.map(group=>group.id)];
+   const allowed={groups:new Set([ALL_GROUPS,...groups]),tags:new Set(catalog.tags.map(tag=>tag.id)),collapsed:new Set(groups)};
+   let changed=false;
+   for(const [key,ids] of Object.entries(allowed)){
+    const filtered=value[key].filter(id=>ids.has(id));
+    if(filtered.length!==value[key].length){value[key]=filtered;changed=true;}
+   }
+   if(changed) save();
+  }};
  }
  function lifecycle(a){return a.revoked?'revoked':a.disabled_at!=null?'paused':a.online?'online':a.state||a.last_seen?'offline':'unknown';}
  const diskFaultReasons={write_eio:['写入失败','写入失败（I/O 错误）'],read_eio:['读回失败','读回失败（I/O 错误）'],read_only:['变为只读','文件系统变为只读'],stalled:['I/O 卡住','I/O 卡住'],ext4_errors:['文件系统报错','ext4 记录到新错误']};
@@ -45,21 +75,7 @@
   const d=new Date(at),pad=n=>String(n).padStart(2,'0');
   return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
  }
- const savedPlans=new WeakSet();
- function savedPlan(plan){if(plan&&typeof plan==='object')savedPlans.add(plan);}
- // A local plan write arrives before its next summary. Until the matching
- // summary arrives, project the saved date rather than the preceding date's days.
- function renewal(a,now=Date.now()){
-  const p=a.plan,r=a.renewal||{};if(!p||!savedPlans.has(p))return r;
-  const date=p.renewal_date||p.expiry_date||'',timezone=p.timezone||'UTC';
-  if(r.date===date&&(r.timezone||'UTC')===timezone)return r;
-  const value={date,timezone,field:p.renewal_date?'renewal_date':p.expiry_date?'expiry_date':''};
-  if(!date)return {...value,type:'missing'};
-  const management=root.Management||(typeof require==='function'?require('./management.js'):null),today=management?.planDate(now,timezone);
-  if(timezone==='Local'||!today||!management.validPlanDate(date))return {...value,type:'invalid'};
-  const days=Math.round((Date.parse(date)-Date.parse(today))/86400000);
-  return {...value,days,type:days<0?'overdue':days<=7?'due_soon':'upcoming'};
- }
+ function renewal(agent){return agent.renewal||{};}
  function flags(a,server,now=Date.now()){
   const r=a.resources,t=a.dashboard_traffic||{},p=a.plan,n=a.network;
   const fresh=!!r?.known&&!r.stale&&(!r.max_age_ms||!r.collected_at||now-r.collected_at<=r.max_age_ms);
@@ -84,15 +100,15 @@
   }return s;
  }
  function active(p){return !!(p.search.trim()||['groups','tags','countries','statuses','youtubeRegions','quick'].some(k=>p[k]?.length));}
- function matches(a,p,server,now,youtube){
+ function matches(a,p,server,now,youtubeFree){
   if(a.revoked)return false;
   if(p.search.trim()&&!(a.search_fields||[]).some(text=>typeof text==='string'&&text.toLocaleLowerCase().includes(p.search.trim().toLocaleLowerCase())))return false;
-  if(p.groups.length&&!p.groups.includes(a.group_id||'__ungrouped'))return false;
+  if(p.groups.length&&p.groups[0]!==ALL_GROUPS&&p.groups[0]!== (a.group_id||UNGROUPED))return false;
   if(p.tags.length&&!p.tags.some(id=>(a.tag_ids||[]).includes(id)))return false;
-  if(p.countries.length&&!p.countries.includes(a.country_code||'unknown'))return false;
+  const youtubeSelected=p.youtubeRegions?.length>0;
+  if((p.countries.length||youtubeSelected)&&!p.countries.includes(a.country_code||'unknown')&&!(youtubeSelected&&youtubeFree))return false;
   if(p.statuses.length&&!p.statuses.includes(lifecycle(a)))return false;
-  if(p.youtubeRegions?.length&&!p.youtubeRegions.includes(youtube))return false;
-  const f=flags(a,server,now);return p.quick.every(k=>f[k]);
+  return !p.quick.length||flags(a,server,now)[p.quick[0]];
  }
  const collator=new Intl.Collator('zh-CN');
  const byName=(a,b)=>collator.compare(a.name||'',b.name||'')||a.agent_id.localeCompare(b.agent_id);
@@ -130,22 +146,34 @@
   for(const id of order.keys())if(!liveGroups.has(id))order.delete(id);return model;
  },reset(){key='';order=new Map();}};}
  function select(agents,catalog,p,server,now=Date.now()){
-  const groupIDs=new Set(catalog.groups.map(g=>g.id));
-  const regions=catalog.youtube_ad_free_regions||[],youtubeCounts=new Map();
+  const groupIDs=new Set(catalog.groups.map(group=>group.id));
+  const regions=catalog.youtube_ad_free_regions||[];
   const youtubeStatus=root.YouTubeStatus||(typeof require==='function'?require('./youtube-status.js'):null);
   const list=[];
+  let youtubeFreeCount=0;
   for(const agent of agents.values()){
-   if(agent.revoked)continue;
-   const view=youtubeStatus?.display(agent,regions,now);
-   const youtube=view?.tone==='observed'?(view.regionTone==='crit'?view.code:'other'):'unknown';
-   youtubeCounts.set(youtube,(youtubeCounts.get(youtube)||0)+1);
+   if(agent.revoked) continue;
+   const youtube=youtubeStatus?.display(agent,regions,now);
+   const youtubeFree=youtube?.regionTone==='crit';
+   if(youtubeFree) youtubeFreeCount++;
    const candidate=agent.group_id&&!groupIDs.has(agent.group_id)?{...agent,group_id:null}:agent;
-   if(matches(candidate,p,server,now,youtube))list.push(candidate);
+   if(matches(candidate,p,server,now,youtubeFree)) list.push(candidate);
   }
-  const groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
   list.sort(comparator(p,server,catalog,now));
-  const sections=p.sort==='group'?[...groups.map(g=>({id:g.id,name:g.name,items:list.filter(a=>a.group_id===g.id)})),{id:'__ungrouped',name:'未分组',items:list.filter(a=>!a.group_id)}].filter(g=>g.items.length):[{id:'__all',name:'全部设备',items:list}];
-  return {list,sections,youtubeCounts,summary:aggregate(agents,server,now)};
+  const segmented=p.groups.length>0;
+  let sections=[{id:'__all',name:'全部设备',items:list}];
+  if(segmented){
+   const groupItems=new Map();
+   for(const agent of list){
+    const id=agent.group_id||UNGROUPED;
+    if(!groupItems.has(id)) groupItems.set(id,[]);
+    groupItems.get(id).push(agent);
+   }
+   const groups=[...catalog.groups].sort((a,b)=>a.sort_order-b.sort_order||a.id.localeCompare(b.id));
+   groups.push({id:UNGROUPED,name:'未分组'});
+   sections=groups.filter(g=>groupItems.has(g.id)).map(g=>({id:g.id,name:g.name,items:groupItems.get(g.id)}));
+  }
+  return {list,sections,segmented,youtubeFreeCount,summary:aggregate(agents,server,now)};
  }
- const api={KEY,QUICK,STATUS,YOUTUBE,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,savedPlan,renewal,diskReport,diskTone,diskFaults,diskHints,diskTime,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,ALL_GROUPS,UNGROUPED,AD_FREE,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,renewal,diskReport,diskTone,diskFaults,diskHints,diskTime,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);

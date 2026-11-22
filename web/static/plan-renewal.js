@@ -89,7 +89,7 @@
     r.facts=facts(result.current_plan);r.revision=result.current_revision;r.serverUndo=result.undo;
     if(pending.kind==='apply'&&result.undo.available&&result.undo.operation_id===result.operation.request_id)r.latest={...result.operation};
     else if(pending.kind==='undo'||result.undo.operation_id!==r.latest?.request_id)r.latest=null;
-    completed=finish(mutation,{plan:result.current_plan});
+    completed=finish(mutation,{plan:result.current_plan,renewal:result.renewal});
     if(!completed)return;
     r.unknown=null;r.error='';r.message=`${pending.kind==='undo'?'撤销已确认':'登记已确认'}：${labels[result.operation.field]} ${result.operation.from_date} → ${result.operation.to_date}。当前套餐以服务器返回资料为准。`;
     if(live(key,serial)){preview=null;undoAsk=false;}

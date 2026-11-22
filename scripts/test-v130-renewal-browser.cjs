@@ -16,7 +16,7 @@ test('renewal URL is validated and links follow the actual renewal deadline', as
   const session = await open(browser, {n:5,handle: async ({req,url,body,json}) => {
     if (url.pathname === `/api/v1/web/agents/${target}/plan` && req.method === 'PUT') {
       agent.plan = {...agent.plan,...body};
-      json(agent.plan);
+      json({...agent.plan,renewal:agent.renewal});
       return true;
     }
     if (url.pathname.endsWith('/renewal/preview')) {
@@ -26,7 +26,7 @@ test('renewal URL is validated and links follow the actual renewal deadline', as
     if (url.pathname.endsWith('/renewal/apply')) {
       agent.plan.renewal_date = normal.to_date;
       agent.renewal = {field:'renewal_date',type:'upcoming',date:future,days:366,timezone:'UTC'};
-      json({replayed:false,current_revision:'b'.repeat(32),current_plan:agent.plan,undo:{available:true,operation_id:body.request_id},operation:{...normal,request_id:body.request_id,kind:'apply',applied_at:Date.now(),undo_until:Date.now()+300000}});
+      json({replayed:false,current_revision:'b'.repeat(32),current_plan:agent.plan,renewal:agent.renewal,undo:{available:true,operation_id:body.request_id},operation:{...normal,request_id:body.request_id,kind:'apply',applied_at:Date.now(),undo_until:Date.now()+300000}});
       return true;
     }
     return false;

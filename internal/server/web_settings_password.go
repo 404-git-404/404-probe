@@ -16,7 +16,11 @@ import (
 	"404-probe/internal/storage"
 )
 
-const webPasswordAttemptLimit = 5
+const (
+	webPasswordAttemptLimit = 5
+	// Three 1024-byte password fields can grow up to sixfold in JSON escapes.
+	maxWebPasswordJSONBytes = 20 << 10
+)
 
 func (w *webAuthenticator) currentCredential(ctx context.Context) (storage.WebCredential, error) {
 	credential, err := w.store.WebCredential(ctx)
@@ -90,7 +94,7 @@ func (a *App) handleChangeWebPassword(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", generic)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebPasswordJSONBytes))
 	if err != nil {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", generic)
 		return

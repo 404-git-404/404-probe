@@ -1,39 +1,47 @@
 (function(root){
- 'use strict';
- const M=root.DashboardModel||(typeof require==='function'?require('./dashboard-model.js'):null);
- function create({doc=root.document,preferences,onfilter=()=>{},onexpense=()=>{}}={}){
-  const get=id=>doc.getElementById('overview-'+id),p=preferences?.value||M.defaults();
-  const save=()=>preferences?.save();
-  for(const [id,key]of [['upgrade','upgrade'],['health','health'],['renewal','renewal']])get(id).addEventListener('click',()=>onfilter(key));
-  get('expense').addEventListener('click',e=>onexpense(e.currentTarget));
-  let last=null;
-  const periods=[...(get('period').querySelectorAll?.('button')||[])];
-  for(const b of periods)b.addEventListener('click',()=>{p.expensePeriod=b.dataset.period;save();money();});
-  function money(){get('money').textContent=last&&last.included_count!==0?'$'+(p.expensePeriod==='yearly'?last.yearly_usd:last.monthly_usd)+' / '+(p.expensePeriod==='yearly'?'年':'月'):'—';get('money-note').textContent=last?.included_count===0?`未设置价格 ${last.missing_price_count||0} 台`:last?.missing_rates?.length?'有币种缺汇率':'';for(const b of periods)b.setAttribute('aria-pressed',String(b.dataset.period===p.expensePeriod));}
-  money();
-  let painted='';
-  function update(agents,ready,{summary=null,catalog={},server={}}={}){
-   const signature=JSON.stringify([ready,summary&&{...summary,nearest:summary.nearest&&[summary.nearest.name,summary.nearest.renewal]},catalog.expenses]);if(signature===painted)return;painted=signature;
-   get('scope').textContent=ready?'全部 '+summary.registered+' 台':'正在读取';
-   if(!ready){for(const id of ['online','health','renewal'])get(id).textContent='等待读取';get('health-note').textContent='资料读取完成后显示健康汇总';return;}
-   const s=summary||M.aggregate(agents,server);get('online').textContent=`${s.online} / ${s.registered}`;
-   get('offline').textContent=`离线 ${s.offline} · 暂停 ${s.paused}`;get('upgrade').textContent=`待升级 ${s.upgrade} 台`;get('upgrade').disabled=!s.upgrade;
-   get('versions').textContent=[s.versionNonformal?`非正式版本 ${s.versionNonformal} 台，未计入待升级`:'',s.versionUnknown?`版本无法识别 ${s.versionUnknown} 台`:'',s.unknown?`状态未知 ${s.unknown} 台`:''].filter(Boolean).join(' · ');
-   get('health').textContent=s.health?`⚠ ${s.health} 台需要关注`:s.insufficient?'暂无已知异常':s.registered?'✓ 全部正常':'尚无设备';
-   get('health').classList.toggle('attention',s.health>0);get('health').disabled=!s.health;
-   get('health-note').textContent=`磁盘异常 ${s.quick.disk} · 网络异常 ${s.quick.network} · 资源吃紧 ${s.quick.resources} · 流量将满 ${s.quick.traffic}`;
-   get('unknown').textContent=s.insufficient?(s.health?`${s.insufficient} 台暂无最新数据（离线或尚未检测）`:`其余 ${s.insufficient} 台暂无最新数据（离线或尚未检测）`) : '';
-   if(doc.createElement){
-    let count=get('renewal').querySelector?.('strong');
-    if(!count){count=doc.createElement('strong');const label=doc.createElement('span');label.textContent='7 天内续费';get('renewal').textContent='';get('renewal').append(count,label);}
-    if(count.textContent!==s.renewal+' 台')count.textContent=s.renewal+' 台';
-   }else get('renewal').textContent=`${s.renewal} 台 7 天内续费`;
-   get('renewal').classList.toggle('attention',s.renewal>0);get('renewal').disabled=!s.renewal;get('overdue').textContent=`已到期 ${s.overdue}`;
-   get('nearest').textContent=s.nearest?`最近：${s.nearest.name} · ${s.nearest.renewal.date}（${s.nearest.renewal.days===0?'今天':s.nearest.renewal.days+' 天后'}）`:s.renewalInvalid?'续费日期或时区需要检查':'尚未设置待续费日期';
-   doc.getElementById('panel-online').textContent=`${s.online}/${s.registered}`;doc.getElementById('panel-health').textContent='⚠ '+s.health;doc.getElementById('panel-renewal').textContent='↻ '+s.renewal;
-   last=catalog.expenses||null;money();
+  'use strict';
+  const M=root.DashboardModel||(typeof require==='function'?require('./dashboard-model.js'):null);
+  function create({doc=root.document,preferences,onfilter=()=>{},onexpense=()=>{}}={}){
+    const get=id=>doc.getElementById('overview-'+id),p=preferences?.value||M.defaults();
+    const filters=['upgrade','health','renewal'];
+    for(const id of filters) get(id).addEventListener('click',()=>onfilter(id));
+    get('expense').addEventListener('click',event=>onexpense(event.currentTarget));
+    const periods=[...get('period').querySelectorAll('button')];
+    let expenses=null, painted='';
+    function money(){
+      get('money').textContent=expenses&&expenses.included_count!==0
+        ?'$'+(p.expensePeriod==='yearly'?expenses.yearly_usd+' / 年':expenses.monthly_usd+' / 月'):'—';
+      for(const button of periods) button.setAttribute('aria-pressed',String(button.dataset.period===p.expensePeriod));
+    }
+    for(const button of periods) button.addEventListener('click',()=>{
+      p.expensePeriod=button.dataset.period;
+      preferences?.save();
+      money();
+    });
+    money();
+    function update(agents,ready,{summary=null,catalog={},server={}}={}){
+      if(!ready) return;
+      const s=summary||M.aggregate(agents,server);
+      const signature=JSON.stringify([s.registered,s.online,s.offline,s.paused,s.upgrade,s.health,s.insufficient,s.renewal,p.quick,catalog.expenses]);
+      if(signature===painted) return;
+      painted=signature;
+      get('scope').textContent='全部 '+s.registered+' 台';
+      get('online').textContent=s.online+' / '+s.registered;
+      get('offline').textContent='离线 '+s.offline+' · 暂停 '+s.paused;
+      get('upgrade').textContent='待升级 '+s.upgrade+' 台';
+      get('health-stat').textContent=s.health?'⚠ '+s.health+' 台需要关注':s.insufficient?'暂无已知异常':s.registered?'✓ 全部正常':'尚无设备';
+      get('renewal-stat').querySelector('strong').textContent=s.renewal;
+      for(const id of ['health','renewal']) get(id+'-stat').classList.toggle('attention',s[id]>0);
+      for(const id of filters){
+        get(id).disabled=!s[id];
+        get(id).setAttribute('aria-pressed',String(p.quick.includes(id)));
+      }
+      expenses=catalog.expenses||null;
+      money();
+    }
+    return {update};
   }
-  return {update};
- }
- const api={create,aggregate:M.aggregate,KEY:M.KEY};if(typeof module==='object'&&module.exports)module.exports=api;else root.Overview=api;
+  const api={create,aggregate:M.aggregate,KEY:M.KEY};
+  if(typeof module==='object'&&module.exports) module.exports=api;
+  else root.Overview=api;
 })(globalThis);

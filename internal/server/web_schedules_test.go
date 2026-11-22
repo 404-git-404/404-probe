@@ -170,7 +170,7 @@ func TestSchedulePageUsesOnlyWebReadAPI(t *testing.T) {
 		t.Fatalf("schedule script status=%d body=%s", script.Code, body)
 	}
 	dashboard := webAgentResponse(t, app, http.MethodGet, "/")
-	if dashboard.Code != http.StatusOK || !strings.Contains(dashboard.Body.String(), "/schedules.html") {
+	if dashboard.Code != http.StatusOK || strings.Contains(dashboard.Body.String(), "/schedules.html") {
 		t.Fatalf("dashboard status=%d body=%s", dashboard.Code, dashboard.Body.String())
 	}
 }

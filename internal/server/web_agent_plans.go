@@ -122,7 +122,8 @@ func (a *App) handlePutWebAgentPlan(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	saved, err := a.store.PutAgentPlan(r.Context(), plan, calibration, a.now())
+	now := a.now()
+	saved, err := a.store.PutAgentPlan(r.Context(), plan, calibration, now)
 	if err != nil {
 		if errors.Is(err, storage.ErrAgentNotFound) {
 			writeJobError(w, http.StatusNotFound, "agent_not_found", "active agent not found")
@@ -132,7 +133,10 @@ func (a *App) handlePutWebAgentPlan(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not save plan")
 		return
 	}
-	writeJSON(w, http.StatusOK, saved)
+	writeJSON(w, http.StatusOK, struct {
+		storage.AgentPlan
+		Renewal dashboardRenewal `json:"renewal"`
+	}{AgentPlan: saved, Renewal: renewalSummary(&saved, now)})
 }
 
 func (a *App) handleWebAgentPlanMethodNotAllowed(w http.ResponseWriter, r *http.Request) {

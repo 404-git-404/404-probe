@@ -140,11 +140,17 @@ func TestWebPasswordChangeValidation(t *testing.T) {
 	for _, malformed := range []struct{ code, body string }{
 		{"invalid_request", `{"extra":true}`},
 		{"invalid_request", `{"current_password":"a","new_password":"b","confirm_password":"c"}{}`},
-		{"invalid_request", `{"current_password":"` + strings.Repeat("a", 4096) + `"}`},
+		{"invalid_request", `{"current_password":"` + strings.Repeat("a", maxWebPasswordJSONBytes) + `"}`},
 		{"invalid_chars", `{"current_password":"a","new_password":"abc\udc00","confirm_password":"abc"}`},
 		{"invalid_chars", `{"current_password":"a","new_password":"abc` + "\xff" + `","confirm_password":"abc"}`},
 	} {
 		expectPasswordError(t, passwordChangeRaw(a, cookie, session.csrfToken, []byte(malformed.body), ""), http.StatusBadRequest, malformed.code)
+	}
+
+	escaped := strings.Repeat(`\u0061`, 1024)
+	body := `{"current_password":"` + old + `","new_password":"` + escaped + `","confirm_password":"` + escaped + `"}`
+	if got := passwordChangeRaw(a, cookie, session.csrfToken, []byte(body), ""); got.Code != http.StatusNoContent {
+		t.Fatalf("escaped maximum-length password status=%d body=%s", got.Code, got.Body.String())
 	}
 }
 
@@ -309,11 +315,11 @@ func TestWebPasswordChangeTwelveCodePointBoundary(t *testing.T) {
 	}
 }
 
-func TestWebPasswordFormsHaveNonSubmittingUsername(t *testing.T) {
+func TestWebPasswordFormsHaveStableUsernames(t *testing.T) {
 	a, store, _ := newWebAuthenticationTestApp(t)
 	defer store.Close()
 	cookie, _ := passwordTestSession(t, a)
-	for _, path := range []string{"/login", "/settings.html"} {
+	for _, path := range []string{"/login", "/"} {
 		t.Run(path, func(t *testing.T) {
 			var credential *http.Cookie
 			if path != "/login" {
@@ -339,8 +345,14 @@ func TestWebPasswordFormsHaveNonSubmittingUsername(t *testing.T) {
 						count++
 						_, hidden := attrs["hidden"]
 						_, named := attrs["name"]
-						if attrs["value"] != "404-probe" || attrs["tabindex"] != "-1" || attrs["aria-hidden"] != "true" || !hidden || named {
-							t.Fatal("username must be fixed, hidden, ignored by assistive navigation, and excluded from submission")
+						if attrs["value"] != "404-probe" || attrs["tabindex"] != "-1" || attrs["type"] != "text" {
+							t.Fatal("username must identify the fixed account without an extra tab stop")
+						}
+						if path == "/login" && (!hidden || named) {
+							t.Fatal("login retains its password-only form submission")
+						}
+						if path == "/" && (hidden || attrs["class"] != "sr-only" || attrs["name"] != "username") {
+							t.Fatal("Chromium needs a named text field in the password change form")
 						}
 					}
 				}

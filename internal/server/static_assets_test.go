@@ -378,8 +378,8 @@ func TestStaticAssetsStartupOnlyAndPerAppIsolation(t *testing.T) {
 		}
 	}
 	t.Logf("startup directory: legacy=%d immutable=%d page aliases=%d retained bytes=%d", len(b.legacy), len(b.immutable), len(b.pages), retained)
-	// The settings page, script and stylesheet add three entries to the asset directory.
-	if len(b.legacy) != 340 || retained > 3<<20 {
+	// The standalone settings bookmark ships one additional redirect script.
+	if len(b.legacy) != 341 || retained > 3<<20 {
 		t.Fatal("unexpected resource footprint")
 	}
 }

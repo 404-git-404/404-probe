@@ -19,18 +19,20 @@
   const name=a.name||a.state?.hostname||'未命名 VPS',uptime=lifecycle==='paused'?'暂停':lifecycle==='offline'?`离线 ${Math.floor(Math.max(0,now-(a.last_seen||now))/60000)} 分钟`:finite(a.state?.uptime)?`${Math.floor(a.state.uptime/86400)} 天 ${Math.floor(a.state.uptime%86400/3600)} 时`:'等待上报';
   const os=a.state?.os||'',system=/debian/i.test(os)?'Deb':/alpine/i.test(os)?'Alp':/ubuntu/i.test(os)?'Ubu':os.split(' ')[0]||'—';
   const metrics=['cpu_percent','ram_percent','disk_percent'].map(k=>{const v=a.state?.collected_at>=r.collected_at&&finite(a.state[k])?a.state[k]:r[k],tone=C.ringTone(v,old);return {tone,fill:tone==='unknown'?0:Math.max(0,Math.min(100,v)),text:tone==='unknown'?'—':Number(v.toFixed(1))+'%'};});
-  const diskTone=M.diskTone(a,now);
-  if(diskTone==='crit')metrics[2].tone='crit';
+  const flags=M.flags(a,server,now),diskTone=M.diskTone(a,now);
+  for(const [index,key] of ['cpu_percent','ram_percent','disk_percent'].entries()){
+   if((flags.resources&&r[key]>=90)||(index===2&&diskTone==='crit')) metrics[index].tone='warn';
+  }
   metrics[2].diskTone=diskTone;
   const p=a.plan,t=a.dashboard_traffic||{},trafficOld=t.stale||t.quota_state==='expired'||(p?.traffic_mode&&!t.known),used=p?.usage_bytes,quota=p?.quota_bytes;
   let traffic={text:'无流量套餐',fill:0,tone:'unknown'};
   if(p?.traffic_mode){const percent=finite(used)&&finite(quota)&&quota>0?used/quota*100:null;
-   traffic={text:trafficOld?'数据陈旧':t.quota_state==='pending'?'周期尚未开始':quota==null?`${C.sig3(used)} / 不限流量`:!finite(used)?'暂无用量':`${C.sig3(used)} / ${C.sig3(quota)} · ${percent==null?'—':Number(percent.toFixed(1))+'%'}`,fill:trafficOld?0:Math.max(0,Math.min(100,percent||0)),tone:trafficOld?'unknown':C.ringTone(percent)};
+   traffic={text:trafficOld?'数据陈旧':t.quota_state==='pending'?'周期尚未开始':quota==null?`${C.sig3(used)} / 不限流量`:!finite(used)?'暂无用量':`${C.sig3(used)} / ${C.sig3(quota)} · ${percent==null?'—':Number(percent.toFixed(1))+'%'}`,fill:trafficOld?0:Math.max(0,Math.min(100,percent||0)),tone:flags.traffic?'warn':trafficOld?'unknown':C.ringTone(percent)};
   }
   const youtube=root.YouTubeStatus.display(a,youtubeRegions,now);
-  const due=M.renewal(a,now),soon=due.type==='due_soon'||due.type==='overdue';
+  const due=M.renewal(a),soon=due.type==='due_soon'||due.type==='overdue';
   const renewalLink=soon&&p?.renewal_date&&due.field!=='expiry_date'&&p.renewal_url?root.Management.parseRenewalURL(p.renewal_url).url?.href:'';
-  return {name,uptime,lifecycle,country:a.country_code||'',countrySource:a.country_source||'',system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),youtube:{text:youtube.code||'—',tone:youtube.regionTone},price:price(p),renewal:renewal(a,due),renewalLink,soon,upgrade:M.flags(a,server,now).upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
+  return {name,uptime,lifecycle,country:a.country_code||'',countrySource:a.country_source||'',system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),networkWarning:flags.network,youtube:{text:youtube.code||'—',tone:youtube.regionTone},price:price(p),renewal:renewal(a,due),renewalLink,dueType:due.type,upgrade:flags.upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
  }
  function create({host,document:doc=root.document,selector,onOpen=()=>{},onCollapse=()=>{},onSort=()=>{},onSlot=()=>{},csrf=()=>'',blocked=()=>false}={}){
   const groups=new Map(),rows=new Map();let lastLayout='',headerKey='',namesKey='';
@@ -57,16 +59,16 @@
   function row(a){
    const node=el('div','banner-row banner-columns');node.dataset.agentId=a.agent_id;node.setAttribute('role','row');
    const cells=columns.map(([key])=>{const n=el('div','banner-cell');n.dataset.column=key;n.setAttribute('role','cell');node.append(n);return n;}),identity=el('div','banner-identity'),dot=el('i','banner-dot'),flag=el('span','banner-flag'),names=el('div','banner-names'),name=el('button','banner-name'),uptime=el('small');name.type='button';name.addEventListener('click',()=>onOpen(a.agent_id,name));names.append(name,uptime);identity.append(dot,flag,names);cells[0].append(identity);
-   const system=el('span','banner-os');cells[1].append(system);const metrics=[bar(),bar(),bar(true)];metrics.forEach((m,i)=>cells[2+i].append(m.box));const tx=el('span'),rx=el('small');cells[5].append(tx,rx);const traffic=bar();cells[6].append(traffic.box);const youtube=el('span','banner-youtube');cells[9].append(youtube);
+   const system=el('span','banner-os');cells[1].append(system);const metrics=[bar(),bar(),bar(true)];metrics.forEach((m,i)=>cells[2+i].append(m.box));const tx=el('span'),rx=el('small');cells[5].append(tx,rx);const traffic=bar();cells[6].append(traffic.box);const delay=el('span'),network=el('small','banner-network-warning','⚠ 网络异常');cells[7].append(delay,network);const youtube=el('span','banner-youtube');cells[9].append(youtube);
    const cost=el('span'),renewalLine=el('small','banner-renewal-line');cells[10].append(cost,renewalLine);
    let renewalDate,go;
    node.addEventListener('click',e=>{if(e.target.closest('button,a,input,select')||root.getSelection?.()?.toString())return;onOpen(a.agent_id,name);});
    function update(v,agent){
     node.dataset.lifecycle=v.lifecycle;node.setAttribute('aria-label',v.name);text(name,v.name);name.title=v.name;name.setAttribute('aria-label','查看 '+v.name+' 详情');text(uptime,v.uptime);if(flag.dataset.code!==v.country||flag.dataset.source!==v.countrySource){flag.dataset.code=v.country;flag.dataset.source=v.countrySource;flag.replaceChildren(root.countryMark(v.country,v.countrySource));}dot.dataset.state=v.lifecycle;dot.title=C.statusHint(agent);if(system.dataset.os!==v.os){system.dataset.os=v.os;system.replaceChildren(root.systemLogo(v.os));}system.title=v.os;
-    const setBar=(m,v)=>{m.box.dataset.tone=v.tone;m.fill.style.width=v.fill+'%';text(m.label,v.text);};metrics.forEach((m,i)=>setBar(m,v.metrics[i]));text(tx,v.tx);text(rx,v.rx);setBar(traffic,v.traffic);text(cells[7],v.latency.text);cells[7].title=v.latency.title;cells[7].dataset.state=v.latency.state;
+    const setBar=(m,v)=>{m.box.dataset.tone=v.tone;m.fill.style.width=v.fill+'%';text(m.label,v.text);};metrics.forEach((m,i)=>setBar(m,v.metrics[i]));text(tx,v.tx);text(rx,v.rx);setBar(traffic,v.traffic);text(delay,v.latency.text);network.hidden=!v.networkWarning;cells[7].title=v.latency.title;cells[7].dataset.state=v.latency.state;
     const diskTone=v.metrics[2].diskTone;metrics[2].badge.dataset.tone=diskTone;text(metrics[2].badge,diskTone==='crit'?' · 异常':diskTone==='warn'?' · 曾出错':'');
     const trigger=selector.compactTrigger(agent);if(trigger.parentNode!==cells[8])cells[8].append(trigger);text(youtube,v.youtube.text);youtube.dataset.tone=v.youtube.tone;youtube.removeAttribute('title');text(cost,v.price);if(v.upgrade){if(!cells[11].firstElementChild){const upgrade=el('button','banner-upgrade-link','待升级');upgrade.type='button';upgrade.addEventListener('click',()=>onOpen(a.agent_id,upgrade,'management'));cells[11].replaceChildren(upgrade);}}else cells[11].replaceChildren();cells[11].classList.toggle('banner-upgrade',v.upgrade);
-    renewalLine.classList.toggle('due-soon',v.soon);
+    renewalLine.dataset.due=v.dueType||'';
     if(v.renewalLink){
      if(!go){renewalDate=el('span');go=el('a','banner-renewal-link','去续费 ↗');go.target='_blank';go.rel='noopener noreferrer';go.title='去续费（新标签页）';}
      go.href=v.renewalLink;text(renewalDate,v.renewal);
@@ -82,7 +84,7 @@
    const hk=JSON.stringify([prefs.sort,prefs.sortDir,prefs.latencySlot]);if(hk!==headerKey){headerKey=hk;text(header.querySelector('.banner-slot'),`槽 ${prefs.latencySlot||1} ▾`);for(const b of header.querySelectorAll('[data-slot]'))b.setAttribute('aria-pressed',String(Number(b.dataset.slot)===(prefs.latencySlot||1)));for(const b of header.querySelectorAll('[data-sort]')){const active=b.dataset.sort===prefs.sort;b.dataset.direction=active?(prefs.sortDir||'asc'):'';b.setAttribute('aria-label',(columns.find(c=>c[0]===b.dataset.sort)?.[1]||'待升级')+'排序'+(active?(prefs.sortDir==='desc'?'，降序':'，升序'):''));}}
    const layout=JSON.stringify(model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])),changed=layout!==lastLayout;
    let position=grid.firstElementChild;
-   for(const group of model.sections){let gv=groups.get(group.id);if(!gv){const node=el('section','banner-group'),head=el('button','banner-group-header'),body=el('div','banner-group-body');head.type='button';const label=el('span');head.append(label);head.addEventListener('click',()=>onCollapse(group.id));node.setAttribute('role','rowgroup');body.setAttribute('role','presentation');const heading=el('div'),cell=el('div');heading.setAttribute('role','row');cell.setAttribute('role','cell');cell.setAttribute('aria-colspan','12');cell.append(head);heading.append(cell);node.append(heading,body);gv={node,head,body,label};groups.set(group.id,gv);}const collapsed=prefs.collapsed.includes(group.id);text(gv.label,`${collapsed?'▸':'▾'} ${group.name} ${group.items.length} 台`);gv.head.parentNode.hidden=prefs.sort!=='group';gv.head.setAttribute('aria-expanded',String(!collapsed));gv.body.hidden=collapsed;
+   for(const group of model.sections){let gv=groups.get(group.id);if(!gv){const node=el('section','banner-group'),head=el('button','banner-group-header'),body=el('div','banner-group-body');head.type='button';const label=el('span');head.append(label);head.addEventListener('click',()=>onCollapse(group.id));node.setAttribute('role','rowgroup');body.setAttribute('role','presentation');const heading=el('div'),cell=el('div');heading.setAttribute('role','row');cell.setAttribute('role','cell');cell.setAttribute('aria-colspan','12');cell.append(head);heading.append(cell);node.append(heading,body);gv={node,head,body,label};groups.set(group.id,gv);}const collapsed=prefs.collapsed.includes(group.id);text(gv.label,`${collapsed?'▸':'▾'} ${group.name} ${group.items.length} 台`);gv.head.parentNode.hidden=!model.segmented;gv.head.setAttribute('aria-expanded',String(!collapsed));gv.body.hidden=collapsed;
     if(changed){if(gv.node!==position)grid.insertBefore(gv.node,position);position=gv.node.nextElementSibling;}if(collapsed)continue;
     let rowPosition=gv.body.firstElementChild;
     for(const a of group.items){const id=a.agent_id;visible.add(id);let rv=rows.get(id);if(!rv||dirty===null||dirty.has(id)){
