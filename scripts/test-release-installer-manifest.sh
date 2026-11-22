@@ -15,7 +15,9 @@ cat >"${temporary}/fake-bin/sha256sum" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 [[ "${FAKE_FAIL:-0}" == 0 ]] || exit 17
-printf '%s%s%s\n' "${FAKE_DIGEST}" "${FAKE_MARKER}" "$1"
+[[ $# -eq 0 ]]
+cat >/dev/null
+printf '%s%s-\n' "${FAKE_DIGEST}" "${FAKE_MARKER}"
 EOF
 chmod 0700 "${temporary}/fake-bin/sha256sum"
 
@@ -37,5 +39,15 @@ if PATH="${temporary}/fake-bin:${PATH}" FAKE_FAIL=1 FAKE_DIGEST="${digest}" FAKE
   exit 1
 fi
 [[ "$(cat "${temporary}/SHA256SUMS")" == sentinel ]]
+
+# GNU escapes a literal backslash in a file operand on Linux.
+if [[ "$(uname -s)" == Linux ]]; then
+  escaped_directory="${temporary}/path\with-backslash"
+  mkdir -- "${escaped_directory}"
+  cp -- "${temporary}/install.sh" "${escaped_directory}/install.sh"
+  bash "${root}/scripts/write-installer-checksum.sh" \
+    "${escaped_directory}/install.sh" "${escaped_directory}/SHA256SUMS"
+  (cd "${escaped_directory}" && "${real_sha256sum}" --check --strict SHA256SUMS)
+fi
 
 printf 'Release installer manifest format tests passed.\n'

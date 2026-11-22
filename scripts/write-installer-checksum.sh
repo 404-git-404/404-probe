@@ -14,7 +14,8 @@ readonly checksums="$2"
   exit 1
 }
 
-checksum_output="$(sha256sum "${installer}")"
+# Hash stdin so GNU sha256sum never escapes the input path in its output.
+checksum_output="$(sha256sum <"${installer}")"
 checksum="${checksum_output%%[[:space:]]*}"
 [[ "${checksum}" =~ ^[[:xdigit:]]{64}$ ]] || {
   printf 'sha256sum returned a malformed installer digest\n' >&2

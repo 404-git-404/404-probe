@@ -25,6 +25,14 @@
       "added_tables": ["web_admin_credential", "web_youtube_ad_free_regions"],
       "removed_tables": [],
       "generation_chain": ["v1.2.1", "v1.3.0"]
+    },
+    "v1.3.1": {
+      "commit": "cdd4fa3e0aed72aeb68d6d1cf3e0bf18d0fe800a",
+      "schema": 38,
+      "previous_version": "v1.3.0",
+      "added_tables": [],
+      "removed_tables": [],
+      "generation_chain": ["v1.2.1", "v1.3.0", "v1.3.1"]
     }
   }
 }
