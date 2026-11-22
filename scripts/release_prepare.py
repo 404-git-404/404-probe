@@ -116,11 +116,14 @@ def prepare(root, target, start, notes):
                f"文件之前被安装器拒绝，请先查阅中间版本发布说明中的支持起点。版本窗口只由安装器保证，"
                f"手动替换二进制不保证。详情见 [{target} 发布说明](RELEASE_NOTES_{target}.md)“升级前必读”。")
     edit(readme, r"^> \*\*本版支持从 .+$", upgrade)
-    edit(readme, r"^(\*\*现有 Server 升级（支持 ).+$",
-         f"**现有 Server 升级（支持 {start}）：**在 Server 主机运行上面的同一命令，确认目标 {target}。"
-         f"安装器会验证候选文件、数据库和可用空间，并建立受保护的一致性备份。{description}"
-         "升级后请保留与旧版匹配的数据库、配置和密码文件。更早的版本请按中间版发布说明逐步升级。"
-         "先升级 Server，再在面板中升级 Agent。")
+    edit(readme, r"^\*\*现有 Server 升级（支持 .+?确认目标 " + re.escape(previous) + r"。",
+         f"**现有 Server 升级（支持 {start}）：**在 Server 主机运行上面的同一命令，确认目标 {target}。")
+    edit(readme, r"本版没有新增数据库迁移：.+?安装器在受保护备份之后执行迁移，并做完整性校验。",
+         f"{description}安装器在受保护备份之后执行必要的迁移，并做完整性校验。")
+    edit(readme, r"窗口外的 Server（包括 " + VERSION + r"）或 schema \d+ 及更早的数据库",
+         f"窗口外的 Server 或 schema {floor_schema - 1} 及更早的数据库")
+    edit(readme, r"本版 Agent 没有功能变化，面板升级 Agent 可以晚点做。",
+         "Server 升级完成后，可在面板中升级 Agent。")
     edit(readme, r"^the current " + VERSION + r" Server [\s\S]*?"
          r"Preserve the protected upgrade backup and do not directly\s+downgrade the migrated database\.",
          f"the current {target} Server supports upgrades from {start} (schema {floor_schema}).\n"

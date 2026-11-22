@@ -77,7 +77,7 @@ class Release:
         self.source = self.out / "candidate"
         self.assets = self.out / "assets"
         self.state_file = self.out / "release-state.json"
-        self.state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
+        self.state = {}
         suffix = ".exe" if os.name == "nt" else ""
         local_go = ROOT / ".tools/go/bin" / ("go" + suffix)
         main_go = ROOT.parent / "404-probe/.tools/go/bin" / ("go" + suffix)
@@ -310,7 +310,10 @@ class Release:
                     raise
         except Exception as error:
             retry = [sys.executable, str(Path(__file__).resolve()), name, *sys.argv[2:]]
-            command = subprocess.list2cmdline(retry) if os.name == "nt" else shlex.join(retry)
+            command = (
+                "& " + " ".join("'" + item.replace("'", "''") + "'" for item in retry)
+                if os.name == "nt" else shlex.join(retry)
+            )
             self.state.setdefault("steps", []).append([name, "失败", log.name])
             self.report()
             print(f"FAILED {name}: {error}\nLog: {log}\nRetry this step: {command}", file=sys.stderr)
@@ -381,6 +384,8 @@ def main():
     except (OSError, ValueError) as error:
         parser.exit(1, f"{error}\n")
     try:
+        if release.state_file.exists():
+            release.state = json.loads(release.state_file.read_text(encoding="utf-8"))
         stages = STAGES if args.stage == "all" else (args.stage,)
         for stage in stages:
             if not release.step(stage):
