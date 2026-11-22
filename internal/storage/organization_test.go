@@ -150,6 +150,7 @@ func TestMigration36PreservesAllLegacyDataAndIsIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	rewindSystemChecksFixture(t, s.db)
 	if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version>=36`); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func TestMigration36PreservesAllLegacyDataAndIsIdempotent(t *testing.T) {
 	if err := s.migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	after := m35Fingerprint(t, s.db, append(organizationTables, "schema_migrations")...)
+	after := m35Fingerprint(t, s.db, append(organizationTables, "schema_migrations", "agent_system_check_settings", "server_local_agent")...)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("migration changed legacy rows or schema")
 	}
@@ -192,6 +193,7 @@ func TestMigration36FailureRollsBackEverything(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			rewindSystemChecksFixture(t, s.db)
 			if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version>=36`); err != nil {
 				t.Fatal(err)
 			}

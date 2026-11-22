@@ -91,6 +91,14 @@ func TestCertificateScannerLimitsAndPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	supplement := scanCertificateSubtrees(t.Context(), []string{root}, []string{blocked})
+	link := filepath.Join(t.TempDir(), "linked-root")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved := scanCertificateSubtrees(t.Context(), []string{link}, []string{blocked})
+	if len(resolved.Certificates) != 1 || resolved.Certificates[0].Domains != "blocked.example.test" {
+		t.Fatal(resolved)
+	}
 	combined := mergeCertificates(result, supplement)
 	if len(combined.Certificates) != 4 || combined.UnreadableCount != 0 || combined.Certificates[2].Domains != "blocked.example.test" {
 		t.Fatal(combined)

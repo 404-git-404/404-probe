@@ -58,7 +58,9 @@ func RunRoot(ctx context.Context, local bool) error {
 		}
 	}
 	result.Scan = cache.Scan
-	result.Fail2ban = collectFail2ban(ctx, runShort)
+	fail2banCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	result.Fail2ban = collectFail2ban(fail2banCtx, runShort)
+	cancel()
 	result.Packages = collectPackages(ctx, root, now)
 	return writeJSON(path, result, 0640)
 }

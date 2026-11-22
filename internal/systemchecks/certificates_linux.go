@@ -88,9 +88,12 @@ func scanCertificateSubtrees(ctx context.Context, roots, subtrees []string) prot
 			w.roots = append(w.roots, resolved)
 		}
 	}
+	// Denied subdirectories are recorded beneath the resolved root. Also keep
+	// the configured paths so a denied symlink root itself can be retried.
+	depthRoots := append(append([]string(nil), roots...), w.roots...)
 	for _, target := range subtrees {
 		depth := maxScanDepth + 1
-		for _, root := range roots {
+		for _, root := range depthRoots {
 			if under(target, root) {
 				relative := strings.TrimPrefix(strings.TrimPrefix(target, root), "/")
 				if relative == "" {

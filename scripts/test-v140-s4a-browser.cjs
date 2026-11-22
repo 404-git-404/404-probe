@@ -84,6 +84,8 @@ for (const theme of ['dark', 'light']) {
       assert.match(await system.textContent(), /待更新软件包未开启/);
       assert.match(await page.locator('.details-machine').textContent(), /Debian 13.6 · KVM/);
       await capture(page, theme, 'system');
+      await system.getByRole('heading', {name: '机器', exact: true}).scrollIntoViewIfNeeded();
+      await capture(page, theme, 'system-lower');
 
       await page.getByRole('tab', {name: '安全', exact: true}).click();
       assert.match(await page.locator('.system-fail2ban').textContent(), /未开启/);
@@ -97,7 +99,7 @@ for (const theme of ['dark', 'light']) {
 
       await page.getByRole('tab', {name: '管理', exact: true}).click();
       const settings = page.locator('.system-settings');
-      await settings.getByText('/opt/certs', {exact: true}).waitFor();
+      await settings.getByRole('button', {name: '移除 /opt/certs'}).waitFor();
       await settings.scrollIntoViewIfNeeded();
       await capture(page, theme, 'management');
       await settings.getByRole('textbox', {name: '添加证书目录'}).fill('/root/certs');
