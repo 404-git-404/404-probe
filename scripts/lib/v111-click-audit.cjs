@@ -20,10 +20,12 @@ async function audit({source=path.resolve(__dirname,'../..'),onResult=()=>{}}={}
   const controls=kind==='theme'?p.locator(selector):p.locator(selector).first();
   if(await controls.count()!==(kind==='theme'?2:1)||!await controls.first().isVisible())throw Error('missing audit control: '+name+' '+selector);
   await controls.evaluateAll((nodes,kind)=>nodes.forEach(node=>node.dataset.audit=kind),kind);
+  // Measure the marked controls even if SSE changes which card is first.
+  const marked=`[data-audit="${kind}"]`;
+  const n=p.locator(kind==='theme'?marked+'[aria-pressed=false]':marked);
   let hits=0,effects=0;
   for(let i=0;i<50;i++){
    if(kind==='tag-clear')await tag.click();
-   const n=kind==='theme'?p.locator(selector+'[aria-pressed=false]'):controls;
    await n.scrollIntoViewIfNeeded();const r=await n.boundingBox(),before=await snapshot();
    // Alternate center and padded area to cover the button, not just its glyph.
    // Let the browser settle on the hit target before holding the real mouse down.
@@ -36,7 +38,7 @@ async function audit({source=path.resolve(__dirname,'../..'),onResult=()=>{}}={}
    if(kind==='renewal'){await p.evaluate(()=>dashboardUI.clear());await p.waitForFunction(()=>!renderFrame);}
    if(selector==='#dashboard-sort')await p.keyboard.press('Escape');
   }
-  await controls.evaluateAll(nodes=>nodes.forEach(node=>delete node.dataset.audit));
+  await p.locator(marked).evaluateAll(nodes=>nodes.forEach(node=>delete node.dataset.audit));
   const result={name,selector,attempts:50,hits,...(kind!=='delivery'?{effects}:{})};results.push(result);onResult(result);
  }
  await p.locator('#dashboard-settings:not([open]) > summary').click();
