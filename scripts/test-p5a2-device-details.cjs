@@ -12,6 +12,13 @@ function dom(){
   get parentNode(){return this.parent||null;}get nextElementSibling(){const a=this.parent?.children||[];return a[a.indexOf(this)+1]||null;}
   insertBefore(node,before){if(node===before)return node;if(node.parent)node.parent.children=node.parent.children.filter(n=>n!==node);node.parent=this;node.isConnected=true;const i=before?this.children.indexOf(before):-1;if(i<0)this.children.push(node);else this.children.splice(i,0,node);return node;}
   replaceChildren(...nodes){for(const c of this.children)c.parent=null;this.children=[];this.append(...nodes);}
+  replaceWith(node){
+   const parent=this.parent;
+   if(!parent||node===this)return;
+   parent.insertBefore(node,this);
+   this.remove();
+   this.parent=null;
+  }
   remove(){if(this.parent)this.parent.children=this.parent.children.filter(n=>n!==this);this.isConnected=false;}
   setAttribute(k,v){this.attributes[k]=v;}addEventListener(t,f){const a=this.listeners.get(t)||[];a.push(f);this.listeners.set(t,a);}removeEventListener(t,f){this.listeners.set(t,(this.listeners.get(t)||[]).filter(x=>x!==f));}
   dispatch(t,e={}){for(const f of this.listeners.get(t)||[])f({currentTarget:this,target:this,preventDefault(){},...e});}

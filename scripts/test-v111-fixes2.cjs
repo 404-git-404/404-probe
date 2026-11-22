@@ -20,7 +20,12 @@ test('S2 toolbar resize and tag changes immediately move sticky header without a
  const check=async()=>{await p.waitForTimeout(100);const r=await p.evaluate(()=>({toolbar:document.querySelector('#dashboard-toolbar').getBoundingClientRect().bottom,sticky:document.querySelector('.banner-sticky').getBoundingClientRect().top}));assert(Math.abs(r.toolbar-r.sticky)<1,JSON.stringify(r));};
  for(const width of [1300,820,1300]){await p.setViewportSize({width,height:900});await check();}
  f.f.state.tags.push(...Array.from({length:16},(_,i)=>({id:ID(500+i),name:'长标签名称 '+i})));f.f.state.revision++;await p.evaluate(()=>dashboardData.reload());await p.waitForFunction(()=>!renderFrame);await check();
- await p.evaluate(()=>{document.querySelector('#dashboard-chips').style.minHeight='120px';});await check();await p.evaluate(()=>document.querySelector('#dashboard-chips').style.minHeight='0px');await check();
+ const toolbar=p.locator('#dashboard-toolbar'),tags=p.locator('#dashboard-tags');
+ const before=(await toolbar.boundingBox()).height;
+ await tags.evaluate(node=>node.style.minHeight='120px');await check();
+ assert((await toolbar.boundingBox()).height>before);
+ await tags.evaluate(node=>node.style.minHeight='');await check();
+ assert.equal((await toolbar.boundingBox()).height,before);
 }));
 test('B10 each control receives 50 mouse clicks under continuous SSE; theme and quick filters act every time',async()=>{
  const result=await audit({onResult:r=>console.log('CONTROL '+JSON.stringify(r))});assert.deepEqual(result.errors,[]);for(const r of result.results){assert.equal(r.hits,50,r.name);if('effects'in r)assert.equal(r.effects,50,r.name);}assert(result.events>50);

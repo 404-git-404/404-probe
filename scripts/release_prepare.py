@@ -77,14 +77,9 @@ def prepare(root, target, start, notes):
     floor_test = "internal/storage/upgrade_floor_test.go"
     edit(floor_test, r'\[\]string\{"' + VERSION + r'"(?:, "' + VERSION + r'")*\}',
          f'[]string{{"{start}"}}')
+    # The fixture owns the current/newer schema cases. Only the release's
+    # supported upgrade floor and the version in its guidance change here.
     edit(floor_test, r"if version <= \d+ \{", f"if version <= {floor_schema - 1} {{")
-    edit(floor_test, r"if version == 39 \{", "if version == currentSchemaVersion+1 {", 2)
-    historical_schemas = sorted({34, 35, 36, 37, floor_schema - 1, floor_schema, target_schema})
-    boundary = ", ".join(map(str, historical_schemas))
-    edit(floor_test, r"range \[\]int\{34, 35, 36, 37, 38, 39\}",
-         f"range []int{{{boundary}, currentSchemaVersion + 1}}")
-    edit(floor_test, r"INSERT INTO schema_migrations VALUES\(39,1\)\x60",
-         "INSERT INTO schema_migrations VALUES(?,1)\x60, version")
 
     shell_test = "scripts/test-upgrade-floor.sh"
     edit(shell_test, r"^(for identity in v1\.0\.8 .+) unknown; do$",
