@@ -77,8 +77,12 @@ func TestMigration38PreservesLegacyRowsAndDoesNotReseed(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertMigration38Defaults(t, s)
+	rewindAgentControlsFixture(t, s.db)
 	if planRow() != legacyPlan || !reflect.DeepEqual(legacy, m35Fingerprint(t, s.db, skip...)) {
 		t.Fatal("migration changed legacy rows")
+	}
+	if err := s.migrate(ctx); err != nil {
+		t.Fatal(err)
 	}
 	for _, query := range []string{
 		`UPDATE agent_plans SET renewal_url=NULL`,
@@ -114,7 +118,7 @@ func TestMigration38PreservesLegacyRowsAndDoesNotReseed(t *testing.T) {
 
 func assertMigration38Defaults(t *testing.T, s *Store) {
 	t.Helper()
-	if version, err := s.SchemaVersion(context.Background()); err != nil || version != 38 {
+	if version, err := s.SchemaVersion(context.Background()); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema=%d, err=%v", version, err)
 	}
 	var regions string

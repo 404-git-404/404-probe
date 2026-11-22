@@ -58,7 +58,7 @@ let organizationDialogs=null,expenseDialog=null;
 const dashboardUI=DashboardView.create({read:readJSON,onchange:()=>render(),onManage:(kind,trigger)=>organizationDialogs?.openManage(kind,trigger)});
 const overview = Overview.create({preferences:dashboardUI.preferences,onfilter:key=>dashboardUI.apply(key),onexpense:trigger=>expenseDialog?.open(matchMedia('(max-width:44rem)').matches?document.querySelector('#panel-mobile-open'):trigger)});
 const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinator,
-  identity: agent => countryMark(agent?.country_code,agent?.country_source),
+  identity: agent => countryMark(agent?.country_code,agent?.country_source,agent?.country_lookup_enabled),
   management: agent => detailsFor(agent.agent_id)?.management,
   overview: agent => detailsFor(agent.agent_id)?.overview,
   upgradeTargets: id => loadDetailUpgradeTargets(id),
@@ -431,6 +431,7 @@ function youtubeRegions() { return dashboardData.catalog().youtube_ad_free_regio
 function googleStatusPanel(agent) {
   const panel = document.createElement('section');
   panel.className = 'google-checks';
+  panel.hidden = agent.youtube_check_enabled===false;
   panel.setAttribute('aria-label', 'YouTube 地区检测结果');
   const {label, tone, regionTone} = YouTubeStatus.display(agent, youtubeRegions());
   const item = document.createElement('div');
@@ -448,7 +449,7 @@ function googleStatusPanel(agent) {
 }
 
 async function rerunGoogleStatus(agent, button, feedback) {
-  if (!mutationCSRFToken) return;
+  if (!mutationCSRFToken || agent.youtube_check_enabled===false) return;
   const mutation = agentState.beginMutation(agent.agent_id, ['google']);
   if (!mutation) return;
   agentActionErrors.delete(`${agent.agent_id}/google`);
@@ -850,9 +851,11 @@ function systemLogo(os) {
   return logo;
 }
 
-function countryMark(code, source) {
+function countryMark(code, source, enabled=true) {
   const mark = document.createElement('span');
   mark.className = 'country-mark';
+  mark.hidden = !enabled;
+  if(!enabled)return mark;
   const normalized = /^[A-Z]{2}$/.test(code || '') ? code : '';
   if (normalized) {
     mark.dataset.countryCode = normalized;
@@ -907,7 +910,7 @@ async function verifyCountryRequest(agent, button, feedback) {
 
 async function refreshCountryCodeLookup(agent, button, feedback, newAfterVerification = false) {
   agent = agents.get(agent.agent_id);
-  if (!agent || !mutationCSRFToken || !agent.management?.country_code_lookup || !agent.online
+  if (!agent || !mutationCSRFToken || agent.country_lookup_enabled===false || !agent.management?.country_code_lookup || !agent.online
     || agent.disabled_at || agent.revoked || (uncertainCountryRequests.has(agent.agent_id) && !newAfterVerification)
     || ['requested', 'delivered'].includes(agent.country_code_lookup_operation?.status)) return;
   agentActionErrors.delete(`${agent.agent_id}/country`);render(new Set([agent.agent_id]));
@@ -1118,7 +1121,7 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
 let youtubeRegionKey='',youtubeRegionGeneration=0;
-function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1225,11 +1228,13 @@ function createPublicEgress(agentID) {
   });
   let shownKey=null;
   function update(agent) {
-    const p=agent.state?.public_egress;
+    const p=agent.detail_public_egress??agent.state?.public_egress;
     const lifecycle=Boolean(!agent.online||agent.disabled_at||agent.revoked||agent.state?.stale);
     const shown=[],families=[];
     for(const {family,item} of items) {
-      const raw=p?.[family],masked=agent.masked_egress?.[family],observation=raw?.checked_at?raw:masked,status=observation?.status||'unknown';
+      const raw=p?.[family],masked=agent.masked_egress?.[family];
+      const observation=(raw?.checked_at||0)>=(masked?.checked_at||0)&&raw?.checked_at?raw:masked;
+      const status=observation?.status||'unknown';
       const stale=Boolean(lifecycle||observation?.stale||!observation?.checked_at||!observation?.valid_until||Date.now()>=observation.valid_until);
       const available=status==='available'&&typeof observation?.ip==='string'&&observation.ip.length>0;
       if(!available||stale)continue;
@@ -1266,7 +1271,54 @@ async function saveDetailCountry(agent,code){
 }
 
 function canSaveYouTubeRegion(agent) {
-  return Boolean(mutationCSRFToken && !agent.revoked && !agentState.blocked(agent.agent_id) && !agentState.busy(agent.agent_id, 'google'));
+  return Boolean(agent.youtube_check_enabled!==false && canEditAgentControl(agent,'google'));
+}
+
+function canEditAgentControl(agent,group){
+  return Boolean(agent&&mutationCSRFToken&&!agent.revoked&&!agentState.blocked(agent.agent_id)&&!agentState.busy(agent.agent_id,group));
+}
+
+async function setDetailCheck(agent,check,enabled){
+  const id=agent.agent_id,group=check==='country'?'country':'google';
+  if(!canEditAgentControl(agent,group))return '';
+  const token=agentState.beginMutation(id,[group]);
+  const field=check==='country'?'country_lookup_enabled':'youtube_check_enabled';
+  try{
+    const saved=await Management.write(`/api/v1/web/agents/${encodeURIComponent(id)}/checks/${check}`,{
+      method:'PUT',csrf:mutationCSRFToken,payload:{enabled},unauthorized:()=>location.assign('/login')});
+    const patch={[field]:saved.enabled};
+    if(!saved.enabled){
+      if(check==='country')patch.country_code_lookup_operation=null;
+      else patch.google_status={...agents.get(id)?.google_status,pending:false};
+    }
+    finishResource(token,patch);
+    return '';
+  }catch{
+    finishResource(token);
+    return '开关保存失败，请重试';
+  }
+}
+
+const diskAckError=agent=>{
+  const error=agentActionErrors.get(`${agent.agent_id}/disk-ack`);
+  return error?.faultAt===agent.state?.host_health?.last_fault_at?error?.message||'':'';
+};
+async function acknowledgeDiskFault(agent){
+  const id=agent.agent_id;
+  if(!canEditAgentControl(agent,'disk')||DashboardModel.diskTone(agent)!=='warn')return;
+  const faultAt=agent.state.host_health.last_fault_at;
+  const token=agentState.beginMutation(id,['disk']);
+  const key=`${id}/disk-ack`;
+  agentActionErrors.delete(key);
+  render(new Set([id]));
+  try{
+    const saved=await Management.write(`/api/v1/web/agents/${encodeURIComponent(id)}/disk-fault-acknowledgement`,{
+      method:'PUT',csrf:mutationCSRFToken,payload:{fault_at:faultAt},unauthorized:()=>location.assign('/login')});
+    finishResource(token,saved);
+  }catch(error){
+    agentActionErrors.set(key,{faultAt,message:error.status===409?'磁盘状态已更新':'保存失败，请重试'});
+    finishResource(token);
+  }
 }
 
 async function saveYouTubeRegion(agent, code) {
@@ -1339,13 +1391,17 @@ function createAgentCard(initialAgent) {
     const version = document.createElement('small');
     sub.append(status, logo, systemText, systemFailure, egress, runtime, version);
     let nameControl = agentNameControl(agent, state);
-    const mark = countryMark(agent.country_code, agent.country_source);
+    const mark = countryMark(agent.country_code, agent.country_source, agent.country_lookup_enabled);
     identity.append(nameControl, sub);
     head.append(mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
     const tags=document.createElement('div');tags.className='dashboard-card-tags';
     const diskBadge=document.createElement('span');diskBadge.className='dashboard-warning dashboard-disk-warning';
+    const diskLabel=document.createElement('span'),diskAck=document.createElement('button');
+    diskAck.type='button';diskAck.className='disk-fault-ack';diskAck.textContent='知道了';
+    diskAck.addEventListener('click',event=>{event.stopPropagation();acknowledgeDiskFault(agent);});
+    diskBadge.append(diskLabel,diskAck);
     const updateTags=()=>{
       const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);
       const signature=JSON.stringify(key);
@@ -1357,7 +1413,9 @@ function createAgentCard(initialAgent) {
       const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
       const reason=tone==='crit'?DashboardModel.diskFaults(health.disk,{short:true})[0]:'';
       const label=tone==='crit'?`⚠ 磁盘异常${reason?' · '+reason:''}`:tone==='warn'?`⚠ 磁盘曾出错 · ${DashboardModel.diskTime(health.last_fault_at)}`:'';
-      setCardText(diskBadge,label);diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
+      const error=diskAckError(agent);
+      setCardText(diskLabel,label+(tone==='warn'&&error?' · '+error:''));diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
+      diskAck.hidden=tone!=='warn';diskAck.disabled=!canEditAgentControl(agent,'disk');
       tags.hidden=!key.length;
       systemFailure.hidden=!health?.os_read_failed;
         return tone==='crit';
@@ -1501,7 +1559,7 @@ function createAgentCard(initialAgent) {
       if (logo.getAttribute('src') !== `/vendor/card-icons/${system.icon}.svg`) logo.src = `/vendor/card-icons/${system.icon}.svg`;
       setReadableText(systemText, system.text);
       updateEgress(agent);
-      updateDisplay(mark, countryMark(agent.country_code, agent.country_source));
+      updateDisplay(mark, countryMark(agent.country_code, agent.country_source, agent.country_lookup_enabled));
       const editing = editingAgentNames.has(agent.agent_id);
       if (editing !== nameControl.classList.contains('agent-name-editor')) {
         const nextName = agentNameControl(agent, state); nameControl.replaceWith(nextName); nameControl = nextName;
@@ -1608,6 +1666,7 @@ function createAgentDetails(initial){
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
       youtubeRegions,saveYouTubeRegion,canSaveYouTubeRegion,youtubeError:a=>agentActionErrors.get(`${a.agent_id}/youtube-region`)||'',serverNow:dashboardData.serverNow,
+      setDetailCheck,canEditAgentControl,acknowledgeDiskFault,diskAckError,
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
     detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
 
@@ -1797,6 +1856,7 @@ events.onopen = () => {
   stream.textContent = '实时连接';
   stream.classList.add('live');
   if(streamOpened||!agentState.refreshing())refresh();streamOpened=true;
+ const active=deviceDetails.snapshot();if(active.open)hydrateActiveDetail(active.id);
 };
 events.onerror = () => {
   stream.textContent = '正在重连';

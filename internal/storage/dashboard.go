@@ -9,6 +9,7 @@ import (
 )
 
 type DashboardRecord struct {
+	AgentControls
 	NetworkSlots                   [3]DashboardNetworkSlot
 	Snapshot                       AgentSnapshot
 	Plan                           *AgentPlan

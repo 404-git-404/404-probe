@@ -36,6 +36,7 @@ type webAgentSummaryView struct {
 
 type webAgentDetailView struct {
 	webAgentSummaryView
+	storage.AgentControls
 	CountryCode          string                         `json:"country_code,omitempty"`
 	CountrySource        string                         `json:"country_source,omitempty"`
 	Management           webManagementView              `json:"management"`
@@ -254,6 +255,10 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	}
 	record = a.withUpdaterHealth(record)
 	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
+	view.AgentControls, err = a.store.ReadAgentControls(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
 	management, err := a.store.GetAgentManagementCapabilities(ctx, agentID)
 	if err != nil {
 		return webAgentDetailView{}, err
@@ -263,7 +268,7 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	if err != nil {
 		return webAgentDetailView{}, err
 	}
-	if countryLookupExists {
+	if countryLookupExists && !countryLookup.Cancelled {
 		lookupView := newWebAgentCountryCodeLookupView(countryLookup, a.now())
 		view.CountryLookup = &lookupView
 	}

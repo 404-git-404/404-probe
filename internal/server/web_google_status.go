@@ -35,6 +35,8 @@ func (a *App) handleCreateWebGoogleStatus(w http.ResponseWriter, r *http.Request
 			writeJobError(w, http.StatusConflict, "agent_offline", "offline Agent cannot run Google Status")
 		case errors.Is(err, storage.ErrGoogleStatusUnsupported):
 			writeJobError(w, http.StatusConflict, "google_status_unsupported", "Agent does not support Google Status")
+		case errors.Is(err, storage.ErrGoogleStatusDisabled):
+			writeJobError(w, http.StatusConflict, "google_status_disabled", "YouTube detection is switched off")
 		case errors.Is(err, storage.ErrGoogleStatusPending):
 			writeJobError(w, http.StatusConflict, "google_status_pending", "Google Status is already pending")
 		case errors.Is(err, storage.ErrOutstandingJobsFull):

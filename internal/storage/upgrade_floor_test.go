@@ -23,7 +23,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	for _, version := range []int{34, 35, 36, 37, 38, 39} {
+	for _, version := range []int{34, 35, 36, 37, 38, 39, 40} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "database.db")
 			store, err := Open(ctx, path)
@@ -41,12 +41,14 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 				rewindHostHealthFixture(t, store.db)
 			} else if version == 37 {
 				rewindWebSettingsFixture(t, store.db)
+			} else if version == 38 {
+				rewindAgentControlsFixture(t, store.db)
 			}
 			if _, err := store.db.Exec(`DELETE FROM schema_migrations WHERE version>?`, version); err != nil {
 				t.Fatal(err)
 			}
-			if version == 39 {
-				if _, err := store.db.Exec(`INSERT INTO schema_migrations VALUES(39,1)`); err != nil {
+			if version == currentSchemaVersion+1 {
+				if _, err := store.db.Exec(`INSERT INTO schema_migrations VALUES(?,1)`, version); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -61,7 +63,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 			if version <= 36 {
 				wantErr = ErrSchemaTooOld
 			}
-			if version == 39 {
+			if version == currentSchemaVersion+1 {
 				wantErr = ErrUnsupportedSchemaVersion
 			}
 			verification, err := VerifyReadOnly(ctx, path)

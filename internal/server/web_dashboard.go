@@ -55,6 +55,7 @@ type dashboardNetworkEntry struct {
 type dashboardSummary struct {
 	NetworkSlots [3]storage.DashboardNetworkSlot `json:"network_slots"`
 	webAgentSummaryView
+	storage.AgentControls
 	Lifecycle            string                           `json:"lifecycle"`
 	Hostname             string                           `json:"hostname"`
 	CountryCode          string                           `json:"country_code"`
@@ -285,6 +286,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		delete(selected, id)
 		record := a.withUpdaterHealth(raw.Snapshot)
 		v := dashboardSummary{webAgentSummaryView: newWebAgentSummaryView(record), Lifecycle: "unknown", CountryCode: raw.CountryCode, CountrySource: raw.CountrySource, TagIDs: []string{}, OrganizationRevision: data.Catalog.Revision, Plan: raw.Plan, MaskedIPs: []string{}, SearchFields: []string{record.Agent.Name}, Renewal: renewalSummary(raw.Plan, now), Traffic: dashboardTraffic{QuotaState: "unconfigured", Stale: true}}
+		v.AgentControls = raw.AgentControls
 		switch {
 		case record.Agent.Revoked:
 			v.Lifecycle = "revoked"
@@ -350,6 +352,10 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case p.TrafficMode == "":
 				v.Traffic.QuotaState = "unconfigured"
+			case p.QuotaBytes == nil && (p.CycleStart == nil || p.CycleEnd == nil):
+				v.Traffic.QuotaState = "pending"
+			case p.QuotaBytes == nil && !v.Traffic.CycleCurrent:
+				v.Traffic.QuotaState = "expired"
 			case p.QuotaBytes == nil:
 				v.Traffic.QuotaState = "unlimited"
 			case *p.QuotaBytes == 0:

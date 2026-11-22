@@ -118,8 +118,14 @@ test('traffic face A: rates, the cycle amounts, and the quota bar in each plan s
  assert.equal(Card.trafficView(agent({plan:plan({usage_bytes:4e12})}),{now:NOW}).bar.tone,'warn');
  assert.equal(Card.trafficView(agent({plan:plan({usage_bytes:4.6e12})}),{now:NOW}).bar.tone,'crit');
  assert.equal(Card.trafficView(agent({plan:plan({usage_bytes:6e12})}),{now:NOW}).bar.fill,100,'the bar stops at the end, the percentage does not');
- const nocap=Card.trafficView(agent({plan:plan({quota_bytes:undefined})}),{now:NOW});
- assert.equal(nocap.bar.kind,'nocap');assert.equal(nocap.bar.right,'第 10/30 天 · 1 Gbps');assert.doesNotMatch(JSON.stringify(nocap.bar),/已用|配额 /);
+ const unlimited=Card.trafficView(agent({plan:plan({quota_bytes:undefined})}),{now:NOW});
+ assert.equal(unlimited.bar.kind,'bar');assert.equal(unlimited.bar.right,'第 10/30 天 · 1 Gbps');
+ assert.equal(unlimited.bar.left,'已用 36.6 GB · ');assert.equal(unlimited.bar.percent,'无限');assert.equal(unlimited.bar.tone,'neutral');
+ for(const [used,scale] of [[0,1000],[300,1000],[1000,1000],[1500,2000],[2000,2000],[2500,3000]]){
+  const bar=Card.unlimitedQuota(used*1e9);
+  assert.equal(bar.title,`流量条满格 ${scale} GB`);
+  assert.equal(bar.fill,used/scale*100);
+ }
  const none=Card.trafficView(agent({plan:undefined,traffic:{rx_total:79.3e9,tx_total:79.1e9}}),{now:NOW});
  assert.deepEqual([none.label,none.down,none.up,none.bar.kind,none.bar.text],['累计','79.3 GB','79.1 GB','none','未设置流量配额 · 点此设置']);
  assert.equal(Card.trafficView(agent({plan:plan({cycle_kind:'none'})}),{now:NOW}).label,'累计','a plan without a cycle counts the device total');

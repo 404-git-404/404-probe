@@ -19,6 +19,7 @@
 .banner-row[data-lifecycle=paused] .banner-dot{background:var(--color-text-muted)}
 .banner-cell:is([data-column=cpu],[data-column=memory],[data-column=disk]) .banner-metric{max-width:5.2rem}
 .banner-youtube[data-tone=crit]{border:1px solid var(--color-danger)}
+.banner-metric[data-tone=neutral] .banner-track i{background:var(--color-text-muted)}
 
 .banner-table{min-width:0}.banner-table:has(.banner-scroll[hidden]){display:none}.banner-sticky{font-size:.75rem;position:sticky;top:var(--toolbar-height,4rem);z-index:90;background:var(--color-page)}
 .banner-head-scroll{overflow:hidden}.banner-head-scroll .banner-header{position:relative;width:max(100%,calc(var(--device-width,14em) + 78.25rem));min-width:100%;--cols:var(--device-width,14em) 3.5rem repeat(3,6.25rem) 7rem 11.5rem 9rem 10rem 6rem 8rem 4.5rem}

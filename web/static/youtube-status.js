@@ -29,6 +29,7 @@
   }
   // Card and list share region resolution and color.
   function display(agent,regions=[],now=Date.now()){
+    if(agent?.youtube_check_enabled===false)return {label:'',code:null,tone:'unknown',regionTone:'unknown'};
     const automatic=view(agent,now),manual=agent?.google_status?.manual_region;
     const code=manual||automatic.code;
     const tone=manual?'observed':automatic.tone;
@@ -39,6 +40,7 @@
     };
   }
   function summary(agent,regions=[],countryName=code=>code,formatTime=at=>new Date(at).toLocaleString()){
+    if(agent?.youtube_check_enabled===false)return '检测已关闭';
     const automatic=view(agent),manual=agent?.google_status?.manual_region;
     const result=automatic.tone==='observed'?countryName(automatic.code):automatic.label;
     const parts=[];

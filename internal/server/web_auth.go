@@ -185,6 +185,8 @@ func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/upgrade", a.requireWebSession(http.HandlerFunc(a.handleGetWebUpgrade), true))
 	mux.Handle("GET /api/v1/web/agents/{agent_id}/upgrade-targets", a.requireWebSession(http.HandlerFunc(a.handleWebUpgradeTargets), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/google-status", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebGoogleStatus)))
+	mux.Handle("PUT /api/v1/web/agents/{agent_id}/checks/{check}", a.requireWebMutation(http.HandlerFunc(a.handleSetWebAgentCheck)))
+	mux.Handle("PUT /api/v1/web/agents/{agent_id}/disk-fault-acknowledgement", a.requireWebMutation(http.HandlerFunc(a.handleAcknowledgeWebDiskFault)))
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
 		mux.Handle(method+" /api/v1/web/agents/{agent_id}/youtube-region", a.requireWebMutation(http.HandlerFunc(a.handleWebYouTubeRegion)))
 	}

@@ -88,8 +88,9 @@
   }
   const resource = key => ({
     name: 'name', revoked: 'lifecycle', disabled_at: 'lifecycle', created_at: 'lifecycle',
-    country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country',
-    plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', public_egress_check: 'egress',
+    country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country', country_lookup_enabled: 'country',
+    plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', youtube_check_enabled: 'google',
+    public_egress_check: 'egress', detail_public_egress: 'egress', disk_fault_acknowledged_at: 'disk',
     security: 'security', management: 'management', traffic: 'traffic', removal: 'removal',
     group_id:'organization', tag_ids:'organization', organization_revision:'organization',
     renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', masked_egress:'summary', dashboard_loaded:'summary', dashboard_received_at:'summary', network:'summary', network_slots:'summary',
@@ -169,7 +170,7 @@
       const e = entry(id), token = {id, entry: e, lifetime: e.lifetime, start: e.revision, context,
         versions: new Map(e.versions), reads: new Map(), groups};
       // Per-resource latest invocation; an upgrade read cannot invalidate detail fields.
-      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','egress','security','management','traffic','removal','organization','summary'];
+      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','egress','disk','security','management','traffic','removal','organization','summary'];
       for (const group of all) {
         const next = (e.reads.get(group) || 0) + 1;
         e.reads.set(group, next); token.reads.set(group, next);
@@ -203,13 +204,13 @@
       // Preserve checked observations across empty replies. A checked failure
       // from the detail endpoint is authoritative for the panel.
       for(const family of ['ipv4','ipv6']){
-        if(previous?.[family]?.checked_at>0&&!(incoming?.[family]?.checked_at>0))detailEgress[family]=previous[family];
+        if((previous?.[family]?.checked_at||0)>(incoming?.[family]?.checked_at||0))detailEgress[family]=previous[family];
       }
       // webAgentDetailView omitempty means absence is authoritative removal,
       // unlike a partial event, list summary, upgrade or mutation patch.
       return commitRead(token, {country_code: '', country_source: '', country_code_lookup_operation: null,
         removal: null, traffic: null, plan: null, ...detail,
-        detail_public_egress: detailEgress});
+        detail_public_egress: detail.public_egress_check?.enabled===false?{}:detailEgress});
     }
     function commitList(value, records) {
       if (!validCycle(value)) return false;
@@ -233,7 +234,20 @@
       // Full management snapshots have no server revision. Re-read rather than trust
       // potentially queued old fields. This also reflects other clients' writes.
       if (fullEvent(update) || !agents.has(update.agent_id)) return false;
-      return merge(update.agent_id, update, group => group === 'runtime' && !entry(update.agent_id).pending.has(group));
+      const current=agents.get(update.agent_id), incoming=update.state?.public_egress;
+      const previous=current.detail_public_egress;
+      if(previous&&incoming&&current.public_egress_check?.enabled!==false){
+        const observations={...previous};
+        let newer=false;
+        for(const family of ['ipv4','ipv6']){
+          if((incoming[family]?.checked_at||0)>(previous[family]?.checked_at||0)){
+            observations[family]=incoming[family];
+            newer=true;
+          }
+        }
+        if(newer)update={...update,detail_public_egress:observations};
+      }
+      return merge(update.agent_id, update, group => (group === 'runtime'||group === 'egress') && !entry(update.agent_id).pending.has(group));
     }
     function beginMutation(id, groups) {
       const e = entry(id);

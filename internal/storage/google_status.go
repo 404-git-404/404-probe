@@ -15,6 +15,7 @@ import (
 
 var (
 	ErrGoogleStatusUnsupported = errors.New("agent does not support google status")
+	ErrGoogleStatusDisabled    = errors.New("YouTube detection is switched off")
 	ErrGoogleStatusPending     = errors.New("google status check is already pending")
 	ErrAgentOffline            = errors.New("agent is offline")
 )
@@ -140,9 +141,10 @@ func (s *Store) createGoogleStatusJob(ctx context.Context, agentID string, now t
 	}
 	defer tx.Rollback()
 	var revoked int
+	var enabled bool
 	var disabledAt sql.NullInt64
 	var lastSeen sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT a.revoked,a.disabled_at,s.last_seen FROM agents a LEFT JOIN agent_state s ON s.agent_id=a.id WHERE a.id=?`, agentID).Scan(&revoked, &disabledAt, &lastSeen); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT a.revoked,a.disabled_at,s.last_seen,a.youtube_check_enabled FROM agents a LEFT JOIN agent_state s ON s.agent_id=a.id WHERE a.id=?`, agentID).Scan(&revoked, &disabledAt, &lastSeen, &enabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, ErrAgentNotFound
 		}
@@ -153,6 +155,12 @@ func (s *Store) createGoogleStatusJob(ctx context.Context, agentID string, now t
 	}
 	if disabledAt.Valid {
 		return false, ErrAgentDisabled
+	}
+	if !enabled {
+		if automatic {
+			return false, nil
+		}
+		return false, ErrGoogleStatusDisabled
 	}
 	var supported int
 	if err := tx.QueryRowContext(ctx, `SELECT supported FROM agent_google_status_capabilities WHERE agent_id=?`, agentID).Scan(&supported); err != nil {
@@ -282,7 +290,7 @@ func (s *Store) GetGoogleStatusAt(ctx context.Context, agentID string, now time.
 		return snapshot, exists, err
 	}
 	var expired sql.NullInt64
-	err = tx.QueryRowContext(ctx, `SELECT MAX(expires_at) FROM probe_jobs WHERE agent_id=? AND probe_type='google_status' AND status IN ('queued','leased','expired') AND expires_at<=?`, agentID, now.UnixMilli()).Scan(&expired)
+	err = tx.QueryRowContext(ctx, `SELECT MAX(expires_at) FROM probe_jobs WHERE agent_id=? AND probe_type='google_status' AND cancelled=0 AND status IN ('queued','leased','expired') AND expires_at<=?`, agentID, now.UnixMilli()).Scan(&expired)
 	if err != nil {
 		return snapshot, exists, err
 	}
@@ -308,7 +316,7 @@ func expiredYouTubeSnapshot(agentID string, prior GoogleStatusSnapshot, at int64
 
 func expireYouTubeObservationTx(ctx context.Context, tx *sql.Tx, agentID string, now int64) error {
 	var expired sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT MAX(expires_at) FROM probe_jobs WHERE agent_id=? AND probe_type='google_status' AND status='expired' AND expires_at<=?`, agentID, now).Scan(&expired); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(expires_at) FROM probe_jobs WHERE agent_id=? AND probe_type='google_status' AND cancelled=0 AND status='expired' AND expires_at<=?`, agentID, now).Scan(&expired); err != nil {
 		return err
 	}
 	if !expired.Valid {

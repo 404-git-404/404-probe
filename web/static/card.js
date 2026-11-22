@@ -99,6 +99,11 @@
   // A cycle is in force when the plan names one and the Server has bounds for it. An anchor in the future leaves the bounds empty:
   // until it arrives the card shows the device total, like a device without a plan (design 2.4).
   const hasCycle=plan=>Boolean(plan&&plan.traffic_mode&&plan.cycle_kind&&plan.cycle_kind!=='none'&&finite(plan.cycle_start)&&finite(plan.cycle_end));
+  function unlimitedQuota(used){
+    if(!finite(used))return {fill:0,tone:'neutral',title:'',usedText:'暂无用量'};
+    const step=1000*1e9,scale=Math.max(1,Math.ceil(used/step))*step;
+    return {fill:used/scale*100,tone:'neutral',title:`流量条满格 ${scale/1e9} GB`,usedText:sig3(used)};
+  }
   function cycleDays(plan,now) {
     if(!finite(plan.cycle_start)||!finite(plan.cycle_end)||plan.cycle_end<=plan.cycle_start)return null;
     const total=Math.max(1,Math.round((plan.cycle_end-plan.cycle_start)/DAY)),day=Math.min(total,Math.max(1,Math.floor((now-plan.cycle_start)/DAY)+1));
@@ -137,7 +142,10 @@
     };
     if(!cycle){const pending=pendingCycle(plan);return {...view,bar:{kind:'none',text:pending?pending+' · 配额 '+((quotaDisplay?`${quotaDisplay.value} ${quotaDisplay.unit}`:null)|| (plan.quota_bytes==null?'不限流量':sig3(plan.quota_bytes))):'未设置流量配额 · 点此设置'}};}
     const days=cycleDays(plan,now),dayText=days?`第 ${days.day}/${days.total} 天`:'周期尚未开始',right=`${dayText} · ${view.bandwidth}`;
-    if(plan.quota_bytes==null)return {...view,bar:{kind:'nocap',left:'不限流量',right,time:days?days.elapsed:null}};
+    if(plan.quota_bytes==null){
+      const quota=unlimitedQuota(plan.usage_bytes);
+      return {...view,bar:{kind:'bar',...quota,left:`已用 ${quota.usedText} · `,percent:'无限',right}};
+    }
     const used=Number(plan.usage_bytes||0),quota=Number(plan.quota_bytes),percent=quota>0?used/quota*100:0;
     const quotaText=quotaDisplay?`${quotaDisplay.value} ${quotaDisplay.unit}`:sig3(quota);
     return {...view,bar:{kind:'bar',left:`已用 ${sig3(used)} / ${quotaText} · `,percent:percent.toFixed(1)+'%',tone:quotaWarning?'warn':percent>=90?'crit':percent>=80?'warn':'ok',fill:Math.max(0,Math.min(100,percent)),right,time:days?days.elapsed:null,
@@ -225,7 +233,7 @@
       else{
         bar.dataset.kind=kind;bar.dataset.tone=view.bar.tone||'ok';fill.style.width=kind==='bar'?view.bar.fill+'%':'0%';fill.hidden=kind!=='bar';
         tick.hidden=kind!=='bar'||view.bar.time==null;if(view.bar.time!=null)tick.style.left=(view.bar.time*100).toFixed(1)+'%';
-        left.textContent=kind==='bar'?view.bar.left:view.bar.left;pctNode.textContent=kind==='bar'?view.bar.percent:'';right.textContent=view.bar.right;bar.title=view.bar.title||'';
+        left.textContent=view.bar.left;pctNode.textContent=kind==='bar'?view.bar.percent:'';right.textContent=view.bar.right;bar.title=view.bar.title||'';
       }
       const label=spark.querySelector('.tc7-label'),parts=detail.day24.split(/(?=↓|↑)/);
       label.replaceChildren(...parts.map((text,i)=>el('span',i===1?'c7-rx':i===2?'c7-tx':'',text)));
@@ -241,6 +249,6 @@
     const hours=Math.floor(minutes/60);return hours<48?`${hours} 小时前`:`${Math.floor(hours/24)} 天前`;
   }
   const statusHint=a=>'状态：'+(a.revoked?'未知（已撤销）':a.disabled_at?'未知（暂停）':a.online?'正常（在线）':a.state?'异常（离线）':'未知');
-  const api={statusHint,agoText,HINT,MODULES,parseFaces,flipAll,createFaceStore,sig3,ringTone,ringDash,machineView,trafficView,trafficDetail,resetText,hasCycle,cycleDays,basisMark,ipRow,attachFlip,createModule,machineFaces,trafficFaces,INTERACTIVE};
+  const api={statusHint,agoText,HINT,MODULES,parseFaces,flipAll,createFaceStore,sig3,ringTone,ringDash,machineView,trafficView,trafficDetail,resetText,hasCycle,cycleDays,unlimitedQuota,basisMark,ipRow,attachFlip,createModule,machineFaces,trafficFaces,INTERACTIVE};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.Card=api;
 })(globalThis);

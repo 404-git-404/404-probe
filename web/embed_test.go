@@ -318,7 +318,7 @@ func TestDashboardContinuousListAndTelemetryStatusContracts(t *testing.T) {
 		`for(const agent of group.items)`,
 		`utilizationTone(percent, 2, 10)`, `utilizationTone(percent, 60, 85)`,
 		`state.cpu_steal_percent`,
-		`countryMark(agent.country_code, agent.country_source)`, `country_code_override: '#plan-country-code'`,
+		`countryMark(agent.country_code, agent.country_source, agent.country_lookup_enabled)`, `country_code_override: '#plan-country-code'`,
 		`country-code/refresh`, `country_code_lookup_operation`, `升级 Agent 后可重新识别`,
 		`/vendor/flag-icons/4x3/${normalized.toLowerCase()}.svg`,
 		`.focus({preventScroll: true})`,

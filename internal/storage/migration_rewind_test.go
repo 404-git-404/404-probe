@@ -27,8 +27,22 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 	}
 }
 
+func rewindAgentControlsFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, column := range [][2]string{
+		{"agents", "country_lookup_enabled"}, {"agents", "youtube_check_enabled"}, {"agents", "disk_fault_acknowledged_at"},
+		{"probe_jobs", "cancelled"}, {"agent_country_code_lookups", "cancelled"},
+	} {
+		dropColumnIfPresent(t, db, column[0], column[1])
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version=39`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func rewindWebSettingsFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
+	rewindAgentControlsFixture(t, db)
 	dropColumnIfPresent(t, db, "agent_plans", "renewal_url")
 	for _, q := range []string{
 		`DROP TABLE IF EXISTS web_youtube_ad_free_regions`,

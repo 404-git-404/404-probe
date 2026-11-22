@@ -14,7 +14,7 @@
   if(Object.hasOwn(upgradeFailureReasons,code))return upgradeFailureReasons[code];
   return `升级失败（原因代码：${Array.from(code).slice(0,64).join('')}）`;
  }
- function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>'',serverNow=()=>null}){
+ function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>'',serverNow=()=>null,setDetailCheck=()=>'',canEditAgentControl=()=>false,acknowledgeDiskFault=()=>{},diskAckError=()=>''}){
   const el=(t,c='',text)=>{const n=doc.createElement(t);n.className=c;if(text!=null)n.textContent=text;return n;};
   const overview=el('div','details-overview'),management=el('div','details-management'),metrics=el('div','details-metrics'),grid=el('div','details-grid'),groups=el('div','details-grid');
   overview.append(metrics,grid);management.append(groups);
@@ -31,15 +31,35 @@
   const track=el('div','details-progress'),fill=el('span');track.append(fill);traffic.n.append(track);value('cycle',traffic.n).className='details-note';fact(traffic,'设备累计','total');value('coverage',traffic.n).className='details-note';
   const network=section('网络地址');network.n.append(egress.addresses);fact(network,'出口地区','country');
   const system=section('系统');fact(system,'磁盘检测','diskHealth');fact(system,'系统名','os');fact(system,'主机名','hostname');fact(system,'配置','config');values.config.className='details-config';fact(system,'Agent','version');fact(system,'最近上报','seen');
-  const diskStatus=el('span','details-disk-status'),diskMeta=el('span','details-note');values.diskHealth.className='details-disk-health';values.diskHealth.append(diskStatus,diskMeta);
+  const diskStatus=el('span','details-disk-status'),diskMeta=el('span','details-note');
+  const diskAck=button('知道了',()=>acknowledgeDiskFault(current),'detail-disk-ack');diskAck.className='disk-fault-ack';
+  const diskFeedback=el('span','details-note');diskFeedback.setAttribute('aria-live','polite');
+  const diskLine=el('span','details-disk-line');diskLine.append(diskStatus,diskAck);
+  values.diskHealth.className='details-disk-health';values.diskHealth.append(diskLine,diskMeta,diskFeedback);
   const osName=el('span'),osFailure=el('span','disk-os-failed');values.os.append(osName,osFailure);
   const agentGroup=section('Agent',groups),checks=section('检测与统计',groups),danger=section('危险操作',management);danger.n.classList.add('details-danger');
   function row(box,title,key,control){const n=el('div','details-action-row'),left=el('div');left.append(el('strong','',title));value(key,left).className='details-note';n.append(left);if(control)n.append(control);box.n.append(n);return n;}
+  function checkSwitch(row,title,check,field,group){
+   const head=row.firstElementChild,label=el('label','pe-switch'),input=el('input'),feedback=el('span','details-note');
+   input.type='checkbox';input.dataset.focusKey='detail-'+check+'-switch';
+   feedback.setAttribute('aria-live','polite');
+   label.append(input,el('span','',title));head.firstElementChild.replaceWith(label);head.append(feedback);
+   let saving=false;
+   function update(a){input.checked=a[field]!==false;input.disabled=saving||!canEditAgentControl(a,group);}
+   input.addEventListener('change',async()=>{
+    const agent=current;
+    saving=true;input.disabled=true;text(feedback,'');
+    try{text(feedback,await setDetailCheck(agent,check,input.checked));}
+    finally{saving=false;update(current);}
+   });
+   return update;
+  }
   row(agentGroup,'升级','upgrade',actions.upgrade).dataset.upgradeRegion='';row(agentGroup,'系统信息','sample');
   const organizationButton=button('分组和标签…',n=>organization(current,n),'detail-organization');row(agentGroup,'分组和标签','organization',organizationButton);
   const region=el('div','details-region'),select=el('select');select.setAttribute('aria-label','出口地区手动覆盖');select.dataset.focusKey='detail-country';
   const catalog=root.Management.countries();select.append(Object.assign(el('option','','使用自动识别'),{value:''}));for(const c of catalog)select.append(Object.assign(el('option','',c.zh+' '+c.code),{value:c.code}));
-  select.addEventListener('change',()=>saveCountry(current,select.value));region.append(select,country);row(agentGroup,'出口地区','countryManage',region);
+  select.addEventListener('change',()=>saveCountry(current,select.value));region.append(select,country);
+  const updateCountrySwitch=checkSwitch(row(agentGroup,'出口地区','countryManage',region),'出口地区','country','country_lookup_enabled','country');
   const iprow=row(checks,'公网 IP 检测','egress',egress.controls),switchLabel=egress.controls.querySelector('.pe-switch');if(switchLabel){switchLabel.querySelector('span').textContent=' 公网 IP 检测';iprow.children[0].querySelector('strong').hidden=true;iprow.children[0].prepend(switchLabel);}row(checks,'设备累计流量','since',actions.reset);checks.n.append(actions.resetFeedback);
   const youtubeControls=el('div','details-region');
   const youtubeSelect=el('select');youtubeSelect.setAttribute('aria-label','YouTube 手动地区');youtubeSelect.dataset.focusKey='detail-youtube-region';
@@ -58,7 +78,8 @@
    if(!savingYouTube)youtubeSelect.value=current?.google_status?.manual_region||'';
   });
   youtubeControls.append(youtubeSelect,actions.google,youtubeFeedback);
-  row(checks,'YouTube 地区检测','google',youtubeControls);checks.n.append(actions.googleFeedback);
+  const updateYouTubeSwitch=checkSwitch(row(checks,'YouTube 检测','google',youtubeControls),'YouTube 检测','youtube','youtube_check_enabled','google');
+  checks.n.append(actions.googleFeedback);
   row(danger,'暂停监控','pause',actions.pause);row(danger,'撤销 Agent','revoke',actions.remove);
   const more=el('details','details-more'),summary=el('summary','','更多');more.append(summary,actions.history);management.append(more);
   const time=(v,dateOnly=false)=>{if(!v)return '未知';const d=new Date(v),pad=n=>String(n).padStart(2,'0');return (d.getFullYear()!==new Date().getFullYear()?d.getFullYear()+'-':'')+pad(d.getMonth()+1)+'-'+pad(d.getDate())+(dateOnly?'':' '+pad(d.getHours())+':'+pad(d.getMinutes()));};
@@ -73,7 +94,7 @@
    const hints=(d?.reasons||[]).filter(r=>r!=='unwritable'||tone!=='crit').map(r=>model.diskHints[r]).filter(Boolean);
    let status=s.host_health?'检测数据已过期':s.hostname?'未检测（需升级 Agent）':'尚未检测',meta=[];
    if(d){
-    status=tone==='crit'?['异常',...faults].join(' · '):d.container?'部分支持（容器）':tone==='warn'?`曾出错 · ${model.diskTime(h.last_fault_at)}`:d.status==='ok'?`正常 · ${root.Card.agoText(d.checked_at)}检查`:hints.length?'检测受限':'等待检测';
+    status=tone==='crit'?['异常',...faults].join(' · '):tone==='warn'?`曾出错 · ${model.diskTime(h.last_fault_at)}`:d.container?'部分支持（容器）':d.status==='ok'?`正常 · ${root.Card.agoText(d.checked_at)}检查`:hints.length?'检测受限':'等待检测';
     if(tone==='crit'&&h.first_fault_at){
      const minutes=Math.max(0,Math.floor((now-h.first_fault_at)/60000));
      meta.push(`${model.diskTime(h.first_fault_at).slice(-5)} 起，已持续 ${minutes<1?'不到 1 分钟':minutes+' 分钟'}`);
@@ -87,6 +108,8 @@
     meta.push(...hints);
    }
    diskStatus.dataset.tone=tone;text(diskStatus,status);text(diskMeta,meta.join(' · '));
+   diskAck.hidden=tone!=='warn';diskAck.disabled=!canEditAgentControl(a,'disk');
+   text(diskFeedback,tone==='warn'?diskAckError(a):'');
    text(osName,s.os||'—');osFailure.hidden=!s.host_health?.os_read_failed;
    text(osFailure,s.os?'读取失败，显示上次的值':'读取失败');
    tiles[2].className='details-box details-metric'+(tone==='crit'?' disk-health-critical':'');
@@ -115,7 +138,10 @@
    values.total.replaceChildren();if(a.traffic)values.total.append(el('span','details-down','↓ '+format(a.traffic.rx_total,false)),el('span','details-up','↑ '+format(a.traffic.tx_total,false)),el('span','details-note',a.traffic.started_at?'自 '+time(a.traffic.started_at,true):'自接入起'));else set('total','—');
    set('coverage','');values.usage.title=p.usage_status==='calibrated'?'本周期用量已人工对账':'仅统计可观测用量，缺测可能使统计不完整';
    const regionText=p.country_code_override?`已手动设置为 ${countryName(p.country_code_override)} ${p.country_code_override}`:`${a.country_code?countryName(a.country_code)+' '+a.country_code:'未知'} · 自动识别`;
-   set('country',regionText);set('countryManage',regionText);if(select!==doc.activeElement)select.value=p.country_code_override||'';select.disabled=!canWrite(a);
+   region.hidden=a.country_lookup_enabled===false;
+   set('country',region.hidden?'检测已关闭':regionText);set('countryManage',region.hidden?'检测已关闭':regionText);
+   if(select!==doc.activeElement)select.value=p.country_code_override||'';select.disabled=region.hidden||!canWrite(a);
+   updateCountrySwitch(a);
    set('hostname',s.hostname||'—');set('config',`${s.cpu_cores?s.cpu_cores+' 核':'核心数未知'} · ${s.ram_total?format(s.ram_total,true):'—'} 内存 · ${s.disk_total?format(s.disk_total,true):'—'} 磁盘 · ${s.swap_total==null?'—':format(s.swap_total,true)} Swap`);
    actions.upgrade.disabled=actions.upgrade.disabled||!target?.supported;
    const healthCode=root.AgentState?.updaterHealthReason(a.updater_health);
@@ -146,6 +172,8 @@
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
    const youtubeName=code=>code==='EU'?'欧盟 EU':countryName(code)+' '+code;
    set('google',root.YouTubeStatus.summary(a,youtubeRegions(),youtubeName,time));
+   youtubeControls.hidden=actions.googleFeedback.hidden=a.youtube_check_enabled===false;
+   updateYouTubeSwitch(a);
    if(!savingYouTube&&youtubeSelect!==doc.activeElement)youtubeSelect.value=a.google_status?.manual_region||'';
    youtubeSelect.disabled=savingYouTube||!canSaveYouTubeRegion(a);
    text(youtubeFeedback,savingYouTube?'正在保存…':youtubeError(a));

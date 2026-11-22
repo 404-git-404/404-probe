@@ -3,6 +3,27 @@ const State=require('../web/static/agent-state.js'),Data=require('../web/static/
 const A='a'.repeat(32),B='b'.repeat(32),tick=()=>new Promise(setImmediate);
 const row=id=>({agent_id:id,name:id,online:true,revoked:false,group_id:null,tag_ids:[],state:{cpu_percent:1},traffic:{quota_state:'current'},accumulated_traffic:{rx_total:12},plan:{renewal_price:'1'}});
 const response=items=>({items,revision:1,groups:[],tags:[],exchange_rates:[],expenses:{monthly_usd:'1.00',yearly_usd:'12.00'}});
+test('R69: a dashboard summary cannot block fresh public IP in a reopened detail', () => {
+ const state=State.create();
+ const detail=(ip, checked_at)=>({agent_id:A,public_egress_check:{enabled:true},state:{public_egress:{ipv4:{ip,checked_at,status:'available'}}}});
+ state.commitDetail(state.read(A),detail('8.8.8.8',1000));
+ const reopened=state.read(A);
+ const summary=state.read(A,null,['runtime','summary']);
+ state.commitRead(summary,{version:'v1.4.0',state:{public_egress:{}}});
+ state.commitDetail(reopened,detail('9.9.9.9',2000));
+ assert.equal(state.agents.get(A).version,'v1.4.0');
+ assert.equal(state.agents.get(A).detail_public_egress.ipv4.ip,'9.9.9.9');
+});
+test('R69: an open detail follows a newer telemetry observation and rejects older data', () => {
+ const state=State.create();
+ const patch=(ip, checked_at)=>({agent_id:A,state:{public_egress:{ipv4:{ip,checked_at,status:'available'}}}});
+ state.commitDetail(state.read(A),{...patch('8.8.8.8',1000),public_egress_check:{enabled:true}});
+ const inFlight=state.read(A);
+ state.event(patch('9.9.9.9',3000));
+ state.commitDetail(inFlight,patch('1.1.1.1',2000));
+ state.event(patch('8.8.8.8',1000));
+ assert.equal(state.agents.get(A).detail_public_egress.ipv4.ip,'9.9.9.9');
+});
 test('slow partial reads never flicker the 200-device network union',async()=>{
  const {simulate}=require('./lib/v110-dashboard-clock.cjs');const run=await simulate({source:process.env.V110_TEST_SOURCE,partialLatency:1500});
  for(const s of run.samples)assert.deepEqual([s.network,s.insufficient,s.health],[200,0,200],JSON.stringify(s));

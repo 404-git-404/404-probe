@@ -61,6 +61,8 @@ func (a *App) handleCreateWebAgentCountryCodeLookup(w http.ResponseWriter, r *ht
 	operation, err := a.store.CreateAgentCountryCodeLookup(r.Context(), agentID, a.now())
 	if err != nil {
 		switch {
+		case errors.Is(err, storage.ErrAgentCountryLookupDisabled):
+			writeJobError(w, http.StatusConflict, "lookup_disabled", "country-code lookup is switched off")
 		case errors.Is(err, storage.ErrAgentCountryLookupUnsupported):
 			writeJobError(w, http.StatusUpgradeRequired, "agent_upgrade_required", "upgrade Agent to enable one-time country-code lookup")
 		case errors.Is(err, storage.ErrAgentCountryLookupPending):

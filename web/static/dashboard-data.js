@@ -1,7 +1,7 @@
 /* Batch summaries use the same per-resource request/mutation barriers as detail. */
 (function(root){
  'use strict';
- const GROUPS=['runtime','name','lifecycle','country','plan','organization','summary','google','outbounds','traffic'];
+ const GROUPS=['runtime','name','lifecycle','country','plan','organization','summary','google','outbounds','traffic','disk'];
  function telemetryPhase(id){let hash=2166136261;for(const c of id)hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;return hash%10000;}
  function normalize(row){
   const result={...row,dashboard_traffic:row.traffic,traffic:row.accumulated_traffic,dashboard_loaded:true,dashboard_received_at:Date.now()};
@@ -87,7 +87,10 @@
    if(value.kind==='youtube-ad-free-regions'){wantFull=true;schedule();return;}
    const id=value.agent_id;
    if(value.revoked&&state.agents.has(id)){const token=state.beginDelete(id);state.finishDelete(token,true);dirty.delete(id);telemetryDirty.delete(id);telemetryReady.delete(id);summaryDue.delete(id);onchange(new Set([id]),{full:false});wantFull=true;schedule();return;}
-   if(id){state.invalidate(id,value.kind==='name'?['name','summary']:['lifecycle','summary']);notify(id);}
+   if(id){
+    const groups={name:['name'], 'country-check':['country'], 'youtube-check':['google'], 'disk-fault-acknowledgement':['disk']}[value.kind];
+    state.invalidate(id,[...(groups||['lifecycle']),'summary']);notify(id);
+   }
   }
   return {refresh,async reload(){if(full)await full;if(partial)await partial;wantFull=false;return refresh();},notify,telemetry(id){if(!closed&&id&&!state.blocked(id)){if(!summaryDue.has(id))summaryDue.set(id,now()+10000+telemetryPhase(id));telemetryDirty.add(id);armTelemetry();}},metadata,organization(){for(const id of state.agents.keys())state.invalidate(id,['organization','summary']);wantFull=true;schedule();},retry(){schedule();},
    catalog:()=>catalog,serverNow:()=>serverClock?serverClock.time+root.performance.now()-serverClock.receivedAt:null,ready:()=>ready,close(){closed=true;dirty.clear();telemetryDirty.clear();telemetryReady.clear();if(telemetryTimer!==null)clearTimer(telemetryTimer);state.beginRefresh().controller.abort();},

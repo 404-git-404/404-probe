@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrAgentCountryLookupUnsupported = errors.New("Agent does not support country-code lookup")
+	ErrAgentCountryLookupDisabled    = errors.New("country-code lookup is switched off")
 	ErrAgentCountryLookupPending     = errors.New("Agent country-code lookup is already pending")
 	ErrAgentCountryLookupNotFound    = errors.New("Agent country-code lookup operation not found")
 	ErrAgentCountryLookupTransition  = errors.New("invalid Agent country-code lookup transition")
@@ -30,6 +31,7 @@ const (
 )
 
 type AgentCountryCodeLookup struct {
+	Cancelled        bool
 	AgentID          string
 	OperationID      string
 	Status           AgentCountryCodeLookupStatus
@@ -65,6 +67,13 @@ func (s *Store) CreateAgentCountryCodeLookup(ctx context.Context, agentID string
 	if err := requireActiveAgentTx(ctx, tx, agentID); err != nil {
 		return AgentCountryCodeLookup{}, ErrAgentNotFound
 	}
+	var enabled bool
+	if err := tx.QueryRowContext(ctx, `SELECT country_lookup_enabled FROM agents WHERE id=?`, agentID).Scan(&enabled); err != nil {
+		return AgentCountryCodeLookup{}, err
+	}
+	if !enabled {
+		return AgentCountryCodeLookup{}, ErrAgentCountryLookupDisabled
+	}
 	epoch, sessionID, supported, err := countryCodeLookupCapabilityTx(ctx, tx, agentID)
 	if err != nil {
 		return AgentCountryCodeLookup{}, err
@@ -77,7 +86,7 @@ func (s *Store) CreateAgentCountryCodeLookup(ctx context.Context, agentID string
 		return AgentCountryCodeLookup{}, err
 	} else if exists {
 		lastCode = existing.LastCode
-		if isPendingCountryCodeLookup(existing.Status) && now.UnixMilli()-existing.UpdatedAt < AgentCountryCodeLookupPendingTTL.Milliseconds() {
+		if !existing.Cancelled && isPendingCountryCodeLookup(existing.Status) && now.UnixMilli()-existing.UpdatedAt < AgentCountryCodeLookupPendingTTL.Milliseconds() {
 			return AgentCountryCodeLookup{}, ErrAgentCountryLookupPending
 		}
 	}
@@ -93,7 +102,7 @@ func (s *Store) CreateAgentCountryCodeLookup(ctx context.Context, agentID string
 	ON CONFLICT(agent_id) DO UPDATE SET operation_id=excluded.operation_id,status='requested',
 		requested_epoch=excluded.requested_epoch,requested_session_id=excluded.requested_session_id,
 		active_epoch=excluded.active_epoch,active_session_id=excluded.active_session_id,
-		result_code=NULL,error_code=NULL,created_at=excluded.created_at,updated_at=excluded.updated_at`,
+		result_code=NULL,error_code=NULL,cancelled=0,created_at=excluded.created_at,updated_at=excluded.updated_at`,
 		agentID, operationID, int64(epoch), sessionID, int64(epoch), sessionID, stamp, stamp)
 	if err != nil {
 		return AgentCountryCodeLookup{}, err
@@ -134,7 +143,7 @@ func (s *Store) ClaimAgentCountryCodeLookup(ctx context.Context, agentID string,
 		return nil, nil
 	}
 	operation, exists, err := readAgentCountryCodeLookupByAgentTx(ctx, tx, agentID)
-	if err != nil || !exists || operation.Status != AgentCountryCodeLookupRequested {
+	if err != nil || !exists || operation.Cancelled || operation.Status != AgentCountryCodeLookupRequested {
 		if err != nil {
 			return nil, err
 		}
@@ -208,7 +217,7 @@ func (s *Store) CompleteAgentCountryCodeLookup(ctx context.Context, agentID, ope
 		}
 		return AgentCountryCodeLookupAck{Accepted: true, Duplicate: true, Status: operation.Status}, nil
 	}
-	if operation.Status != AgentCountryCodeLookupDelivered {
+	if operation.Cancelled || operation.Status != AgentCountryCodeLookupDelivered {
 		return AgentCountryCodeLookupAck{}, ErrAgentCountryLookupTransition
 	}
 	status, resultCode := AgentCountryCodeLookupFailed, sql.NullString{}
@@ -261,19 +270,19 @@ func countryCodeLookupCapabilityTx(ctx context.Context, tx *sql.Tx, agentID stri
 	return uint64(epoch), session, supported == 1, nil
 }
 
+const countryCodeLookupColumns = `agent_id,operation_id,status,result_code,error_code,last_country_code,
+	created_at,updated_at,requested_epoch,requested_session_id,active_epoch,active_session_id,cancelled`
+
 func readAgentCountryCodeLookupByAgentTx(ctx context.Context, tx *sql.Tx, agentID string) (AgentCountryCodeLookup, bool, error) {
-	return scanAgentCountryCodeLookup(tx.QueryRowContext(ctx, `SELECT agent_id,operation_id,status,result_code,error_code,last_country_code,
-		created_at,updated_at,requested_epoch,requested_session_id,active_epoch,active_session_id FROM agent_country_code_lookups WHERE agent_id=?`, agentID))
+	return scanAgentCountryCodeLookup(tx.QueryRowContext(ctx, `SELECT `+countryCodeLookupColumns+` FROM agent_country_code_lookups WHERE agent_id=?`, agentID))
 }
 
 func readAgentCountryCodeLookupByOperationTx(ctx context.Context, tx *sql.Tx, operationID string) (AgentCountryCodeLookup, bool, error) {
-	return scanAgentCountryCodeLookup(tx.QueryRowContext(ctx, `SELECT agent_id,operation_id,status,result_code,error_code,last_country_code,
-		created_at,updated_at,requested_epoch,requested_session_id,active_epoch,active_session_id FROM agent_country_code_lookups WHERE operation_id=?`, operationID))
+	return scanAgentCountryCodeLookup(tx.QueryRowContext(ctx, `SELECT `+countryCodeLookupColumns+` FROM agent_country_code_lookups WHERE operation_id=?`, operationID))
 }
 
 func readAgentCountryCodeLookupByAgentDB(ctx context.Context, db *sql.DB, agentID string) (AgentCountryCodeLookup, bool, error) {
-	return scanAgentCountryCodeLookup(db.QueryRowContext(ctx, `SELECT agent_id,operation_id,status,result_code,error_code,last_country_code,
-		created_at,updated_at,requested_epoch,requested_session_id,active_epoch,active_session_id FROM agent_country_code_lookups WHERE agent_id=?`, agentID))
+	return scanAgentCountryCodeLookup(db.QueryRowContext(ctx, `SELECT `+countryCodeLookupColumns+` FROM agent_country_code_lookups WHERE agent_id=?`, agentID))
 }
 
 func scanAgentCountryCodeLookup(row *sql.Row) (AgentCountryCodeLookup, bool, error) {
@@ -282,7 +291,7 @@ func scanAgentCountryCodeLookup(row *sql.Row) (AgentCountryCodeLookup, bool, err
 	var resultCode, errorCode, lastCode sql.NullString
 	var requestedEpoch, activeEpoch int64
 	err := row.Scan(&operation.AgentID, &operation.OperationID, &status, &resultCode, &errorCode, &lastCode,
-		&operation.CreatedAt, &operation.UpdatedAt, &requestedEpoch, &operation.RequestedSession, &activeEpoch, &operation.ActiveSession)
+		&operation.CreatedAt, &operation.UpdatedAt, &requestedEpoch, &operation.RequestedSession, &activeEpoch, &operation.ActiveSession, &operation.Cancelled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentCountryCodeLookup{}, false, nil
 	}

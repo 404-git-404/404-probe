@@ -59,7 +59,7 @@
  function diskTone(a,now=Date.now()){
   const h=diskReport(a,now);
   if(h?.disk.status==='error')return 'crit';
-  return h?.disk.status==='ok'&&h.last_fault_at>0&&h.last_fault_at<=now&&now-h.last_fault_at<=7*86400000?'warn':'';
+  return h?.disk.status==='ok'&&h.last_fault_at>(a.disk_fault_acknowledged_at||0)&&h.last_fault_at<=now&&now-h.last_fault_at<=7*86400000?'warn':'';
  }
  function diskFaults(disk,{short=false,now=Date.now()}={}){
   const result=[];

@@ -104,6 +104,7 @@ func TestPublicEgressMigrationLeavesExistingAgentsDisabled(t *testing.T) {
 	at := time.Unix(10_000, 0)
 	egressReport(t, store, agentID, at, "session-1", 1, nil)
 	// Put the database back where a v1.0.3 Server left it (schema 29, no control table).
+	rewindAgentControlsFixture(t, store.db)
 	for _, table := range organizationTables {
 		if _, err := store.db.ExecContext(ctx, `DROP TABLE `+table); err != nil {
 			t.Fatal(err)

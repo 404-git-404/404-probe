@@ -87,6 +87,9 @@ html { scrollbar-gutter: stable; }
 
 /* Keep the select/button row, and give completed lookup feedback a full line. */
 .details-region .country-lookup-controls{display:contents}
+.device-details :is(.details-region,.country-mark,.disk-fault-ack)[hidden]{display:none}
+.details-disk-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.device-details .disk-fault-ack{padding:0 6px;height:24px}
 .details-region .country-lookup-controls>span[data-result=true]{display:block;grid-column:1/-1;font-size:12px;margin-top:0}
 .details-youtube-feedback{grid-column:1/-1}
 .details-youtube-feedback:empty{display:none}
