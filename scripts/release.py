@@ -85,9 +85,8 @@ class Release:
         self.go = go or shutil.which("go") or "go"
         git_path = shutil.which("git")
         bundled_bash = Path(git_path).parent.parent / "bin/bash.exe" if git_path else None
-        self.bash = (args.bash or shutil.which("bash" if os.name != "nt" else "git-bash")
-                     or (str(bundled_bash) if bundled_bash and bundled_bash.is_file() else None)
-                     or "bash")
+        self.bash = (args.bash or (str(bundled_bash) if bundled_bash and bundled_bash.is_file() else None)
+                     or shutil.which("bash") or "bash")
         self.env = dict(os.environ)
         go_path = shutil.which(self.go) or self.go
         if Path(go_path).is_absolute():
@@ -270,7 +269,7 @@ class Release:
         return "通过"
 
     def shell(self):
-        for name in ("test-release-installer-manifest.sh", "test-release-rc.sh"):
+        for name in ("test-release-installer-manifest.sh", "test-release-rc.sh", "test-install-banner.sh"):
             self.run([self.bash, f"scripts/{name}"])
         for path in sorted((self.source / "scripts").glob("test-*.py")):
             if path.name in {"test-r31.py", "test-machine-release.py"}:
@@ -288,7 +287,8 @@ class Release:
         # Compile as the caller and run only the selected programs inside the fixture.
         with tempfile.TemporaryDirectory(prefix="installer-", dir=self.out) as temp:
             for package in ("cmd/server", "internal/agent", "internal/updater"):
-                self.run([self.go, "test", "-c", "-o", str(Path(temp) / (Path(package).name + ".test")),
+                self.run([self.go, "test", "-c", f"-gcflags=all=-trimpath={self.source}=>/work/source",
+                          "-o", str(Path(temp) / (Path(package).name + ".test")),
                           "./" + package])
             self.run(["sudo", "--", sys.executable, "-B",
                       str(self.source / "scripts/release_install_fixtures.py"),
@@ -343,17 +343,35 @@ def main():
                                            text=True, encoding="utf-8").strip()
 
         try:
-            command = [*wsl, "python3", "-B", linux_path(Path(__file__)), args.stage,
-                       "--out", linux_path(args.out)]
-            if args.notes:
-                command.extend(["--notes", linux_path(args.notes)])
-            for flag, value in (("--version", args.version), ("--from-version", args.from_version),
-                                ("--go", args.go), ("--bash", args.bash)):
-                if value:
-                    command.extend([flag, value])
-            return subprocess.run(command).returncode
-        except (OSError, subprocess.CalledProcessError):
-            parser.exit(1, "Cannot run the release pipeline in the requested local WSL distribution\n")
+            # A Windows worktree's .git file can contain a drive-letter path
+            # that Linux Git cannot resolve. Hand WSL a normal local clone.
+            ensure_clean(ROOT)
+            out = args.out.resolve()
+            if out.is_relative_to(ROOT):
+                raise ValueError("--out must be outside the source worktree")
+            out.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="wsl-source-", dir=out) as seed:
+                source = Path(seed) / "repo"
+                subprocess.run(["git", "-c", "core.autocrlf=false", "clone", "--no-hardlinks",
+                                "--no-checkout", str(ROOT), str(source)], check=True)
+                git(source, "config", "core.autocrlf", "false")
+                git(source, "config", "user.name", git(ROOT, "config", "user.name"))
+                git(source, "config", "user.email", git(ROOT, "config", "user.email"))
+                git(source, "switch", "--detach", git(ROOT, "rev-parse", "HEAD"))
+                command = [*wsl, "python3", "-B", linux_path(source / "scripts/release.py"), args.stage,
+                           "--out", linux_path(out)]
+                if args.notes:
+                    command.extend(["--notes", linux_path(args.notes)])
+                for flag, value in (("--version", args.version), ("--from-version", args.from_version),
+                                    ("--go", args.go), ("--bash", args.bash)):
+                    if value:
+                        command.extend([flag, value])
+                code = subprocess.run(command).returncode
+            if code:
+                print("Use the same Windows entry point with --wsl and the failed step name.", file=sys.stderr)
+            return code
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            parser.exit(1, f"Cannot start the release pipeline in the requested local WSL distribution: {error}\n")
     args.out = args.out.resolve()
     lock = args.out / ".release.lock"
     try:

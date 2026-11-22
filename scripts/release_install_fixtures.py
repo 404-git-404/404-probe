@@ -17,9 +17,8 @@ SHELL_CASES = {
     "test-install-oneclick-token.sh": (),
     "test-install-password.sh": (),
     "test-install-web-password-reset.sh": ("server",),
-    "test-install-banner.sh": (),
     "test-server-upgrade-transaction.sh": (),
-    "test-selector-order-existing.sh": ("installer", "agent"),
+    "test-selector-order-existing.sh": ("agent",),
     "test-upgrade-floor.sh": (),
     "test-release-build-gates.sh": (),
 }
@@ -77,10 +76,18 @@ def run(source, assets, binaries):
             root = parent / label
             root.mkdir(mode=0o755 if profile == "multiuser" else 0o700)
             for name, original in (files or {}).items():
-                target = root / name
+                target = root / "tmp" / name
+                target.parent.mkdir(exist_ok=True)
                 shutil.copyfile(original, target)
                 target.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRGRP |
                              stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+            if label in {"test-install-web-password-reset", "test-selector-order-existing"}:
+                fake_etc = root / "system/etc"
+                fake_etc.mkdir(parents=True)
+                (fake_etc / "os-release").write_text("ID=debian\nVERSION_ID=13\n")
+                (root / "system/run/systemd/system").mkdir(parents=True)
+                if label == "test-selector-order-existing":
+                    (root / "system/var/lib/404-probe").mkdir(parents=True)
             result = subprocess.run([*fixture, "--root", str(root), "--profile", profile, *options],
                                     cwd=source, env=env, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, errors="replace")
@@ -97,13 +104,14 @@ def run(source, assets, binaries):
             case("canary-" + profile, ["--probe"], profile=profile)
 
         inputs = {"server": assets / f"404-probe-server-linux-{arch}",
-                  "agent": assets / f"404-probe-agent-linux-{arch}",
-                  "installer": assets / "install.sh"}
+                  "agent": assets / f"404-probe-agent-linux-{arch}"}
         for script, names in SHELL_CASES.items():
             label = Path(script).stem
             root = parent / label
-            args = [str(root / name) for name in names]
-            multiuser = script == "test-install-web-password-reset.sh"
+            args = [str(root / "tmp" / name) for name in names]
+            multiuser = script in {"test-install-web-password-reset.sh", "test-selector-order-existing.sh"}
+            if script == "test-selector-order-existing.sh":
+                args.insert(0, str(root / "installer-fixture.sh"))
             case(label, ["--script", str(source / "scripts" / script), "--", *args],
                  files={name: inputs[name] for name in names},
                  profile="multiuser" if multiuser else "default")
@@ -114,10 +122,11 @@ def run(source, assets, binaries):
             # Use one path translation for the source and a separate translation for
             # the precompiled binary. Keep the temp paths within the guest.
             expression = "^(" + "|".join(names) + ")" + ("" if role == "updater" else "$")
-            binary = parent / label / "suite.test"
+            binary = parent / label / "tmp/suite.test"
             case(label, ["--", "bash", "-c", 'cd "$1"; exec "$2" -test.v -test.count=1 "-test.run=$3"',
                          "fixture", str(source / directory), str(binary), expression],
-                 files={"suite.test": binaries / (role + ".test")})
+                 files={"suite.test": binaries / (role + ".test")},
+                 profile="default" if role == "server" else "multiuser")
     print("Host after: " + json.dumps(snapshot()), flush=True)
 
 
