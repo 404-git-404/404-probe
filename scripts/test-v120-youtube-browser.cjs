@@ -201,12 +201,25 @@ test('name tip stays inside the viewport and public IP uses a native title', () 
   assert.equal(await device.locator('.public-egress-tip').count(), 0);
 }));
 
-test('R63 clamps the rightmost network tip to both viewport edges and closes it on scroll', () => ui(async ({page}) => {
-  const edge = block(page, 8, 2, 19);
+test('R63 clamps the rightmost network tip to both viewport edges and closes it on scroll', () => ui(async ({page, f}) => {
+  const cards = page.locator('.agent-card:visible');
+  const viewport = page.viewportSize();
+  const gridBottom = await cards.evaluateAll(nodes => Math.max(...nodes.map(node => node.getBoundingClientRect().bottom)) + scrollY);
+  if (gridBottom <= viewport.height) {
+    await page.setViewportSize({...viewport, height: Math.floor(gridBottom - 40)});
+    await settled(page);
+  }
+  const rightmostID = await cards.evaluateAll(nodes => nodes.map(node => {
+    const {right, bottom} = node.getBoundingClientRect();
+    return {id: node.dataset.agentId, right, bottom};
+  }).sort((a, b) => b.right - a.right || b.bottom - a.bottom)[0].id);
+  const agent = f.state.items.findIndex(item => item.agent_id === rightmostID);
+  assert(agent >= 0, 'rightmost card must belong to the fixture');
+  const edge = block(page, agent, 2, 19);
   const tip = page.locator('.nq7-tip:visible');
-  await nearBottom(page, 8, edge);
+  await nearBottom(page, agent, edge);
   await page.waitForFunction(node => Boolean(node.tipText), await edge.elementHandle());
-  const rightmost = await page.locator(card(8)).evaluate(node => {
+  const rightmost = await page.locator(card(agent)).evaluate(node => {
     const right = node.getBoundingClientRect().right;
     return [...document.querySelectorAll('.agent-card')].every(card => card.getBoundingClientRect().right <= right);
   });
