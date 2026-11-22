@@ -21,6 +21,11 @@ const {launch,open}=require('./lib/v11-panel-fixture.cjs');
  assert.equal(await p.locator('#pw-current-preview').isVisible(),true);
  assert.equal(await p.locator('#pw-new-preview').textContent(),'a'.repeat(11));
  assert.equal(await p.locator('#pw-confirm-preview').textContent(),'a'.repeat(11));
+ for(const id of ['current','new','confirm']){
+  const [field,preview]=await Promise.all([p.locator('#pw-'+id).boundingBox(),p.locator('#pw-'+id+'-preview').boundingBox()]);
+  assert.equal(preview.x,field.x);assert(preview.y>=field.y+field.height);
+ }
+ await shot('visible');
  await show.uncheck();await passwordTypes();assert.equal(await p.locator('#pw-new-preview').isVisible(),false);assert.equal(await p.locator('#pw-new-preview').textContent(),'');
  await p.locator('#pw-save').click();await p.waitForFunction(()=>document.querySelector('#pw-new-msg').textContent==='太短了：至少 12 个字符，现在 11 个');await shot('error-11');
  await show.check();for(const field of ['new','confirm'])await p.locator('#pw-'+field).fill('密'.repeat(12));
