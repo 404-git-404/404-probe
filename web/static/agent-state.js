@@ -91,6 +91,7 @@
     country_code: 'country', country_source: 'country', country_code_lookup_operation: 'country', country_lookup_enabled: 'country',
     plan: 'plan', outbounds: 'outbounds', upgrade: 'upgrade', google_status: 'google', youtube_check_enabled: 'google',
     public_egress_check: 'egress', detail_public_egress: 'egress', disk_fault_acknowledged_at: 'disk', startup_disk_failure: 'disk',
+    system_check_settings:'system_settings',system_checks:'system_checks',debian_stable_major:'system_checks',
     security: 'security', management: 'management', traffic: 'traffic', removal: 'removal',
     group_id:'organization', tag_ids:'organization', organization_revision:'organization',
     renewal:'plan', dashboard_traffic:'plan', search_fields:'summary', masked_ips:'summary', masked_egress:'summary', dashboard_loaded:'summary', dashboard_received_at:'summary', network:'summary', network_slots:'summary',
@@ -170,7 +171,7 @@
       const e = entry(id), token = {id, entry: e, lifetime: e.lifetime, start: e.revision, context,
         versions: new Map(e.versions), reads: new Map(), groups};
       // Per-resource latest invocation; an upgrade read cannot invalidate detail fields.
-      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','egress','disk','security','management','traffic','removal','organization','summary'];
+      const all = groups || ['runtime','name','lifecycle','country','plan','outbounds','google','egress','disk','security','system_checks','system_settings','management','traffic','removal','organization','summary'];
       for (const group of all) {
         const next = (e.reads.get(group) || 0) + 1;
         e.reads.set(group, next); token.reads.set(group, next);

@@ -65,7 +65,7 @@ const deviceDetails = DeviceDetails.create({agents,coordinator:monitorCoordinato
   // Revealed IP addresses never outlive the dialog or a switch to another Agent.
   conceal: () => { resetDetailPoll(); for (const view of detailViews.values()) view.egressPanel?.conceal(); },
   resourceFacts: agent => resourceFactsFor(agent).filter(row=>row[0]==='DISK'),
-  hydrate: id => hydrateActiveDetail(id)});
+  hydrate: id => hydrateActiveDetail(id), serverNow: () => dashboardData.serverNow()});
 const revokedAgentIDs = agentState.revokedAgentIDs;
 const selectorController = Selector.create({
   state: agentState, fetcher: (...args) => fetch(...args), csrf: () => mutationCSRFToken,
@@ -1121,7 +1121,7 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
 let youtubeRegionKey='',youtubeRegionGeneration=0;
-function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,a.server_local,a.system_attention,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1278,6 +1278,20 @@ function canEditAgentControl(agent,group){
   return Boolean(agent&&mutationCSRFToken&&!agent.revoked&&!agentState.blocked(agent.agent_id)&&!agentState.busy(agent.agent_id,group));
 }
 
+async function saveSystemSettings(agent,settings){
+  if(!canEditAgentControl(agent,'system_settings'))return '当前无法保存';
+  const id=agent.agent_id,token=agentState.beginMutation(id,['system_settings']);
+  try{
+    const saved=await Management.write(`/api/v1/web/agents/${encodeURIComponent(id)}/system-checks`,{
+      method:'PUT',csrf:mutationCSRFToken,payload:settings,unauthorized:()=>location.assign('/login')});
+    finishResource(token,{system_check_settings:saved});
+    return '';
+  }catch{
+    finishResource(token);
+    return '保存失败，请检查目录路径或服务名后重试';
+  }
+}
+
 async function setDetailCheck(agent,check,enabled){
   const id=agent.agent_id,group=check==='country'?'country':'google';
   if(!canEditAgentControl(agent,group))return '';
@@ -1404,11 +1418,13 @@ function createAgentCard(initialAgent) {
     diskBadge.append(diskLabel,diskAck);
     const updateTags=()=>{
       const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);
-      const signature=JSON.stringify(key);
+      const badges=DashboardModel.systemBadges(agent);
+      const signature=JSON.stringify([key,badges]);
       if(tags.dataset.signature!==signature){
         tags.dataset.signature=signature;
         tags.replaceChildren();
         for(const [,name] of key){const n=document.createElement('span');n.textContent=name;n.title=name;tags.append(n);}
+        tags.append(...SystemChecks.badges(document,agent));
       }
       const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
       const reason=tone==='crit'?DashboardModel.diskFaults(health?.disk,{short:true})[0]:'';
@@ -1418,7 +1434,7 @@ function createAgentCard(initialAgent) {
       setCardText(diskLabel,label+(tone==='warn'&&error?' · '+error:''));diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
       diskBadge.classList.toggle('startup-disk-failure',!!agent.startup_disk_failure);
       diskAck.hidden=tone!=='warn';diskAck.disabled=!canEditAgentControl(agent,'disk');
-      tags.hidden=!key.length;
+      tags.hidden=!key.length&&!badges.length;
       systemFailure.hidden=!health?.os_read_failed;
         return tone==='crit';
     };
@@ -1670,10 +1686,13 @@ function createAgentDetails(initial){
       youtubeRegions,saveYouTubeRegion,canSaveYouTubeRegion,youtubeError:a=>agentActionErrors.get(`${a.agent_id}/youtube-region`)||'',serverNow:dashboardData.serverNow,
       setDetailCheck,canEditAgentControl,acknowledgeDiskFault,diskAckError,
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
+    const systemSettings=SystemChecks.settingsEditor(document,saveSystemSettings,a=>canEditAgentControl(a,'system_settings'));
+    summary.management.append(systemSettings.node);
+    systemSettings.update(agent);
     detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
 
  return {management:detailPanel,overview:summary.overview,egressPanel,update(next){
-  agent=next;egressPanel.update(agent);
+  agent=next;egressPanel.update(agent);systemSettings.update(agent);
       const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
       remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
       stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
@@ -1872,7 +1891,8 @@ events.addEventListener('agent', event => {
  else if(agentState.event(update))render(new Set([id]));
  if(!telemetry)dashboardData.notify(id);
  else dashboardData.telemetry(id);
- if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===id&&agentState.fullEvent(update))hydrateActiveDetail(id);
+ const detail=deviceDetails.snapshot();
+ if(detail.open&&detail.id===id&&(agentState.fullEvent(update)||(['system','security'].includes(detail.tab)&&update.system_checked_at!==previous?.system_checked_at)))hydrateActiveDetail(id);
 });
 events.addEventListener('dashboard',event=>{try{const value=JSON.parse(event.data);dashboardData.metadata(value);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===value.agent_id&&!value.revoked)hydrateActiveDetail(value.agent_id);}catch{}});
 events.addEventListener('organization',event=>{try{const value=JSON.parse(event.data);dashboardData.organization(value);}catch{}});

@@ -498,6 +498,29 @@ func agentCommand(args []string) error {
 		}
 		fmt.Printf("Agent ID: %s\nToken: %s\n\nSave this token now; the server stores only its SHA-256 hash.\n", id, plain)
 		return nil
+	case "local-id":
+		id, err := store.ServerLocalAgent(ctx)
+		if err == nil {
+			_, err = fmt.Fprintln(os.Stdout, id)
+		}
+		return err
+	case "register-local":
+		if value != "" || flags.NArg() != 0 {
+			return errors.New("usage: 404-probe-server agent register-local --db path")
+		}
+		id, err := auth.NewID()
+		if err != nil {
+			return err
+		}
+		plain, hash, err := auth.NewToken()
+		if err != nil {
+			return err
+		}
+		if err := store.AddServerLocalAgent(ctx, id, "Server", hash, time.Now()); err != nil {
+			return err
+		}
+		_, err = fmt.Printf("PROBE_404_AGENT_ID=%s\nPROBE_404_TOKEN=%s\n", id, plain)
+		return err
 	case "enroll-token":
 		// A one-click registration token (what the panel's install command carries), for test machines:
 		// the installer's oneclick-token command stores it in a root-only file instead of printing it.

@@ -27,8 +27,18 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 	}
 }
 
+func rewindSystemChecksFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, q := range []string{`DROP TABLE IF EXISTS agent_system_check_settings`, `DROP TABLE IF EXISTS server_local_agent`, `DELETE FROM schema_migrations WHERE version=41`} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func rewindStartupDiskFailureFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
+	rewindSystemChecksFixture(t, db)
 	for _, q := range []string{`DROP TABLE IF EXISTS agent_startup_disk_failures`, `DELETE FROM schema_migrations WHERE version=40`} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)

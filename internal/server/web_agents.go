@@ -20,21 +20,26 @@ const (
 )
 
 type webAgentSummaryView struct {
-	SummaryVersion string                  `json:"summary_version"`
-	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health"`
-	AgentID        string                  `json:"agent_id"`
-	Name           string                  `json:"name"`
-	Revoked        bool                    `json:"revoked"`
-	DisabledAt     *int64                  `json:"disabled_at"`
-	CreatedAt      int64                   `json:"created_at"`
-	Online         bool                    `json:"online"`
-	LastSeen       *int64                  `json:"last_seen"`
-	Version        string                  `json:"version"`
-	UpgradeCapable bool                    `json:"upgrade_capable"`
-	UpgradeV2      bool                    `json:"upgrade_v2"`
+	ServerLocal     bool                    `json:"server_local"`
+	SystemAttention systemAttention         `json:"system_attention"`
+	SummaryVersion  string                  `json:"summary_version"`
+	UpdaterHealth   *protocol.UpdaterHealth `json:"updater_health"`
+	AgentID         string                  `json:"agent_id"`
+	Name            string                  `json:"name"`
+	Revoked         bool                    `json:"revoked"`
+	DisabledAt      *int64                  `json:"disabled_at"`
+	CreatedAt       int64                   `json:"created_at"`
+	Online          bool                    `json:"online"`
+	LastSeen        *int64                  `json:"last_seen"`
+	Version         string                  `json:"version"`
+	UpgradeCapable  bool                    `json:"upgrade_capable"`
+	UpgradeV2       bool                    `json:"upgrade_v2"`
 }
 
 type webAgentDetailView struct {
+	SystemChecks        *protocol.SystemChecks       `json:"system_checks"`
+	SystemCheckSettings protocol.SystemCheckSettings `json:"system_check_settings"`
+	DebianStableMajor   int                          `json:"debian_stable_major,omitempty"`
 	webAgentSummaryView
 	storage.AgentControls
 	CountryCode          string                         `json:"country_code,omitempty"`
@@ -168,16 +173,18 @@ type webAgentHistoryPointView struct {
 }
 
 type webAgentEventView struct {
-	SummaryVersion string                  `json:"summary_version"`
-	UpdaterHealth  *protocol.UpdaterHealth `json:"updater_health"`
-	UpgradeCapable bool                    `json:"upgrade_capable"`
-	UpgradeV2      bool                    `json:"upgrade_v2"`
-	Version        string                  `json:"version"`
-	AgentID        string                  `json:"agent_id"`
-	Name           string                  `json:"name"`
-	Online         bool                    `json:"online"`
-	LastSeen       int64                   `json:"last_seen"`
-	State          *webAgentStateView      `json:"state"`
+	SystemCheckedAt int64                   `json:"system_checked_at"`
+	SystemAttention systemAttention         `json:"system_attention"`
+	SummaryVersion  string                  `json:"summary_version"`
+	UpdaterHealth   *protocol.UpdaterHealth `json:"updater_health"`
+	UpgradeCapable  bool                    `json:"upgrade_capable"`
+	UpgradeV2       bool                    `json:"upgrade_v2"`
+	Version         string                  `json:"version"`
+	AgentID         string                  `json:"agent_id"`
+	Name            string                  `json:"name"`
+	Online          bool                    `json:"online"`
+	LastSeen        int64                   `json:"last_seen"`
+	State           *webAgentStateView      `json:"state"`
 }
 
 func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
@@ -255,6 +262,18 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	}
 	record = a.withUpdaterHealth(record)
 	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
+	localID, err := a.store.ServerLocalAgent(ctx)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	view.ServerLocal = localID == agentID
+	view.SystemCheckSettings, err = a.store.SystemCheckSettings(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	view.SystemChecks = a.currentSystemChecks(record, a.now())
+	view.SystemAttention = checkAttention(view.SystemChecks, a.now())
+	view.DebianStableMajor = a.debianStable.current()
 	view.AgentControls, err = a.store.ReadAgentControls(ctx, agentID)
 	if err != nil {
 		return webAgentDetailView{}, err
@@ -568,9 +587,15 @@ func newWebAgentEventView(state storage.State, timeout time.Duration) webAgentEv
 	if reportStateStale(state, time.UnixMilli(state.LastSeen), timeout) {
 		view.HostHealth = newWebHostHealth(state.HostHealth, true, state.LastSeen)
 	}
+	var attention systemAttention
+	if state.LastSeen-state.SystemChecksAt <= systemCheckFreshness.Milliseconds() {
+		attention = checkAttention(state.SystemChecks, time.UnixMilli(state.LastSeen))
+	}
 	return webAgentEventView{
-		SummaryVersion: dashboardVersion(storage.Agent{ID: state.AgentID, Name: state.Name}, &state),
-		UpdaterHealth:  state.AgentUpdaterHealth, UpgradeCapable: state.AgentUpgradeCapable && state.AgentUpdaterHealth.ReasonCode() == "", UpgradeV2: state.AgentUpgradeV2, Version: state.AgentVersion,
+		SystemAttention: attention,
+		SystemCheckedAt: state.SystemChecksAt,
+		SummaryVersion:  dashboardVersion(storage.Agent{ID: state.AgentID, Name: state.Name}, &state),
+		UpdaterHealth:   state.AgentUpdaterHealth, UpgradeCapable: state.AgentUpgradeCapable && state.AgentUpdaterHealth.ReasonCode() == "", UpgradeV2: state.AgentUpgradeV2, Version: state.AgentVersion,
 		AgentID: state.AgentID, Name: state.Name, Online: true, LastSeen: state.LastSeen,
 		State: view,
 	}

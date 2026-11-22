@@ -78,6 +78,17 @@
   return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
  }
  function renewal(agent){return agent.renewal||{};}
+ function systemBadges(a, includeServer=true){
+  const badges=[];
+  if(includeServer&&a.server_local)badges.push(['Server','server']);
+  if(!a.online||a.disabled_at)return badges;
+  const attention=a.system_attention||{};
+  if(attention.certificate==='danger')badges.push(['证书已过期','danger']);
+  if(attention.certificate==='warning')badges.push(['证书将到期','warning']);
+  if(attention.service)badges.push(['服务停止','danger']);
+  if(attention.time)badges.push(['时间未同步','warning']);
+  return badges;
+ }
  function flags(a,server,now=Date.now()){
   const r=a.resources,t=a.dashboard_traffic||{},p=a.plan,n=a.network;
   const fresh=!!r?.known&&!r.stale&&(!r.max_age_ms||!r.collected_at||now-r.collected_at<=r.max_age_ms);
@@ -89,7 +100,7 @@
   const disk=diskTone(a,now)==='crit';
   const order=State.compareStableVersions(a.version,server?.version);
   const nonformal=order===null&&/^v\d+\.\d+\.\d+-(?:beta|rc)\.[1-9]\d*$/.test(a.version||'')&&State.compareReleaseVersions(a.version,a.version)===0;
-  return {offline:lifecycle(a)==='offline',disk,network,resources:resource,traffic,renewal:renewal(a,now).type==='due_soon',health:disk||network||resource||traffic,upgrade:order===-1,versionNonformal:nonformal,versionUnknown:order===null&&!nonformal,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
+  return {offline:lifecycle(a)==='offline',disk,network,resources:resource,traffic,renewal:renewal(a,now).type==='due_soon',health:disk||network||resource||traffic||systemBadges(a,false).length>0,upgrade:order===-1,versionNonformal:nonformal,versionUnknown:order===null&&!nonformal,insufficient:!!(!fresh||!networkKnown||(p?.traffic_mode&&(!t.known||t.stale||t.quota_state==='expired')))};
  }
  function aggregate(agents,server,now=Date.now()){
   const s={registered:0,online:0,offline:0,paused:0,unknown:0,health:0,insufficient:0,upgrade:0,versionUnknown:0,versionNonformal:0,renewal:0,overdue:0,renewalInvalid:0,nearest:null,quick:Object.fromEntries(Object.keys(QUICK).map(k=>[k,0]))};
@@ -177,5 +188,5 @@
   }
   return {list,sections,segmented,youtubeFreeCount,summary:aggregate(agents,server,now)};
  }
- const api={KEY,QUICK,STATUS,STARTUP_DISK_FAILURE_LABEL,ALL_GROUPS,UNGROUPED,AD_FREE,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,renewal,diskReport,diskTone,diskFaults,diskHints,diskTime,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
+ const api={KEY,QUICK,STATUS,STARTUP_DISK_FAILURE_LABEL,ALL_GROUPS,UNGROUPED,AD_FREE,SORTS,NETWORK_SUMMARY_FRESH_MS,defaults,preferences,lifecycle,resourcesOld,renewal,diskReport,diskTone,diskFaults,diskHints,diskTime,systemBadges,flags,aggregate,active,matches,select,createOrder,comparator};if(typeof module==='object'&&module.exports)module.exports=api;else root.DashboardModel=api;
 })(globalThis);

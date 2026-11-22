@@ -24,6 +24,7 @@ import (
 
 type App struct {
 	store                         *storage.Store
+	debianStable                  debianStable
 	offlineTimeout                time.Duration
 	logger                        *slog.Logger
 	now                           func() time.Time
@@ -242,7 +243,12 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid agent token")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, protocol.MaxReportBytes)
+	reportLimit := int64(protocol.MaxReportBytes)
+	systemSupported := r.Header.Get(protocol.SystemCheckHeader) == "1"
+	if systemSupported {
+		reportLimit = protocol.MaxSystemReportBytes
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, reportLimit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	var report protocol.Report
@@ -287,6 +293,16 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if accepted {
+		if systemSupported && report.SystemChecks != nil {
+			state.SystemChecks = report.SystemChecks
+			state.SystemChecksAt = received.UnixMilli()
+			if !state.SystemChecks.ClockMeasured {
+				state.SystemChecks.TimeOffsetMS = received.Sub(time.UnixMilli(report.CollectedAt)).Milliseconds()
+			}
+			if state.SystemChecks.DebianMajor > 0 {
+				a.debianStable.observe(a.shutdown, received)
+			}
+		}
 		a.publishReportedState(state, owner, received)
 		if state.ClearedStartupDiskFailure {
 			a.publishDashboardChange(authenticatedID, "startup-disk-failure", false)
@@ -312,6 +328,14 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	response.Capabilities.NetworkQualityUserTargets = report.QualityTargetsHeader
 	response.Capabilities.AgentUpgradeV2 = true
 	response.Capabilities.UpdaterHealthReport = true
+	if systemSupported {
+		if settings, err := a.store.SystemCheckSettings(r.Context(), authenticatedID); err == nil {
+			response.SystemCheckSettings = &settings
+			response.SystemServerTime = received.UnixMilli()
+		} else {
+			a.logger.Warn("read system check settings", "error", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, a.qualityReportResponse(r, response, authenticatedID, report))
 }
 
@@ -574,6 +598,9 @@ func (a *App) publishReportedState(state storage.State, owner trafficOwner, rece
 	if exists && !stateAfter(state, current) {
 		a.mu.Unlock()
 		return false
+	}
+	if state.SystemChecks == nil && exists && current.Epoch == state.Epoch {
+		state.SystemChecks, state.SystemChecksAt = current.SystemChecks, current.SystemChecksAt
 	}
 	a.states[state.AgentID] = state
 	if a.traffic != nil {

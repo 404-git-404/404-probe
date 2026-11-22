@@ -279,6 +279,11 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	out := dashboardResponse{Partial: selected != nil, Total: len(data.Records), Expenses: estimateExpenses(data, nil).expenseTotals, ServerNow: now.UnixMilli(), Revision: data.Catalog.Revision, Groups: data.Catalog.Groups, Tags: data.Catalog.Tags, ExchangeRates: data.Catalog.Rates, Items: []dashboardSummary{}}
 	out.YouTubeAdFreeRegions = data.YouTubeAdFreeRegions
+	localID, err := a.store.ServerLocalAgent(r.Context())
+	if err != nil {
+		a.organizationError(w, err)
+		return
+	}
 	for _, raw := range data.Records {
 		id := raw.Snapshot.Agent.ID
 		if selected != nil && !selected[id] {
@@ -288,6 +293,8 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		record := a.withUpdaterHealth(raw.Snapshot)
 		v := dashboardSummary{webAgentSummaryView: newWebAgentSummaryView(record), Lifecycle: "unknown", CountryCode: raw.CountryCode, CountrySource: raw.CountrySource, TagIDs: []string{}, OrganizationRevision: data.Catalog.Revision, Plan: raw.Plan, MaskedIPs: []string{}, SearchFields: []string{record.Agent.Name}, Renewal: renewalSummary(raw.Plan, now), Traffic: dashboardTraffic{QuotaState: "unconfigured", Stale: true}}
 		v.AgentControls = raw.AgentControls
+		v.ServerLocal = localID == id
+		v.SystemAttention = checkAttention(a.currentSystemChecks(record, now), now)
 		v.StartupDiskFailure = raw.StartupDiskFailure
 		switch {
 		case record.Agent.Revoked:

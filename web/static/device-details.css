@@ -95,6 +95,43 @@ html { scrollbar-gutter: stable; }
 .details-youtube-feedback:empty{display:none}
 .details-metric.disk-health-critical{border-color:var(--color-danger)}
 .details-metric .disk-fault-text,.details-disk-status[data-tone=crit]{color:var(--color-danger-text);font-weight:700}
+
+/* System checks share the dashboard theme and detail card layout. */
+.system-summary{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.system-summary:empty{display:none}
+.system-root-status{margin-inline-start:auto}
+.system-wide{grid-column:1/-1}
+.system-grid .details-box{height:100%;box-sizing:border-box}
+.system-grid .details-box .details-note,.system-fail2ban .details-note{margin:0}
+.system-pill,.dashboard-card-tags>span.system-pill{display:inline-block;width:max-content;max-width:100%;padding:2px 8px;border:1px solid var(--color-line-soft);border-radius:999px;font-size:12px;line-height:1.35;color:var(--color-text-muted);background:var(--color-surface-module);white-space:nowrap}
+.system-pill[data-tone=warning],.dashboard-card-tags>span.system-pill[data-tone=warning]{color:var(--color-warning-text);background:var(--color-surface-11);border-color:currentColor}
+.system-pill[data-tone=danger],.dashboard-card-tags>span.system-pill[data-tone=danger]{color:var(--color-danger-text);background:var(--color-surface-29);border-color:currentColor}
+.system-pill[data-tone=server],.dashboard-card-tags>span.system-pill[data-tone=server]{color:var(--color-accent-text);background:var(--color-accent-soft);border-color:var(--color-accent)}
+.system-pill[data-tone=ok]{color:var(--color-success)}
+.banner-system-badges{display:flex;gap:3px;flex-wrap:wrap;margin-top:2px}
+.banner-system-badges[hidden]{display:none}
+.banner-system-badges .system-pill{font-size:10px;padding:1px 5px}
+.system-table-scroll{overflow-x:auto}
+.system-certificates{width:100%;border-collapse:collapse;font-size:13px}
+.system-certificates th,.system-certificates td{padding:7px 9px;text-align:start;border-bottom:1px solid var(--color-line-soft)}
+.system-certificates th{color:var(--color-text-muted)}
+.system-certificates td:nth-child(2),.system-certificates td:nth-child(3){white-space:nowrap}
+.system-certificates td,.system-access-note,.system-jail-ips{overflow-wrap:anywhere}
+.system-access-note{margin:0;padding:8px 10px;border-radius:8px;color:var(--color-warning-text);background:var(--color-surface-11)}
+.system-fail2ban{margin-bottom:14px}
+.system-jail summary{cursor:pointer}
+.system-jail-ips{margin:6px 0;font-family:monospace}
+.system-settings .details-box{height:100%}
+.system-settings-content{display:grid;gap:8px;padding:12px 16px}
+.system-settings-content p{margin:0}
+.system-chips{display:flex;flex-wrap:wrap;gap:6px}
+.system-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;border:1px solid var(--color-line-soft);font-size:12px;overflow-wrap:anywhere;max-width:100%}
+.system-chip button{padding:0 3px;border:0;background:var(--color-clear);height:auto}
+.system-add{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.system-add input{min-width:0;padding:6px 8px}
+.system-settings-error{color:var(--color-danger-text)}
+@media(max-width:650px){.system-grid,.system-settings{grid-template-columns:1fr}.system-root-status{margin-inline-start:0}}
+
 .details-disk-status[data-tone=warn]{color:var(--color-warning-text);font-weight:700}
 .details-disk-health{display:flex;flex-direction:column;gap:2px}
 .details-disk-health>.details-note:empty{display:none}

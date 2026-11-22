@@ -8,6 +8,8 @@ import (
 )
 
 const MaxReportBytes = 64 << 10
+const MaxSystemReportBytes = 256 << 10
+const SystemCheckHeader = "X-404-Probe-System-Checks"
 
 type Report struct {
 	PublicEgress     *PublicEgress        `json:"public_egress,omitempty"`
@@ -53,6 +55,7 @@ type Report struct {
 	RXBytes              uint64                       `json:"rx_bytes"`
 	TXBytes              uint64                       `json:"tx_bytes"`
 	NetworkCounters      *NetworkCounterSet           `json:"network_counters,omitempty"`
+	SystemChecks         *SystemChecks                `json:"system_checks,omitempty"`
 	HostHealth           *HostHealth                  `json:"host_health,omitempty"`
 }
 
@@ -96,6 +99,11 @@ func (r Report) Validate() error {
 	}
 	if r.CollectedAt <= 0 || time.UnixMilli(r.CollectedAt).After(time.Now().Add(24*time.Hour)) {
 		return errors.New("collected_at is invalid")
+	}
+	if r.SystemChecks != nil {
+		if err := r.SystemChecks.Validate(); err != nil {
+			return err
+		}
 	}
 	if r.HostHealth != nil {
 		if err := r.HostHealth.Validate(); err != nil {
@@ -194,10 +202,12 @@ func validID(s string, max int) bool {
 func validText(s string, max int) bool { return validID(s, max) }
 
 type ReportResponse struct {
-	NetworkQuality *QualityConfig     `json:"network_quality,omitempty"`
-	Accepted       bool               `json:"accepted"`
-	Reason         string             `json:"reason,omitempty"`
-	Capabilities   ReportCapabilities `json:"capabilities,omitempty"`
+	SystemServerTime    int64                `json:"system_server_time,omitempty"`
+	SystemCheckSettings *SystemCheckSettings `json:"system_check_settings,omitempty"`
+	NetworkQuality      *QualityConfig       `json:"network_quality,omitempty"`
+	Accepted            bool                 `json:"accepted"`
+	Reason              string               `json:"reason,omitempty"`
+	Capabilities        ReportCapabilities   `json:"capabilities,omitempty"`
 }
 
 type ReportCapabilities struct {

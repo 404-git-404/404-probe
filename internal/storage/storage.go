@@ -20,7 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 40
+const currentSchemaVersion = 41
 
 // 每个版本发布前按升级支持策略更新。v1.2.1 uses schema 37; v1.3.0 and v1.3.1 use schema 38.
 const minimumUpgradeSchemaVersion = 37
@@ -73,6 +73,8 @@ type State struct {
 	BootID                 string                             `json:"boot_id"`
 	Hostname               string                             `json:"hostname"`
 	OS                     string                             `json:"os"`
+	SystemChecks           *protocol.SystemChecks             `json:"-"`
+	SystemChecksAt         int64                              `json:"-"`
 	HostHealth             *HostHealthState                   `json:"-"`
 	Arch                   string                             `json:"arch"`
 	AgentVersion           string                             `json:"agent_version"`
@@ -957,6 +959,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	if version < 40 && !migration34Skip {
 		if err := migrateStartupDiskFailure40Tx(ctx, tx); err != nil {
 			return fmt.Errorf("migration 40: %w", err)
+		}
+	}
+	if version < 41 && !migration34Skip {
+		if err := migrateSystemChecks41Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 41: %w", err)
 		}
 	}
 	return tx.Commit()

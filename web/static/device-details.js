@@ -193,7 +193,7 @@
   const C=root.NetworkQualityCore||(typeof require==='function'?require('./network-quality-core.js'):null);
   function create({document:doc=root.document,state=root.AgentState,agents,coordinator,fetcher=(...args)=>root.fetch(...args),
     unauthorized=()=>root.location.assign('/login'),Plot=root.uPlot,Resize=root.ResizeObserver,
-    management=()=>null,overview=()=>null,upgradeTargets=()=>{},resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},conceal=()=>{}}={}) {
+    management=()=>null,overview=()=>null,serverNow=()=>null,upgradeTargets=()=>{},resourceFacts=()=>[],identity=()=>null,hydrate=()=>{},conceal=()=>{}}={}) {
     const dialog=doc.querySelector('#device-details'),owner={},panes={},tabs={},shell=root.DialogShell?.attach(dialog,{decorate:false,read:()=>[from.value,to.value],requestClose:()=>close()});
     let current=null,tab='overview',origin=null,scroll=null,overflow='',serial=0,loading=false,pending=false,dead=false,opened=false;
     let query={hours:1},data=null,error='',metric='traffic',plot=null,resize=null,tap=null,plots=[],selected=0,savedCustom=['',''];
@@ -203,7 +203,7 @@
     const heading=el('div','details-heading');header.append(heading);heading.append(title,machine);
     const tablist=el('div','details-tabs');tablist.setAttribute('role','tablist');tablist.setAttribute('aria-label','设备详情类别');
     const body=el('div','details-body');
-    for(const [key,label]of [['overview','概览'],['resources','资源'],['security','安全'],['management','管理']]){
+    for(const [key,label]of [['overview','概览'],['resources','资源'],['system','系统'],['security','安全'],['management','管理']]){
       const b=button(label,()=>activate(key));b.id='details-tab-'+key;b.setAttribute('role','tab');b.setAttribute('aria-controls','details-pane-'+key);tabs[key]=b;tablist.append(b);
       const pane=el('section','details-pane');pane.id='details-pane-'+key;pane.setAttribute('role','tabpanel');pane.setAttribute('aria-labelledby',b.id);panes[key]=pane;body.append(pane);
       b.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const keys=Object.keys(tabs),i=keys.indexOf(key),next=e.key==='Home'?0:e.key==='End'?keys.length-1:(i+(e.key==='ArrowRight'?1:keys.length-1))%keys.length;activate(keys[next]);tabs[keys[next]].focus();});
@@ -225,22 +225,26 @@
     function destroyPlot(){resize?.disconnect();resize=null;for(const p of plots)p.destroy();plots=[];plot=null;chart.replaceChildren();output.textContent='';}
     function release(){serial++;loading=false;coordinator.release(owner);destroyPlot();}
     function leave(){if(tab==='resources'){pending=loading;release();}}
-    let titleIdentity = null, securityIdentity = null;
+    let titleIdentity = null, securityIdentity = null, systemIdentity = null;
     function updateTitle(){const agent=agents.get(current),s=agent?.state||{};machine.replaceChildren();const mark=identity(agent);if(mark)machine.append(mark);
       const group=el('div','details-identity'),line=el('div','details-title-line'),name=el('strong','',agent?.name||s.hostname||'未命名设备');
       const lifecycle=agent?.revoked?'已撤销':agent?.disabled_at?'已暂停':agent?.online?'在线':'离线';
       name.title=name.textContent;line.append(name,el('span','details-status status-'+(agent?.revoked?'revoked':agent?.disabled_at?'paused':agent?.online?'online':'offline'),'● '+lifecycle+(agent?.last_seen?' · '+Math.max(0,Math.floor((Date.now()-agent.last_seen)/1000))+' 秒前上报':'')));
-      const nameText=s.os||'系统未知',rest=' · '+[s.arch||'架构未知','Agent '+(agent?.version||'未知'),s.uptime==null?'运行时长未知':`运行 ${Math.floor(s.uptime/86400)} 天${!agent?.online?'（旧数据）':''}`].join(' · ');
+      if(agent?.server_local){const badge=el('span','system-pill','Server');badge.dataset.tone='server';line.append(badge);}
+      const virt=agent?.system_checks?.virtualization;
+      const nameText=s.os||'系统未知',rest=' · '+[...(virt?[root.SystemChecks?.virtualization(virt)||virt]:[]),s.arch||'架构未知','Agent '+(agent?.version||'未知'),s.uptime==null?'运行时长未知':`运行 ${Math.floor(s.uptime/86400)} 天${!agent?.online?'（旧数据）':''}`].join(' · ');
       const info=el('span','details-note',s.host_health?.os_read_failed?null:nameText+rest);
       if(s.host_health?.os_read_failed)info.append(el('span','',nameText),el('span','disk-os-failed','读取失败'),el('span','',rest));
       group.append(line,info);machine.append(group);title.hidden=true;
     }
     function renderOverview(){const node=overview(agents.get(current));if(node&&node.parentNode!==panes.overview)panes.overview.replaceChildren(node);}
-    function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='overview')renderOverview();if(tab==='management')renderManagement();if(tab==='resources')renderResourceFacts();if(tab==='security')renderSecurity();}
+    function update(agent){if(!dialog.open||agent?.agent_id!==current)return;updateTitle();if(tab==='overview')renderOverview();if(tab==='management')renderManagement();if(tab==='resources')renderResourceFacts();if(tab==='security')renderSecurity();if(tab==='system')renderSystem();}
     function renderManagement(){const pane=panes.management,focused=pane.contains(doc.activeElement)?doc.activeElement?.dataset?.focusKey:null;
       const node=management(agents.get(current));if(node){node.hidden=false;if(node.parentNode!==pane)pane.replaceChildren(node);if(focused)pane.querySelector(`[data-focus-key="${focused}"]`)?.focus({preventScroll:true});}}
     const shortTime=(v,seconds=false)=>{if(!v)return '未知';const d=new Date(v),p=n=>String(n).padStart(2,'0');return (d.getFullYear()!==new Date().getFullYear()?d.getFullYear()+'-':'')+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+(seconds?':'+p(d.getSeconds()):'');};
-    function renderSecurity(){const security=agents.get(current)?.security,pane=panes.security,signature=JSON.stringify([current,security]);if(signature===securityIdentity)return;securityIdentity=signature;pane.replaceChildren();
+    function renderSystem(){const agent=agents.get(current),signature=JSON.stringify([current,agent?.online,agent?.system_checks,agent?.system_attention,agent?.debian_stable_major,Math.floor((agent?.state?.uptime||0)/3600)]);
+      if(signature===systemIdentity||!root.SystemChecks)return;systemIdentity=signature;panes.system.replaceChildren(root.SystemChecks.systemPane(doc,agent,serverNow()??Date.now()));}
+    function renderSecurity(){const agent=agents.get(current),security=agent?.security,pane=panes.security,signature=JSON.stringify([current,security,agent?.online,agent?.system_checks?.fail2ban]);if(signature===securityIdentity)return;securityIdentity=signature;pane.replaceChildren();if(root.SystemChecks)pane.append(root.SystemChecks.fail2banPane(doc,agent));
       const date=shortTime,batch=security?.current,box=el('section','details-security-conclusion'),copy=el('div','security-conclusion-copy');box.append(copy);pane.append(box);
       const reasons={setup_required:'需要配置',sandbox_unavailable:'当前环境无法运行安全观察',collector_start_failed:'本地安全采集服务启动失败',platform_unsupported:'此平台暂不支持安全观察',no_sing_box_logs:'未发现 sing-box 日志'};
       if(!security||!security.supported||!batch){copy.title=security?.reason||'';copy.append(el('strong','',!security?'安全资料尚未加载':!security.supported?'当前 Agent 不支持安全观察':security.status==='failed'?'采集失败':reasons[security.reason]||'等待首次本地审计'),el('p','','暂无当前观察，无法形成次数结论'));if(!security)pane.append(button('读取设备资料',()=>hydrate(current)));return;}
@@ -259,7 +263,7 @@
     function activate(key){if(!Object.hasOwn(panes,key))return;if(tab!==key){leave();body.scrollTop=0;}tab=key;
       for(const [name,pane]of Object.entries(panes)){pane.hidden=name!==tab;tabs[name].setAttribute('aria-selected',String(name===tab));tabs[name].tabIndex=name===tab?0:-1;}
       if(!dialog.open)return;
-      if(tab==='overview'){renderOverview();upgradeTargets(current);if(!agents.get(current)?.detail_loaded)hydrate(current);}else if(tab==='management'){renderManagement();upgradeTargets(current);if(!agents.get(current)?.detail_loaded)hydrate(current);}else if(tab==='security'){renderSecurity();if(!agents.get(current)?.detail_loaded)hydrate(current);}
+      if(tab==='overview'){renderOverview();upgradeTargets(current);if(!agents.get(current)?.detail_loaded)hydrate(current);}else if(tab==='management'){renderManagement();upgradeTargets(current);if(!agents.get(current)?.detail_loaded)hydrate(current);}else if(tab==='security'){renderSecurity();hydrate(current);}else if(tab==='system'){renderSystem();hydrate(current);}
       else if(tab==='resources'){pending=false;renderResourceFacts();renderPlot();request();}
 
     }

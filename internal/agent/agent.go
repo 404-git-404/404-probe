@@ -26,6 +26,7 @@ import (
 	"404-probe/internal/hosthealth"
 	"404-probe/internal/platformsupport"
 	"404-probe/internal/protocol"
+	"404-probe/internal/systemchecks"
 	"404-probe/internal/updater"
 )
 
@@ -52,6 +53,7 @@ type Config struct {
 	SecurityInterval            time.Duration
 	CountryCode                 string
 	EnableRemoteRemoval         bool
+	LocalServerAgent            bool
 }
 
 var (
@@ -132,6 +134,10 @@ type Runner struct {
 	reportManagementCapabilities bool
 	reportNetworkCounters        bool
 	reportHostHealth             bool
+	systemCollector              systemchecks.Collector
+	systemSettings               *protocol.SystemCheckSettings
+	lastSystemSample             *protocol.SystemChecks
+	systemClockOffset            *int64
 	versionReportAccepted        atomic.Bool
 	upgradeAPISupported          atomic.Bool
 	upgradeV2ServerSupported     atomic.Bool
@@ -518,6 +524,25 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	measurement.CollectedAt = time.Now().UnixMilli()
 	// The public IP check is a Server-dispatched job now: nothing about it is measured or attached here.
 	measurement.PublicEgress = nil
+	measurement.SystemChecks = nil
+	var systemSample *protocol.SystemChecks
+	if r.systemSettings != nil {
+		rootDir := systemchecks.DefaultRootState
+		if r.config.LocalServerAgent {
+			rootDir = systemchecks.LocalRootState
+		}
+		systemSample = r.systemCollector.Snapshot(ctx, *r.systemSettings, filepath.Dir(r.config.StatePath), rootDir)
+		if systemSample != r.lastSystemSample {
+			if systemSample != nil {
+				copy := *systemSample
+				if r.systemClockOffset != nil {
+					copy.ClockMeasured = true
+					copy.TimeOffsetMS = *r.systemClockOffset
+				}
+				measurement.SystemChecks = &copy
+			}
+		}
+	}
 	response, err := r.post(ctx, measurement)
 	if errors.Is(err, errReportExtensionsRejected) {
 		if measurement.NetworkQualityV2 != nil {
@@ -535,6 +560,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 				measurement.OS = protocol.UnavailableSystemName
 			}
 		}
+		measurement.SystemChecks = nil
 		response, err = r.post(ctx, measurement) // Once only; the rejected report was not committed.
 	}
 	if err != nil {
@@ -597,6 +623,12 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	r.observeQualityReport(measurement.NetworkQuality, response)
 	r.reportNetworkCounters = response.Capabilities.NetworkCountersReport
 	r.reportHostHealth = response.Capabilities.HostHealthReport
+	r.systemSettings = response.SystemCheckSettings
+	if r.systemSettings == nil {
+		r.lastSystemSample = nil
+	} else if measurement.SystemChecks != nil {
+		r.lastSystemSample = systemSample
+	}
 	r.managementAPISupported.Store(response.Capabilities.ManagementReport)
 	if !r.platformUnsupported() && response.Capabilities.AgentUpgrade {
 		r.upgradeAPISupported.Store(true)
@@ -662,22 +694,25 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
+	req.Header.Set(protocol.SystemCheckHeader, "1")
 	req.Header.Set(protocol.QualityVersionHeader, "2")
 	req.Header.Set(protocol.QualitySemanticsHeader, protocol.QualityStagedSemantics)
 	req.Header.Set(protocol.QualityTargetsHeader, protocol.QualityTargetsUserV1)
+	started := time.Now()
 	resp, err := doAgentServerRequest(r.client, req)
+	roundTrip := time.Since(started)
 	if err != nil {
 		return protocol.ReportResponse{}, err
 	}
 	defer resp.Body.Close()
-	limited, err := io.ReadAll(io.LimitReader(resp.Body, 4097))
+	limited, err := io.ReadAll(io.LimitReader(resp.Body, (32<<10)+1))
 	if err != nil {
 		return protocol.ReportResponse{}, fmt.Errorf("read server response: %w", err)
 	}
-	if len(limited) > 4096 {
+	if len(limited) > 32<<10 {
 		return protocol.ReportResponse{}, errors.New("server response is too large")
 	}
-	if resp.StatusCode == http.StatusBadRequest && (report.NetworkQualityV2 != nil || report.HostHealth != nil) {
+	if resp.StatusCode == http.StatusBadRequest && (report.NetworkQualityV2 != nil || report.HostHealth != nil || report.SystemChecks != nil) {
 		return protocol.ReportResponse{}, errReportExtensionsRejected
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -697,10 +732,12 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 		return protocol.ReportResponse{}, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(limited)))
 	}
 	var wire struct {
-		Accepted       *bool                       `json:"accepted"`
-		Reason         string                      `json:"reason"`
-		Capabilities   protocol.ReportCapabilities `json:"capabilities"`
-		NetworkQuality json.RawMessage             `json:"network_quality"`
+		SystemCheckSettings *protocol.SystemCheckSettings `json:"system_check_settings"`
+		SystemServerTime    int64                         `json:"system_server_time"`
+		Accepted            *bool                         `json:"accepted"`
+		Reason              string                        `json:"reason"`
+		Capabilities        protocol.ReportCapabilities   `json:"capabilities"`
+		NetworkQuality      json.RawMessage               `json:"network_quality"`
 	}
 	if err := json.Unmarshal(limited, &wire); err != nil {
 		return protocol.ReportResponse{}, fmt.Errorf("decode server response: %w", err)
@@ -709,6 +746,13 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 		return protocol.ReportResponse{}, errors.New("decode server response: accepted field is required")
 	}
 	response := protocol.ReportResponse{Accepted: *wire.Accepted, Reason: wire.Reason, Capabilities: wire.Capabilities}
+	if wire.SystemCheckSettings != nil && wire.SystemCheckSettings.Normalize() == nil {
+		response.SystemCheckSettings = wire.SystemCheckSettings
+		if wire.SystemServerTime > 0 && roundTrip < 5*time.Second {
+			offset := time.UnixMilli(wire.SystemServerTime).Sub(started.Add(roundTrip / 2)).Milliseconds()
+			r.systemClockOffset = &offset
+		}
+	}
 	if len(wire.NetworkQuality) > 0 {
 		var quality protocol.QualityConfig
 		if json.Unmarshal(wire.NetworkQuality, &quality) == nil {

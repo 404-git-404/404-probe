@@ -23,7 +23,7 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	for _, version := range []int{34, 35, 36, 37, 38, 39, currentSchemaVersion, currentSchemaVersion + 1} {
+	for _, version := range []int{34, 35, 36, 37, 38, 39, 40, currentSchemaVersion, currentSchemaVersion + 1} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "database.db")
 			store, err := Open(ctx, path)
@@ -45,6 +45,8 @@ func TestUpgradeSchemaFloor(t *testing.T) {
 				rewindAgentControlsFixture(t, store.db)
 			} else if version == 39 {
 				rewindStartupDiskFailureFixture(t, store.db)
+			} else if version == 40 {
+				rewindSystemChecksFixture(t, store.db)
 			}
 			if _, err := store.db.Exec(`DELETE FROM schema_migrations WHERE version>?`, version); err != nil {
 				t.Fatal(err)

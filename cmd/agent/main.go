@@ -20,6 +20,7 @@ import (
 	"404-probe/internal/geoip"
 	"404-probe/internal/platformsupport"
 	"404-probe/internal/securitycollector"
+	"404-probe/internal/systemchecks"
 	"404-probe/internal/updater"
 )
 
@@ -88,6 +89,19 @@ func main() {
 		}
 		if err := updater.Serve(ctx); err != nil {
 			slog.Error("Agent updater stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "root-collect" || os.Args[1] == "local-root-collect") {
+		if len(os.Args) != 2 {
+			slog.Error("root collector accepts no arguments")
+			os.Exit(2)
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := systemchecks.RunRoot(ctx, os.Args[1] == "local-root-collect"); err != nil {
+			slog.Error("root collector stopped", "error", err)
 			os.Exit(1)
 		}
 		return
@@ -176,7 +190,7 @@ func run() error {
 	_, legacyClashSecret := os.LookupEnv("PROBE_404_SING_BOX_CLASH_SECRET")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	config := agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode, EnableRemoteRemoval: *enableRemoteRemoval}
+	config := agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode, EnableRemoteRemoval: *enableRemoteRemoval, LocalServerAgent: os.Getenv("PROBE_404_LOCAL_SERVER_AGENT") == "1"}
 	runner, err := agent.New(config, slog.Default())
 	if err != nil {
 		agent.ReportStartupFailure(ctx, config, slog.Default(), err)

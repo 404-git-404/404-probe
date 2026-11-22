@@ -27,6 +27,14 @@ readonly SECURITY_EXPORT_DIRECTORY="${SECURITY_STATE_DIRECTORY}/export"
 readonly SECURITY_SERVICE_UNIT="/etc/systemd/system/404-probe-security-collect.service"
 readonly SECURITY_TIMER_UNIT="/etc/systemd/system/404-probe-security-collect.timer"
 readonly SERVICE_USER="404-probe"
+
+readonly LOCAL_AGENT_USER="404-probe-local"
+readonly LOCAL_AGENT_BINARY="/usr/local/bin/404-probe-local-agent"
+readonly LOCAL_AGENT_CONFIG="/etc/404-probe-local-agent"
+readonly LOCAL_AGENT_STATE="/var/lib/404-probe-local-agent"
+readonly LOCAL_AGENT_UNIT="/etc/systemd/system/404-probe-local-agent.service"
+readonly LOCAL_ROOT_STATE="/var/lib/404-probe-local-root-collector"
+readonly ROOT_COLLECTOR_STATE="/var/lib/404-probe-root-collector"
 readonly ENROLLMENT_PREFIX="404p1_"
 readonly SERVER_UPGRADE_DIRECTORY="/var/lib/404-probe-upgrade"
 readonly SERVER_UPGRADE_STATE="${SERVER_UPGRADE_DIRECTORY}/pending"
@@ -312,12 +320,14 @@ usage() {
 Usage:
   404-probe-install                 install, or offer a protected existing-Server upgrade
   404-probe-install agent --server <origin>
+  404-probe-install setup-local-agent      monitor this Server over loopback
+  404-probe-install setup-root-collector   enable Debian root checks
   404-probe-install setup-security  enable V0.9 local security audit on an existing Agent
   404-probe-install selector-order <absolute-sing-box-config.json>
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install oneclick-token <name> [--output <absolute-path>]
                                     test machines: one-click registration token into a root-only file
-  404-probe-install uninstall <server|agent> [--confirm-delete-data]
+  404-probe-install uninstall <server|agent|local-agent> [--confirm-delete-data]
 
 Uninstall permanently removes the selected role's services, binaries,
 configuration, credentials, database/state, updater, and managed backups.
@@ -1043,11 +1053,246 @@ download_binary() (
   install -m 0755 "${temporary_directory}/${asset}" "${destination}"
 )
 
+
+validate_local_agent_account() {
+  local entry group password name uid gid home shell
+  entry="$(getent passwd "${LOCAL_AGENT_USER}")" || return 1
+  IFS=: read -r name _ uid gid _ home shell <<<"${entry}"
+  [[ "${name}" == "${LOCAL_AGENT_USER}" && "${uid}" =~ ^[1-9][0-9]*$ && "${gid}" =~ ^[1-9][0-9]*$ &&
+     "${home}" == "${LOCAL_AGENT_STATE}" && "${shell}" == */nologin ]] || return 1
+  group="$(getent group "${gid}")" || return 1
+  [[ "${group}" == "${LOCAL_AGENT_USER}":*:${gid}: ]] || return 1
+  entry="$(getent shadow "${LOCAL_AGENT_USER}")" || return 1
+  IFS=: read -r _ password _ <<<"${entry}"
+  [[ "${password}" == '!'* || "${password}" == '*'* ]]
+}
+
+validate_local_agent_directory() {
+  local path="$1" identity="$2"
+  [[ ! -L "${path}" ]] || die "unsafe local Agent path: ${path}"
+  if [[ -e "${path}" ]]; then
+    [[ -d "${path}" && "$(stat -c '%U:%G:%a' -- "${path}")" == "${identity}" ]] || die "unexpected local Agent directory: ${path}"
+    if mountpoint -q -- "${path}"; then die "refusing mounted local Agent directory: ${path}"; fi
+  fi
+}
+
+validate_installed_binary() {
+  [[ -f "$1" && ! -L "$1" && "$(stat -c '%U:%G:%a' -- "$1")" == root:root:755 ]]
+}
+
+prepare_local_agent_binary() {
+  local version="$1" destination="$2"
+  PROBE_404_VERSION="${version}" download_binary agent "${destination}" || return 1
+  [[ "$("${destination}" version)" == "${version}" ]]
+}
+
+setup_local_agent() (
+  set +ax
+  [[ $# -eq 0 ]] || die "usage: 404-probe-install setup-local-agent"
+  [[ "${INSTALL_INIT:-systemd}" == systemd ]] || die "local Agent requires Debian systemd"
+  acquire_server_operation_lock
+  validate_installed_binary "${SERVER_BINARY}" || die "a safe installed Server binary is required"
+  [[ -f "${SERVER_UNIT}" && ! -L "${SERVER_UNIT}" && "$(stat -c '%U:%G:%a' -- "${SERVER_UNIT}")" == root:root:644 ]] || die "a safe installed Server unit is required"
+  [[ -f "${SERVER_DATABASE}" && ! -L "${SERVER_DATABASE}" && ! -e "${SERVER_UPGRADE_DIRECTORY}/pending" ]] || die "Server database is unavailable or an upgrade is pending"
+  local listen version envfile="${LOCAL_AGENT_CONFIG}/agent.env" current_id configured_id="" stage=""
+  listen="$(sed -n "s#^ExecStart=${SERVER_BINARY} serve --listen \([^ ]*\) .*#\1#p" "${SERVER_UNIT}")"
+  [[ "${listen}" =~ ^(127\.0\.0\.1|localhost):[0-9]{1,5}$ || "${listen}" =~ ^\[::1\]:[0-9]{1,5}$ ]] || die "Server must listen on a loopback address"
+  version="$("${SERVER_BINARY}" version)"
+  release_version "${version}" || die "Server requires an identified release version"
+  validate_local_agent_directory "${LOCAL_AGENT_CONFIG}" root:root:700
+  validate_local_agent_directory "${LOCAL_AGENT_STATE}" "${LOCAL_AGENT_USER}:${LOCAL_AGENT_USER}:700"
+  if [[ -e "${LOCAL_AGENT_UNIT}" || -L "${LOCAL_AGENT_UNIT}" ]]; then
+    [[ -f "${LOCAL_AGENT_UNIT}" && ! -L "${LOCAL_AGENT_UNIT}" && "$(stat -c '%U:%G:%a' -- "${LOCAL_AGENT_UNIT}")" == root:root:644 ]] || die "unsafe local Agent service unit"
+    grep -Fxq "ExecStart=${LOCAL_AGENT_BINARY} --allow-insecure-http" "${LOCAL_AGENT_UNIT}" || die "unrecognized local Agent service"
+  fi
+  if [[ -e "${LOCAL_AGENT_BINARY}" || -L "${LOCAL_AGENT_BINARY}" ]]; then
+    validate_installed_binary "${LOCAL_AGENT_BINARY}" || die "unsafe local Agent binary"
+  fi
+  local unit_stage="" env_stage=""
+  trap '[[ -z "${stage}" ]] || rm -f -- "${stage}"; [[ -z "${unit_stage}" ]] || rm -f -- "${unit_stage}"; [[ -z "${env_stage}" ]] || rm -f -- "${env_stage}"' EXIT
+  if [[ ! -e "${LOCAL_AGENT_BINARY}" || "$("${LOCAL_AGENT_BINARY}" version)" != "${version}" ]]; then
+    stage="$(mktemp "${LOCAL_AGENT_BINARY}.XXXXXXXX")"
+    prepare_local_agent_binary "${version}" "${stage}" || die "could not prepare the matching local Agent release"
+  fi
+  if ! id "${LOCAL_AGENT_USER}" >/dev/null 2>&1; then
+    ! getent group "${LOCAL_AGENT_USER}" >/dev/null || die "local Agent group already exists without a managed account"
+    useradd --system --user-group --home-dir "${LOCAL_AGENT_STATE}" --shell /usr/sbin/nologin "${LOCAL_AGENT_USER}"
+  fi
+  validate_local_agent_account || die "unrecognized local Agent account"
+  install -d -m 0700 -o root -g root "${LOCAL_AGENT_CONFIG}"
+  install -d -m 0700 -o "${LOCAL_AGENT_USER}" -g "${LOCAL_AGENT_USER}" "${LOCAL_AGENT_STATE}"
+  if [[ -e "${envfile}" || -L "${envfile}" ]]; then
+    [[ -f "${envfile}" && ! -L "${envfile}" && "$(stat -c '%U:%G:%a' -- "${envfile}")" == root:root:600 ]] || die "unsafe local Agent environment"
+    configured_id="$(sed -n 's/^PROBE_404_AGENT_ID=//p' "${envfile}")"
+  fi
+  current_id="$(runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" agent local-id --db "${SERVER_DATABASE}")"
+  if [[ -z "${configured_id}" || "${configured_id}" != "${current_id}" ]] || ! grep -Fxq "PROBE_404_SERVER=http://${listen}" "${envfile}"; then
+    env_stage="$(mktemp "${LOCAL_AGENT_CONFIG}/.agent-env.XXXXXXXX")"
+    if [[ -n "${current_id}" && "${configured_id}" == "${current_id}" ]]; then
+      grep -E '^PROBE_404_(AGENT_ID|TOKEN)=' "${envfile}" >"${env_stage}"
+    else
+      runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" agent register-local --db "${SERVER_DATABASE}" >"${env_stage}"
+    fi
+    cat >>"${env_stage}" <<EOF
+PROBE_404_SERVER=http://${listen}
+PROBE_404_LOCAL_SERVER_AGENT=1
+PROBE_404_STATE=${LOCAL_AGENT_STATE}/agent.epoch
+PROBE_404_SECURITY_ACKS=${LOCAL_AGENT_STATE}/security-acks.json
+PROBE_404_SECURITY_EXPORT=${LOCAL_AGENT_STATE}/security-export
+PROBE_404_SELECTOR_ORDER=${LOCAL_AGENT_CONFIG}/selector-order.json
+PROBE_404_UPDATER_SOCKET=/run/404-probe-local-agent/updater-disabled.sock
+EOF
+    chmod 0600 "${env_stage}"
+    mv -fT -- "${env_stage}" "${envfile}"
+  fi
+  [[ -z "${stage}" ]] || mv -fT -- "${stage}" "${LOCAL_AGENT_BINARY}"
+  unit_stage="$(mktemp "${LOCAL_AGENT_UNIT}.XXXXXXXX")"
+  cat >"${unit_stage}" <<EOF
+[Unit]
+Description=404-probe Server local Agent
+After=network-online.target
+
+[Service]
+User=${LOCAL_AGENT_USER}
+Group=${LOCAL_AGENT_USER}
+EnvironmentFile=${envfile}
+ExecStart=${LOCAL_AGENT_BINARY} --allow-insecure-http
+UMask=0077
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${LOCAL_AGENT_STATE}
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 "${unit_stage}"
+  mv -fT -- "${unit_stage}" "${LOCAL_AGENT_UNIT}"
+  systemctl daemon-reload
+  systemctl enable "${LOCAL_AGENT_UNIT##*/}"
+  systemctl restart "${LOCAL_AGENT_UNIT##*/}"
+  systemctl is-active --quiet "${LOCAL_AGENT_UNIT##*/}" || die "local Agent did not start"
+  printf '404-probe local Agent is installed.\n'
+)
+
+setup_root_collector() (
+  [[ "${INSTALL_INIT:-systemd}" == systemd ]] || die "root collector requires Debian systemd"
+  [[ $# -eq 0 || ( $# -eq 1 && "$1" == --local-agent ) ]] || die "usage: 404-probe-install setup-root-collector [--local-agent]"
+  local binary="${AGENT_BINARY}" unit="${AGENT_UNIT}" group="${SERVICE_USER}" state="${ROOT_COLLECTOR_STATE}" command=root-collect
+  if [[ "${1:-}" == --local-agent || ( ! -e "${AGENT_UNIT}" && -e "${LOCAL_AGENT_UNIT}" ) ]]; then
+    binary="${LOCAL_AGENT_BINARY}"; unit="${LOCAL_AGENT_UNIT}"; group="${LOCAL_AGENT_USER}"
+    state="${LOCAL_ROOT_STATE}"; command=local-root-collect
+  fi
+  validate_installed_binary "${binary}" && [[ -f "${unit}" && ! -L "${unit}" ]] || die "an installed Debian Agent is required"
+  validate_local_agent_directory "${state}" "root:${group}:750"
+  local name="${state##*/}" service="/etc/systemd/system/${state##*/}.service" timer="/etc/systemd/system/${state##*/}.timer" file
+  for file in "${service}" "${timer}"; do
+    [[ ! -L "${file}" && ( ! -e "${file}" || ( -f "${file}" && "$(stat -c '%U:%G:%a' -- "${file}")" == root:root:644 ) ) ]] || die "unsafe root collector unit"
+  done
+  install -d -m 0750 -o root -g "${group}" "${state}"
+  (umask 022; cat >"${service}" <<EOF
+[Unit]
+Description=404-probe read-only root checks
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=${group}
+ExecStart=${binary} ${command}
+UMask=0077
+TimeoutStartSec=4min
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=${state} /var/lib/apt/lists
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+EOF
+  cat >"${timer}" <<EOF
+[Unit]
+Description=Run 404-probe root checks every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+EOF
+  )
+  systemctl daemon-reload
+  systemctl start "${name}.service" || die "root collector did not start; see its systemd journal"
+  [[ "$(stat -c '%U:%G:%a' -- "${state}/checks.json")" == "root:${group}:640" ]] || die "root collector export permissions are incorrect"
+  systemctl enable --now "${name}.timer"
+  printf '404-probe root collector is enabled.\n'
+)
+
+uninstall_root_collector() {
+  local state="$1" group="$2" name="${1##*/}"
+  validate_local_agent_directory "${state}" "root:${group}:750"
+  if [[ -e "/etc/systemd/system/${name}.timer" || -e "/etc/systemd/system/${name}.service" ]]; then
+    systemctl stop "${name}.timer" "${name}.service" || die "could not stop root collector"
+    systemctl disable "${name}.timer" >/dev/null 2>&1 || true
+    rm -f -- "/etc/systemd/system/${name}.timer" "/etc/systemd/system/${name}.service"
+  fi
+  rm -f -- "${state}/checks.json" "${state}/certificate-cache.json" "${state}/apt-refresh.json" "${state}"/.system-checks-*
+  if [[ -d "${state}" ]]; then rmdir --ignore-fail-on-non-empty -- "${state}"; fi
+}
+
+uninstall_local_agent() {
+  [[ $# -le 1 ]] || die "usage: 404-probe-install uninstall local-agent [--confirm-delete-data]"
+  [[ "${INSTALL_INIT:-systemd}" == systemd ]] || die "local Agent requires Debian systemd"
+  confirm_uninstall local-agent "${1:-}"
+  if [[ -e "${SERVER_UNIT}" ]]; then acquire_server_operation_lock; fi
+  validate_local_agent_directory "${LOCAL_AGENT_CONFIG}" root:root:700
+  validate_local_agent_directory "${LOCAL_AGENT_STATE}" "${LOCAL_AGENT_USER}:${LOCAL_AGENT_USER}:700"
+  if id "${LOCAL_AGENT_USER}" >/dev/null 2>&1; then validate_local_agent_account || die "unrecognized local Agent account"; fi
+  uninstall_root_collector "${LOCAL_ROOT_STATE}" "${LOCAL_AGENT_USER}"
+  if [[ -e "${LOCAL_AGENT_UNIT}" ]]; then
+    systemctl stop "${LOCAL_AGENT_UNIT##*/}" || die "could not stop local Agent"
+    systemctl disable "${LOCAL_AGENT_UNIT##*/}" >/dev/null 2>&1 || true
+  fi
+  rm -f -- "${LOCAL_AGENT_UNIT}" "${LOCAL_AGENT_BINARY}" "${LOCAL_AGENT_CONFIG}/agent.env" \
+    "${LOCAL_AGENT_STATE}/agent.epoch" "${LOCAL_AGENT_STATE}/agent.epoch.lock" "${LOCAL_AGENT_STATE}/security-acks.json" \
+    "${LOCAL_AGENT_STATE}/root-collector-request.json" "${LOCAL_AGENT_STATE}/.disk-probe"
+  local path
+  for path in "${LOCAL_AGENT_CONFIG}" "${LOCAL_AGENT_STATE}"; do
+    if [[ -d "${path}" ]]; then rmdir --ignore-fail-on-non-empty -- "${path}"; fi
+  done
+  if [[ ! -d "${LOCAL_AGENT_STATE}" ]] && id "${LOCAL_AGENT_USER}" >/dev/null 2>&1; then userdel "${LOCAL_AGENT_USER}"; fi
+  systemctl daemon-reload
+  if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]] && ! server_residue_exists && ! agent_residue_exists; then
+    rm -f -- /usr/local/sbin/404-probe-install
+  fi
+  printf 'Uninstalled the 404-probe local Agent and its managed files.\n'
+}
+
 render_local_helper() {
   printf '#!/usr/bin/env bash\n'
   render_platform_functions
   declare -f acquire_server_operation_lock write_private_file generate_token run_web_password_hasher \
     tty_write tty_read tty_read_secret utf8_length utf8_valid obtain_web_password_hash
+  declare -f note detect_architecture release_version target_version download_binary download_release_asset \
+    download_to_file curl_with_retry forward_curl_progress report_download_failure \
+    validate_local_agent_account validate_local_agent_directory validate_installed_binary prepare_local_agent_binary \
+    setup_local_agent setup_root_collector uninstall_root_collector uninstall_local_agent
+  declare -p REPOSITORY DEFAULT_VERSION LOCAL_AGENT_USER LOCAL_AGENT_BINARY LOCAL_AGENT_CONFIG LOCAL_AGENT_STATE \
+    LOCAL_AGENT_UNIT LOCAL_ROOT_STATE ROOT_COLLECTOR_STATE DOWNLOAD_CONNECT_TIMEOUT_SECONDS \
+    DOWNLOAD_STALL_SECONDS DOWNLOAD_SPEED_LIMIT DOWNLOAD_RETRY_MAX_SECONDS DOWNLOAD_RETRIES
   cat <<'HELPER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -1096,7 +1341,7 @@ server_residue_exists() {
   return 1
 }
 usage() {
-  printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | web-password reset | selector-order <sing-box-config.json> | setup-security | uninstall <server|agent> [--confirm-delete-data] | recover-agent-removal\n'
+  printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | web-password reset | selector-order <sing-box-config.json> | setup-security | setup-local-agent | setup-root-collector | uninstall <server|agent|local-agent> [--confirm-delete-data] | recover-agent-removal\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
@@ -1501,6 +1746,7 @@ remove_disk_probe_file() {
 }
 
 uninstall() {
+  if [[ "${1:-}" == local-agent || ( "${1:-}" == agent && ! -e "${AGENT_UNIT}" && -e "${LOCAL_AGENT_UNIT}" ) ]]; then shift; uninstall_local_agent "$@"; return; fi
   [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
     || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
   if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_uninstall "$@"; return; fi
@@ -1543,9 +1789,11 @@ uninstall() {
   if systemctl is-active --quiet "${unit}"; then
     die "${unit} is still active; nothing was removed"
   fi
+  if [[ "${role}" == agent ]]; then uninstall_root_collector "${ROOT_COLLECTOR_STATE}" "${SERVICE_USER}"; fi
   rm -f -- "${unit_path}"
   rm -f -- "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
+    rm -f -- "${STATE_DIRECTORY}/root-collector-request.json"
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" "${CONFIG_DIRECTORY}/sandbox.conf" \
       "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" "${SELECTOR_ORDER_FILE}" \
 	  "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
@@ -1574,7 +1822,7 @@ uninstall() {
       && ! -d "${AGENT_UPDATER_STATE}" && ! -d "${SECURITY_STATE_DIRECTORY}" ]]; then
       remove_service_account_for_uninstall
   fi
-	if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]] && (( removal_pending == 0 )); then
+	if [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" && ! -e "${LOCAL_AGENT_UNIT}" ]] && (( removal_pending == 0 )); then
 	  rm -f -- /usr/local/sbin/404-probe-install
 	fi
   printf 'Uninstalled %s and removed its managed data. Re-running the official version-pinned uninstall is safe.\n' "${role}"
@@ -1645,6 +1893,8 @@ case "${1:-}" in
   web-password) shift; reset_web_password "$@" ;;
   selector-order) shift; selector_order "$@" ;;
   setup-security) shift; setup_security "$@" ;;
+  setup-local-agent) shift; setup_local_agent "$@" ;;
+  setup-root-collector) shift; setup_root_collector "$@" ;;
   uninstall) shift; uninstall "$@" ;;
   finalize-agent-removal-account) shift; finalize_agent_removal_account "$@" ;;
   recover-agent-removal) shift; recover_agent_removal "$@" ;;
@@ -2029,6 +2279,15 @@ EOF
   wait_for_server_readiness 404-probe-server.service
   fi
   commit_install_transaction
+
+  if [[ "${INSTALL_INIT:-systemd}" == systemd ]]; then
+    local choice="${PROBE_404_INSTALL_LOCAL_AGENT:-}"
+    if [[ -z "${choice}" ]]; then
+      printf 'Install a local Agent to monitor this Server? [Y/n]: ' >/dev/tty
+      IFS= read -r choice </dev/tty || true
+    fi
+    case "${choice}" in n|N|no|No|0) ;; *) setup_local_agent ;; esac
+  fi
 
   note "404-probe Server is installed and running."
   if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then rc-service 404-probe-server status || true
@@ -3180,6 +3439,7 @@ preflight_uninstall_trees() {
 
 uninstall_role() {
   require_root_linux_systemd
+  if [[ "${1:-}" == local-agent || ( "${1:-}" == agent && ! -e "${AGENT_UNIT}" && -e "${LOCAL_AGENT_UNIT}" ) ]]; then shift; uninstall_local_agent "$@"; return; fi
   [[ $# -ge 1 && $# -le 2 && ( "$1" == "server" || "$1" == "agent" ) ]] \
     || die "usage: 404-probe-install uninstall <server|agent> [--confirm-delete-data]"
   if [[ "${INSTALL_INIT:-systemd}" == openrc ]]; then openrc_uninstall "$@"; return; fi
@@ -3228,9 +3488,11 @@ uninstall_role() {
   if systemctl is-active --quiet "${unit}"; then
     die "${unit} is still active; nothing was removed"
   fi
+  if [[ "${role}" == agent ]]; then uninstall_root_collector "${ROOT_COLLECTOR_STATE}" "${SERVICE_USER}"; fi
   rm -f -- "${unit_path}"
   rm -f -- "${binary_path}"
   if [[ "${role}" == "agent" ]]; then
+    rm -f -- "${STATE_DIRECTORY}/root-collector-request.json"
     rm -f -- "${CONFIG_DIRECTORY}/agent.env" "${CONFIG_DIRECTORY}/sandbox.conf" \
       "${STATE_DIRECTORY}/agent.epoch" "${STATE_DIRECTORY}/agent.epoch.lock" "${STATE_DIRECTORY}/agent.security-acks.json" \
       "${AGENT_UPDATER_UNIT}" "${AGENT_UPDATER_SOCKET}" \
@@ -3260,7 +3522,7 @@ uninstall_role() {
     && ! -d "${AGENT_UPDATER_STATE}" && ! -d "${SECURITY_STATE_DIRECTORY}" ]]; then
     remove_service_account_for_uninstall
   fi
-	if ! server_residue_exists && [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]] && (( removal_pending == 0 )); then
+	if ! server_residue_exists && [[ ! -e "${SERVER_UNIT}" && ! -e "${AGENT_UNIT}" ]] && [[ ! -e "${LOCAL_AGENT_UNIT}" ]] && (( removal_pending == 0 )); then
 	  rm -f -- "${INSTALL_HELPER}"
 	fi
   note "Uninstalled ${role} and removed its managed data. Re-running the official version-pinned uninstall is safe."
@@ -3420,12 +3682,14 @@ create_server_upgrade_backup_manifest() {
     cd "${backup}" || exit 1
     sha256sum server-binary server.service config.tar database-files helper-state || exit 1
     [[ "$(<helper-state)" != 1 ]] || sha256sum install-helper || exit 1
+    if [[ -e local-agent-binary ]]; then sha256sum local-agent-binary local-agent-active || exit 1; fi
     while IFS= read -r file; do sha256sum "database/${file}" || exit 1; done <database-files
   ) >"${backup}/SHA256SUMS" || return 1
   chmod 0600 "${backup}/config.tar" "${backup}/database-files" "${backup}/helper-state" "${backup}/SHA256SUMS" || return 1
   sync -f "${backup}/server-binary" "${backup}/server.service" "${backup}/config.tar" \
     "${backup}/database-files" "${backup}/helper-state" "${backup}/SHA256SUMS" "${backup}/database/404-probe.db" || return 1
   [[ "$(<"${backup}/helper-state")" != 1 ]] || sync -f "${backup}/install-helper" || return 1
+  if [[ -e "${backup}/local-agent-binary" ]]; then sync -f "${backup}/local-agent-binary" "${backup}/local-agent-active" || return 1; fi
   sync -f "${backup}" "${backup}/database" || return 1
 }
 
@@ -3443,6 +3707,12 @@ verify_server_upgrade_backup() {
     expected_lines=$((expected_lines + 1))
   else
     [[ ! -e "${backup}/install-helper" ]] || return 1
+  fi
+  if [[ -e "${backup}/local-agent-binary" || -e "${backup}/local-agent-active" ]]; then
+    validate_installed_binary "${backup}/local-agent-binary" || return 1
+    [[ -f "${backup}/local-agent-active" && ! -L "${backup}/local-agent-active" ]] || return 1
+    [[ "$(<"${backup}/local-agent-active")" =~ ^[01]$ ]] || return 1
+    expected_lines=$((expected_lines + 2))
   fi
   [[ "$(sed -n '1p' "${backup}/database-files")" == 404-probe.db ]] || return 1
   [[ "$(grep -Ec '^404-probe\.db(-wal|-shm)?$' "${backup}/database-files")" -eq "$(grep -c . "${backup}/database-files")" ]] || return 1
@@ -3463,9 +3733,9 @@ verify_server_upgrade_backup() {
     [[ -f "${file}" && ! -L "${file}" ]] || return 1
     grep -Fxq "$(basename "${file}")" "${backup}/database-files" || return 1
   done
-  actual_lines="$(grep -Ec '^[[:xdigit:]]{64} [ *](server-binary|server\.service|config\.tar|database-files|helper-state|install-helper|database/404-probe\.db(-wal|-shm)?)$' "${backup}/SHA256SUMS")"
+  actual_lines="$(grep -Ec '^[[:xdigit:]]{64} [ *](server-binary|server\.service|config\.tar|database-files|helper-state|install-helper|local-agent-binary|local-agent-active|database/404-probe\.db(-wal|-shm)?)$' "${backup}/SHA256SUMS")"
   [[ "${actual_lines}" -eq "${expected_lines}" && "${actual_lines}" -eq "$(grep -c . "${backup}/SHA256SUMS")" ]] || return 1
-  expected_names="$({ printf '%s\n' server-binary server.service config.tar database-files helper-state; [[ "${helper_state}" != 1 ]] || printf '%s\n' install-helper; while IFS= read -r file; do printf 'database/%s\n' "${file}"; done <"${backup}/database-files"; } | sort)" || return 1
+  expected_names="$({ printf '%s\n' server-binary server.service config.tar database-files helper-state; [[ "${helper_state}" != 1 ]] || printf '%s\n' install-helper; if [[ -e "${backup}/local-agent-binary" ]]; then printf '%s\n' local-agent-binary local-agent-active; fi; while IFS= read -r file; do printf 'database/%s\n' "${file}"; done <"${backup}/database-files"; } | sort)" || return 1
   actual_names="$(awk '{name=$2; sub(/^\*/, "", name); print name}' "${backup}/SHA256SUMS" | sort)" || return 1
   [[ "${actual_names}" == "${expected_names}" ]] || return 1
   (cd "${backup}" && sha256sum --check --strict SHA256SUMS >/dev/null) || return 1
@@ -3589,6 +3859,9 @@ restore_server_upgrade() {
         rm -f -- "${INSTALL_HELPER}" || return 1
       fi
       sync -f "$(dirname "${INSTALL_HELPER}")" || return 1
+      if [[ -e "${SERVER_UPGRADE_BACKUP}/local-agent-binary" ]]; then
+        install_local_agent_upgrade "${SERVER_UPGRADE_BACKUP}/local-agent-binary" "$(<"${SERVER_UPGRADE_BACKUP}/local-agent-active")" || return 1
+      fi
       ;;
     *) return 1 ;;
   esac
@@ -3616,7 +3889,7 @@ restore_server_upgrade() {
     systemctl is-active --quiet 404-probe-server.service && return 1
   fi
   clear_server_upgrade_state || return 1
-  rm -f -- "${SERVER_UPGRADE_CANDIDATE}" || return 1
+  rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_DIRECTORY}/local-agent.candidate" || return 1
   rm -f -- "${SERVER_UPGRADE_HELPER_CANDIDATE}" || return 1
   rm -rf -- "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || return 1
   return 0
@@ -3653,8 +3926,24 @@ acquire_server_operation_lock() {
   flock -n 9 || die "another Server upgrade or Web password reset is already running"
 }
 
+install_local_agent_upgrade() (
+  local binary="$1" active="$2" stage
+  stage="$(mktemp "${LOCAL_AGENT_BINARY}.XXXXXXXX")" || return 1
+  trap 'rm -f -- "${stage}"' EXIT
+  install -m 0755 -- "${binary}" "${stage}" || return 1
+  sync -f "${stage}" || return 1
+  mv -fT -- "${stage}" "${LOCAL_AGENT_BINARY}" || return 1
+  sync -f "$(dirname "${LOCAL_AGENT_BINARY}")" || return 1
+  if [[ "${active}" == 1 ]]; then
+    systemctl restart "${LOCAL_AGENT_UNIT##*/}" || return 1
+    sleep 1
+    systemctl is-active --quiet "${LOCAL_AGENT_UNIT##*/}" || return 1
+  fi
+)
+
 upgrade_existing_server() (
   reject_openrc_deferred Server-upgrade
+  local local_candidate="" local_active=0
   local target current comparison active=0 enabled=0 helper_existed=0 active_state enabled_state answer required_kb available_kb database_kb pid executable version_json listen origin
   # A pending transaction must recover before inspecting the interrupted binary.
   if [[ ! -e "${SERVER_UPGRADE_STATE}" ]]; then
@@ -3666,7 +3955,7 @@ upgrade_existing_server() (
     require_supported_server_version "${current}"
   fi
   acquire_server_operation_lock
-  trap 'rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"' EXIT
+  trap 'rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}"; [[ -z "${local_candidate}" ]] || rm -f -- "${local_candidate}"' EXIT
   if [[ -e "${SERVER_UPGRADE_DIRECTORY}" ]]; then
     [[ -d "${SERVER_UPGRADE_DIRECTORY}" && ! -L "${SERVER_UPGRADE_DIRECTORY}" \
       && "$(stat -c '%U:%G:%a' "${SERVER_UPGRADE_DIRECTORY}")" == "root:root:700" ]] \
@@ -3752,6 +4041,13 @@ EOF
   IFS= read -r answer </dev/tty
   [[ "${answer}" == y || "${answer}" == Y ]] || { rm -f -- "${SERVER_UPGRADE_CANDIDATE}"; die "upgrade cancelled; no files were changed"; }
 
+  if [[ -e "${LOCAL_AGENT_UNIT}" || -L "${LOCAL_AGENT_UNIT}" ]]; then
+    [[ -f "${LOCAL_AGENT_UNIT}" && ! -L "${LOCAL_AGENT_UNIT}" ]] && validate_installed_binary "${LOCAL_AGENT_BINARY}" || die "local Agent installation is incomplete"
+    local_candidate="${SERVER_UPGRADE_DIRECTORY}/local-agent.candidate"
+    rm -f -- "${local_candidate}"
+    prepare_local_agent_binary "${target}" "${local_candidate}" || die "could not prepare the matching local Agent release"
+    if systemctl is-active --quiet "${LOCAL_AGENT_UNIT##*/}"; then local_active=1; fi
+  fi
   rm -rf -- "${SERVER_UPGRADE_DIRECTORY}/backup.previous" || die "could not rotate previous Server backup"
   if [[ -e "${SERVER_UPGRADE_BACKUP}" ]]; then
     [[ -d "${SERVER_UPGRADE_BACKUP}" && ! -L "${SERVER_UPGRADE_BACKUP}" ]] || die "existing Server backup path is unsafe"
@@ -3765,6 +4061,10 @@ EOF
   systemctl is-active --quiet 404-probe-server.service && die "Server is still active; upgrade did not begin"
   write_server_upgrade_state stopped-unbacked "${active}" "${enabled}" "${target}" || die "could not persist stopped upgrade state"
   database_has_open_handles && die "a process still has the Server database open; refusing to take an inconsistent backup"
+  if [[ -n "${local_candidate}" ]]; then
+    cp -a -- "${LOCAL_AGENT_BINARY}" "${SERVER_UPGRADE_BACKUP}/local-agent-binary" || die "could not back up local Agent binary"
+    printf '%s\n' "${local_active}" >"${SERVER_UPGRADE_BACKUP}/local-agent-active" || die "could not back up local Agent activity"
+  fi
   cp -a -- "${SERVER_BINARY}" "${SERVER_UPGRADE_BACKUP}/server-binary" || die "could not back up Server binary"
   cp -a -- "${SERVER_UNIT}" "${SERVER_UPGRADE_BACKUP}/server.service" || die "could not back up Server unit"
   cp -a -- "${CONFIG_DIRECTORY}" "${SERVER_UPGRADE_BACKUP}/config" || die "could not back up Server configuration"
@@ -3816,7 +4116,11 @@ EOF
   rm -rf -- "${STATE_DIRECTORY}/.404-probe-upgrade-staging" || die "could not clear migration staging"
   sync -f "${SERVER_BINARY}" "${SERVER_DATABASE}" "${INSTALL_HELPER}" || die "could not persist upgraded Server files"
   sync -f "${STATE_DIRECTORY}" "$(dirname "${SERVER_BINARY}")" "$(dirname "${INSTALL_HELPER}")" || die "could not persist upgraded Server directories"
+  if [[ -n "${local_candidate}" ]]; then
+    install_local_agent_upgrade "${local_candidate}" "${local_active}" || die "local Agent upgrade failed"
+  fi
   clear_server_upgrade_state || die "could not durably commit Server upgrade state"
+  if [[ -n "${local_candidate}" ]]; then rm -f -- "${local_candidate}"; fi
   rm -f -- "${SERVER_UPGRADE_CANDIDATE}" "${SERVER_UPGRADE_HELPER_CANDIDATE}" || die "could not clear Server candidate staging"
   trap - EXIT HUP INT TERM
   note "404-probe Server upgraded from ${current} to ${target}. The protected backup remains at ${SERVER_UPGRADE_BACKUP}."
@@ -3888,6 +4192,14 @@ main() {
     oneclick-token)
       shift
       oneclick_token "$@"
+      ;;
+    setup-local-agent)
+      shift
+      setup_local_agent "$@"
+      ;;
+    setup-root-collector)
+      shift
+      setup_root_collector "$@"
       ;;
     setup-security)
       shift
