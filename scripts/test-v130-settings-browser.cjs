@@ -96,13 +96,14 @@ test('settings password errors, all-session logout, lockout delay and narrow lay
     await page.locator('[data-settings=password]').click();
     assert.equal(await page.locator('.settings-content > section:visible').count(),1);
     await page.locator('#pw-show').check();
-    assert.equal(await page.locator('#pw-current').getAttribute('type'), 'text');
+    assert.equal(await page.locator('#pw-current').getAttribute('type'), 'password');
     const submit = async () => {
       for (const id of ['current','new','confirm']) await page.locator('#pw-'+id).fill('synthetic secret');
       await page.locator('#pw-save').click();
     };
     await submit();
     await page.waitForFunction(() => document.querySelector('#pw-current-msg').textContent.includes('再错 2 次'));
+    assert.equal(await page.locator('#pw-current-preview').textContent(), 'synthetic secret');
     for (const [error,field,pattern] of [['mismatch','confirm',/不一样/],['too_short','new',/9 个/],['same_as_current','new',/不能和当前密码一样/],['invalid_chars','new',/控制字符/]]) {
       code = error;
       await submit();
@@ -113,6 +114,7 @@ test('settings password errors, all-session logout, lockout delay and narrow lay
     await submit();
     await page.waitForFunction(() => document.querySelector('#pw-banner').textContent.includes('所有浏览器都已退出') && document.querySelector('#pw-save').disabled);
     assert.equal(await page.locator('#pw-new').inputValue(), '');
+    assert.equal(await page.locator('#pw-current-preview').textContent(), '');
     assert.equal(await page.locator('#ab-schema').textContent(), '38');
     assert.equal(await page.getByText('构建时间').count(), 0);
     await page.setViewportSize({width:430,height:900});

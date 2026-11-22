@@ -114,9 +114,9 @@
         <form id="password-form" method="post" action="/api/v1/web/settings/password">
           <label class="sr-only" for="pw-username">用户名</label><input class="sr-only" id="pw-username" name="username" type="text" autocomplete="username" value="404-probe" tabindex="-1">
           <div class="settings-password-fields">
-            <label for="pw-current">当前密码</label><input id="pw-current" name="current_password" type="password" autocomplete="current-password" required aria-describedby="pw-current-msg"><span id="pw-current-msg" class="settings-note" aria-live="polite"></span>
-            <label for="pw-new">新密码</label><input id="pw-new" name="new_password" type="password" autocomplete="new-password" required aria-describedby="pw-new-msg"><span id="pw-new-msg" class="settings-note" aria-live="polite">至少 12 个字符</span>
-            <label for="pw-confirm">再输一次新密码</label><input id="pw-confirm" name="confirm_password" type="password" autocomplete="new-password" required aria-describedby="pw-confirm-msg"><span id="pw-confirm-msg" class="settings-note" aria-live="polite"></span>
+            <label for="pw-current">当前密码</label><input id="pw-current" name="current_password" type="password" autocomplete="current-password" required aria-describedby="pw-current-msg"><span id="pw-current-preview" class="settings-password-preview" hidden></span><span id="pw-current-msg" class="settings-note" aria-live="polite"></span>
+            <label for="pw-new">新密码</label><input id="pw-new" name="new_password" type="password" autocomplete="new-password" required aria-describedby="pw-new-msg"><span id="pw-new-preview" class="settings-password-preview" hidden></span><span id="pw-new-msg" class="settings-note" aria-live="polite">至少 12 个字符</span>
+            <label for="pw-confirm">再输一次新密码</label><input id="pw-confirm" name="confirm_password" type="password" autocomplete="new-password" required aria-describedby="pw-confirm-msg"><span id="pw-confirm-preview" class="settings-password-preview" hidden></span><span id="pw-confirm-msg" class="settings-note" aria-live="polite"></span>
             <label class="settings-check settings-show"><input id="pw-show" type="checkbox"> 显示密码</label>
           </div>
           <div class="settings-actions"><button id="pw-save" class="primary-action" type="submit" disabled>修改密码</button></div>

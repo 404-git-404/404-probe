@@ -79,9 +79,19 @@
   const passwordBanner = get('pw-banner');
   const passwordFields = ['current', 'new', 'confirm'].map(name => get('pw-' + name));
   const showPassword = get('pw-show');
-  showPassword.addEventListener('change', () => {
-    for (const field of passwordFields) field.type = showPassword.checked ? 'text' : 'password';
-  });
+  function updatePasswordPreviews() {
+    for (const field of passwordFields) {
+      const preview = get(field.id + '-preview');
+      const value = showPassword.checked ? field.value : '';
+      preview.textContent = value;
+      preview.hidden = !value;
+    }
+  }
+  showPassword.addEventListener('change', updatePasswordPreviews);
+  for (const field of passwordFields) {
+    field.addEventListener('input', updatePasswordPreviews);
+    field.addEventListener('change', updatePasswordPreviews);
+  }
 
   function passwordMessage(field, message, invalid = true) {
     const input = get('pw-' + field);
@@ -112,7 +122,7 @@
         locked = true;
         csrf = '';
         passwordForm.reset();
-        for (const field of passwordFields) field.type = 'password';
+        updatePasswordPreviews();
         check.disabled = true;
         updateRegions();
         passwordStatus('当前密码连续输错 5 次，已退出登录。3 秒后转到登录页…');
@@ -135,7 +145,7 @@
     try {
       await request(settingsPath + 'password', 'POST', {current_password, new_password, confirm_password});
       passwordForm.reset();
-      for (const field of passwordFields) field.type = 'password';
+      updatePasswordPreviews();
       csrf = '';
       locked = true;
       check.disabled = true;

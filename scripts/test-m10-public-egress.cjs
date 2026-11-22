@@ -69,7 +69,7 @@ class Element {
   append(...children) {this.children.push(...children);}
   replaceChildren(...children) {this.ownText = ''; this.children = children;}
   setAttribute(key, value) {this.attributes[key] = value;}
-  addEventListener() {} querySelector() {return new Element();} querySelectorAll() {return [];}
+  addEventListener() {} querySelector() {return new Element();} querySelectorAll() {return [];} getClientRects() {return [];}
 }
 function loadApp() {
   const nodes = new Map(), node = key => {if (!nodes.has(key)) nodes.set(key, new Element()); return nodes.get(key);};
@@ -85,7 +85,8 @@ function loadApp() {
   test.after(() => { for (const handle of timers) clearTimeout(handle); timers.clear(); });
   const sandbox = {ResizeObserver:class{observe(){} disconnect(){}},AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
     document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
-    location: {search: '', assign() {}}, setInterval() {}, setTimeout: schedule, clearTimeout: cancel, queueMicrotask, addEventListener() {},
+    location: {hash: '', pathname: '/', search: '', assign() {}, replace() {}}, setInterval() {}, setTimeout: schedule, clearTimeout: cancel, queueMicrotask, addEventListener() {},
+    requestAnimationFrame: fn => schedule(() => fn(Date.now()), 0), cancelAnimationFrame: cancel,
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
   sandbox.DialogShell={attach:()=>({heading(){},setGuard(){},markSaved(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
