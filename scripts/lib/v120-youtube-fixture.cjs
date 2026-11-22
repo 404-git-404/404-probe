@@ -63,6 +63,13 @@ function fixture(source = path.join(__dirname, '../..')) {
 
 async function nearBottom(page, agent, anchor) {
   await page.locator(card(agent)).scrollIntoViewIfNeeded();
+  const viewport = page.viewportSize();
+  const documentBottom = await anchor.evaluate(el => el.getBoundingClientRect().bottom + scrollY);
+  // A compact grid can fit the whole fixture in the default viewport.
+  // Shorten the viewport so the same anchor exercises bottom-edge placement.
+  if (documentBottom <= viewport.height) {
+    await page.setViewportSize({...viewport, height: Math.floor(documentBottom - 24)});
+  }
   await anchor.scrollIntoViewIfNeeded();
   await anchor.evaluate(el => scrollBy(0, el.getBoundingClientRect().bottom - innerHeight + 24));
   await page.waitForFunction(el => el.getBoundingClientRect().bottom >= innerHeight - 45, await anchor.elementHandle());
