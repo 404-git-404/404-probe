@@ -87,6 +87,9 @@ func TestQualityObjectsRetainHistoryAndCardOrder(t *testing.T) {
 	if removed, err := save(rows[1:]); err != nil || len(removed.Slots) != 7 || len(k.open()) != 28 {
 		t.Fatalf("delete object: slots=%d open=%d error=%v", len(removed.Slots), len(k.open()), err)
 	}
+	if n := k.count(`SELECT COUNT(*) FROM quality_slots WHERE agent_id=? AND slot=?`, k.id, object); n != 0 {
+		t.Fatalf("deleted object left %d lane pointers", n)
+	}
 	now := k.now.Add(time.Minute)
 	history, err := k.s.NetworkHistory(k.ctx, k.id, NetworkLine{object, "ipv4", "tcp"}, now.Add(-time.Hour).UnixMilli(), now.UnixMilli(), now)
 	if err != nil || history.Stats.Samples != 2 || len(history.Changes) != 1 || history.LastChangeAt == nil {

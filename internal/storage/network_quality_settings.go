@@ -408,7 +408,7 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 		}
 		syntheticEnabled := s.SlotEnabled && s.Sub(l.Family, l.Protocol)
 		slotRevisionChanged := pointerChanged || closeOld || openNew || (cur.exists && cur.enabled != syntheticEnabled) || (!cur.exists && syntheticEnabled)
-		if slotRevisionChanged {
+		if slotRevisionChanged && s.Slot != "" {
 			var pointer any
 			if target != "" {
 				pointer = target
@@ -441,6 +441,9 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 	if proposal != nil {
 		for _, old := range rows {
 			if _, present := nextByID[old.Slot]; !present {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM quality_slots WHERE agent_id=? AND slot=?`, id, old.Slot); err != nil {
+					return result, err
+				}
 				if _, err := tx.ExecContext(ctx, `DELETE FROM quality_slot_settings WHERE agent_id=? AND slot=?`, id, old.Slot); err != nil {
 					return result, err
 				}
