@@ -78,6 +78,7 @@ for (const theme of ['dark', 'light']) {
       async function assertBars(view, barSelector, fillSelector) {
         for (const [i, scale] of [1000, 2000, 3000].entries()) {
           const bar = page.locator(view(i)).locator(barSelector);
+          await bar.and(page.locator('[data-tone=neutral]')).waitFor();
           assert.equal(await bar.getAttribute('data-tone'), 'neutral');
           assert.equal(await bar.getAttribute('title'), `流量条满格 ${scale} GB`);
           assert.match(await bar.textContent(), /无限/);
