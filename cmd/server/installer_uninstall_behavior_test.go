@@ -15,6 +15,37 @@ func TestInstallerAgentUninstallExecutionIsCompleteIdempotentAndPreservesSharedH
 	}
 }
 
+func installerRootCollectorPrelude(t *testing.T, source string) string {
+	t.Helper()
+	var prelude strings.Builder
+	for _, line := range strings.Split(source, "\n") {
+		if strings.HasPrefix(line, "readonly LOCAL_") || strings.HasPrefix(line, "readonly ROOT_COLLECTOR_") {
+			prelude.WriteString(line + "\n")
+		}
+	}
+	for _, name := range []string{"validate_local_agent_directory", "uninstall_root_collector"} {
+		signature := "\n" + name + "() {\n"
+		_, rest, found := strings.Cut(source, signature)
+		body, _, closed := strings.Cut(rest, "\n}\n")
+		if !found || !closed {
+			t.Fatalf("could not extract installer function %s", name)
+		}
+		prelude.WriteString(signature + body + "\n}\n")
+	}
+	return prelude.String()
+}
+
+func installerGeneratedUninstallSource(t *testing.T, source string) string {
+	t.Helper()
+	_, heredoc, found := strings.Cut(source, "cat <<'HELPER'\n")
+	definitions, _, closed := strings.Cut(heredoc, "\nreject_deferred_command_on_host \"${1:-}\"\nrequire_root\n")
+	if !found || !closed {
+		t.Fatal("could not locate generated helper definitions")
+	}
+	// render_local_helper writes these declarations before the static heredoc.
+	return installerRootCollectorPrelude(t, source) + definitions
+}
+
 func TestInstallerServerUpdateCheckCleanup(t *testing.T) {
 	for _, role := range []string{"installer", "generated-helper", "openrc", "fresh-rollback"} {
 		t.Run(role, func(t *testing.T) {
@@ -23,12 +54,7 @@ func TestInstallerServerUpdateCheckCleanup(t *testing.T) {
 			source := m12InstallerSource(t)
 			source = strings.TrimSuffix(strings.TrimSpace(source), `main "$@"`)
 			if role == "generated-helper" {
-				start := strings.Index(source, "cat <<'HELPER'\n")
-				end := strings.Index(source, "\nreject_deferred_command_on_host \"${1:-}\"\nrequire_root\n")
-				if start < 0 || end <= start {
-					t.Fatal("could not locate generated helper definitions")
-				}
-				source = source[start+len("cat <<'HELPER'\n") : end]
+				source = installerGeneratedUninstallSource(t, source)
 			}
 			path := filepath.Join(rootNative, "installer-source.sh")
 			if err := os.WriteFile(path, []byte(installerFixtureSource(source, root)), 0600); err != nil {
@@ -222,11 +248,7 @@ func TestK1DiskProbeLeftover(t *testing.T) {
 				root := shellTestPath(rootNative)
 				source := strings.TrimSuffix(strings.TrimSpace(m12InstallerSource(t)), `main "$@"`)
 				if entry == "generated-helper" {
-					_, helper, ok := strings.Cut(source, "cat <<'HELPER'\n")
-					source, _, _ = strings.Cut(helper, "\nreject_deferred_command_on_host \"${1:-}\"\nrequire_root\n")
-					if !ok || source == helper {
-						t.Fatal("could not locate generated helper definitions")
-					}
+					source = installerGeneratedUninstallSource(t, source)
 				}
 				if err := os.WriteFile(filepath.Join(rootNative, "source.sh"), []byte(installerFixtureSource(source, root)), 0600); err != nil {
 					t.Fatal(err)
@@ -348,15 +370,7 @@ func runInstallerAgentUninstallFixture(t *testing.T, early bool) {
 			t.Skip("bash is unavailable")
 		}
 	}
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("could not locate installer")
-	}
-	content, err := os.ReadFile(filepath.Join(filepath.Dir(filename), "..", "..", "install.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := strings.ReplaceAll(string(content), "\r\n", "\n")
+	script := m12InstallerSource(t)
 	start := strings.LastIndex(script, "confirm_uninstall() {")
 	endMarker := "\njson_string_field() {"
 	if early {
@@ -382,7 +396,7 @@ func runInstallerAgentUninstallFixture(t *testing.T, early bool) {
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.bootstrap"`, `"${TEST_AGENT_BOOTSTRAP}"`)
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.candidate"`, `"${TEST_AGENT_CANDIDATE}"`)
 	functionSource = strings.ReplaceAll(functionSource, `"/usr/local/bin/.404-probe-agent.previous"`, `"${TEST_AGENT_PREVIOUS}"`)
-	functionSource = installerFixtureSource(functionSource, root)
+	functionSource = installerFixtureSource(installerRootCollectorPrelude(t, script)+functionSource, root)
 	functionPath := filepath.Join(rootNative, "uninstall-function.sh")
 	if err := os.WriteFile(functionPath, []byte(functionSource), 0600); err != nil {
 		t.Fatal(err)

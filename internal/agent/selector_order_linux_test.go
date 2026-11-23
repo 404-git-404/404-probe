@@ -16,9 +16,18 @@ func TestSelectorOrderRootDirectoryIsReadableButNotReplaceableByAgent(t *testing
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to exercise the service-user boundary")
 	}
-	account, err := user.Lookup("nobody")
+	accountName := "nobody"
+	inFixture := os.Getenv("INSTALLER_FIXTURE_ROOT") != ""
+	if inFixture {
+		// The isolated multi-user profile supplies its own service account.
+		accountName = "404-probe"
+	}
+	account, err := user.Lookup(accountName)
 	if err != nil {
-		t.Skipf("nobody account unavailable: %v", err)
+		if inFixture {
+			t.Fatalf("isolated service account %s unavailable: %v", accountName, err)
+		}
+		t.Skipf("%s account unavailable: %v", accountName, err)
 	}
 	uidValue, err := strconv.ParseUint(account.Uid, 10, 32)
 	if err != nil {
