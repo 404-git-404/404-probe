@@ -59,7 +59,7 @@ async function run(){
  const openDetails=async()=>{if(!await page.locator('#device-details').evaluate(n=>n.open))await page.locator(`[data-agent-id="${ID}"] .detail-toggle`).click();};
  if(process.env.V109_TASK_TWO==='1'){await require('./lib/v109-task-two-browser.cjs')({page,browser,current,ID,out,openDetails,tabs});return;}
  if(reference){await require('./lib/v109-rework-reference.cjs')({page,browser,current,ID,out,openDetails,tabs});return;}
- await openDetails();await shot('details-overview');assert.deepEqual(await page.locator('.details-tabs button').allTextContents(),['概览','资源','安全','管理']);
+ await openDetails();await shot('details-overview');assert.deepEqual(await page.locator('.details-tabs button').allTextContents(),['概览','资源','系统','安全','管理']);
  const rect=await page.locator('#device-details').boundingBox();assert.equal(rect.width,960);assert.equal(rect.height,680);
  await tabs('resources');await page.waitForSelector('.resource-chart');assert.equal(await page.locator('.resource-chart').count(),3);await shot('details-resources');
  await page.getByRole('button',{name:'7 天',exact:true}).click();await page.waitForFunction(()=>deviceDetails.snapshot().points>9000);await shot('details-resources-seven-days');
