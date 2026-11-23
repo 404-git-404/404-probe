@@ -26,14 +26,25 @@
     ]));
     let page = 'devices', controlsKey = '', tagLayoutKey = '', tagFrame = 0, lastSummary;
     let touchStart = null, manualExpanded = false;
+    const networkButton=get('dashboard-network'), networkMachines=get('dashboard-network-machines');
+    const network=root.NetworkStatus?.create({
+      host:get('network-placeholder'), nav:networkMachines, read,
+      select:id=>{setNetworkExpanded(true);navigate('network/'+encodeURIComponent(id),{closeMobile:true});onchange();}
+    });
+    const networkPage=()=>page==='network'||page.startsWith('network/');
+    function setNetworkExpanded(expanded){
+      networkButton.setAttribute('aria-expanded',String(expanded));
+      if(networkMachines)networkMachines.hidden=!expanded;
+    }
     const mobileShell = root.DialogShell.attach(mobile,{decorate:false,guard:false,onclose:()=>app.prepend(panel)});
 
     function paintPage(){
       const devices = page==='devices';
       get('dashboard-toolbar').hidden = !devices;
-      get('network-placeholder').hidden = page!=='network';
+      get('network-placeholder').hidden = !networkPage();
+      network?.show(networkPage()?page.slice(8):null);
       get('dashboard-settings-content').hidden = !settings.includes(page);
-      pressed(get('dashboard-network'),page==='network');
+      pressed(networkButton,page==='network');
       for(const item of doc.querySelectorAll('[data-settings]')){
         const active = item.dataset.settings===page;
         get(item.dataset.settings).hidden = !active;
@@ -58,7 +69,8 @@
 
     function fromHash(){
       const hash = root.location.hash.slice(1);
-      navigate(settings.includes(hash)||hash==='network'?hash:'devices',{history:false});
+      if(hash.startsWith('network/'))setNetworkExpanded(true);
+      navigate(settings.includes(hash)||/^network(?:\/[a-zA-Z0-9_-]+)?$/.test(hash)?hash:'devices',{history:false});
       onchange();
     }
     root.addEventListener('popstate',fromHash);
@@ -150,7 +162,12 @@
       });
     }
 
-    get('dashboard-network').addEventListener('click',()=>{navigate('network',{closeMobile:true});onchange();});
+    networkButton.addEventListener('click',()=>{
+      const expanded=networkButton.getAttribute('aria-expanded')==='true';
+      if(app.classList.contains('panel-collapsed'))setCollapsed(false);
+      setNetworkExpanded(page!=='network'||!expanded);
+      navigate('network');onchange();
+    });
     for(const button of doc.querySelectorAll('[data-settings]')) button.addEventListener('click',()=>{
       navigate(button.dataset.settings,{closeMobile:true});onchange();
     });
@@ -279,6 +296,7 @@
     function update(agents,catalog,server,ready){
       if(ready) preferences.validate(catalog);
       const model=M.select(agents,catalog,p,server);
+      if(networkPage())network?.updateAgents(agents);
       lastSummary=model.summary;
       order.apply(model,catalog,p);
       if(ready&&p.quick.length&&!lastSummary[p.quick[0]]){
@@ -356,6 +374,7 @@
       collapse(id){p.collapsed=p.collapsed.includes(id)?p.collapsed.filter(value=>value!==id):[...p.collapsed,id];change();},
       close(){
         closed=true;
+        network?.close();
         tagResize.disconnect();
         if(tagFrame) root.cancelAnimationFrame(tagFrame);
         phone.removeEventListener('change',breakpoint);

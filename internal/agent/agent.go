@@ -699,6 +699,7 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	req.Header.Set(protocol.QualityVersionHeader, "2")
 	req.Header.Set(protocol.QualitySemanticsHeader, protocol.QualityStagedSemantics)
 	req.Header.Set(protocol.QualityTargetsHeader, protocol.QualityTargetsUserV1)
+	req.Header.Set(protocol.QualityObjectsHeader, "1")
 	started := time.Now()
 	resp, err := doAgentServerRequest(r.client, req)
 	roundTrip := time.Since(started)

@@ -43,3 +43,9 @@ dialog.nq-overlay{position:fixed;inset:0;margin:auto;z-index:auto;width:720px;he
 #network-quality-settings .nq-dialog-foot .nq-save{background:var(--color-accent)!important;color:var(--color-text-02)!important;padding:0 14px!important}
 
 #network-quality-settings .nq-capability-note{font-size:12px;color:var(--color-text-muted);line-height:1.6;margin:0 0 10px}
+
+#network-quality-settings .nq-object-actions{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--color-text-muted)}
+#network-quality-settings .nq-object-actions[hidden]{display:none}
+#network-quality-settings .nq-object-actions button{padding:2px 8px}
+#network-quality-settings .nq-object-display{display:flex;align-items:center;gap:5px;margin-right:auto}
+#network-quality-settings .nq-object-display input{accent-color:var(--color-accent)}

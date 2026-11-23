@@ -32,7 +32,7 @@ func TestFleetRollupsMatchRawAndExpireStaleData(t *testing.T) {
 	// A copied schema 42 database has source buckets but no derived rows.
 	if _, err := c.s.db.Exec(`DROP TRIGGER quality_fleet_hour_insert; DROP TRIGGER quality_fleet_hour_update;
 		DROP TRIGGER quality_fleet_hour_delete; DROP TABLE quality_fleet_dirty; DROP TABLE quality_fleet_rollups;
-		DELETE FROM schema_migrations WHERE version=43`); err != nil {
+		DELETE FROM schema_migrations WHERE version>=43`); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.s.migrate(c.ctx); err != nil {

@@ -161,7 +161,13 @@ func (p qualityBudget) apply(c *protocol.QualityConfig) {
 	}
 	if c.Semantics == protocol.QualityStagedSemantics {
 		// The capacity plan only slows a lane down; it never lowers what the user chose.
-		if slowed := 30000 * p.Scale; slowed > c.IntervalMS {
+		active := 0
+		for _, target := range c.Targets {
+			if target.Status == "active" {
+				active++
+			}
+		}
+		if slowed := qualityEffectiveInterval(c.IntervalMS, p.Scale, active); slowed > c.IntervalMS {
 			c.IntervalMS = slowed
 			c.State = "capacity_throttled"
 		}

@@ -28,16 +28,19 @@ type dashboardSlotQueryer interface {
 // Settings/capabilities and sample cache misses are each read in one batch.
 // The five-second sample cache includes negative results. Labels, capability,
 // enabled state and the five-minute age boundary are recalculated on every read.
-const dashboardSlotsSQL = `WITH slots(slot,number) AS (VALUES('telecom',1),('unicom',2),('mobile',3))
+const dashboardSlotsSQL = `WITH slots(slot,number) AS (VALUES('telecom',1),('unicom',2),('mobile',3)),
+ selected AS (SELECT agent_id,slot,ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY position,slot) number
+ FROM quality_slot_settings WHERE show_on_card=1)
  SELECT a.id,slots.number,COALESCE(s.kind,''),COALESCE(s.region,''),COALESCE(s.isp,''),COALESCE(s.host,''),
  COALESCE(c.enabled,0),COALESCE(s.slot_enabled,0),COALESCE(s.ipv4_tcp,0),
  COALESCE(cap.supported,0),COALESCE(cap.excluded_reason,''),COALESCE(cap.v2_details,''),COALESCE(q.target_id,'')
  FROM agents a CROSS JOIN slots
- LEFT JOIN quality_slot_settings s ON s.agent_id=a.id AND s.slot=slots.slot
  LEFT JOIN quality_config c ON c.agent_id=a.id
+ LEFT JOIN selected sel ON sel.agent_id=a.id AND sel.number=slots.number AND c.objects_configured=1
+ LEFT JOIN quality_slot_settings s ON s.agent_id=a.id AND s.slot=CASE WHEN c.objects_configured=1 THEN sel.slot ELSE slots.slot END
  LEFT JOIN agent_state ast ON ast.agent_id=a.id
  LEFT JOIN quality_capability cap ON cap.agent_id=a.id AND cap.epoch=ast.epoch AND cap.session_id=ast.session_id
- LEFT JOIN quality_slots q ON q.agent_id=a.id AND q.slot=slots.slot AND q.family='ipv4' AND q.protocol='tcp'`
+ LEFT JOIN quality_slots q ON q.agent_id=a.id AND q.slot=s.slot AND q.family='ipv4' AND q.protocol='tcp'`
 
 const dashboardSlotSampleSQL = `WITH targets(target_id) AS (VALUES %s)
  SELECT t.target_id,f.rtt,f.sample_time FROM targets t

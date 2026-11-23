@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/vendor/uplot/uPlot.min.css">
   <link rel="stylesheet" href="/network-quality.css">
+  <link rel="stylesheet" href="/network-status.css">
   <link rel="stylesheet" href="/card-layout.css">
   <link rel="stylesheet" href="/card-v7.css">
   <link rel="stylesheet" href="/device-details.css">
@@ -54,7 +55,10 @@
           </details>
         </div>
       </details>
-      <button id="dashboard-network" class="panel-row" type="button" aria-label="网络状态" aria-pressed="false" title="网络状态"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M1 12h5l3-8 5 16 3-8h6"/></svg><span>网络状态</span></button>
+      <div class="panel-drawer">
+      <button id="dashboard-network" class="panel-row" type="button" aria-label="网络状态" aria-pressed="false" aria-expanded="false" aria-controls="dashboard-network-machines" title="网络状态"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M1 12h5l3-8 5 16 3-8h6"/></svg><span>网络状态</span><i class="network-nav-arrow" aria-hidden="true"></i></button>
+      <div id="dashboard-network-machines" class="panel-items" hidden></div>
+      </div>
       <hr>
       <details id="dashboard-settings" class="panel-drawer">
         <summary class="panel-row" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m10 2-.7 2.8-2 .9-2.5-1.4-2.5 4.3 2 2.1v2.6l-2 2.1 2.5 4.3 2.5-1.4 2 .9L10 22h4l.7-2.8 2-.9 2.5 1.4 2.5-4.3-2-2.1v-2.6l2-2.1-2.5-4.3-2.5 1.4-2-.9L14 2z"/></svg><span>设置</span></summary>
@@ -99,7 +103,7 @@
     </div>
     </div>
     <p id="phone-view-note" hidden>手机上以卡片显示</p>
-    <section id="network-placeholder" hidden><h2>网络状态</h2><p>这个视图将在后续版本提供</p></section>
+    <section id="network-placeholder" aria-label="网络状态" hidden></section>
     <div id="dashboard-settings-content" class="settings-content" hidden>
       <section id="update" hidden aria-labelledby="update-title">
         <h2 id="update-title">检查新版本</h2>
@@ -282,6 +286,8 @@
   <script src="/range-slider.js" defer></script>
   <script src="/network-quality-core.js" defer></script>
   <script src="/network-quality.js" defer></script>
+  <script src="/network-status-charts.js" defer></script>
+  <script src="/network-status.js" defer></script>
   <script src="/traffic-chart.js" defer></script>
   <script src="/latency-mini.js" defer></script>
   <script src="/card-metrics.js" defer></script>

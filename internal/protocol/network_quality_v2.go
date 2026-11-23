@@ -26,6 +26,7 @@ type QualityCapabilities struct {
 	Lanes          []QualityLaneCapability `json:"lanes"`
 	// Targets and IPv6Address are only sent after the Server answered the quality-targets header
 	// (two-step negotiation); an older Server never sees them.
+	Objects     bool   `json:"objects,omitempty"`
 	Targets     string `json:"targets,omitempty"`
 	IPv6Address string `json:"ipv6_address,omitempty"`
 }

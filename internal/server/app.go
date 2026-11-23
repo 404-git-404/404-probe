@@ -267,6 +267,9 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	// The header only tells a current Agent from an old one (design 4.2); it is not part of the body.
 	report.QualityTargetsHeader = r.Header.Get(protocol.QualityTargetsHeader) == protocol.QualityTargetsUserV1
+	if report.NetworkQualityV2 != nil {
+		report.NetworkQualityV2.Objects = r.Header.Get(protocol.QualityObjectsHeader) == "1"
+	}
 	received := a.now()
 	owner := a.traffic.capture(authenticatedID, received)
 	// Retired slots can be evicted; pending removal is authoritative even then.

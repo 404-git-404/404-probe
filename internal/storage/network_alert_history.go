@@ -131,11 +131,11 @@ func (s *Store) sweepAgentNetworkAlerts(ctx context.Context, id string, now time
 		return err
 	}
 	reader.alertBuckets = map[string]map[int64]qualityBucketData{}
-	for _, lane := range qualityLanes() {
+	for _, config := range reader.cfg.Lanes {
+		lane := qualityLane{config.Slot, config.Family, config.Protocol}
 		if lane.Protocol != "tcp" {
 			continue
 		}
-		config, _ := reader.lane(lane.Slot, lane.Family, lane.Protocol)
 		tl, active, err := reader.timelineOf(ctx, lane.Slot, lane.Family, lane.Protocol)
 		if err != nil {
 			return err

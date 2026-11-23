@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/hex"
 	"errors"
 	"net/netip"
 	"strconv"
@@ -16,6 +17,29 @@ import (
 // current Agent from an old one; the safety boundary is the Agent's per-connection address check.
 const QualityTargetsHeader = "X-404-Probe-Quality-Targets"
 const QualityTargetsUserV1 = "user_v1"
+const QualityObjectsHeader = "X-404-Probe-Quality-Objects"
+
+const (
+	QualityMaxObjects     = 8
+	QualityMaxCardObjects = 3
+)
+
+func QualityObjectID(id string) bool {
+	if QualitySlot(id) {
+		return true
+	}
+	if !strings.HasPrefix(id, "obj-") || len(id) != 20 {
+		return false
+	}
+	_, err := hex.DecodeString(id[4:])
+	return err == nil && id == strings.ToLower(id)
+}
+
+// QualityNewObjectKey identifies an unsaved row within one Web request.
+func QualityNewObjectKey(id string) bool {
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "new-"))
+	return err == nil && n >= 0 && n < QualityMaxObjects && id == "new-"+strconv.Itoa(n)
+}
 
 const (
 	QualityIPv6Present = "present"
@@ -83,9 +107,10 @@ func QualityISPForSlot(slot string) string {
 	return ""
 }
 
-// QualityV4Slot is one of the three slots of a card. Region and ISP are the user's own labels;
+// QualityV4Slot describes one monitoring object. Region and ISP are the user's own labels;
 // 404-probe does not verify, calibrate or warn about them.
 type QualityV4Slot struct {
+	ShowOnCard  bool   `json:"show_on_card"`
 	Slot        string `json:"slot"`
 	Kind        string `json:"kind"`
 	Region      string `json:"region"`
@@ -117,10 +142,18 @@ func (s QualityV4Slot) Sub(family, proto string) bool {
 // QualityV4SaveRequest saves the settings. It never changes the master switch.
 type QualityV4SaveRequest struct {
 	ExpectedRevision string          `json:"expected_revision"`
+	Objects          bool            `json:"objects,omitempty"`
 	IntervalMS       int             `json:"interval_ms"`
 	Slots            []QualityV4Slot `json:"slots"`
 	// SlowThresholdMS is absent for a page that does not know the field (v1.0.6): the stored value is kept.
 	SlowThresholdMS *QualityThreshold `json:"slow_threshold_ms,omitempty"`
+}
+
+func (r QualityV4SaveRequest) ValidSlotCount() bool {
+	if r.Objects {
+		return r.Slots != nil && len(r.Slots) <= QualityMaxObjects
+	}
+	return len(r.Slots) == QualityMaxCardObjects
 }
 
 // QualityThreshold carries a slow threshold as the client sent it. A JSON number that is not a whole
@@ -364,7 +397,7 @@ func NormalizeQualitySlot(s QualityV4Slot) (QualityV4Slot, []QualityFieldError) 
 	add := func(field, code string) {
 		errs = append(errs, QualityFieldError{Slot: s.Slot, Field: field, Code: code})
 	}
-	if !QualitySlot(s.Slot) {
+	if !QualityObjectID(s.Slot) && !QualityNewObjectKey(s.Slot) {
 		add("slot", QualityErrInvalidRequest)
 		return s, errs
 	}

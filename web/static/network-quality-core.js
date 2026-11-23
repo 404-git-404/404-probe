@@ -2,6 +2,9 @@
 (function(root) {
   'use strict';
   const slots = ['telecom','unicom','mobile'];
+  const MAX_OBJECTS=8, MAX_CARD_OBJECTS=3;
+  const objectID=id=>typeof id==='string'&&(slots.includes(id)||/^obj-[0-9a-f]{16}$/.test(id));
+  const cardSlots=config=>config?config.slots.filter(s=>s.show_on_card!==false).map(s=>s.slot):slots;
   const names = {telecom:'电信',unicom:'联通',mobile:'移动'};
   const finite = value => typeof value === 'number' && Number.isFinite(value);
   const ms = value => finite(value) ? `${value.toFixed(1)} ms` : '—';
@@ -103,15 +106,17 @@
   const isDecimal=v=>typeof v==='string'&&/^(0|[1-9][0-9]*)$/.test(v);
   const bad=what=>{throw Error('v4 配置契约不匹配：'+what);};
   // The Server answers with settings_revision (optimistic lock), config_revision (what samples carry),
-  // slots[3] and lanes[12]. Anything else is not adopted.
+  // Four lanes are described for each configured object.
   function adapt(v4) {
     if(!v4||typeof v4!=='object')bad('响应');
     if(!isDecimal(v4.settings_revision)||!isDecimal(v4.config_revision))bad('版本号');
-    if(!Array.isArray(v4.slots)||v4.slots.length!==3||!Array.isArray(v4.lanes)||v4.lanes.length!==12)bad('卡槽/通道数量');
+    if(!Array.isArray(v4.slots)||v4.slots.length>MAX_OBJECTS||!Array.isArray(v4.lanes)||v4.lanes.length!==4*v4.slots.length)bad('对象/通道数量');
+    const objects=v4.slots.length===0||v4.slots.some(s=>typeof s?.show_on_card==='boolean');
+    if(objects?v4.slots.filter(s=>s?.show_on_card===true).length>MAX_CARD_OBJECTS:v4.slots.length!==slots.length)bad('卡片对象数量');
     if(!finite(v4.interval_ms)||!finite(v4.effective_interval_ms)||typeof v4.enabled!=='boolean'||typeof v4.state!=='string'||typeof v4.agent_support!=='string')bad('字段类型');
     const bySlot=new Map();
     v4.slots.forEach((s,i)=>{
-      if(s.slot!==slots[i]||!['builtin','custom'].includes(s.kind)||typeof s.region!=='string'||typeof s.isp!=='string'||typeof s.host!=='string'||!Number.isInteger(s.port)||typeof s.slot_enabled!=='boolean'||subItems.some(([k])=>typeof s[k]!=='boolean'))bad('卡槽 '+(i+1));
+      if(!s||!objectID(s.slot)||bySlot.has(s.slot)||(objects?typeof s.show_on_card!=='boolean':s.slot!==slots[i])||!['builtin','custom'].includes(s.kind)||typeof s.region!=='string'||typeof s.isp!=='string'||typeof s.host!=='string'||!Number.isInteger(s.port)||typeof s.slot_enabled!=='boolean'||subItems.some(([k])=>typeof s[k]!=='boolean'))bad('卡槽 '+(i+1));
       bySlot.set(s.slot,s);
     });
     // What the Agent of this session can do with ICMP, per family, as the Server says it. Missing or unrecognised means unknown, never unsupported.
@@ -129,19 +134,19 @@
     // The Server always sends the threshold (schema 35); an answer without it is read as the default.
     const threshold=Number.isInteger(v4.slow_threshold_ms)&&v4.slow_threshold_ms>=THRESHOLD_MIN&&v4.slow_threshold_ms<=THRESHOLD_MAX?v4.slow_threshold_ms:THRESHOLD_DEFAULT;
     return {version:4,revision:v4.config_revision,settings_revision:v4.settings_revision,enabled:v4.enabled,interval_ms:v4.interval_ms,effective_interval_ms:v4.effective_interval_ms,slow_threshold_ms:threshold,
-      state:v4.state,agent_support:v4.agent_support,icmpSupport,supported:v4.agent_support==='user_targets',slots:v4.slots.map(s=>({...s})),lanes,targets};
+      objects,state:v4.state,agent_support:v4.agent_support,icmpSupport,supported:v4.agent_support==='user_targets',slots:v4.slots.map(s=>({...s})),lanes,targets};
   }
-  const slotNumber=slot=>slots.indexOf(slot)+1;
+  const slotNumber=(slot,config)=>((config?.slots?.findIndex(s=>s.slot===slot)??slots.indexOf(slot))+1)||1;
   const ispText=s=>s?.kind==='builtin'?(names[s.isp]||s.isp):s?.isp;
   // Row label of a slot: "ISP · region" exactly as the user typed or picked it; "卡槽 N（未标注）" when empty.
   function slotLabel(config,slot) {
     const s=config?.slots?.find(x=>x.slot===slot);
     const text=[ispText(s),s?.region].filter(Boolean).join(' · ');
-    return text||`卡槽 ${slotNumber(slot)}（未标注）`;
+    return text||`卡槽 ${slotNumber(slot,config)}（未标注）`;
   }
   function slotShort(config,slot) {
     const s=config?.slots?.find(x=>x.slot===slot),text=ispText(s);
-    return text?Array.from(text)[0]:String(slotNumber(slot));
+    return text?Array.from(text)[0]:String(slotNumber(slot,config));
   }
   const conditionText={not_found:'域名不存在或没有该地址族的记录',no_address:'没有该地址族的解析结果',unsafe_address:'解析到非公网地址，已拒绝连接'};
   // What a lane shows when it is not measuring: decided by the Server's status, never inferred by the page.
@@ -187,10 +192,10 @@
     }
   }
   // ---- the settings dialog ----
-  const slotDraft=s=>({slot:s.slot,kind:s.kind,region:s.region,isp:s.isp,host:s.host,port:s.port?String(s.port):'',slot_enabled:s.slot_enabled,...Object.fromEntries(subItems.map(([k])=>[k,s[k]]))});
-  const draftOf=config=>({interval_ms:config.interval_ms,slow_threshold_ms:String(config.slow_threshold_ms??THRESHOLD_DEFAULT),slots:config.slots.map(slotDraft)});
+  const slotDraft=s=>({slot:s.slot,kind:s.kind,region:s.region,isp:s.isp,host:s.host,port:s.port?String(s.port):'',slot_enabled:s.slot_enabled,...(typeof s.show_on_card==='boolean'?{show_on_card:s.show_on_card}:{}),...Object.fromEntries(subItems.map(([k])=>[k,s[k]]))});
+  const draftOf=config=>({objects:!!config.objects,interval_ms:config.interval_ms,slow_threshold_ms:String(config.slow_threshold_ms??THRESHOLD_DEFAULT),slots:config.slots.map(slotDraft)});
   const clone=v=>JSON.parse(JSON.stringify(v));
-  const trimmed=d=>({interval_ms:d.interval_ms,slow_threshold_ms:String(d.slow_threshold_ms??THRESHOLD_DEFAULT).trim(),slots:d.slots.map(s=>({...s,host:s.host.trim(),port:s.port.trim()}))});
+  const trimmed=d=>({objects:!!d.objects,interval_ms:d.interval_ms,slow_threshold_ms:String(d.slow_threshold_ms??THRESHOLD_DEFAULT).trim(),slots:d.slots.map(s=>({...s,host:s.host.trim(),port:s.port.trim()}))});
   const sameContent=(a,b)=>JSON.stringify(trimmed(a))===JSON.stringify(trimmed(b));
   const isDirty=(d,base)=>JSON.stringify(trimmed(d))!==JSON.stringify(trimmed(base));
   // Switching between built-in and custom keeps address, port and ticks and only clears the labels, so no free text is carried into an enumeration.
@@ -235,9 +240,9 @@
     if(!isDecimal(settingsRevision))throw Error('配置版本缺失，不能保存');
     if(!intervals.includes(d.interval_ms))throw Error('检测频率须为 30–300 秒，每档 30 秒');
     if(thresholdHint(d))throw Error(errorText.invalid_threshold);
-    return {expected_revision:settingsRevision,interval_ms:d.interval_ms,slow_threshold_ms:Number(String(d.slow_threshold_ms).trim()),slots:d.slots.map(s=>{
+    return {expected_revision:settingsRevision,...(d.objects?{objects:true}:{}),interval_ms:d.interval_ms,slow_threshold_ms:Number(String(d.slow_threshold_ms).trim()),slots:d.slots.map(s=>{
       const host=s.host.trim();
-      return {slot:s.slot,kind:s.kind,region:s.region,isp:s.isp,host,port:host?Number(s.port.trim()):0,slot_enabled:!!s.slot_enabled,ipv4_tcp:!!s.ipv4_tcp,ipv4_icmp:!!s.ipv4_icmp,ipv6_tcp:!!s.ipv6_tcp,ipv6_icmp:!!s.ipv6_icmp};
+      return {slot:s.slot,...(d.objects?{show_on_card:!!s.show_on_card}:{}),kind:s.kind,region:s.region,isp:s.isp,host,port:host?Number(s.port.trim()):0,slot_enabled:!!s.slot_enabled,ipv4_tcp:!!s.ipv4_tcp,ipv4_icmp:!!s.ipv4_icmp,ipv6_tcp:!!s.ipv6_tcp,ipv6_icmp:!!s.ipv6_icmp};
     })};
   }
   function enabledPayload(settingsRevision,enabled) {
@@ -287,9 +292,11 @@
     if(!v||typeof v!=='object')fail('响应');
     if(v.family!==family)fail('地址族');
     for(const key of ['now','eval_end','threshold_ms','interval_ms','block_ms','window_start'])if(!finite(v[key]))fail(key);
-    if(typeof v.alert_active!=='boolean'||!Array.isArray(v.lanes)||v.lanes.length!==slots.length)fail('卡槽');
+    if(typeof v.alert_active!=='boolean'||!Array.isArray(v.lanes)||(v.objects===true?v.lanes.length>MAX_CARD_OBJECTS:v.lanes.length!==slots.length))fail('卡槽');
+    const seen=new Set();
     const lanes=v.lanes.map((l,i)=>{
-      if(!l||l.slot!==slots[i]||!l.tcp||!l.icmp||!l.right||typeof l.tcp.status!=='string'||typeof l.icmp.status!=='string')fail('卡槽 '+(i+1));
+      if(!l||!objectID(l.slot)||seen.has(l.slot)||(v.objects!==true&&l.slot!==slots[i])||!l.tcp||!l.icmp||!l.right||typeof l.tcp.status!=='string'||typeof l.icmp.status!=='string')fail('卡槽 '+(i+1));
+      seen.add(l.slot);
       let blocks=null;
       if(l.tcp.status==='active') {
         if(!Array.isArray(l.tcp.blocks)||l.tcp.blocks.length!==BLOCK_COUNT)fail('方块数量');
@@ -310,7 +317,7 @@
   function cardLabel(config,slot) {
     const s=config?.slots?.find(x=>x.slot===slot),region=s?.region||'',carrier=ispText(s)||'';
     const text=s?.kind==='builtin'?region+carrier:[region,carrier].filter(Boolean).join(' ');
-    return text||`卡槽 ${slotNumber(slot)}（未标注）`;
+    return text||`卡槽 ${slotNumber(slot,config)}（未标注）`;
   }
   const clock=v=>new Date(v).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false});
   const peak=v=>v>=1000?String(Math.round(v)):v>=100?v.toFixed(0):v.toFixed(1);
@@ -365,6 +372,6 @@
     const fitsBelow=below+height<=viewport.clientHeight-margin;
     tip.style.top=Math.max(margin,Math.min(fitsBelow?below:above,viewport.clientHeight-height-margin))+'px';
   }
-  const api={positionCardTip,slots,names,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,rightView,tcpRightView,laneView,STATE_TEXT};
+  const api={positionCardTip,slots,names,cardSlots,MAX_OBJECTS,MAX_CARD_OBJECTS,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,rightView,tcpRightView,laneView,STATE_TEXT};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);

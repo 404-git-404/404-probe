@@ -85,15 +85,16 @@ func networkStatusResponse(w http.ResponseWriter, result any, err error) {
 }
 
 func (a *App) handleNetworkFleet(w http.ResponseWriter, r *http.Request) {
-	q, valid := networkQuery(r, "", "start end window agent_id family protocol")
+	q, valid := networkQuery(r, "", "start end window agent_id family protocol view")
 	now := a.now()
 	start, end, rangeOK := networkRange(q, now)
 	id := q.Get("agent_id")
-	if r.URL.EscapedPath() != networkFleetPath || !valid || !rangeOK || (id != "" && !validWebAgentID(id)) {
+	view := q.Get("view")
+	if r.URL.EscapedPath() != networkFleetPath || !valid || !rangeOK || (view != "" && view != "card") || (id != "" && !validWebAgentID(id)) {
 		writeJobError(w, 400, "invalid_query", "choose start and end or window")
 		return
 	}
-	result, err := a.store.NetworkFleet(r.Context(), id, q.Get("family"), q.Get("protocol"), start, end, now, a.offlineTimeout)
+	result, err := a.store.NetworkFleet(r.Context(), id, q.Get("family"), q.Get("protocol"), start, end, now, a.offlineTimeout, view == "card")
 	networkStatusResponse(w, result, err)
 }
 

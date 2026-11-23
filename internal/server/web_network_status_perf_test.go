@@ -81,8 +81,8 @@ func TestNetworkStatusSyntheticTimings(t *testing.T) {
 	}{
 		{"range-7d", historyPath + rangeQuery(7*24*time.Hour), false, 0},
 		{"range-30d", historyPath + rangeQuery(30*24*time.Hour), false, 0},
-		{"fleet-200-24h", networkFleetPath + "?" + rangeQuery(24*time.Hour), true, time.Second},
-		{"fleet-200-30d", networkFleetPath + "?" + rangeQuery(30*24*time.Hour), true, 2 * time.Second},
+		{"fleet-200-24h", networkFleetPath + "?view=card&family=ipv4&protocol=tcp&" + rangeQuery(24*time.Hour), true, time.Second},
+		{"fleet-200-30d", networkFleetPath + "?view=card&family=ipv4&protocol=tcp&" + rangeQuery(30*24*time.Hour), true, 2 * time.Second},
 	} {
 		t.Run(trial.name, func(t *testing.T) {
 			var elapsed []time.Duration
@@ -97,7 +97,7 @@ func TestNetworkStatusSyntheticTimings(t *testing.T) {
 				size = resp.Body.Len()
 				if trial.fleet {
 					var out storage.NetworkFleet
-					if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil || len(out.Machines) != 200 || len(out.Machines[0].Lines) != 12 {
+					if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil || len(out.Machines) != 200 || len(out.Machines[0].Lines) != 3 {
 						t.Fatalf("machines=%d err=%v", len(out.Machines), err)
 					}
 				} else {
@@ -114,6 +114,45 @@ func TestNetworkStatusSyntheticTimings(t *testing.T) {
 			}
 		})
 	}
+	t.Run("machine-8-30d-first-screen", func(t *testing.T) {
+		url := networkFleetPath + "?agent_id=" + id + "&family=ipv4&protocol=tcp&window=30d"
+		var elapsed []time.Duration
+		for range 3 {
+			start := time.Now()
+			fleet := webAgentResponse(t, a, http.MethodGet, url)
+			var out storage.NetworkFleet
+			if fleet.Code != 200 || json.Unmarshal(fleet.Body.Bytes(), &out) != nil || len(out.Machines) != 1 || len(out.Machines[0].Lines) != 8 {
+				t.Fatalf("machine first screen: HTTP %d", fleet.Code)
+			}
+			// Sum the authenticated requests serially as an upper bound for the browser's parallel reads.
+			for _, slot := range networkTimingSlots() {
+				path := webAgentPathPrefix + id + "/network-quality/range?slot=" + slot + "&family=ipv4&protocol=tcp&window=30d"
+				if res := webAgentResponse(t, a, http.MethodGet, path); res.Code != 200 {
+					t.Fatalf("range %s: HTTP %d", slot, res.Code)
+				}
+			}
+			for _, suffix := range []string{"alerts", "heatmap?slot=telecom&family=ipv4&protocol=tcp&days=30"} {
+				if res := webAgentResponse(t, a, http.MethodGet, webAgentPathPrefix+id+"/network-quality/"+suffix); res.Code != 200 {
+					t.Fatalf("%s: HTTP %d", suffix, res.Code)
+				}
+			}
+			elapsed = append(elapsed, time.Since(start))
+		}
+		sort.Slice(elapsed, func(i, j int) bool { return elapsed[i] < elapsed[j] })
+		t.Logf("min=%s median=%s max=%s", elapsed[0], elapsed[1], elapsed[2])
+		if elapsed[2] > 2*time.Second {
+			t.Errorf("machine requests exceeded 2 s")
+		}
+	})
+
+}
+
+func networkTimingSlots() []string {
+	slots := protocol.QualitySlotOrder()
+	for i := len(slots); i < protocol.QualityMaxObjects; i++ {
+		slots = append(slots, fmt.Sprintf("obj-%016x", i))
+	}
+	return slots
 }
 
 func seedNetworkStatusTemplate(ctx context.Context, s *storage.Store, now time.Time) (id, token string, err error) {
@@ -153,7 +192,16 @@ func seedNetworkStatusFleet(t *testing.T, path, firstAgent string, now time.Time
 			t.Fatal(err)
 		}
 	}
-	for _, slot := range protocol.QualitySlotOrder() {
+	if _, err := tx.Exec(`INSERT INTO quality_config(agent_id,revision,enabled,ipv6,choices,updated_at,objects_configured)
+		SELECT id,0,0,0,'[]',created_at,1 FROM agents WHERE true ON CONFLICT(agent_id) DO UPDATE SET objects_configured=1`); err != nil {
+		t.Fatal(err)
+	}
+	for i, slot := range networkTimingSlots() {
+		if _, err := tx.Exec(`INSERT INTO quality_slot_settings(agent_id,slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,position,show_on_card)
+			SELECT id,?1,'custom','中国',?1,'synthetic.example',443,1,1,1,1,1,0,?2,?3 FROM agents WHERE true
+			ON CONFLICT(agent_id,slot) DO UPDATE SET position=excluded.position,show_on_card=excluded.show_on_card`, slot, i, i < 3); err != nil {
+			t.Fatal(err)
+		}
 		for _, family := range []string{"ipv4", "ipv6"} {
 			for _, proto := range []string{"tcp", "icmp"} {
 				lane := slot + "/" + family + "/" + proto

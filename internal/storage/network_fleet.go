@@ -26,19 +26,20 @@ type NetworkFleetLine struct {
 }
 
 type NetworkMachine struct {
-	ID                   string             `json:"agent_id"`
-	Name                 string             `json:"name"`
-	CountryCode          string             `json:"country_code"`
-	ServerLocal          bool               `json:"server_local"`
-	Status               string             `json:"status"`
-	LastSeen             *int64             `json:"last_seen"`
-	OfflineSince         *int64             `json:"offline_since"`
-	ThresholdMS          int                `json:"slow_threshold_ms"`
-	Alerts30Days         int                `json:"alerts_30d"`
-	CurrentAlerts        int                `json:"current_alerts"`
-	QualityClockOffsetMS *int64             `json:"quality_clock_offset_ms"`
-	QualityClockSkewed   bool               `json:"quality_clock_skewed"`
-	Lines                []NetworkFleetLine `json:"lines"`
+	ID                   string                   `json:"agent_id"`
+	Name                 string                   `json:"name"`
+	CountryCode          string                   `json:"country_code"`
+	ServerLocal          bool                     `json:"server_local"`
+	Status               string                   `json:"status"`
+	LastSeen             *int64                   `json:"last_seen"`
+	OfflineSince         *int64                   `json:"offline_since"`
+	ThresholdMS          int                      `json:"slow_threshold_ms"`
+	Alerts30Days         int                      `json:"alerts_30d"`
+	CurrentAlerts        int                      `json:"current_alerts"`
+	QualityClockOffsetMS *int64                   `json:"quality_clock_offset_ms"`
+	QualityClockSkewed   bool                     `json:"quality_clock_skewed"`
+	Objects              []protocol.QualityV4Slot `json:"objects"`
+	Lines                []NetworkFleetLine       `json:"lines"`
 }
 
 type NetworkFleet struct {
@@ -102,7 +103,7 @@ func networkFleetSpans(start, end, res, sparkStart, step int64) []networkBucketS
 	return spans
 }
 
-func (s *Store) NetworkFleet(ctx context.Context, agentID, family, proto string, start, end int64, now time.Time, offlineTimeout time.Duration) (NetworkFleet, error) {
+func (s *Store) NetworkFleet(ctx context.Context, agentID, family, proto string, start, end int64, now time.Time, offlineTimeout time.Duration, cardOnly ...bool) (NetworkFleet, error) {
 	out := NetworkFleet{Start: start, End: end, Now: now.UnixMilli(), Machines: []NetworkMachine{}}
 	res, err := networkStatusResolution(start, end, now)
 	if err != nil || (family != "" && family != "ipv4" && family != "ipv6") || (proto != "" && proto != "tcp" && proto != "icmp") {
@@ -182,7 +183,7 @@ func (s *Store) NetworkFleet(ctx context.Context, agentID, family, proto string,
 	buckets := networkFleetBucketReader{raw: raw, rollup: rollup, staleBefore: networkFleetStaleBefore()}
 	for i := range out.Machines {
 		if err := fillNetworkMachine(ctx, tx, &out.Machines[i], NetworkLine{Family: family, Protocol: proto},
-			sparkStart, end, step, spans, out.Now, buckets); err != nil {
+			sparkStart, end, step, spans, out.Now, buckets, len(cardOnly) != 0 && cardOnly[0]); err != nil {
 			return out, err
 		}
 	}
@@ -190,7 +191,24 @@ func (s *Store) NetworkFleet(ctx context.Context, agentID, family, proto string,
 }
 
 func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine, filter NetworkLine, first, end, step int64,
-	spans []networkBucketSpan, now int64, buckets networkFleetBucketReader) error {
+	spans []networkBucketSpan, now int64, buckets networkFleetBucketReader, cardOnly bool) error {
+	var configured bool
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT objects_configured FROM quality_config WHERE agent_id=?),0)`, machine.ID).Scan(&configured); err != nil {
+		return err
+	}
+	objects, err := qualityLoadSlotsTx(ctx, tx, machine.ID, qualityConfigRow{ObjectsConfigured: configured})
+	if err != nil {
+		return err
+	}
+	machine.Objects = []protocol.QualityV4Slot{}
+	var slotIDs []string
+	for _, object := range objects {
+		if !cardOnly || object.ShowOnCard {
+			machine.Objects = append(machine.Objects, object.QualityV4Slot)
+			slotIDs = append(slotIDs, object.Slot)
+		}
+	}
+	lanes := qualityLanesFor(slotIDs)
 	current, err := networkCurrentTargets(ctx, tx, machine.ID)
 	if err != nil {
 		return err
@@ -209,11 +227,15 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 	}
 	n := int(ceilDiv64(end-first, step))
 	acc := map[NetworkLine]*networkFleetAccumulator{}
-	for _, lane := range qualityLanes() {
+	for _, lane := range lanes {
 		line := NetworkLine(lane)
 		if (filter.Family == "" || line.Family == filter.Family) && (filter.Protocol == "" || line.Protocol == filter.Protocol) {
 			acc[line] = &networkFleetAccumulator{whole: qualityNewBucket(), evening: qualityNewBucket(), spark: make([]networkFleetSpark, n)}
 		}
+	}
+	if len(acc) == 0 {
+		machine.Lines = []NetworkFleetLine{}
+		return nil
 	}
 	for _, span := range spans {
 		err := buckets.scan(ctx, machine.ID, filter, span,
@@ -258,7 +280,7 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 		}
 	}
 	machine.Lines = make([]NetworkFleetLine, 0, len(acc))
-	for _, lane := range qualityLanes() {
+	for _, lane := range lanes {
 		line := NetworkLine(lane)
 		a := acc[line]
 		if a == nil {

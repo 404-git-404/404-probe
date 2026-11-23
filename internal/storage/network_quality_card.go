@@ -60,6 +60,7 @@ type QualityCardLane struct {
 
 // QualityCardSummary is the answer of v5/card: the face A of one card for one address family.
 type QualityCardSummary struct {
+	Objects          bool              `json:"objects,omitempty"`
 	Now              int64             `json:"now"`
 	EvalEnd          int64             `json:"eval_end"`
 	Family           string            `json:"family"`
@@ -239,7 +240,8 @@ func (r *qualityJudgeReader) alert(ctx context.Context) (bool, error) {
 	if err != nil || !open {
 		return false, err
 	}
-	for _, slot := range protocol.QualitySlotOrder() {
+	for _, object := range r.cfg.Slots {
+		slot := object.Slot
 		tl, ok, err := r.timelineOf(ctx, slot, "ipv4", "tcp")
 		if err != nil {
 			return false, err
@@ -279,9 +281,13 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 	if err != nil {
 		return QualityCardSummary{}, err
 	}
-	out := QualityCardSummary{Now: now.UnixMilli(), EvalEnd: evalEnd, Family: family, SettingsRevision: r.cfg.SettingsRevision, ConfigRevision: r.cfg.ConfigRevision,
+	out := QualityCardSummary{Objects: true, Now: now.UnixMilli(), EvalEnd: evalEnd, Family: family, SettingsRevision: r.cfg.SettingsRevision, ConfigRevision: r.cfg.ConfigRevision,
 		ThresholdMS: r.cfg.SlowThresholdMS, IntervalMS: r.cfg.EffectiveIntervalMS, BlockMS: QualityBlockMS, WindowStart: windowStart, Lanes: []QualityCardLane{}}
-	for _, slot := range protocol.QualitySlotOrder() {
+	for _, object := range r.cfg.Slots {
+		if !object.ShowOnCard {
+			continue
+		}
+		slot := object.Slot
 		lane := QualityCardLane{Slot: slot, Right: QualityCardRight{Kind: "none", Samples: "none"}}
 		if l, ok := r.lane(slot, family, "tcp"); ok {
 			lane.TCP.Status, lane.TCP.Condition = l.Status, l.Condition
@@ -383,7 +389,11 @@ func (s *Store) QualityMarks(ctx context.Context, agentID, family string, from, 
 	if !ok {
 		return out, nil
 	}
-	for _, slot := range protocol.QualitySlotOrder() {
+	for _, object := range r.cfg.Slots {
+		if !object.ShowOnCard {
+			continue
+		}
+		slot := object.Slot
 		tl, active, err := r.timelineOf(ctx, slot, family, "tcp")
 		if err != nil {
 			return out, err

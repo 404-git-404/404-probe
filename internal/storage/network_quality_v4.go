@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"time"
@@ -40,10 +42,10 @@ func (s *Store) SaveQualityConfigV4(ctx context.Context, id string, request prot
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	expected, ok := protocol.ParseQualityExpectedRevision(request.ExpectedRevision)
-	if !ok || !protocol.QualityIntervalValid(request.IntervalMS) || len(request.Slots) != 3 {
+	if !ok || !protocol.QualityIntervalValid(request.IntervalMS) || !request.ValidSlotCount() {
 		return protocol.QualityV4Config{}, ErrQualityInvalid
 	}
-	proposal := qualityProposal{IntervalMS: request.IntervalMS}
+	proposal := qualityProposal{IntervalMS: request.IntervalMS, ObjectsConfigured: request.Objects}
 	if request.SlowThresholdMS != nil {
 		if !request.SlowThresholdMS.Valid || !protocol.QualitySlowThresholdValid(request.SlowThresholdMS.Value) {
 			return protocol.QualityV4Config{}, ErrQualityInvalid
@@ -51,17 +53,20 @@ func (s *Store) SaveQualityConfigV4(ctx context.Context, id string, request prot
 		proposal.SlowThresholdMS = request.SlowThresholdMS.Value
 	}
 	seen := map[string]bool{}
+	shown := 0
 	for _, slot := range request.Slots {
 		normalized, errs := protocol.NormalizeQualitySlot(slot)
-		if len(errs) != 0 || seen[normalized.Slot] {
+		if len(errs) != 0 || seen[normalized.Slot] || (!request.Objects && !protocol.QualitySlot(slot.Slot)) {
 			return protocol.QualityV4Config{}, ErrQualityInvalid
 		}
 		seen[normalized.Slot] = true
-		for i, name := range protocol.QualitySlotOrder() {
-			if name == normalized.Slot {
-				proposal.Slots[i] = normalized
-			}
+		if slot.ShowOnCard {
+			shown++
 		}
+		proposal.Slots = append(proposal.Slots, normalized)
+	}
+	if request.Objects && shown > protocol.QualityMaxCardObjects {
+		return protocol.QualityV4Config{}, ErrQualityInvalid
 	}
 	pressure := s.qualityPressure(ctx)
 	budget := s.qualityBudget(ctx)
@@ -87,6 +92,45 @@ func (s *Store) SaveQualityConfigV4(ctx context.Context, id string, request prot
 		return protocol.QualityV4Config{}, err
 	} else if excluded {
 		return protocol.QualityV4Config{}, ErrQualityUnsupported
+	}
+	rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg)
+	if err != nil {
+		return protocol.QualityV4Config{}, err
+	}
+	if request.Objects {
+		previous := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			previous[row.Slot] = true
+		}
+		for i := range proposal.Slots {
+			slot := &proposal.Slots[i]
+			if protocol.QualityNewObjectKey(slot.Slot) {
+				var key [8]byte
+				if _, err := rand.Read(key[:]); err != nil {
+					return protocol.QualityV4Config{}, err
+				}
+				slot.Slot = "obj-" + hex.EncodeToString(key[:])
+			} else if !previous[slot.Slot] {
+				return protocol.QualityV4Config{}, ErrQualityInvalid
+			}
+		}
+	} else {
+		// Cached legacy Web clients can edit existing legacy objects. Their three-row
+		// payload cannot reorder objects or remove newer objects.
+		byID := make(map[string]protocol.QualityV4Slot, len(proposal.Slots))
+		for _, slot := range proposal.Slots {
+			byID[slot.Slot] = slot
+		}
+		proposal.Slots = proposal.Slots[:0]
+		proposal.ObjectsConfigured = cfg.ObjectsConfigured
+		for _, old := range rows {
+			slot, ok := byID[old.Slot]
+			if !ok {
+				slot = old.QualityV4Slot
+			}
+			slot.ShowOnCard = old.ShowOnCard
+			proposal.Slots = append(proposal.Slots, slot)
+		}
 	}
 	proposal.Enabled = cfg.Enabled
 	if _, err := qualityApplyTx(ctx, tx, id, &proposal, true, now, pressure); err != nil {
@@ -140,13 +184,13 @@ func (s *Store) SetQualityEnabledV4(ctx context.Context, id string, request prot
 				return protocol.QualityV4Config{}, ErrQualityUnsupported
 			}
 		}
-		rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg.SettingsRevision)
+		rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg)
 		if err != nil {
 			return protocol.QualityV4Config{}, err
 		}
-		proposal := qualityProposal{Enabled: want, IntervalMS: cfg.IntervalMS, SlowThresholdMS: cfg.SlowThresholdMS}
+		proposal := qualityProposal{Enabled: want, IntervalMS: cfg.IntervalMS, SlowThresholdMS: cfg.SlowThresholdMS, ObjectsConfigured: cfg.ObjectsConfigured}
 		for i := range rows {
-			proposal.Slots[i] = rows[i].QualityV4Slot
+			proposal.Slots = append(proposal.Slots, rows[i].QualityV4Slot)
 		}
 		if _, err := qualityApplyTx(ctx, tx, id, &proposal, true, now, pressure); err != nil {
 			return protocol.QualityV4Config{}, err
@@ -171,7 +215,11 @@ func (s *Store) QualityV4SlotHosts(ctx context.Context, id string) (map[string]s
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := qualityLoadSlotsTx(ctx, tx, id, 0)
+	cfg, err := qualityLoadConfigTx(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +268,11 @@ func qualitySupportTx(ctx context.Context, tx *sql.Tx, id string, cfg qualityCon
 }
 
 // qualityEffectiveInterval never goes below what the user chose; the capacity plan only slows it down.
-func qualityEffectiveInterval(user, scale int) int {
+func qualityEffectiveInterval(user, scale, active int) int {
+	// Keep reserve below six workers even when every lane uses the full five-second timeout.
+	if active > 24 {
+		scale = max(scale, 2)
+	}
 	return max(user, protocol.QualityMinIntervalMS*max(1, scale))
 }
 
@@ -246,7 +298,7 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 	if err != nil {
 		return out, err
 	}
-	rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg.SettingsRevision)
+	rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg)
 	if err != nil {
 		return out, err
 	}
@@ -269,13 +321,14 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 	out.Enabled = cfg.Enabled
 	out.IntervalMS = cfg.IntervalMS
 	out.SlowThresholdMS = cfg.SlowThresholdMS
-	out.EffectiveIntervalMS = qualityEffectiveInterval(cfg.IntervalMS, budget.Scale)
 	out.AgentSupport = support.state
 	out.ICMPSupport = qualityICMPSupport(deviceInactive, support, in)
 	slotByName := map[string]protocol.QualityV4Slot{}
+	var slotIDs []string
 	anyHost := false
 	for _, row := range rows {
 		out.Slots = append(out.Slots, row.QualityV4Slot)
+		slotIDs = append(slotIDs, row.Slot)
 		slotByName[row.Slot] = row.QualityV4Slot
 		anyHost = anyHost || row.Host != ""
 	}
@@ -327,6 +380,8 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 	}
 	openRows.Close()
 
+	out.EffectiveIntervalMS = qualityEffectiveInterval(cfg.IntervalMS, budget.Scale, len(opens))
+
 	// Card-level state.
 	switch {
 	case deviceInactive:
@@ -347,14 +402,14 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 		out.State = protocol.QualityLaneUnset
 	case budget.Degraded:
 		out.State = "retention_degraded"
-	case budget.Scale > 1 && out.EffectiveIntervalMS > cfg.IntervalMS:
+	case out.EffectiveIntervalMS > cfg.IntervalMS:
 		out.State = "capacity_throttled"
 	default:
 		out.State = "ready"
 	}
 
 	candidates := []qualityConditionCandidate{}
-	for _, l := range qualityLanes() {
+	for _, l := range qualityLanesFor(slotIDs) {
 		slot := slotByName[l.Slot]
 		p := pointers[l.key()]
 		lane := protocol.QualityV4Lane{Slot: l.Slot, Family: l.Family, Protocol: l.Protocol, SlotRevision: strconv.FormatInt(p.revision, 10)}
@@ -377,6 +432,8 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 			lane.Status = protocol.QualityLaneStoragePressure
 		case !cfg.Enabled:
 			lane.Status = protocol.QualityLaneDisabled
+		case !protocol.QualitySlot(slot.Slot) && !in.caps.Objects:
+			lane.Status, lane.Condition = protocol.QualityLaneAgentUnavailable, protocol.QualitySupportUpgradeRequired
 		case slot.Host == "":
 			lane.Status = protocol.QualityLaneUnset
 		case !slot.SlotEnabled || !slot.Sub(l.Family, l.Protocol):

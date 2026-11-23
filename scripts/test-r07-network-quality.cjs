@@ -34,7 +34,7 @@ test('every committed Server response satisfies the page contract, and a damaged
     'eleven lanes': v => { v.lanes.pop(); },
     'unknown lane status': v => { v.lanes[0].status = 'weird'; },
     'port as string': v => { v.slots[0].port = '443'; },
-    'slot order': v => { v.slots.reverse(); },
+    'duplicate object ID': v => { v.slots[1].slot=v.slots[0].slot; },
   })) { const bad = clone(good); mutate(bad); assert.throws(() => C.adapt(bad), /契约/, what); }
 });
 
@@ -54,11 +54,11 @@ test('save payload carries exactly the Server fields; ports and hosts are normal
   const config = C.adapt(load('v4-saved-off')), draft = C.draftOf(config);
   draft.slots[2].host = '  Example.NET '; draft.slots[2].port = ' 8443 '; draft.slots[2].kind = 'custom'; draft.slots[2].region = 'a'; draft.slots[2].isp = 'b';
   const out = C.savePayload(draft, config.settings_revision);
-  assert.deepEqual(Object.keys(out), ['expected_revision', 'interval_ms', 'slow_threshold_ms', 'slots']);
+  assert.deepEqual(Object.keys(out), ['expected_revision', 'objects', 'interval_ms', 'slow_threshold_ms', 'slots']);
   assert.equal(out.expected_revision, '1'); assert.equal(out.slow_threshold_ms, 500);
   for (const bad of ['', '49', '3001', '12.5', 'abc', '1e3']) { draft.slow_threshold_ms = bad; assert.equal(C.thresholdHint(draft), 'invalid_threshold', bad); assert.throws(() => C.savePayload(draft, '1'), /门槛/); }
   draft.slow_threshold_ms = ' 800 '; assert.equal(C.savePayload(draft, '1').slow_threshold_ms, 800); draft.slow_threshold_ms = '500';
-  assert.deepEqual(Object.keys(out.slots[0]), ['slot', 'kind', 'region', 'isp', 'host', 'port', 'slot_enabled', 'ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']);
+  assert.deepEqual(Object.keys(out.slots[0]), ['slot', 'show_on_card', 'kind', 'region', 'isp', 'host', 'port', 'slot_enabled', 'ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']);
   assert.equal(out.slots[2].host, 'Example.NET'); assert.equal(out.slots[2].port, 8443);
   assert.equal(out.slots[1].port, 80); assert.equal(typeof out.slots[1].port, 'number');
   assert.throws(() => C.savePayload(draft, 1), /版本/);

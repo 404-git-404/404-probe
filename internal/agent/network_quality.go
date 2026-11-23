@@ -111,9 +111,22 @@ func (s *qualitySchedule) reconcile(c *protocol.QualityConfig, now time.Time, ra
 	if c != nil {
 		interval = time.Duration(c.IntervalMS) * time.Millisecond
 	}
-	for key, t := range wanted {
+	if c == nil {
+		return
+	}
+	for i, t := range c.Targets {
+		key := qualityLaneKey(t)
+		if _, ok := wanted[key]; !ok {
+			continue
+		}
 		if l, ok := s.lanes[key]; !ok {
-			s.lanes[key] = &qualityLane{target: t, semantics: c.Semantics, interval: interval, next: now.Add(qualityDelay(interval, random))}
+			delay := qualityDelay(interval, random)
+			if len(wanted) > 12 {
+				// Spread a newly authorized group through its first period. The established
+				// per-lane jitter takes over after that first probe.
+				delay = interval * time.Duration(i+1) / time.Duration(len(c.Targets))
+			}
+			s.lanes[key] = &qualityLane{target: t, semantics: c.Semantics, interval: interval, next: now.Add(delay)}
 		} else if interval != l.interval {
 			// A new frequency applies to a running lane without waiting out the old period: a shorter one
 			// pulls the next probe forward, a longer one takes effect after the one already scheduled.

@@ -13,6 +13,7 @@
   },
   "slots": [
     {
+      "show_on_card": true,
       "slot": "telecom",
       "kind": "builtin",
       "region": "",
@@ -26,6 +27,7 @@
       "ipv6_icmp": false
     },
     {
+      "show_on_card": true,
       "slot": "unicom",
       "kind": "builtin",
       "region": "",
@@ -39,6 +41,7 @@
       "ipv6_icmp": false
     },
     {
+      "show_on_card": true,
       "slot": "mobile",
       "kind": "builtin",
       "region": "",

@@ -21,12 +21,7 @@ type NetworkLine struct {
 }
 
 func (l NetworkLine) valid() bool {
-	for _, lane := range qualityLanes() {
-		if l.Slot == lane.Slot && l.Family == lane.Family && l.Protocol == lane.Protocol {
-			return true
-		}
-	}
-	return false
+	return protocol.QualityObjectID(l.Slot) && protocol.QualityFamily(l.Family) && protocol.QualityProtocol(l.Protocol)
 }
 
 type NetworkStats struct {
@@ -62,6 +57,7 @@ type NetworkHistory struct {
 	Stats        NetworkStats          `json:"stats"`
 	EveningP50   *float64              `json:"evening_p50_ms"`
 	Points       []NetworkPoint        `json:"points"`
+	LastChangeAt *int64                `json:"last_target_change_at"`
 	Changes      []NetworkTargetChange `json:"target_changes"`
 	Gaps         []protocol.QualityGap `json:"gaps"`
 }
@@ -224,9 +220,15 @@ func (s *Store) NetworkHistory(ctx context.Context, id string, line NetworkLine,
 		}
 		out.Points[i] = NetworkPoint{at, at + res, networkStats(bucket, line.Protocol)}
 	}
-	out.Changes, err = networkTargetChanges(ctx, tx, id, line, start, end)
+	changes, err := networkTargetChanges(ctx, tx, id, line, now.Add(-QualityHistoryRetention).UnixMilli(), now.UnixMilli()+1)
 	if err != nil {
 		return out, err
+	}
+	for _, change := range changes {
+		out.LastChangeAt = &change.At
+		if change.At >= start && change.At < end {
+			out.Changes = append(out.Changes, change)
+		}
 	}
 	return out, tx.Commit()
 }

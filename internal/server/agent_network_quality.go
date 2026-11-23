@@ -145,7 +145,11 @@ func (a *App) qualityReportResponse(r *http.Request, response protocol.ReportRes
 	if err == nil && config.Supported {
 		response.NetworkQuality = &config
 		wire, encodeErr := json.Marshal(response)
-		if encodeErr != nil || len(wire)+1 > protocol.QualityResponseLimit {
+		limit := protocol.QualityResponseLimit
+		if report.NetworkQualityV2 != nil && report.NetworkQualityV2.Objects {
+			limit += protocol.QualityConfigResponseLimit
+		}
+		if encodeErr != nil || len(wire)+1 > limit {
 			err = errQualityResponseBudget
 			response.NetworkQuality = nil
 		}

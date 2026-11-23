@@ -81,7 +81,7 @@
       finally{if(periodic){if(card.refreshing===token)card.refreshing=null;}else if(serial===card.configSerial)card.reading=false;card.refreshing=null;}
     }
     function targets(card) {
-      return C.slots.flatMap(slot=>['tcp','icmp'].map(protocol=>{
+      return C.cardSlots(card.config).flatMap(slot=>['tcp','icmp'].map(protocol=>{
         const actual=(card.config?.targets||[]).find(t=>t.slot===slot&&t.family===card.family&&t.protocol===protocol);
         return actual||{slot,family:card.family,protocol,status:'unavailable'};
       }));
@@ -182,7 +182,7 @@
       card.sub.title=`只看 TCP 线路（当前所选地址族）· 最近 1 小时，每格 3 分钟 · 慢 = 连接时间超过 ${threshold} ms · 检测间隔 ${interval/1000} 秒${interval>=240000?'；检测间隔较长，部分方块没有样本':''}`;
       const live=new Set();let position=card.content.firstElementChild;
       const selected=targets(card);
-      for(const key of C.slots) {
+      for(const key of C.cardSlots(card.config)) {
         live.add(key);let view=card.rows.get(key);
         if(!view){view=buildRow(card,key);card.rows.set(key,view);}
         view.tcp=selected.find(t=>t.slot===key&&t.protocol==='tcp');view.icmp=selected.find(t=>t.slot===key&&t.protocol==='icmp');
@@ -264,7 +264,7 @@
     const dirty=p=>C.isDirty(p.draft,p.baseDraft)||p.draftEnabled!==p.baseEnabled;
     const ispName=value=>C.isps.find(([key])=>key===value)?.[1]||value;
     const focusables=p=>[...p.node.querySelectorAll('button,input,select,summary')].filter(n=>!n.disabled&&!n.hidden&&(!n.closest||!n.closest('[hidden]'))&&!n.parentNode?.hidden);
-    function replaceDraft(p,draft,enabled){p.draft=C.clone(draft);p.baseDraft=C.clone(draft);p.baseEnabled=p.draftEnabled=enabled;p.labels=new Map(draft.slots.map(slot=>[slot.slot,{...slot}]));p.present=new Set(draft.slots.filter(slot=>slot.host||slot.slot_enabled).map(slot=>slot.slot));p.newSlots=new Set();}
+    function replaceDraft(p,draft,enabled){p.draft=C.clone(draft);p.baseDraft=C.clone(draft);p.baseEnabled=p.draftEnabled=enabled;p.labels=new Map(draft.slots.map(slot=>[slot.slot,{...slot}]));p.present=new Set(draft.slots.filter(slot=>slot.host||slot.slot_enabled||slot.slot.startsWith('obj-')).map(slot=>slot.slot));p.newSlots=new Set();}
     function openPanel(card,trigger) {
       if(panel&&!closePanel(false))return;
       const config=card.config,draft=config?C.draftOf(config):{interval_ms:30000,slow_threshold_ms:String(C.THRESHOLD_DEFAULT),slots:C.slots.map(slot=>C.slotDraft({slot,kind:'builtin',region:'',isp:slot,host:'',port:0,slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false}))};
@@ -297,14 +297,45 @@
       if(original?.kind==='builtin'&&region===original.region&&isp===ispName(original.isp)){row.kind='builtin';row.region=original.region;row.isp=original.isp;}
       else{row.kind='custom';row.region=region;row.isp=isp;}changed();
     }
-    function addSlot(p){const slot=C.slots.find(key=>!p.present.has(key));if(!slot)return;const row=draftOf(slot);Object.assign(row,{kind:'custom',region:'',isp:'',host:'',port:'443',slot_enabled:true,ipv4_tcp:true,ipv4_icmp:true,ipv6_tcp:true,ipv6_icmp:true});p.present.add(slot);p.newSlots.add(slot);p.labels.set(slot,{...row});changed();p.slots.get(slot).regionText.focus({preventScroll:true});}
-    function removeSlot(p,slot){Object.assign(draftOf(slot),{kind:'builtin',region:'',isp:slot,host:'',port:'',slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false});p.present.delete(slot);p.newSlots.delete(slot);changed();}
+    function newObjectKey(rows) {
+      for(let i=0;i<C.MAX_OBJECTS;i++) {
+        const key='new-'+i;
+        if(!rows.some(row=>row.slot===key))return key;
+      }
+    }
+    function addSlot(p){
+      const rows=p.draft.slots,blank=rows.find(row=>!p.present.has(row.slot));
+      const row=blank||{slot:newObjectKey(rows),show_on_card:false};
+      if(!blank){if(!p.draft.objects||rows.length>=C.MAX_OBJECTS)return;rows.push(row);}
+      const slot=row.slot;
+      Object.assign(row,{kind:'custom',region:'',isp:'',host:'',port:'443',slot_enabled:true,ipv4_tcp:true,ipv4_icmp:true,ipv6_tcp:true,ipv6_icmp:true});
+      p.present.add(slot);p.newSlots.add(slot);p.labels.set(slot,{...row});changed();p.slots.get(slot).regionText.focus({preventScroll:true});
+    }
+    function removeSlot(p,slot){
+      if(p.draft.objects)p.draft.slots=p.draft.slots.filter(row=>row.slot!==slot);
+      else Object.assign(draftOf(slot),{kind:'builtin',region:'',isp:slot,host:'',port:'',slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false});
+      p.present.delete(slot);p.newSlots.delete(slot);changed();
+    }
+    function moveSlot(p,slot,delta){
+      const rows=p.draft.slots,from=rows.findIndex(row=>row.slot===slot);
+      let to=from+delta;
+      while(to>=0&&to<rows.length&&!p.present.has(rows[to].slot))to+=delta;
+      if(to<0||to>=rows.length)return;
+      rows.splice(to,0,rows.splice(from,1)[0]);changed();
+      p.slots.get(slot)[delta<0?'up':'down'].focus();
+    }
     function openCopy(p){
       if(p.copyDialog?.open||p.saving||p.toggling)return;const d=el('dialog','dialog-shell dialog-small'),body=el('div','shell-content'),choose=el('select'),status=el('p','nq-muted'),actions=el('div','shell-actions');d.setAttribute('aria-label','从其他设备复制');choose.setAttribute('aria-label','来源设备');
       for(const card of cards.values())if(card.id!==p.card.id&&!card.agent.revoked){const option=el('option','',card.agent.name||card.agent.state?.hostname||'未命名设备');option.value=card.id;choose.append(option);}
       let copying=false;const cancel=button('取消',()=>d.close()),apply=button('复制到当前草稿',async()=>{const id=choose.value;if(!id||!cards.has(id))return;copying=true;apply.disabled=true;status.textContent='正在读取来源设备…';
         try{const raw=await read(JSON.stringify(['copy-config',id]),p.copyOwner,path(id)+'v4/config'),source=C.adapt(raw);if(panel!==p||!d.open||p.copyDialog!==d)return;if(!cards.has(id)||raw.agent_id!==id)throw Error('来源设备已不可用');
-          const copied=C.draftOf(source);p.draft={interval_ms:copied.interval_ms,slow_threshold_ms:copied.slow_threshold_ms,slots:copied.slots.map((row,i)=>({...row,slot:C.slots[i]}))};p.labels=new Map(p.draft.slots.map(row=>[row.slot,{...row}]));p.present=new Set(p.draft.slots.filter(row=>row.host||row.slot_enabled).map(row=>row.slot));p.newSlots=new Set();p.guard=null;p.errors={};p.message='已复制到当前草稿，保存后生效';d.close();renderPanel();
+          const copied=C.draftOf(source);const destination=p.draft.slots, objects=p.draft.objects, reserved=destination.slice();
+          const copiedSlots=copied.slots.slice(0,objects?C.MAX_OBJECTS:C.MAX_CARD_OBJECTS).map((row,i)=>{
+            const slot=objects?(destination[i]?.slot||newObjectKey(reserved)):C.slots[i];
+            if(!destination[i]&&objects)reserved.push({slot});
+            return {...row,slot};
+          });
+          p.draft={...copied,objects,slots:copiedSlots};p.labels=new Map(p.draft.slots.map(row=>[row.slot,{...row}]));p.present=new Set(p.draft.slots.filter(row=>row.host||row.slot_enabled||!C.slots.includes(row.slot)).map(row=>row.slot));p.newSlots=new Set();p.guard=null;p.errors={};p.message='已复制到当前草稿，保存后生效';d.close();renderPanel();
         }catch(error){if(panel===p&&d.open)status.textContent=error.message||'无法读取来源设备';}finally{copying=false;if(d.open)apply.disabled=!choose.value;}
       },'primary-action');apply.disabled=!choose.value;choose.addEventListener('change',()=>{apply.disabled=!choose.value;});status.textContent=choose.children.length?'只复制间隔、慢阈值和线路内容，会替换当前的线路设置；保存后才生效。':'没有其他可复制的设备。';body.append(choose,status);actions.append(cancel,apply);d.append(body,actions);doc.body.append(d);p.copyDialog=d;p.copyOwner={};
       const shell=root.DialogShell?.attach(d,{title:'从其他设备复制',size:'small',subtitle:p.card.agent.name||'',busy:()=>copying});d.addEventListener('close',()=>{queue.release(p.copyOwner);if(p.copyDialog===d)p.copyDialog=null;d.remove();});if(shell)shell.open(p.copyButton);else d.showModal();choose.focus({preventScroll:true});
@@ -320,24 +351,50 @@
       p.capabilityNote=el('p','nq-capability-note');body.append(p.capabilityNote);
       const columns=el('div','nq-columns');for(const label of ['地区','运营商','目标地址','TCP 端口','测什么（默认全测）',''])columns.append(el('span','',label));body.append(columns);p.slots=new Map();
       const suggestions=el('datalist');suggestions.id='nq-isp-hints';for(const label of ['电信','联通','移动']){const option=el('option');option.value=label;suggestions.append(option);}body.append(suggestions);
-      for(const slot of C.slots){const set=el('fieldset','nq-slot');set.dataset.nqSlot=slot;const regionText=el('input'),ispText=el('input'),hostInput=el('input'),portInput=el('input'),errors=el('small','nq-field-error'),checks=new Map(),subNotes=new Map();errors.setAttribute('role','alert');
-        for(const [input,key,label,max]of [[regionText,'region-text','地区',64],[ispText,'isp-text','运营商',64],[hostInput,'host','目标地址',253],[portInput,'port','TCP 端口',5]]){input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',label);input.maxLength=max;input.autocomplete='off';}ispText.setAttribute('list','nq-isp-hints');portInput.inputMode='numeric';regionText.addEventListener('input',()=>editLabels(p,slot));ispText.addEventListener('input',()=>editLabels(p,slot));
-        hostInput.addEventListener('input',()=>{const row=draftOf(slot);row.host=hostInput.value;if(p.newSlots.has(slot)){const family=C.literalFamily(row.host);for(const [key,,fam]of C.subItems)row[key]=!family||family===fam;}p.guard=null;p.message='';delete p.errors[slot];renderPanel();});portInput.addEventListener('input',()=>{draftOf(slot).port=portInput.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
-        const subs=el('div','nq-subs');for(const [key,,family,protocol]of C.subItems){const label=el('label','nq-sub'),input=el('input');input.type='checkbox';input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase());input.addEventListener('change',()=>{draftOf(slot)[key]=input.checked;p.newSlots.delete(slot);changed();});label.append(input,el('span','',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase()));subs.append(label);checks.set(key,input);subNotes.set(key,label);}
-        const remove=button('×',()=>removeSlot(p,slot),'nq-remove');remove.setAttribute('aria-label','删除线路 '+(C.slots.indexOf(slot)+1));remove.dataset.nqField=slot+'-remove';const resume=button('启用这条线路',()=>{draftOf(slot).slot_enabled=true;changed();},'nq-link');resume.dataset.nqField=slot+'-resume';set.append(regionText,ispText,hostInput,portInput,subs,remove,errors,resume);body.append(set);p.slots.set(slot,{set,regionText,ispText,hostInput,portInput,checks,subNotes,errors,resume});}
+      p.rows=el('div','nq-object-rows');body.append(p.rows);
+      p.cardLimit=el('p','nq-muted');p.cardLimit.setAttribute('role','status');body.append(p.cardLimit);
       p.add=button('+ 添加线路',()=>addSlot(p),'nq-add');p.add.dataset.nqField='add';body.append(p.add,el('p','nq-footnote','亮着的就会测，点一下关掉。这台机器没有 IPv6 时自动跳过 v6；容器里测不了 ICMP 时会自动变灰。'),el('p','nq-footnote','只检测你有权检测的目标。地区和运营商是你自己的标注，404-probe 不核对。'));
       p.messageNode=el('p','nq-status');p.messageNode.setAttribute('role','status');p.saveBottom=button('保存',()=>savePanel(),'nq-save');p.saveBottom.dataset.nqField='save-bottom';p.copyButton=button('从其他设备复制…',()=>openCopy(p),'nq-link');p.copyButton.dataset.nqField='copy';const cancel=button('取消',()=>{if(!p.saving&&!p.toggling)closePanel(true);},'nq-link');cancel.dataset.nqField='cancel';const foot=el('div','nq-dialog-foot');foot.append(p.copyButton,cancel,p.saveBottom);p.box.tabIndex=-1;p.box.append(header,p.guardEnable,p.guardConflict,body,p.messageNode,foot);n.append(p.box);
       let pressed=false;const outside=e=>{if(e.target!==n)return false;const r=n.getBoundingClientRect();return e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom;};n.addEventListener('pointerdown',e=>{pressed=e.button===0&&outside(e);});n.addEventListener('pointercancel',()=>{pressed=false;});n.addEventListener('click',e=>{const dismiss=pressed&&outside(e);pressed=false;if(dismiss&&!root.DialogShell)closePanel();});
     }
+    function buildObjectRow(p,slot){
+      const set=el('fieldset','nq-slot');set.dataset.nqSlot=slot;const regionText=el('input'),ispText=el('input'),hostInput=el('input'),portInput=el('input'),errors=el('small','nq-field-error'),checks=new Map(),subNotes=new Map();errors.setAttribute('role','alert');
+        for(const [input,key,label,max]of [[regionText,'region-text','地区',64],[ispText,'isp-text','运营商',64],[hostInput,'host','目标地址',253],[portInput,'port','TCP 端口',5]]){input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',label);input.maxLength=max;input.autocomplete='off';}ispText.setAttribute('list','nq-isp-hints');portInput.inputMode='numeric';regionText.addEventListener('input',()=>editLabels(p,slot));ispText.addEventListener('input',()=>editLabels(p,slot));
+        hostInput.addEventListener('input',()=>{const row=draftOf(slot);row.host=hostInput.value;if(p.newSlots.has(slot)){const family=C.literalFamily(row.host);for(const [key,,fam]of C.subItems)row[key]=!family||family===fam;}p.guard=null;p.message='';delete p.errors[slot];renderPanel();});portInput.addEventListener('input',()=>{draftOf(slot).port=portInput.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
+        const subs=el('div','nq-subs');for(const [key,,family,protocol]of C.subItems){const label=el('label','nq-sub'),input=el('input');input.type='checkbox';input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase());input.addEventListener('change',()=>{draftOf(slot)[key]=input.checked;p.newSlots.delete(slot);changed();});label.append(input,el('span','',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase()));subs.append(label);checks.set(key,input);subNotes.set(key,label);}
+        const remove=button('×',()=>removeSlot(p,slot),'nq-remove');remove.setAttribute('aria-label','删除监测对象');remove.dataset.nqField=slot+'-remove';const resume=button('启用这条线路',()=>{draftOf(slot).slot_enabled=true;changed();},'nq-link');resume.dataset.nqField=slot+'-resume';const display=el('input'),displayLabel=el('label','nq-object-display'),actions=el('div','nq-object-actions');
+        display.type='checkbox';display.dataset.nqField=slot+'-show-on-card';display.addEventListener('change',()=>{draftOf(slot).show_on_card=display.checked;changed();});
+        displayLabel.append(display,el('span','','在卡片显示'));
+        const up=button('↑',()=>moveSlot(p,slot,-1)),down=button('↓',()=>moveSlot(p,slot,1));
+        up.setAttribute('aria-label','上移监测对象');down.setAttribute('aria-label','下移监测对象');
+        actions.append(displayLabel,up,down);
+        set.append(regionText,ispText,hostInput,portInput,subs,remove,actions,errors,resume);
+        return {set,regionText,ispText,hostInput,portInput,checks,subNotes,errors,resume,actions,display,up,down};
+    }
+
     function renderPanel(){if(!panel)return;const p=panel;if(!p.box)buildPanel(p);const config=p.config||p.card.config,locked=p.saving||p.toggling,value=(node,next)=>{if(doc.activeElement!==node&&node.value!==next)node.value=next;};
       p.guardEnable.hidden=p.guard!=='enable';p.guardConflict.hidden=p.guard!=='conflict';p.loadLatest.disabled=!p.latest||locked;p.enabled.checked=p.draftEnabled;p.enabled.disabled=locked||p.outdated||!config||!config.supported&&!config.enabled;p.interval.disabled=p.threshold.disabled=locked;
       p.masterNote.textContent=!config?'正在读取设置…':!config.supported?C.cardNotice(config)||'Agent 尚未支持':'';p.masterNote.hidden=!p.masterNote.textContent;value(p.interval,String(p.draft.interval_ms));value(p.threshold,String(p.draft.slow_threshold_ms));p.thresholdError.textContent=(C.errorText[p.errors.threshold||C.thresholdHint(p.draft)]||'');p.thresholdError.hidden=!p.thresholdError.textContent;p.frequencyNote.textContent=config&&config.effective_interval_ms!==config.interval_ms?'实际每隔 '+config.effective_interval_ms/1000+' 秒检测一次（当前负载限制）':'';p.frequencyNote.hidden=!p.frequencyNote.textContent;
       const noV6=config&&[...config.lanes.values()].some(l=>l.status==='no_ipv6'),icmpOff=new Set(['ipv4','ipv6'].filter(f=>config?.icmpSupport?.[f]==='unsupported'));
       p.capabilityNote.textContent=[noV6?'这台机器没有 IPv6，v6 会自动跳过':'',icmpOff.size?'这台机器不支持 '+[...icmpOff].map(f=>(f==='ipv4'?'v4':'v6')+' ICMP').join(' / ')+'，相关开关已置灰，已勾选的仍可取消':''].filter(Boolean).join('；');p.capabilityNote.hidden=!p.capabilityNote.textContent;
-      for(const row of p.draft.slots){const v=p.slots.get(row.slot);v.set.hidden=!p.present.has(row.slot);v.set.disabled=locked;value(v.regionText,row.region);value(v.ispText,row.kind==='builtin'?ispName(row.isp):row.isp);v.regionText.title=v.regionText.value;v.ispText.title=v.ispText.value;value(v.hostInput,row.host);value(v.portInput,row.port);const hints=['region','isp','host','port'].map(field=>fieldError(p,row.slot,field));v.errors.textContent=[...new Set(hints.filter(Boolean))].join(' · ');v.errors.hidden=!v.errors.textContent;v.resume.hidden=row.slot_enabled||!row.host;
+      const slots=p.draft.slots, active=slots.filter(row=>p.present.has(row.slot)), shown=slots.filter(row=>row.show_on_card).length;
+      const current=new Set(slots.map(row=>row.slot));
+      for(const [slot,v] of p.slots)if(!current.has(slot)){v.set.remove();p.slots.delete(slot);}
+      let cursor=p.rows.firstChild;
+      for(const row of slots){
+        if(!p.slots.has(row.slot))p.slots.set(row.slot,buildObjectRow(p,row.slot));
+        const v=p.slots.get(row.slot);
+        if(v.set!==cursor)p.rows.insertBefore(v.set,cursor);
+        cursor=v.set.nextSibling;
+        v.actions.hidden=!p.draft.objects;v.display.checked=!!row.show_on_card;
+        v.display.disabled=locked||!row.show_on_card&&shown>=C.MAX_CARD_OBJECTS;
+        v.up.disabled=locked||active[0]===row;v.down.disabled=locked||active.at(-1)===row;
+        v.set.hidden=!p.present.has(row.slot);v.set.disabled=locked;value(v.regionText,row.region);value(v.ispText,row.kind==='builtin'?ispName(row.isp):row.isp);v.regionText.title=v.regionText.value;v.ispText.title=v.ispText.value;value(v.hostInput,row.host);value(v.portInput,row.port);const hints=['region','isp','host','port'].map(field=>fieldError(p,row.slot,field));v.errors.textContent=[...new Set(hints.filter(Boolean))].join(' · ');v.errors.hidden=!v.errors.textContent;v.resume.hidden=row.slot_enabled||!row.host;
         const literal=C.disabledSubs(row.host);for(const [key,,family,protocol]of C.subItems){const input=v.checks.get(key),unsupported=protocol==='icmp'&&icmpOff.has(family);input.checked=!!row[key];input.disabled=locked||(literal[key]||unsupported)&&!row[key];input.title=literal[key]?'地址属于另一个地址族，请取消不匹配的勾选':unsupported?'当前环境不支持 ICMP；已选项仍可取消':'';v.subNotes.get(key).dataset.unavailable=String(unsupported);}
       }
-      const remaining=C.slots.length-p.present.size;p.add.textContent='+ 添加线路（还可加 '+remaining+' 条）';p.add.disabled=!remaining||locked;p.add.hidden=!remaining;p.copyButton.disabled=locked;p.messageNode.textContent=p.message||(p.outdated?OUTDATED:dirty(p)?'有未保存的修改':'');p.messageNode.hidden=!p.messageNode.textContent;p.saveBottom.textContent=p.saving?'保存中…':'保存';p.saveBottom.disabled=locked||p.outdated||!p.base||!csrf();
+      p.cardLimit.textContent=p.draft.objects?(shown>=C.MAX_CARD_OBJECTS?'卡片已选满 3 个，取消勾选后可换选。':'卡片显示 '+shown+' / 3 个对象'):'';
+      p.cardLimit.hidden=!p.cardLimit.textContent;
+      const remaining=(p.draft.objects?C.MAX_OBJECTS:C.MAX_CARD_OBJECTS)-p.present.size;p.add.textContent='+ 添加线路（还可加 '+remaining+' 条）';p.add.disabled=!remaining||locked;p.add.hidden=!remaining;p.copyButton.disabled=locked;p.messageNode.textContent=p.message||(p.outdated?OUTDATED:dirty(p)?'有未保存的修改':'');p.messageNode.hidden=!p.messageNode.textContent;p.saveBottom.textContent=p.saving?'保存中…':'保存';p.saveBottom.disabled=locked||p.outdated||!p.base||!csrf();
     }
     async function submit(p,suffix,payload){const card=p.card;card.configSerial++;card.reading=false;card.refreshing=null;queue.release(card.configOwner);queue.release(card.panelReadOwner);const raw=await write(card,suffix,payload);return {raw,config:C.adapt(raw)};}
     function failed(p,error){if(p.card.dead||panel!==p)return;p.saving=false;p.toggling=false;

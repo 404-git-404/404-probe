@@ -16,7 +16,7 @@ const (
 	qualityV4BodyLimit    = 16384
 	qualityDNSCheckBudget = 2 * time.Second
 	qualityDNSCheckSlots  = 4
-	qualityDNSMaxNames    = 3
+	qualityDNSMaxNames    = protocol.QualityMaxObjects
 )
 
 // qualityLookupFunc is the Server's own resolver; tests replace it with a fake.
@@ -94,23 +94,30 @@ func (a *App) handleQualityV4Config(w http.ResponseWriter, r *http.Request) {
 	if t := request.SlowThresholdMS; t != nil && (!t.Valid || !protocol.QualitySlowThresholdValid(t.Value)) {
 		errs = append(errs, protocol.QualityFieldError{Field: "slow_threshold_ms", Code: protocol.QualityErrInvalidThreshold})
 	}
-	if len(request.Slots) != 3 {
+	if !request.ValidSlotCount() {
 		errs = append(errs, protocol.QualityFieldError{Field: "slots", Code: protocol.QualityErrInvalidRequest})
 	}
 	seen := map[string]bool{}
 	literal := map[string]bool{}
+	shown := 0
 	for i, slot := range request.Slots {
 		normalized, slotErrs := protocol.NormalizeQualitySlot(slot)
 		errs = append(errs, slotErrs...)
-		if seen[slot.Slot] {
+		if seen[slot.Slot] || (!request.Objects && !protocol.QualitySlot(slot.Slot)) {
 			errs = append(errs, protocol.QualityFieldError{Slot: slot.Slot, Field: "slot", Code: protocol.QualityErrInvalidRequest})
 		}
 		seen[slot.Slot] = true
+		if slot.ShowOnCard {
+			shown++
+		}
 		if len(slotErrs) == 0 {
 			_, lit, _ := protocol.NormalizeQualityHost(slot.Host)
 			literal[normalized.Host] = lit != ""
 			request.Slots[i] = normalized
 		}
+	}
+	if request.Objects && shown > protocol.QualityMaxCardObjects {
+		errs = append(errs, protocol.QualityFieldError{Field: "show_on_card", Code: protocol.QualityErrInvalidRequest})
 	}
 	if len(errs) != 0 {
 		writeQualityFieldErrors(w, errs)
@@ -199,8 +206,8 @@ func (a *App) checkQualityNames(ctx context.Context, names []string) ([]string, 
 	if len(names) > qualityDNSMaxNames {
 		return nil, errQualityDNSBusy
 	}
-	// The limit counts saves (one ticket per request, at most three names, two lookups each), not
-	// single lookups: at most 4 x 3 x 2 lookups can run at once.
+	// The limit counts saves (one ticket per request, at most eight names, two lookups each), not
+	// single lookups: at most 4 x 8 x 2 lookups can run at once.
 	select {
 	case a.qualityDNSSlots <- struct{}{}:
 		defer func() { <-a.qualityDNSSlots }()

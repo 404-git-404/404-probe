@@ -218,7 +218,7 @@ func TestV4EffectiveIntervalNeverLowersTheUsersChoice(t *testing.T) {
 		{30000, 1, 30000}, {120000, 1, 120000}, {300000, 1, 300000},
 		{30000, 2, 60000}, {120000, 2, 120000}, {60000, 4, 120000}, {300000, 10, 300000}, {30000, 10, 300000}, {90000, 0, 90000},
 	} {
-		if got := qualityEffectiveInterval(tc.user, tc.scale); got != tc.want {
+		if got := qualityEffectiveInterval(tc.user, tc.scale, 12); got != tc.want {
 			t.Errorf("user=%d scale=%d got=%d want=%d", tc.user, tc.scale, got, tc.want)
 		}
 	}

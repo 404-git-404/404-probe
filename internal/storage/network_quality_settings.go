@@ -29,9 +29,9 @@ func (l qualityLane) key() string { return l.Slot + "/" + l.Family + "/" + l.Pro
 
 var qualityLaneShapes = [][2]string{{"ipv4", "tcp"}, {"ipv4", "icmp"}, {"ipv6", "tcp"}, {"ipv6", "icmp"}}
 
-func qualityLanes() []qualityLane {
-	lanes := make([]qualityLane, 0, 12)
-	for _, slot := range protocol.QualitySlotOrder() {
+func qualityLanesFor(slots []string) []qualityLane {
+	lanes := make([]qualityLane, 0, len(slots)*len(qualityLaneShapes))
+	for _, slot := range slots {
 		for _, shape := range qualityLaneShapes {
 			lanes = append(lanes, qualityLane{slot, shape[0], shape[1]})
 		}
@@ -40,14 +40,15 @@ func qualityLanes() []qualityLane {
 }
 
 type qualityConfigRow struct {
-	exists           bool
-	Revision         int64
-	SettingsRevision int64
-	Enabled          bool
-	IntervalMS       int
-	SlowThresholdMS  int
-	Granted          bool
-	Snapshot         *protocol.QualityCapabilities
+	exists            bool
+	ObjectsConfigured bool
+	Revision          int64
+	SettingsRevision  int64
+	Enabled           bool
+	IntervalMS        int
+	SlowThresholdMS   int
+	Granted           bool
+	Snapshot          *protocol.QualityCapabilities
 }
 
 // qualitySlotRow is a stored slot with the settings revision of its last change.
@@ -57,14 +58,14 @@ type qualitySlotRow struct {
 }
 
 func qualityDefaultSlot(slot string) protocol.QualityV4Slot {
-	return protocol.QualityV4Slot{Slot: slot, Kind: "builtin", ISP: protocol.QualityISPForSlot(slot)}
+	return protocol.QualityV4Slot{Slot: slot, ShowOnCard: true, Kind: "builtin", ISP: protocol.QualityISPForSlot(slot)}
 }
 
 func qualityLoadConfigTx(ctx context.Context, tx *sql.Tx, id string) (qualityConfigRow, error) {
 	cfg := qualityConfigRow{IntervalMS: protocol.QualityMinIntervalMS, SlowThresholdMS: protocol.QualitySlowThresholdDefaultMS}
 	var snapshot sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT revision,settings_revision,enabled,interval_ms,slow_threshold_ms,targets_granted,capability_snapshot FROM quality_config WHERE agent_id=?`, id).
-		Scan(&cfg.Revision, &cfg.SettingsRevision, &cfg.Enabled, &cfg.IntervalMS, &cfg.SlowThresholdMS, &cfg.Granted, &snapshot)
+	err := tx.QueryRowContext(ctx, `SELECT revision,settings_revision,enabled,interval_ms,slow_threshold_ms,targets_granted,capability_snapshot,objects_configured FROM quality_config WHERE agent_id=?`, id).
+		Scan(&cfg.Revision, &cfg.SettingsRevision, &cfg.Enabled, &cfg.IntervalMS, &cfg.SlowThresholdMS, &cfg.Granted, &snapshot, &cfg.ObjectsConfigured)
 	if errors.Is(err, sql.ErrNoRows) {
 		return cfg, nil
 	}
@@ -81,31 +82,41 @@ func qualityLoadConfigTx(ctx context.Context, tx *sql.Tx, id string) (qualityCon
 	return cfg, nil
 }
 
-func qualityLoadSlotsTx(ctx context.Context, tx *sql.Tx, id string, fallbackRevision int64) ([3]qualitySlotRow, error) {
-	var out [3]qualitySlotRow
-	order := protocol.QualitySlotOrder()
-	for i, slot := range order {
-		out[i] = qualitySlotRow{QualityV4Slot: qualityDefaultSlot(slot), UpdatedRevision: fallbackRevision}
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision FROM quality_slot_settings WHERE agent_id=?`, id)
+func qualityLoadSlotsTx(ctx context.Context, tx *sql.Tx, id string, cfg qualityConfigRow) ([]qualitySlotRow, error) {
+	out := []qualitySlotRow{}
+	rows, err := tx.QueryContext(ctx, `SELECT slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,show_on_card FROM quality_slot_settings WHERE agent_id=?
+		ORDER BY CASE WHEN position>=0 THEN position WHEN slot='telecom' THEN 0 WHEN slot='unicom' THEN 1 ELSE 2 END,slot`, id)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var r qualitySlotRow
 		var port sql.NullInt64
-		if err := rows.Scan(&r.Slot, &r.Kind, &r.Region, &r.ISP, &r.Host, &port, &r.SlotEnabled, &r.IPv4TCP, &r.IPv4ICMP, &r.IPv6TCP, &r.IPv6ICMP, &r.UpdatedRevision); err != nil {
-			return out, err
+		if err := rows.Scan(&r.Slot, &r.Kind, &r.Region, &r.ISP, &r.Host, &port, &r.SlotEnabled, &r.IPv4TCP, &r.IPv4ICMP, &r.IPv6TCP, &r.IPv6ICMP, &r.UpdatedRevision, &r.ShowOnCard); err != nil {
+			return nil, err
 		}
 		r.Port = int(port.Int64)
-		for i, slot := range order {
-			if slot == r.Slot {
-				out[i] = r
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !cfg.ObjectsConfigured {
+		byID := make(map[string]qualitySlotRow, len(out))
+		for _, r := range out {
+			byID[r.Slot] = r
+		}
+		out = out[:0]
+		for _, id := range protocol.QualitySlotOrder() {
+			r, ok := byID[id]
+			if !ok {
+				r = qualitySlotRow{QualityV4Slot: qualityDefaultSlot(id), UpdatedRevision: cfg.SettingsRevision}
 			}
+			out = append(out, r)
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // qualityIdentity is the address identity of a target (design 2.3). Region, ISP and the slot type are
@@ -172,7 +183,7 @@ func qualityHostLiteral(host string) string {
 // qualityLaneActive is the generation condition of design 2.1 without the per-request ones
 // (storage pressure is applied when the configuration is read).
 func qualityLaneActive(s protocol.QualityV4Slot, l qualityLane, enabled bool, in qualityAuthInputs) bool {
-	if !enabled || !in.granted || in.caps == nil || in.excluded != "" || s.Host == "" || !s.SlotEnabled || !s.Sub(l.Family, l.Protocol) {
+	if !enabled || !in.granted || in.caps == nil || (!protocol.QualitySlot(s.Slot) && !in.caps.Objects) || in.excluded != "" || s.Host == "" || !s.SlotEnabled || !s.Sub(l.Family, l.Protocol) {
 		return false
 	}
 	if !qualityLaneSupported(in.caps, l.Family, l.Protocol) {
@@ -190,8 +201,9 @@ type qualityProposal struct {
 	IntervalMS int
 	// SlowThresholdMS is a setting, not a measurement: it changes the settings revision only. Zero means
 	// "keep the stored value", so a proposal built without it can never reset the threshold.
-	SlowThresholdMS int
-	Slots           [3]protocol.QualityV4Slot
+	SlowThresholdMS   int
+	Slots             []protocol.QualityV4Slot
+	ObjectsConfigured bool
 }
 
 func qualityMeasurementSame(a, b protocol.QualityV4Slot) bool {
@@ -224,16 +236,18 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 	if err != nil {
 		return result, err
 	}
-	rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg.SettingsRevision)
+	rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg)
 	if err != nil {
 		return result, err
 	}
-	next := qualityProposal{Enabled: cfg.Enabled, IntervalMS: cfg.IntervalMS, SlowThresholdMS: cfg.SlowThresholdMS}
-	for i := range rows {
-		next.Slots[i] = rows[i].QualityV4Slot
+	next := qualityProposal{Enabled: cfg.Enabled, IntervalMS: cfg.IntervalMS, SlowThresholdMS: cfg.SlowThresholdMS, ObjectsConfigured: cfg.ObjectsConfigured}
+	previous := make(map[string]qualitySlotRow, len(rows))
+	for _, row := range rows {
+		next.Slots = append(next.Slots, row.QualityV4Slot)
+		previous[row.Slot] = row
 	}
 	var settingsChanged, measurementChanged bool
-	slotChanged := [3]bool{}
+	slotChanged := map[string]bool{}
 	if proposal != nil {
 		if !protocol.QualityIntervalValid(proposal.IntervalMS) {
 			return result, ErrQualityInvalid
@@ -245,22 +259,17 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 		if !protocol.QualitySlowThresholdValid(next.SlowThresholdMS) {
 			return result, ErrQualityInvalid
 		}
-		if next.Enabled != cfg.Enabled || next.IntervalMS != cfg.IntervalMS {
-			settingsChanged, measurementChanged = true, true
-		}
-		if next.SlowThresholdMS != cfg.SlowThresholdMS {
-			settingsChanged = true // the threshold only changes how stored samples are classified
-		}
-		for i := range rows {
-			if next.Slots[i].Slot != rows[i].Slot {
-				return result, ErrQualityInvalid
+		measurementChanged = next.Enabled != cfg.Enabled || next.IntervalMS != cfg.IntervalMS
+		settingsChanged = measurementChanged || next.SlowThresholdMS != cfg.SlowThresholdMS || next.ObjectsConfigured != cfg.ObjectsConfigured || len(next.Slots) != len(rows)
+		for i, slot := range next.Slots {
+			old := previous[slot.Slot].QualityV4Slot
+			if !qualityMeasurementSame(slot, old) {
+				measurementChanged, slotChanged[slot.Slot] = true, true
 			}
-			if !qualityMeasurementSame(next.Slots[i], rows[i].QualityV4Slot) {
-				measurementChanged, settingsChanged, slotChanged[i] = true, true, true
+			if !qualityLabelSame(slot, old) {
+				slotChanged[slot.Slot] = true
 			}
-			if !qualityLabelSame(next.Slots[i], rows[i].QualityV4Slot) {
-				settingsChanged, slotChanged[i] = true, true
-			}
+			settingsChanged = settingsChanged || slotChanged[slot.Slot] || slot.ShowOnCard != old.ShowOnCard || i >= len(rows) || rows[i].Slot != slot.Slot
 		}
 	}
 	in, err := qualityAuthTx(ctx, tx, id, cfg)
@@ -269,15 +278,23 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 	}
 
 	// Desired and current authorization descriptors (slot, family, protocol, target identity).
-	lanes := qualityLanes()
-	slotIndex := map[string]int{}
-	for i, slot := range protocol.QualitySlotOrder() {
-		slotIndex[slot] = i
+	slotIDs := make([]string, 0, len(rows)+len(next.Slots))
+	nextByID := make(map[string]protocol.QualityV4Slot, len(next.Slots))
+	for _, slot := range next.Slots {
+		slotIDs = append(slotIDs, slot.Slot)
+		nextByID[slot.Slot] = slot
 	}
+	for _, old := range rows {
+		if _, present := nextByID[old.Slot]; !present {
+			slotIDs = append(slotIDs, old.Slot)
+			measurementChanged = measurementChanged || !qualityMeasurementSame(old.QualityV4Slot, protocol.QualityV4Slot{})
+		}
+	}
+	lanes := qualityLanesFor(slotIDs)
 	desired := map[string]string{}
 	desiredIdentity := map[string]string{}
 	for _, l := range lanes {
-		s := next.Slots[slotIndex[l.Slot]]
+		s := nextByID[l.Slot]
 		if s.Host != "" {
 			desiredIdentity[l.key()] = qualityIdentity(id, l, s.Host, s.Port)
 		}
@@ -352,7 +369,7 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 	}
 
 	for _, l := range lanes {
-		s := next.Slots[slotIndex[l.Slot]]
+		s := nextByID[l.Slot]
 		wantIdentity := desiredIdentity[l.key()]
 		cur := current[l.key()]
 		pointerChanged := wantIdentity != cur.identity || (wantIdentity == "" && cur.target != "")
@@ -422,26 +439,36 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 	}
 
 	if proposal != nil {
+		for _, old := range rows {
+			if _, present := nextByID[old.Slot]; !present {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM quality_slot_settings WHERE agent_id=? AND slot=?`, id, old.Slot); err != nil {
+					return result, err
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE quality_alert_history SET end_at=MAX(start_at,?) WHERE agent_id=? AND slot=? AND end_at IS NULL`, now.UnixMilli(), id, old.Slot); err != nil {
+					return result, err
+				}
+			}
+		}
 		for i, slot := range next.Slots {
-			updated := rows[i].UpdatedRevision
-			if slotChanged[i] || !cfg.exists {
+			updated := previous[slot.Slot].UpdatedRevision
+			if slotChanged[slot.Slot] || !cfg.exists {
 				updated = newSettings
 			}
 			var port any
 			if slot.Host != "" {
 				port = slot.Port
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO quality_slot_settings(agent_id,slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-				ON CONFLICT(agent_id,slot) DO UPDATE SET kind=excluded.kind,region=excluded.region,isp=excluded.isp,host=excluded.host,port=excluded.port,slot_enabled=excluded.slot_enabled,ipv4_tcp=excluded.ipv4_tcp,ipv4_icmp=excluded.ipv4_icmp,ipv6_tcp=excluded.ipv6_tcp,ipv6_icmp=excluded.ipv6_icmp,updated_revision=excluded.updated_revision`,
-				id, slot.Slot, slot.Kind, slot.Region, slot.ISP, slot.Host, port, slot.SlotEnabled, slot.IPv4TCP, slot.IPv4ICMP, slot.IPv6TCP, slot.IPv6ICMP, updated); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO quality_slot_settings(agent_id,slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,position,show_on_card) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+				ON CONFLICT(agent_id,slot) DO UPDATE SET kind=excluded.kind,region=excluded.region,isp=excluded.isp,host=excluded.host,port=excluded.port,slot_enabled=excluded.slot_enabled,ipv4_tcp=excluded.ipv4_tcp,ipv4_icmp=excluded.ipv4_icmp,ipv6_tcp=excluded.ipv6_tcp,ipv6_icmp=excluded.ipv6_icmp,updated_revision=excluded.updated_revision,position=excluded.position,show_on_card=excluded.show_on_card`,
+				id, slot.Slot, slot.Kind, slot.Region, slot.ISP, slot.Host, port, slot.SlotEnabled, slot.IPv4TCP, slot.IPv4ICMP, slot.IPv6TCP, slot.IPv6ICMP, updated, i, slot.ShowOnCard); err != nil {
 				return result, err
 			}
 		}
 	}
 	defaultChoices, _ := json.Marshal(qualityDefaultChoices())
-	if _, err := tx.ExecContext(ctx, `INSERT INTO quality_config(agent_id,revision,enabled,ipv6,choices,updated_at,settings_revision,interval_ms,slow_threshold_ms) VALUES(?,?,?,0,?,?,?,?,?)
-		ON CONFLICT(agent_id) DO UPDATE SET revision=excluded.revision,settings_revision=excluded.settings_revision,enabled=excluded.enabled,interval_ms=excluded.interval_ms,slow_threshold_ms=excluded.slow_threshold_ms,updated_at=excluded.updated_at`,
-		id, newRevision, next.Enabled, string(defaultChoices), now.UnixMilli(), newSettings, next.IntervalMS, next.SlowThresholdMS); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO quality_config(agent_id,revision,enabled,ipv6,choices,updated_at,settings_revision,interval_ms,slow_threshold_ms,objects_configured) VALUES(?,?,?,0,?,?,?,?,?,?)
+		ON CONFLICT(agent_id) DO UPDATE SET revision=excluded.revision,settings_revision=excluded.settings_revision,enabled=excluded.enabled,interval_ms=excluded.interval_ms,slow_threshold_ms=excluded.slow_threshold_ms,objects_configured=excluded.objects_configured,updated_at=excluded.updated_at`,
+		id, newRevision, next.Enabled, string(defaultChoices), now.UnixMilli(), newSettings, next.IntervalMS, next.SlowThresholdMS, next.ObjectsConfigured); err != nil {
 		return result, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE quality_targets SET retired_at=CASE WHEN EXISTS(SELECT 1 FROM quality_slots s WHERE s.target_id=quality_targets.id) THEN NULL ELSE COALESCE(retired_at,?) END WHERE agent_id=?`, now.UnixMilli(), id); err != nil {

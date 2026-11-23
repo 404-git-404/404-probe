@@ -80,6 +80,9 @@ func qualityValidateConfigFor(c protocol.QualityConfig, userTargets bool) error 
 	limit := 6
 	if c.Version == 2 {
 		limit = 12
+		if userTargets {
+			limit = 4 * protocol.QualityMaxObjects
+		}
 		if c.Capabilities != nil && c.Capabilities.Validate() != nil {
 			return errors.New("invalid quality capability details")
 		}
@@ -100,9 +103,14 @@ func qualityValidateConfigFor(c protocol.QualityConfig, userTargets bool) error 
 		return errors.New("active quality config lacks revision")
 	}
 	seen := map[string]bool{}
+	objects := map[string]bool{}
 	for _, t := range c.Targets {
-		if t.Slot != "telecom" && t.Slot != "unicom" && t.Slot != "mobile" {
+		if !protocol.QualitySlot(t.Slot) && !(userTargets && protocol.QualityObjectID(t.Slot)) {
 			return errors.New("invalid quality slot")
+		}
+		objects[t.Slot] = true
+		if len(objects) > protocol.QualityMaxObjects {
+			return errors.New("too many quality objects")
 		}
 		if t.Family != "ipv4" && t.Family != "ipv6" {
 			return errors.New("invalid quality family")
@@ -241,6 +249,7 @@ func (r *Runner) qualityHTTPWith(ctx context.Context, path string, body []byte, 
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
 	if userTargets {
 		req.Header.Set(protocol.QualityTargetsHeader, protocol.QualityTargetsUserV1)
+		req.Header.Set(protocol.QualityObjectsHeader, "1")
 	}
 	resp, err := doAgentServerRequest(r.client, req)
 	if err != nil {

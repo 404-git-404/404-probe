@@ -131,6 +131,9 @@ func (s *Store) GetQualitySessionConfig(ctx context.Context, id string, epoch ui
 		if err != nil {
 			return out, err
 		}
+		if !protocol.QualitySlot(t.Slot) && !caps.Objects {
+			continue
+		}
 		t.SlotRevision, t.Status = strconv.FormatInt(revision, 10), "paused"
 		if open {
 			t.Status = "active"
