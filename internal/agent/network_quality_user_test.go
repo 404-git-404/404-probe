@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -477,22 +477,24 @@ func TestQualityIPv6MonitorStates(t *testing.T) {
 }
 
 func TestQualityIPv6ScanReadsProcNetIfInet6(t *testing.T) {
-	restore := []any{qualityIfInet6Path, qualityReadFile, qualityInterfaceAt, qualityScanGOOS}
-	defer func() {
-		qualityIfInet6Path, qualityReadFile = restore[0].(string), restore[1].(func(string) ([]byte, error))
-		qualityInterfaceAt, qualityScanGOOS = restore[2].(func(int) (*net.Interface, error)), restore[3].(string)
-	}()
+	oldProc, oldSys, oldRead, oldOS := qualityIfInet6Path, qualitySysNetPath, qualityReadFile, qualityScanGOOS
+	t.Cleanup(func() {
+		qualityIfInet6Path, qualitySysNetPath, qualityReadFile, qualityScanGOOS = oldProc, oldSys, oldRead, oldOS
+	})
+	dir := t.TempDir()
 	qualityScanGOOS = "linux"
-	qualityInterfaceAt = func(i int) (*net.Interface, error) {
-		switch i {
-		case 1:
-			return &net.Interface{Index: 1, Name: "lo", Flags: net.FlagUp | net.FlagLoopback}, nil
-		case 2:
-			return &net.Interface{Index: 2, Name: "eth0", Flags: net.FlagUp}, nil
-		case 3:
-			return &net.Interface{Index: 3, Name: "eth1", Flags: 0}, nil
+	qualityIfInet6Path = filepath.Join(dir, "if_inet6")
+	qualitySysNetPath = dir
+	for name, flags := range map[string]string{"lo": "0x9", "eth0": "0x1", "eth1": "0x0", "missing-flags": ""} {
+		dev := filepath.Join(dir, name)
+		if err := os.Mkdir(dev, 0700); err != nil {
+			t.Fatal(err)
 		}
-		return nil, errors.New("no such interface")
+		if flags != "" {
+			if err := os.WriteFile(filepath.Join(dev, "flags"), []byte(flags+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	cases := []struct {
 		name, file string
@@ -509,26 +511,47 @@ func TestQualityIPv6ScanReadsProcNetIfInet6(t *testing.T) {
 		{"interface down", "26064700000000000000000000001111 03 40 00 80 eth1\n", false, false},
 		{"loopback interface with a global address", "26064700000000000000000000001111 01 40 00 80 lo\n", false, false},
 		{"second line wins", "fe800000000000000000000000000001 02 40 20 80 eth0\n26064700000000000000000000001111 02 40 00 80 eth0\n", true, false},
+		{"vanished interface", "26064700000000000000000000001111 04 40 00 80 eth2\n", false, false},
+		{"missing flags with existing interface", "26064700000000000000000000001111 04 40 00 80 missing-flags\n", false, true},
+		{"invalid interface path", "26064700000000000000000000001111 04 40 00 80 ../eth0\n", false, true},
 		{"garbage is an error, not none", "zz064700000000000000000000001111 02 40 00 80 eth0\n", false, true},
 	}
 	for _, tc := range cases {
-		if tc.file == "" {
-			qualityReadFile = func(string) ([]byte, error) {
-				return nil, &os.PathError{Op: "open", Path: "if_inet6", Err: os.ErrNotExist}
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.file == "" {
+				if err := os.Remove(qualityIfInet6Path); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(qualityIfInet6Path, []byte(tc.file), 0600); err != nil {
+				t.Fatal(err)
 			}
-		} else {
-			wire := tc.file
-			qualityReadFile = func(string) ([]byte, error) { return []byte(wire), nil }
+			got, err := scanUsableIPv6()
+			if (err != nil) != tc.fail || got != tc.want {
+				t.Errorf("got %v err=%v", got, err)
+			}
+		})
+	}
+
+	// A failed interface lookup must never complete the consecutive scans required for none.
+	if err := os.WriteFile(qualityIfInet6Path, []byte("26064700000000000000000000001111 02 40 00 80 eth0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, readErr := range []error{os.ErrPermission, errors.New("address family not supported by protocol")} {
+		qualityReadFile = func(path string) ([]byte, error) {
+			if path != qualityIfInet6Path {
+				return nil, readErr
+			}
+			return os.ReadFile(path)
 		}
-		got, err := scanUsableIPv6()
-		if (err != nil) != tc.fail || got != tc.want {
-			t.Errorf("%s: got %v err=%v", tc.name, got, err)
+		monitor := newQualityIPv6Monitor()
+		now := time.Now()
+		for _, at := range []time.Time{now, now.Add(qualityIPv6ConfirmAfter)} {
+			if got := monitor.observe(at); got != protocol.QualityIPv6Unknown {
+				t.Errorf("with %v got %s, want unknown", readErr, got)
+			}
 		}
 	}
-	qualityReadFile = func(string) ([]byte, error) { return nil, errors.New("permission denied") }
-	if _, err := scanUsableIPv6(); err == nil {
-		t.Error("an unreadable file must be an error (unknown), not none")
-	}
+
 }
 
 func newQuietServer() *httptest.Server {

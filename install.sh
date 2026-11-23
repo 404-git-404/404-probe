@@ -1171,7 +1171,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
@@ -2426,7 +2426,7 @@ sandbox_probe() {
   local -a base=(User=root UMask=0077 NoNewPrivileges=true) kept=() first_batch=() namespace_keys=(PrivateTmp PrivateNetwork ProtectSystem ProtectHome ProtectControlGroups)
   local -a all=(PrivateTmp=true PrivateNetwork=true ProtectSystem=strict ProtectHome=true ProtectKernelTunables=true ProtectKernelModules=true
     ProtectKernelLogs=true ProtectControlGroups=true RestrictSUIDSGID=true LockPersonality=true MemoryDenyWriteExecute=true
-    "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6")
+    "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK")
   local -a rest=(ReadWritePaths=/var/lib ReadOnlyPaths=-/var/log/journal)
   SANDBOX_REMOVED=""
   # Phase 1, one reload: the minimal set, the full set, every directive on its own, and CAP_NET_RAW.
@@ -2708,7 +2708,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 CapabilityBoundingSet=CAP_NET_RAW
 AmbientCapabilities=CAP_NET_RAW
 ReadWritePaths=${STATE_DIRECTORY} /run/404-probe

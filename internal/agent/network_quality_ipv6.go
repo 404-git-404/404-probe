@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"encoding/hex"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -73,9 +76,10 @@ func usableIPv6(addr netip.Addr) bool {
 
 var (
 	qualityIfInet6Path = "/proc/net/if_inet6"
+	qualitySysNetPath  = "/sys/class/net"
 	qualityReadFile    = os.ReadFile
+	qualityStat        = os.Stat
 	qualityInterfaces  = net.Interfaces
-	qualityInterfaceAt = net.InterfaceByIndex
 	qualityInterfaceIP = func(i *net.Interface) ([]net.Addr, error) { return i.Addrs() }
 	qualityScanGOOS    = runtime.GOOS
 )
@@ -94,22 +98,14 @@ func scanUsableIPv6() (bool, error) {
 		}
 		for _, line := range strings.Split(string(wire), "\n") {
 			fields := strings.Fields(line)
-			if len(fields) < 6 {
+			if len(fields) == 0 {
 				continue
 			}
-			if len(fields[0]) != 32 {
+			if len(fields) != 6 || len(fields[0]) != 32 {
 				return false, strconv.ErrSyntax
 			}
 			var raw [16]byte
-			for i := 0; i < 16; i++ {
-				b, err := strconv.ParseUint(fields[0][2*i:2*i+2], 16, 8)
-				if err != nil {
-					return false, err
-				}
-				raw[i] = byte(b)
-			}
-			index, err := strconv.ParseInt(fields[1], 16, 32)
-			if err != nil {
+			if _, err := hex.Decode(raw[:], []byte(fields[0])); err != nil {
 				return false, err
 			}
 			flags, err := strconv.ParseUint(fields[4], 16, 32)
@@ -120,11 +116,28 @@ func scanUsableIPv6() (bool, error) {
 			if flags&(tentative|dadFailed) != 0 || !usableIPv6(netip.AddrFrom16(raw)) {
 				continue
 			}
-			iface, err := qualityInterfaceAt(int(index))
-			if err != nil {
-				continue // the interface vanished between the two reads
+			name := fields[5]
+			if name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+				return false, fmt.Errorf("invalid IPv6 interface name %q", name)
 			}
-			if iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 {
+			dir := filepath.Join(qualitySysNetPath, name)
+			wire, err := qualityReadFile(filepath.Join(dir, "flags"))
+			if os.IsNotExist(err) {
+				if _, statErr := qualityStat(dir); os.IsNotExist(statErr) {
+					continue // the interface vanished between the two reads
+				} else if statErr != nil {
+					return false, statErr
+				}
+			}
+			if err != nil {
+				return false, err
+			}
+			ifaceFlags, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(string(wire)), "0x"), 16, 32)
+			if err != nil {
+				return false, err
+			}
+			const up, loopback = 0x1, 0x8
+			if ifaceFlags&up != 0 && ifaceFlags&loopback == 0 {
 				return true, nil
 			}
 		}

@@ -159,7 +159,7 @@
       case 'disabled':return {key:'off',text:'已关闭',detail:'检测总开关已关闭'};
       case 'unset':return {key:'unset',text:'未配置目标',detail:'这个卡槽还没有填写目标地址'};
       case 'inactive':return {key:'inactive',text:'未启用',detail:'这个卡槽或子项没有勾选'};
-      case 'no_ipv6':return {key:'no_ipv6',text:'本机无 IPv6',detail:'这台机器没有可用的 IPv6 地址；有地址后会自动开始'};
+      case 'no_ipv6':return {key:'no_ipv6',text:'本机无 IPv6',detail:'Agent 检测到本机网卡没有可用的 IPv6 地址，有地址后会自动开始'};
       case 'icmp_unsupported':return {key:'no_icmp',text:'不支持 ICMP',detail:'当前环境没有 ICMP 权限（例如容器内没有 CAP_NET_RAW）；TCP 不受影响'};
       default:return {key:'unknown',text:'未知',detail:status};
     }

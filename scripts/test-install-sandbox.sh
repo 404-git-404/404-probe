@@ -95,7 +95,7 @@ sandbox_filter() { cat; }
 all_units
 for f in "${temporary}"/units/*; do cmp -s "${f}" "${temporary}/units-full/$(basename "${f}")" || { printf 'unit %s differs from the unfiltered original\n' "${f}" >&2; exit 1; }; done
 eval "${sandbox_filter_saved}"
-for key in PrivateTmp=true ProtectSystem=strict ProtectKernelTunables=true RestrictSUIDSGID=true LockPersonality=true MemoryDenyWriteExecute=true 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' CapabilityBoundingSet=CAP_NET_RAW AmbientCapabilities=CAP_NET_RAW; do
+for key in PrivateTmp=true ProtectSystem=strict ProtectKernelTunables=true RestrictSUIDSGID=true LockPersonality=true MemoryDenyWriteExecute=true 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' CapabilityBoundingSet=CAP_NET_RAW AmbientCapabilities=CAP_NET_RAW; do
   has "${temporary}/units-full/agent.service" "${key}" || { printf 'full agent unit lacks %s\n' "${key}" >&2; exit 1; }
 done
 printf 'PASS full hardening keeps every unit exactly as before\n'

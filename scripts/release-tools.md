@@ -39,3 +39,5 @@ python -B scripts/test-machine-release.py agent upgrade --from-version v1.3.1 --
 Server 新装使用默认回环地址及安装器随机密码。助手用 `PROBE_404_INSTALL_LOCAL_AGENT=y` 接受候选安装器的本机 Agent 默认选项，v1.3.1 会忽略该变量。脚本把密码写入测试 Server 的 `/root/404-probe-test-web-password`（root、0600），终端不显示。新装遇到现有安装或密码文件会停止。Server 升级检查起点，保留原有凭据和安装器的受保护备份，不自动轮换已有的上一份备份。Agent 新装由测试 Server 生成一次性 token，上传到目标的 0600 临时文件，成功或失败均清理两端。
 
 Agent 升级使用测试 Server 正规 Web 路径，要求其已在运行精确候选提交、已有根专属随机密码文件，且同提交 release 资产可下载。助手按测试 Agent 的本机 ID 发起升级并核对最终版本、提交、二进制 SHA-256 和服务状态。评审时另用 `scripts/agent-state-snapshot.py` 做 R05 前后对照。测试机 SSH 隧道由本地维护，用完关闭。
+
+在具备可用 IPv6 地址的测试 Agent 上检查网络质量 IPv6 通道可用，Server 收到的 `quality_capability.ipv6_address` 为 `present`。只有 IPv4 的测试 Agent 连续成功扫描至少五分钟后应报告 `none`。
