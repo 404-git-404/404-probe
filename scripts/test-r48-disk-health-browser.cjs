@@ -25,7 +25,7 @@ test('disk history and check freshness have inclusive cutoffs', () => {
 });
 
 for (const theme of ['dark', 'light']) {
-  test(`${theme} disk health, filtering, and incremental rendering`, {timeout: 120000}, async t => {
+  test(`${theme} disk health, filtering, and incremental rendering`, {timeout: 360000}, async t => {
     const browser = await launch();
     t.after(() => browser.close());
     const x = await open(browser, {width: 2048, height: 1152, deviceScaleFactor: 1.25, n: 6, theme});

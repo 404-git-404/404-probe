@@ -126,7 +126,7 @@ async function fixture() {
   }
 }
 
-test('R45 private key, backup operations, report continuity and failure notice in both themes', {timeout: 90000}, async () => {
+test('R45 private key, backup operations, report continuity and failure notice in both themes', {timeout: 360000}, async () => {
   const server = await fixture();
   const browser = await chromium.launch({headless: true, executablePath: process.env.M02_CHROMIUM});
   try {

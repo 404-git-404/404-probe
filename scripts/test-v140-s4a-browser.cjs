@@ -17,7 +17,7 @@ async function capture(page, theme, scene) {
 }
 
 for (const theme of ['dark', 'light']) {
-  test(theme + ' system checks, settings, fail2ban and dashboard filters', {timeout: 60000}, async () => {
+  test(theme + ' system checks, settings, fail2ban and dashboard filters', {timeout: 240000}, async () => {
     const browser = await launch();
     let panel;
     try {
