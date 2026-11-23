@@ -104,8 +104,9 @@ test('R33 special states, hover/title and native outbound dialog: draft, per-gro
   const switches=page.locator('[data-selector-kind=submit]');assert.equal(await switches.count(),2);
   assert.equal(await switches.first().isDisabled(),true);assert.equal(await switches.nth(1).isDisabled(),true);
   await shot(page,'outbound-dialog','body');
-  const before=posts.length;await page.locator('.selector-options select').first().selectOption('WARP');assert.equal(posts.length,before);
-  assert.equal(await switches.first().isDisabled(),false);assert.equal(await switches.nth(1).isDisabled(),true);
+  const before=posts.length;await page.locator('.selector-options select').first().selectOption('WARP');
+  await switches.first().and(page.locator(':enabled')).waitFor();
+  assert.equal(posts.length,before);assert.equal(await switches.nth(1).isDisabled(),true);
   await shot(page,'outbound-dialog-draft','body');
   const p1=await page.locator('.selector-dialog').boundingBox();await page.evaluate(()=>{document.body.style.minHeight='2000px';window.scrollTo(0,500);});const p2=await page.locator('.selector-dialog').boundingBox();assert.equal(p1.y,p2.y);
   await page.keyboard.press('Escape');await page.getByRole('button',{name:'放弃修改',exact:true}).click();await page.locator('#action-confirm').waitFor({state:'detached'});await page.waitForFunction(()=>!document.querySelector('.selector-dialog').open);assert.equal(await page.locator('.selector-trigger').evaluate(e=>e===document.activeElement),true);

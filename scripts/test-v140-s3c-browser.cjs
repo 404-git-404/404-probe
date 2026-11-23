@@ -121,7 +121,7 @@ test('S3-C displays all score tiers, breakdowns and touch navigation',async t=>{
       await page.locator('[data-view=list]').click();
       const listStamp=page.locator('.score-stamp-list[data-tier="SSS"]');
       await listStamp.waitFor();
-      assert.equal(await page.locator('.score-stamp-list').count(),8);
+      await page.waitForFunction(()=>document.querySelectorAll('.score-stamp-list').length===8);
       await capture(page,theme+'-list');
       await listStamp.click();
       await dialog.waitFor();
