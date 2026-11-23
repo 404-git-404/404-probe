@@ -14,6 +14,7 @@ import shutil
 import signal
 import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -248,7 +249,14 @@ DOWNLOAD_STALL_SECONDS={60 if real else 2}
 export PATH='{root}':"$PATH" TMPDIR='{scratch}' PROBE_404_VERSION=v1.2.3
 bootstrap_latest_installer
 """
-                with subprocess.Popen(['bash','-c',wrapper], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                # Background launches can inherit SIGINT as ignored. Reset it in a fresh
+                # interpreter before exec, without running preexec_fn beside the HTTPS thread.
+                reset_signals = ('import os, signal, sys; '
+                                 'signal.signal(signal.SIGINT, signal.SIG_DFL); '
+                                 'signal.signal(signal.SIGTERM, signal.SIG_DFL); '
+                                 'os.execvp(sys.argv[1], sys.argv[1:])')
+                with subprocess.Popen([sys.executable, '-c', reset_signals, 'bash', '-c', wrapper],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                       start_new_session=True) as process:
                     try:
                         assert request_started.wait(5), f'bootstrap did not start for {sig.name}'

@@ -326,9 +326,9 @@ Usage:
   404-probe-install selector-order <absolute-sing-box-config.json>
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install oneclick-token <name> [--output <absolute-path>]
+                                    test machines: one-click registration token into a root-only file
   404-probe-install database verify
   404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME) [--extract-to NEW_DIRECTORY]
-                                    test machines: one-click registration token into a root-only file
   404-probe-install uninstall <server|agent|local-agent> [--confirm-delete-data]
 
 Uninstall permanently removes the selected role's services, binaries,

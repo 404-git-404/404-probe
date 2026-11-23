@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -121,6 +122,61 @@ func (s *fakeR2) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		w.WriteHeader(405)
+	}
+}
+
+func TestManagerPrunesOnlyExpiredBackupWork(t *testing.T) {
+	ctx := context.Background()
+	stateDir := t.TempDir()
+	dbPath := filepath.Join(stateDir, "live.db")
+	store, err := storage.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	old := now.Add(-backupWorkMaxAge - time.Hour)
+	stale := filepath.Join(stateDir, backupWorkPrefix+"1")
+	recent := filepath.Join(stateDir, backupWorkPrefix+"2")
+	unrelated := filepath.Join(stateDir, "other-service-data")
+	manual := filepath.Join(stateDir, backupWorkPrefix+"manual")
+	for _, dir := range []string{stale, recent, unrelated, manual} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "snapshot"), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	looseFile := filepath.Join(stateDir, backupWorkPrefix+"3")
+	if err := os.WriteFile(looseFile, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	link := filepath.Join(stateDir, backupWorkPrefix+"4")
+	keep := []string{dbPath, recent, unrelated, manual, looseFile, external}
+	if err := os.Symlink(external, link); err == nil {
+		keep = append(keep, link)
+	} else if runtime.GOOS != "windows" {
+		t.Fatal(err)
+	}
+	for _, path := range []string{stale, unrelated, manual, looseFile, external} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := NewManager(ctx, store, nil, slog.Default()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expired work directory should be absent: %v", err)
+	}
+	for _, path := range keep {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("expected %s to survive startup: %v", path, err)
+		}
 	}
 }
 

@@ -15,8 +15,8 @@ installer_pure_functions() {
     copy && /^\}/ {copy=0}
     END {
       for(name in wanted) {
-        # The second die is the known helper heredoc, not installer scope.
-        expected=name=="die"?2:1;
+        # The generated helper defines its own die and usage after the installer definitions.
+        expected=(name=="die" || name=="usage")?2:1;
         if(count[name]!=expected) {printf "FAIL ambiguous/missing function %s: %d definitions (expected %d)\n",name,count[name],expected > "/dev/stderr"; exit 1}
       }
     }' "$source"

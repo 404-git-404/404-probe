@@ -3,7 +3,7 @@ set -Eeuo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Pure function extraction only; no main, file writes, or fixture required.
 source "${root}/scripts/installer-pure-functions.sh"
-pure="$(installer_pure_functions "${root}/install.sh" die release_version canonical_version target_version print_install_banner)"
+pure="$(installer_pure_functions "${root}/install.sh" die release_version canonical_version target_version print_install_banner usage)"
 eval "$pure"
 
 check_banner() {
@@ -29,3 +29,11 @@ if error="$(PROBE_404_VERSION=v1.0.1-rc.0 print_install_banner 2>&1)"; then
 fi
 [[ "${error}" == '404-probe installer: target version must be stable or explicit beta.N/rc.N' ]]
 printf 'PASS invalid target rejected before banner\n'
+
+help="$(usage)"
+oneclick='  404-probe-install oneclick-token <name> [--output <absolute-path>]'
+description='                                    test machines: one-click registration token into a root-only file'
+verify='  404-probe-install database verify'
+restore='  404-probe-install database restore-backup '
+[[ "$help" == *"$oneclick"$'\n'"$description"$'\n'"$verify"$'\n'"$restore"* ]]
+printf 'PASS one-click token help keeps its description before database commands\n'

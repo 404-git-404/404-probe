@@ -60,15 +60,23 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
       const id=params.get('agent_id'),indices=id?[parseInt(id,16)-1]:Array.from({length:fleetSize},(_,i)=>i);
       json({start,end,now,machines:indices.map(i=>{
         const objects=i===0&&id?Array.from({length:detailCount},(_,j)=>object(j)):[object(0),object(1,i===4),object(2)];
+        if(i===1){
+          objects[0].ipv4_tcp=false;
+          objects[0].ipv6_tcp=true;
+          objects[1].ipv4_tcp=true;
+          objects[1].ipv4_icmp=false;
+          objects[2].ipv4_tcp=true;
+        }
         return {agent_id:ID(i),name:machineName(i),server_local:i===0,country_code:['HK','US','DE','US','US','JP','MO','JP'][i],
           status:i===3?'offline':i===5?'paused':'online',last_seen:now-(i===5?2*DAY:i===3?10*60000:8000),
           offline_since:i===3?now-10*60000:null,slow_threshold_ms:500,alerts_30d:alerts(i).length,current_alerts:i===2?1:0,
           quality_clock_skewed:i===0,quality_clock_offset_ms:i===0?66000:null,objects,
           lines:objects.map((o,j)=>{
-            const stats=bucket(i,j,end-HOUR,family,protocol);
+            const missing=i===1&&j===2&&family==='ipv4'&&protocol==='tcp';
+            const stats=bucket(missing?5:i,j,end-HOUR,family,protocol);
             const alert=protocol==='tcp'&&family==='ipv4'&&j===2?alerts(i)[0]||null:null;
             return {slot:o.slot,family,protocol,stats,evening_p50_ms:stats.p50_ms&&stats.p50_ms*1.23,latest_p50_ms:stats.p50_ms,
-              latest_bucket_at:now-60000,status:i===3||i===5?'no_data':alert?'alert':i===4&&j===1?'slow':'normal',alert,
+              latest_bucket_at:now-60000,status:i===3||i===5||!o[family+'_'+protocol]||missing?'no_data':alert?'alert':i===4&&j===1?'slow':'normal',alert,
               spark:Array.from({length:48},(_,k)=>({start:start+(end-start)*k/48,p50_ms:bucket(i,j,start+(end-start)*k/48,family,protocol).p50_ms}))};
           })};
       })});
@@ -153,7 +161,25 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
         await page.locator('#dashboard-network').click();await fleet(page);
         assert.equal(await page.locator('#dashboard-network-machines button').count(),8);
         assert.equal(await page.locator('.net-fleet thead th').nth(2).textContent(),'位置 2');
+        const scope=() => page.getByText(/ICMP 显示偏慢或丢包，不产生红色告警/);
+        assert.match(await scope().textContent(),/更早的旧口径历史.*不显示/);
+        const fleetObjects=page.locator('.net-fleet tbody tr').nth(1).locator('.net-cell');
+        assert.match(await fleetObjects.nth(0).textContent(),/未启用/);
+        assert.equal(await fleetObjects.nth(0).locator('.net-spark').count(),1);
+        assert.match(await fleetObjects.nth(2).textContent(),/没数据/);
         await capture(page,theme+'-fleet');
+        await page.locator('.net-fleet tbody tr').nth(1).click();await charts(page);
+        assert.match(await scope().textContent(),/更早的旧口径历史.*不显示/);
+        const objectStatuses=page.locator('.net-table tbody .net-pill');
+        assert.equal(await objectStatuses.nth(0).textContent(),'未启用');
+        assert.equal(await objectStatuses.nth(2).textContent(),'没数据');
+        await control(page,'family','ipv6').click();await charts(page);
+        assert.equal(await objectStatuses.nth(0).textContent(),'正常');
+        await control(page,'family','ipv4').click();await charts(page);
+        await control(page,'protocol','icmp').click();await charts(page);
+        assert.equal(await objectStatuses.nth(1).textContent(),'未启用');
+        await control(page,'protocol','tcp').click();await charts(page);
+        await page.locator('#dashboard-network').click();await fleet(page);
         await page.locator('.net-fleet tbody tr').first().click();await charts(page);
         assert.equal(await page.locator('.net-charts .net-chip').count(),5);
         assert.match(await page.locator('.net-strip').textContent(),/Agent 时钟偏差超过 1 分钟/);

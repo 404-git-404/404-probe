@@ -152,6 +152,8 @@ func readDeviceScoreLines(ctx context.Context, tx *sql.Tx, id string, start, end
 		line.Evening = networkP50(a.evening)
 		line.FailurePercent = stats.PacketLossPercent
 		if line.Protocol == "tcp" {
+			// M18 counts connection attempts plus DNS failures. The probe and
+			// connection success percentages each use a different denominator.
 			dns := a.whole.Stats.Categories["dns_error"]
 			if attempts := a.whole.Stats.ConnectAttempts + dns; attempts > 0 {
 				failed := attempts - a.whole.Stats.ConnectSuccesses

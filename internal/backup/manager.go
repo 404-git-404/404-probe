@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,11 @@ var (
 	ErrBusy      = errors.New("a backup operation is running")
 	ErrDisabled  = errors.New("enable backups and save an age key before running a backup")
 	errR2Network = errors.New("R2 network connection failed")
+)
+
+const (
+	backupWorkPrefix = ".offsite-backup-"
+	backupWorkMaxAge = 24 * time.Hour
 )
 
 type Settings struct {
@@ -93,7 +100,51 @@ func NewManager(ctx context.Context, store *storage.Store, configPaths map[strin
 	if err != nil || len(raw) != 0 && json.Unmarshal(raw, &m.state) != nil {
 		return nil, errors.New("could not read backup settings")
 	}
+	m.pruneBackupWork()
 	return m, nil
+}
+
+func (m *Manager) pruneBackupWork() {
+	stateDir := m.store.StateDirectory()
+	if stateDir == "" {
+		return
+	}
+	root, err := os.OpenRoot(stateDir)
+	if err != nil {
+		m.logger.Warn("could not open backup state directory for cleanup", "error", err)
+		return
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		m.logger.Warn("could not list backup work directories for cleanup", "error", err)
+		return
+	}
+	// Keep recent directories well beyond the maximum time allowed for one backup.
+	cutoff := m.clock().Add(-backupWorkMaxAge)
+	for _, entry := range entries {
+		name := entry.Name()
+		suffix, prefixed := strings.CutPrefix(name, backupWorkPrefix)
+		if !entry.IsDir() || !prefixed {
+			continue
+		}
+		// MkdirTemp appends a decimal random suffix to this prefix.
+		if _, err := strconv.ParseUint(suffix, 10, 64); err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				m.logger.Warn("could not inspect backup work directory", "directory", name, "error", err)
+			}
+			continue
+		}
+		if info.IsDir() && info.ModTime().Before(cutoff) {
+			if err := root.RemoveAll(name); err != nil {
+				m.logger.Warn("could not remove expired backup work directory", "directory", name, "error", err)
+			}
+		}
+	}
 }
 
 func (m *Manager) view(now time.Time) Status {
@@ -379,7 +430,7 @@ func (m *Manager) execute(ctx context.Context, settings Settings) (result jobRes
 	if err != nil {
 		return jobResult{err: err}
 	}
-	dir, err := os.MkdirTemp(m.store.StateDirectory(), ".offsite-backup-")
+	dir, err := os.MkdirTemp(m.store.StateDirectory(), backupWorkPrefix)
 	if err != nil {
 		return jobResult{err: errors.New("could not create backup working directory")}
 	}

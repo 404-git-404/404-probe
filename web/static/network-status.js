@@ -3,7 +3,9 @@
   const charts=root.NetworkStatusCharts;
   const HOUR=3600000, DAY=24*HOUR, BEIJING=8*HOUR;
   const windows={'1h':HOUR,'24h':DAY,'7d':7*DAY,'30d':30*DAY};
-  const labels={normal:'正常',slow:'偏慢或失败多',alert:'告警',no_data:'没数据',offline:'离线',paused:'暂停'};
+  const labels={normal:'正常',slow:'偏慢或失败多',alert:'告警',no_data:'没数据',disabled:'未启用',offline:'离线',paused:'暂停'};
+  const scopeNote='红色告警只按 TCP 判定，ICMP 显示偏慢或丢包，不产生红色告警。'+
+    '这里只显示新口径数据，更早的旧口径历史（含 DNS 的旧 TCP 延迟、单回包 ICMP）不显示。';
   const reasonLabels={dns_error:'DNS',dns_timeout:'DNS 超时',not_found:'域名不存在',no_address:'无解析地址',unsafe_address:'非公网地址',icmp_error:'ICMP 错误',timeout:'超时',refused:'拒绝',network_error:'网络错误',
     connect_timeout:'连接超时',connect_refused:'连接被拒绝',icmp_timeout:'回包超时',no_route:'无路由',
     unsupported:'不支持',internal_error:'内部错误',target_abnormal:'目标异常',local_error:'本机错误'};
@@ -58,6 +60,7 @@
     const heatDays=()=>state.window==='30d'&&!state.custom?30:7;
     const currentRange=()=>state.zoom||state.custom;
     const baseParams=()=>({family:state.family,protocol:state.protocol});
+    const objectTone=(object,line)=>object.slot_enabled&&object[state.family+'_'+state.protocol]?tone(line?.status):'disabled';
     function timeParams(){
       const range=currentRange();
       return range?{start:range[0],end:range[1]}:{window:state.window};
@@ -111,12 +114,16 @@
       const rows=machines.map(machine=>{
         const lines=new Map(machine.lines.map(line=>[line.slot,line]));
         const quality=objects.map((name,i)=>{
-          const object=machine.objects[i],line=object&&lines.get(object.slot);
-          if(!line)return cell('—');
-          return '<td><div class="net-cell" data-tone="'+tone(line.status)+'"><div>'+
+          const object=machine.objects[i];
+          if(!object)return cell('—');
+          const line=lines.get(object.slot),status=objectTone(object,line);
+          const emptyLabel=status==='disabled'||status==='no_data'?labels[status]:'';
+          const showStats=line&&(!emptyLabel||line.stats.samples>0);
+          return '<td><div class="net-cell" data-tone="'+status+'"><div>'+
             (name?'':'<small class="net-object-name">'+escape(targetLabel(object,i))+'</small>')+
-            '<strong>'+ms(line.stats.p50_ms)+'</strong><small>抖动 '+number(line.stats.jitter_ms)+' · '+loss+' '+percent(line.stats[key])+
-            '</small></div>'+charts.spark(line.spark)+'</div></td>';
+            (showStats?(emptyLabel?'<small>'+emptyLabel+'</small>':'')+
+              '<strong>'+ms(line.stats.p50_ms)+'</strong><small>抖动 '+number(line.stats.jitter_ms)+' · '+loss+' '+percent(line.stats[key])+'</small>':
+              '<strong>'+emptyLabel+'</strong>')+'</div>'+(showStats?charts.spark(line.spark):'')+'</div></td>';
         }).join('');
         const alert=machine.lines.find(line=>line.alert);
         const object=alert&&machine.objects.find(o=>o.slot===alert.slot);
@@ -129,7 +136,7 @@
       }).join('');
       return title('网络状态','全部 '+machines.length+' 台 · 每格显示所选时间的 p50 延迟')+controls()+
         (machines.length?table(['机器',...objects.map((name,i)=>name||'位置 '+(i+1)),'状态','30 天告警'],rows,'net-fleet'):'<p class="net-empty">尚无活动 Agent。</p>')+
-        '<p class="net-note">颜色：正常 / 偏慢或失败多（黄）/ 告警（红）/ 没数据（灰）。点一行进入这台机器。</p>';
+        '<p class="net-note">颜色：正常 / 偏慢或失败多（黄）/ 告警（红）/ 没数据或未启用（灰）。'+scopeNote+'点一行进入这台机器。</p>';
     }
     function objectLines(result){
       const machine=result.machines[0],histories=result.histories;
@@ -152,15 +159,16 @@
         const stats=line?.stats||{},evening=line?.evening_p50_ms,delta=evening!=null&&stats.p50_ms>0?(evening/stats.p50_ms-1)*100:null;
         const comparison=delta==null?'':' <small'+(delta>25?' class="net-warn"':'')+'>'+(delta>=0?'+':'')+Math.round(delta)+'%</small>';
         const changed=history?.last_target_change_at,days=changed==null?null:Math.floor((result.now-changed)/DAY);
-        let status=tone(line?.status),text=status==='alert'?'告警 · 已持续 '+duration(line.alert?.duration_ms||0):labels[status];
-        if(machine.status==='paused'){status='paused';text='暂停';}
+        const laneStatus=objectTone(object,line);
+        const status=machine.status==='paused'&&laneStatus!=='disabled'?'paused':laneStatus;
+        const text=status==='alert'?'告警 · 已持续 '+duration(line.alert?.duration_ms||0):labels[status];
         return '<tr><th scope="row">'+swatch(color)+escape(name)+(days==null?'':'<small class="net-changed">'+(days<1?'今天':days+' 天前')+'换过目标</small>')+
           '</th>'+cell(targetText(object,state.protocol),'net-address')+cell(number(line?.latest_p50_ms))+cell(number(stats.p50_ms))+
           cell(number(stats.p95_ms))+cell(number(stats.jitter_ms))+cell('<strong>'+number(evening)+'</strong>'+comparison)+
           cell(percent(stats[key]))+cell(pill(status,text),'')+'</tr>';
       }).join('');
       const tableHTML=lines.length?table(['名称','目标','最近','p50','p95','抖动','晚高峰 p50',loss,'状态'],rows):'<p class="net-empty">这台机器还没有监测对象。</p>';
-      const note='<p class="net-note">单位 ms。抖动：TCP = 相邻两次连接耗时之差，ICMP = 同一次探测内相邻回包之差，两者不要相比。晚高峰 = 北京时间 20:00–23:00。</p>';
+      const note='<p class="net-note">单位 ms。抖动：TCP = 相邻两次连接耗时之差，ICMP = 同一次探测内相邻回包之差，两者不要相比。晚高峰 = 北京时间 20:00–23:00。'+scopeNote+'</p>';
       return title(escape(machine.name)+badge(machine),'网络状态')+controls()+strip+tableHTML+note+
         (lines.length?chartSection(lines,loss)+heatSection(lines):'')+alertSection(result,lines);
     }
