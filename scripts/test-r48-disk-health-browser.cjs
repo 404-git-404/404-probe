@@ -32,6 +32,8 @@ for (const theme of ['dark', 'light']) {
     try {
       const {page, f} = x;
       const now = Date.now();
+      // Keep the synthetic sample's age independent of the browser's run time.
+      await page.clock.setFixedTime(new Date(now));
       const healthy = {status: 'ok', checked_at: now - 61000, probe_ms: 15, read_back_verified: true, read_only_super: false};
       for (const [i, a] of f.state.items.entries()) {
         a.name = 'Synthetic-' + String(i + 1).padStart(3, '0');
