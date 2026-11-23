@@ -15,7 +15,7 @@ type epochWriteError struct{ cause error }
 func (e *epochWriteError) Error() string { return e.cause.Error() }
 func (e *epochWriteError) Unwrap() error { return e.cause }
 
-func nextEpoch(path string) (uint64, error) {
+func nextEpoch(path string, floor uint64) (uint64, error) {
 	path = filepath.Clean(path)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -45,6 +45,7 @@ func nextEpoch(path string) (uint64, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return 0, fmt.Errorf("read state file: %w", err)
 	}
+	current = max(current, floor)
 	if current == math.MaxUint64 {
 		return 0, errors.New("epoch exhausted")
 	}

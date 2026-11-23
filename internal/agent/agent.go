@@ -54,6 +54,7 @@ type Config struct {
 	CountryCode                 string
 	EnableRemoteRemoval         bool
 	LocalServerAgent            bool
+	LocalAgentEpochFloor        uint64
 }
 
 var (
@@ -251,7 +252,7 @@ func newRunner(config Config, logger *slog.Logger, executor Executor) (*Runner, 
 	if executor == nil {
 		return nil, errors.New("executor is required")
 	}
-	epoch, err := nextEpoch(config.StatePath)
+	epoch, err := nextEpoch(config.StatePath, config.LocalAgentEpochFloor)
 	if err != nil {
 		return nil, fmt.Errorf("advance persistent epoch: %w", err)
 	}

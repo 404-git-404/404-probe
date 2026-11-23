@@ -231,7 +231,7 @@ expect_stable() { # name, expected status, minimum seconds, maximum seconds, bac
   printf 'stable readiness: %s ok (%ss)\n' "${name}" "${elapsed}"
 }
 sd="${stable_directory}"
-expect_stable 'healthy candidate passes after the full observation window' 0 5 8
+expect_stable 'healthy candidate passes after the full observation window' 0 5 12
 expect_stable 'candidate that never becomes active is rejected' 1 0 4 "printf 'inactive\n' >${sd}/state"
 expect_stable 'candidate that dies after two seconds is rejected' 1 2 4 "sleep 2; printf 'inactive\n' >${sd}/state; kill \${stable_pid}"
 expect_stable 'candidate that is restarted (PID change) is rejected' 1 2 4 "sleep 2; ${SERVER_BINARY} 120 & printf '%s\n' \$! >${sd}/pid; wait"

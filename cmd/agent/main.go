@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -187,10 +188,18 @@ func run() error {
 	countryCode := flag.String("country-code", env("PROBE_404_COUNTRY_CODE", ""), "persisted install-time Agent egress country code")
 	enableRemoteRemoval := flag.Bool("enable-remote-removal", remoteRemovalEnabled, "enable remote Agent removal only after isolated acceptance")
 	flag.Parse()
+	localAgent := os.Getenv("PROBE_404_LOCAL_SERVER_AGENT") == "1"
+	var epochFloor uint64
+	if value := os.Getenv("PROBE_404_LOCAL_AGENT_EPOCH_FLOOR"); localAgent && value != "" {
+		epochFloor, err = strconv.ParseUint(value, 10, 63)
+		if err != nil {
+			return errors.New("invalid local Agent epoch floor")
+		}
+	}
 	_, legacyClashSecret := os.LookupEnv("PROBE_404_SING_BOX_CLASH_SECRET")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	config := agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode, EnableRemoteRemoval: *enableRemoteRemoval, LocalServerAgent: os.Getenv("PROBE_404_LOCAL_SERVER_AGENT") == "1"}
+	config := agent.Config{ServerURL: *server, AgentID: *id, Token: *token, Interval: *interval, JobInterval: *jobInterval, DisabledInterval: *disabledInterval, Timeout: *timeout, AllowInsecureHTTP: *insecure, StatePath: *state, NetworkIncludes: split(*include), NetworkExcludes: split(*exclude), ClashAPIURL: *clashAPI, SelectorOrderPath: *selectorOrder, LegacyClashSecretConfigured: legacyClashSecret, OutboundInterval: *outboundInterval, AgentVersion: buildinfo.Current().Version, UpdaterSocket: *updaterSocket, SecurityExportDir: *securityExport, SecurityAckPath: *securityAcks, SecurityInterval: 5 * time.Minute, CountryCode: *countryCode, EnableRemoteRemoval: *enableRemoteRemoval, LocalServerAgent: localAgent, LocalAgentEpochFloor: epochFloor}
 	runner, err := agent.New(config, slog.Default())
 	if err != nil {
 		agent.ReportStartupFailure(ctx, config, slog.Default(), err)

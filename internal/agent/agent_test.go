@@ -121,7 +121,7 @@ func TestPersistentEpochRejectsCorruptionAndOverflow(t *testing.T) {
 			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := nextEpoch(path); err == nil {
+			if _, err := nextEpoch(path, 0); err == nil {
 				t.Fatal("invalid persistent epoch was accepted")
 			}
 		})
@@ -138,7 +138,7 @@ func TestPersistentEpochConcurrentStartsAreUnique(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			epoch, err := nextEpoch(path)
+			epoch, err := nextEpoch(path, 0)
 			if err != nil {
 				errors <- err
 				return
@@ -930,4 +930,13 @@ func waitForAgentCondition(t *testing.T, name string, condition func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", name)
+}
+
+func TestLocalAgentEpochFloorSurvivesMissingAndNewerState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "epoch")
+	for _, tc := range []struct{ floor, want uint64 }{{7, 8}, {0, 9}, {7, 10}, {20, 21}} {
+		if got, err := nextEpoch(path, tc.floor); err != nil || got != tc.want {
+			t.Fatalf("floor=%d epoch=%d, want %d, err=%v", tc.floor, got, tc.want, err)
+		}
+	}
 }

@@ -141,6 +141,9 @@ def install(role, mode, directory, version, commit, start, origin, name):
     env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8",
            "PROBE_404_VERSION": version, "PROBE_404_LOCAL_ASSET_DIRECTORY": directory}
     if role == "server":
+        if mode == "fresh":
+            # Older installers ignore this setting; newer ones skip the extra TTY prompt.
+            env["PROBE_404_INSTALL_LOCAL_AGENT"] = "y"
         server_tty(directory, mode, env)
     else:
         env.update(PROBE_404_ROLE="agent", PROBE_404_SERVER=origin, PROBE_404_AGENT_NAME=name,

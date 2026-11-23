@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"time"
 
 	"404-probe/internal/protocol"
@@ -69,19 +70,45 @@ func (s *Store) ServerLocalAgent(ctx context.Context) (string, error) {
 	return id, err
 }
 
-// AddServerLocalAgent registers an ordinary credential and its Server identity
-// in one transaction. Only the offline Server administration command calls it.
-func (s *Store) AddServerLocalAgent(ctx context.Context, id, name string, hash []byte, now time.Time) error {
+// RegisterServerLocalAgent rotates the local credential while retaining its
+// Agent identity, reports, and history. The returned epoch is the last one
+// the Server accepted, for reinstalls that have lost their local epoch file.
+func (s *Store) RegisterServerLocalAgent(ctx context.Context, newID, name string, hash []byte, now time.Time) (string, uint64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return "", 0, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id,name,token_hash,created_at,updated_at) VALUES(?,?,?,?,?)`, id, name, hash, now.UnixMilli(), now.UnixMilli()); err != nil {
-		return err
+	var id string
+	err = tx.QueryRowContext(ctx, `UPDATE agents SET token_hash=?,updated_at=?
+		WHERE id=(SELECT agent_id FROM server_local_agent WHERE singleton=1) AND revoked=0 RETURNING id`, hash, now.UnixMilli()).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM server_local_agent)`).Scan(&exists); err != nil {
+			return "", 0, err
+		}
+		if exists {
+			return "", 0, ErrAgentRevoked
+		}
+		id = newID
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id,name,token_hash,created_at,updated_at) VALUES(?,?,?,?,?)`, id, name, hash, now.UnixMilli(), now.UnixMilli()); err != nil {
+			return "", 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO server_local_agent(singleton,agent_id) VALUES(1,?)`, id); err != nil {
+			return "", 0, err
+		}
+	} else if err != nil {
+		return "", 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO server_local_agent(singleton,agent_id) VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET agent_id=excluded.agent_id`, id); err != nil {
-		return err
+	var epoch uint64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT epoch FROM agent_state WHERE agent_id=?),0)`, id).Scan(&epoch); err != nil {
+		return "", 0, err
 	}
-	return tx.Commit()
+	if epoch >= math.MaxInt64 {
+		return "", 0, errors.New("Server local Agent epoch exhausted")
+	}
+	if err := tx.Commit(); err != nil {
+		return "", 0, err
+	}
+	return id, epoch, nil
 }
