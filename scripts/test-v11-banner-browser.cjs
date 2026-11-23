@@ -96,19 +96,22 @@ test('YouTube region uses the Server list for CN and MO and keeps EU green',()=>
 test('traffic modes and independent price/renewal formatter',()=>ui(async({page:p})=>{
  const values=await p.evaluate(id=>{const a=agents.get(id),base={...a,plan:null};return [BannerView.projection(base).traffic.text,BannerView.price({currency:'CNY',renewal_price:'88.48',renewal_price_period:'yearly'}),BannerView.price({renewal_price:'0'}),BannerView.renewal({...a,plan:{},renewal:null}),BannerView.projection({...a,plan:{traffic_mode:'sum',usage_bytes:100,quota_bytes:null},dashboard_traffic:{known:true}}).traffic.text,BannerView.projection({...a,dashboard_traffic:{known:true,stale:true}}).traffic.text];},ID(0));assert.deepEqual(values,['无流量套餐','¥88.48 / 年','免费','长期','100 B · 无限','数据陈旧']);assert(await row(p,1).locator('[data-due=due_soon]').count());
 }));
-test('row opens unified details; width fits names then caps; all columns survive narrow sticky scroll',()=>ui(async({page:p})=>{
+test('row opens unified details; width fits names then caps; all columns survive narrow sticky scroll',()=>ui(async({page:p,f})=>{
  await row(p,0).locator('.banner-name').click();assert(await p.locator('#device-details').isVisible());await p.keyboard.press('Escape');
  const cell=row(p,0).locator('[data-column=name]');
  const name=row(p,0).locator('.banner-name');
- const originalName='Synthetic fixture name wide enough for the name column';
- await p.evaluate(value=>{for(const a of agents.values())a.name=value;render();},originalName);
- await name.filter({hasText:originalName}).waitFor();
- await settle(p);
+ async function rename(items,value){
+  for(const agent of items)agent.name=value;
+  f.state.revision++;
+  await p.evaluate(()=>dashboardData.reload());
+  await name.and(p.getByRole('button',{name:'查看 '+value+' 详情',exact:true})).waitFor();
+  await settle(p);
+ }
+ await rename(f.state.items,'Synthetic fixture name wide enough for the name column');
  const original=await cell.evaluate(n=>n.getBoundingClientRect().width);
- await p.evaluate(()=>{for(const a of agents.values())a.name='a';render();});
+ await rename(f.state.items,'a');
  await p.waitForFunction(({id,original})=>document.querySelector('.banner-row[data-agent-id="'+id+'"] [data-column=name]').getBoundingClientRect().width<original,{id:ID(0),original});
- await p.evaluate(()=>{agents.values().next().value.name='long-name-'.repeat(40);render();});
- await settle(p);
+ await rename(f.state.items.slice(0,1),'long-name-'.repeat(40));
  const capped=await cell.evaluate(n=>n.getBoundingClientRect().width);
  assert(capped<=183);
  assert(await name.evaluate(n=>n.scrollWidth>n.clientWidth&&n.title.length>100));
