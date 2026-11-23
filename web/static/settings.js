@@ -7,8 +7,8 @@
   let csrf = '';
   let locked = false;
 
-  async function request(path, method = 'GET', data) {
-    const options = {method, cache: 'no-store', signal: AbortSignal.timeout(10000)};
+  async function request(path, method = 'GET', data, timeout = 10000) {
+    const options = {method, cache: 'no-store', signal: AbortSignal.timeout(timeout)};
     if (data !== undefined) {
       options.headers = {'Content-Type': 'application/json', 'X-CSRF-Token': csrf};
       options.body = JSON.stringify(data);
@@ -262,6 +262,7 @@
   }
 
   document.addEventListener('dashboard:settings', event => initialize(event.detail));
+  ProbeBackupSettings.attach({request, session: () => sessionReady || readSession(), page: dashboardUI.page, backupAvailable: dashboardUI.backupAvailable});
   const section = dashboardUI.page();
   if (section !== 'devices' && section !== 'network') initialize(section);
 })();

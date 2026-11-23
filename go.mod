@@ -5,6 +5,8 @@ go 1.25.0
 toolchain go1.26.8
 
 require (
+	filippo.io/age v1.2.1
+	github.com/klauspost/compress v1.18.4
 	github.com/shirou/gopsutil/v4 v4.25.6
 	golang.org/x/crypto v0.40.0
 	golang.org/x/net v0.42.0

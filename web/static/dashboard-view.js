@@ -1,7 +1,7 @@
 (function(root){
   'use strict';
   const M = root.DashboardModel;
-  const settings = ['update', 'password', 'regions', 'about'];
+  const settings = ['update', 'password', 'regions', 'backup', 'about'];
 
   function create({document:doc=root.document,onchange=()=>{},onManage=()=>{},read=url=>root.fetch(url).then(r=>r.json())}={}){
     const preferences = M.preferences(), p = preferences.value, get = id => doc.getElementById(id);
@@ -55,6 +55,7 @@
         drawer('settings').open = true;
         doc.dispatchEvent(new CustomEvent('dashboard:settings',{detail:page}));
       }
+      doc.dispatchEvent(new CustomEvent('dashboard:page',{detail:page}));
       if(devices) scheduleTags();
     }
 
@@ -170,6 +171,10 @@
     });
     for(const button of doc.querySelectorAll('[data-settings]')) button.addEventListener('click',()=>{
       navigate(button.dataset.settings,{closeMobile:true});onchange();
+    });
+    get('panel-backup-failure').addEventListener('click',event=>{
+      if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey) return;
+      event.preventDefault();navigate('backup',{closeMobile:true});onchange();
     });
     const themeButtons = [...doc.querySelectorAll('[data-panel-theme]')];
     function paintTheme(){for(const button of themeButtons) pressed(button,button.dataset.panelTheme===root.ProbeTheme.get());}
@@ -349,8 +354,12 @@
       return model;
     }
 
-    let versionReadAt=0,versionBusy=false,closed=false;
+    let versionReadAt=0,versionBusy=false,closed=false,backupAvailable=false;
     function updateVersion(view){
+      if(view?.backup_available&&!backupAvailable){
+        backupAvailable=true;
+        doc.dispatchEvent(new Event('dashboard:backup-available'));
+      }
       const versionData=view?.update||{}, latest=versionData.latest;
       const valid=typeof latest==='string'&&root.AgentState.compareStableVersions(latest,latest)===0;
       const link=get('panel-update');
@@ -369,7 +378,7 @@
     }
     return {
       preferences, page:()=>page, effectiveView:()=>p.viewMode==='list'&&phone.matches?'cards':p.viewMode,
-      update,apply,clear,sortBy,updateVersion,refreshVersion,
+      update,apply,clear,sortBy,updateVersion,refreshVersion,backupAvailable:()=>backupAvailable,
       setSlot(slot){p.latencySlot=slot;change();},
       collapse(id){p.collapsed=p.collapsed.includes(id)?p.collapsed.filter(value=>value!==id):[...p.collapsed,id];change();},
       close(){

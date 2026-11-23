@@ -112,7 +112,8 @@ func TestMigration44PreservesLegacyQualityHistory(t *testing.T) {
 		`ALTER TABLE quality_slot_settings DROP COLUMN position`,
 		`ALTER TABLE quality_slot_settings DROP COLUMN show_on_card`,
 		`ALTER TABLE quality_config DROP COLUMN objects_configured`,
-		`DELETE FROM schema_migrations WHERE version=44`,
+		`DROP TABLE offsite_backup`,
+		`DELETE FROM schema_migrations WHERE version>=44`,
 	} {
 		if _, err := k.s.db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -121,7 +122,7 @@ func TestMigration44PreservesLegacyQualityHistory(t *testing.T) {
 	if err := k.s.migrate(k.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if version, err := k.s.SchemaVersion(k.ctx); err != nil || version != 44 {
+	if version, err := k.s.SchemaVersion(k.ctx); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema version: %d, %v", version, err)
 	}
 	after := k.get()

@@ -66,6 +66,7 @@
           <button class="panel-item" data-settings="update" type="button">检查新版本</button>
           <button class="panel-item" data-settings="password" type="button">修改密码</button>
           <button class="panel-item" data-settings="regions" type="button">YouTube 无广告地区名单</button>
+          <button class="panel-item" data-settings="backup" type="button">备份</button>
           <div class="panel-item panel-appearance">外观 <span class="panel-theme" role="group" aria-label="外观"><button type="button" data-panel-theme="dark">深色</button><button type="button" data-panel-theme="light">浅色</button></span></div>
           <button class="panel-item" data-settings="about" type="button">关于</button>
           <hr>
@@ -82,7 +83,7 @@
         <button id="overview-renewal" class="overview-row panel-item" type="button" disabled><span class="overview-stat" id="overview-renewal-stat"><strong>—</strong> 台 7 天内续费</span></button>
         <div class="overview-expense">支出 <strong id="overview-money">—</strong><div id="overview-period" class="overview-period" role="group" aria-label="支出周期"><button type="button" data-period="monthly" aria-pressed="true">月</button><button type="button" data-period="yearly" aria-pressed="false">年</button></div><button id="overview-expense" class="overview-link" type="button">明细</button></div>
       </section>
-      <div class="panel-status"><a id="panel-update" hidden target="_blank" rel="noopener noreferrer"><span></span></a><span id="stream" class="stream" role="status">正在连接</span></div>
+      <div class="panel-status"><a id="panel-update" hidden target="_blank" rel="noopener noreferrer"><span></span></a><span id="stream" class="stream" role="status">正在连接</span><a id="panel-backup-failure" href="#backup" hidden>备份失败</a></div>
     </div>
   </aside>
   <main id="dashboard-main">
@@ -137,6 +138,44 @@
         <div id="rg-list" class="settings-region-list" role="group" aria-label="国家/地区"></div>
         <div class="settings-actions"><button id="rg-reset" type="button" disabled>恢复默认 15 个</button><span class="settings-spacer"></span><button id="rg-undo" type="button" disabled>撤销修改</button><button id="rg-save" class="primary-action" type="button" disabled>保存</button></div>
         <p id="rg-status" role="status" class="settings-note"></p>
+      </section>
+      <section id="backup" hidden aria-labelledby="backup-title">
+        <h2 id="backup-title">备份</h2>
+        <form id="backup-form" autocomplete="off" method="post">
+          <fieldset id="backup-fields" disabled>
+            <label class="settings-check"><input id="backup-enabled" type="checkbox"> 启用每日加密备份到 Cloudflare R2</label>
+            <div class="backup-grid">
+              <label for="backup-endpoint">R2 账号 ID 或 endpoint</label><input id="backup-endpoint" type="text" maxlength="2048" spellcheck="false" placeholder="账号 ID 或 https://…">
+              <label for="backup-bucket">桶名</label><input id="backup-bucket" type="text" maxlength="63" spellcheck="false">
+              <label for="backup-prefix">对象前缀（可选）</label><input id="backup-prefix" type="text" maxlength="900" spellcheck="false">
+              <label for="backup-access">Access Key ID</label><input id="backup-access" type="password" maxlength="128" autocomplete="off" spellcheck="false">
+              <label for="backup-secret">Secret Access Key</label><input id="backup-secret" type="password" maxlength="256" autocomplete="new-password" spellcheck="false">
+              <label for="backup-keep">保留份数（7–90）</label><input id="backup-keep" type="number" min="7" max="90" value="30" required>
+              <label for="backup-time">每日时间（Server 本地时间）</label><input id="backup-time" type="time" value="04:00" required>
+            </div>
+            <p id="backup-credential-note" class="settings-note" hidden>已保存 R2 凭据。留空会继续使用，修改时请重新填写两项。</p>
+            <div id="backup-key" class="settings-banner" hidden>
+              <p>私钥只在这里显示一次。丢了就无法恢复，请自己保存。重新生成后，旧备份仍需旧私钥。</p>
+              <output id="backup-private" aria-label="age 私钥"></output>
+              <div class="settings-actions"><button id="backup-download" type="button">下载私钥</button><button id="backup-cancel-key" type="button">取消生成</button></div>
+              <label class="settings-check"><input id="backup-key-saved" type="checkbox"> 我已保存</label>
+            </div>
+            <p id="backup-key-note" class="settings-note" hidden>已设置 age 加密公钥。重新生成后，旧备份仍需旧私钥。</p>
+            <div class="settings-actions">
+              <button id="backup-test" type="button">测试连接</button><button id="backup-rekey" type="button" hidden>重新生成钥匙</button>
+              <span class="settings-spacer"></span><button id="backup-save" class="primary-action" type="submit">保存</button>
+            </div>
+          </fieldset>
+        </form>
+        <dl class="settings-about">
+          <dt>上次成功</dt><dd id="backup-success">—</dd>
+          <dt>上次失败</dt><dd id="backup-last-failure">—</dd>
+          <dt>下次计划</dt><dd id="backup-next">—</dd>
+          <dt>R2 现有份数</dt><dd id="backup-count">—</dd>
+        </dl>
+        <p id="backup-overdue" class="settings-error" role="status" hidden>超过 2 天没有成功备份。</p>
+        <div class="settings-actions"><button id="backup-run" type="button" disabled>立即备份</button></div>
+        <p id="backup-result" class="settings-note" role="status"></p>
       </section>
       <section id="about" hidden aria-labelledby="about-title">
         <h2 id="about-title">关于</h2>
@@ -311,6 +350,7 @@
   <script src="/app.js" defer></script>
   <script src="/theme-toggle.js" defer></script>
   <script src="/session.js" defer></script>
+  <script src="/backup-settings.js" defer></script>
   <script src="/settings.js" defer></script>
 </body>
 </html>

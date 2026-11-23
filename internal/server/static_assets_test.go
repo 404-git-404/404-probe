@@ -378,8 +378,8 @@ func TestStaticAssetsStartupOnlyAndPerAppIsolation(t *testing.T) {
 		}
 	}
 	t.Logf("startup directory: legacy=%d immutable=%d page aliases=%d retained bytes=%d", len(b.legacy), len(b.immutable), len(b.pages), retained)
-	// R39 adds the network status stylesheet, controller and charts script.
-	if len(b.legacy) != 345 || retained > 3<<20 {
+	// R45 adds the backup settings controller within the existing byte budget.
+	if len(b.legacy) != 346 || retained > 3<<20 {
 		t.Fatal("unexpected resource footprint")
 	}
 }
