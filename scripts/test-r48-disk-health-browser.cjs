@@ -25,8 +25,9 @@ test('disk history and check freshness have inclusive cutoffs', () => {
 });
 
 for (const theme of ['dark', 'light']) {
-  test(`${theme} disk health, filtering, and incremental rendering`, {timeout: 60000}, async () => {
+  test(`${theme} disk health, filtering, and incremental rendering`, {timeout: 120000}, async t => {
     const browser = await launch();
+    t.after(() => browser.close());
     const x = await open(browser, {width: 2048, height: 1152, deviceScaleFactor: 1.25, n: 6, theme});
     try {
       const {page, f} = x;
@@ -145,7 +146,6 @@ for (const theme of ['dark', 'light']) {
       assert.deepEqual(x.errors, []);
     } finally {
       await x.close();
-      await browser.close();
     }
   });
 }

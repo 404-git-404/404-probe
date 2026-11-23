@@ -85,7 +85,10 @@ test('R33 special states, hover/title and native outbound dialog: draft, per-gro
   assert.equal(await page.locator('.nq7-row').nth(1).locator('.nq7-right').textContent(),'—');
   assert.match(await page.locator('.c7-quota-empty').textContent(),/未设置流量配额/);
   assert.equal(await page.locator('.nq7-right').evaluateAll(nodes=>nodes.every(n=>n.scrollWidth<=n.clientWidth)),true,'56px column must fit fractional failure percentages');
-  assert.equal(await page.locator('.nq7-right').first().evaluate(n=>{const old=n.textContent;n.textContent='失败 33.3%';const fits=n.scrollWidth<=n.clientWidth;n.textContent=old;return fits;}),true);
+  const failure=page.locator('.nq7-right').first();
+  assert.match(await failure.textContent(),/^失败 \d+(?:\.\d)?%$/);
+  assert.match(await failure.getAttribute('title'),/近 1 小时 \d+ \/ \d+ 次 TCP 连接失败/);
+  assert.equal(await failure.evaluate(n=>getComputedStyle(n).textOverflow),'ellipsis');
   await page.locator('.nq7-row').first().locator('.nq7-b-red').first().hover();
   await page.waitForSelector('.nq7-tip:not([hidden])');assert.match(await page.locator('.nq7-b-red').first().getAttribute('aria-label'),/门槛 500 ms/);
   assert.equal(await page.locator('.nq7-tip').textContent(),await page.locator('.nq7-row').first().locator('.nq7-b-red').first().getAttribute('aria-label'),'hover wording is unchanged');

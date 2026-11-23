@@ -24,7 +24,7 @@ function history(query){const now=reference?sampleTime:Date.now(),to=query.has('
  return {agent_id:ID,server_now:now,from,to,bucket_from:lower,bucket_to:upper,interval_ms:M,source:'minute_metrics',aggregation:'arithmetic_mean',retention_days:30,coverage:'partial',point_limit:1441,oldest_timestamp:points[0]?.timestamp??null,last_timestamp:points.at(-1)?.timestamp??null,points};}
 async function run(){
  fs.writeFileSync(path.join(tmp,'update-check.json'),JSON.stringify({enabled:false,latest:'',checked_at:0}),{mode:0o600});
- fs.writeFileSync(hash,cp.execFileSync(exe,['web','password-hash'],{input:password+'\n',windowsHide:true}));
+ fs.writeFileSync(hash,cp.execFileSync(exe,['web','password-hash'],{input:password+'\n',windowsHide:true}),{mode:0o600});
  const portServer=http.createServer();await new Promise(r=>portServer.listen(0,'127.0.0.1',r));const port=portServer.address().port;await new Promise(r=>portServer.close(r));const base='http://127.0.0.1:'+port;
  server=cp.spawn(exe,['serve','--listen','127.0.0.1:'+port,'--db',db,'--web-password-hash-file',hash,'--web-public-origin',base,'--web-allow-insecure-http'],{windowsHide:true,stdio:['ignore','pipe','pipe']});let startupLog='';for(const stream of [server.stdout,server.stderr])stream.on('data',b=>{startupLog=(startupLog+b.toString()).slice(-16000);});
  for(let i=0;;i++){try{await fetch(base+'/login');break;}catch{if(server.exitCode!==null||i>=400){fs.writeFileSync(path.join(out,'server-startup.log'),startupLog);throw Error(server.exitCode!==null?'Server exited '+server.exitCode+': '+startupLog:'Server startup timeout after 20s');}await delay(50);}}

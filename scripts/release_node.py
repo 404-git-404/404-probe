@@ -152,7 +152,9 @@ class NodeFixtures:
             location = self.temp / "m02"
             location.mkdir()
             command = [str(binary), "web", "password-hash"]
-            with (location / "password.hash").open("xb") as output:
+            password_hash = location / "password.hash"
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+            with os.fdopen(os.open(password_hash, flags, 0o600), "wb") as output:
                 subprocess.run(command, input=b"isolated-m02-password\n", cwd=location,
                                stdout=output, stderr=self.release.log, env=env, check=True)
             self.env["M02_ROOT"] = str(location)

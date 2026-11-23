@@ -20,7 +20,7 @@ async function open(browser,{width=1920,height=1080,theme='light',n=28,preferenc
   return r.continue();
  });
  try{
-  await page.goto(f.base);await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n&&!renderFrame&&document.querySelector('#dashboard-count').textContent.includes(' / '),n);
+  await page.goto(f.base);await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n&&!renderFrame&&document.querySelector('#dashboard-count').textContent.includes(' / '),n,{timeout:30000});
   await page.waitForFunction(()=>!document.querySelector('#add-agent').disabled);
  }catch(error){
   await context.close();f.close();
