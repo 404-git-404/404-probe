@@ -378,8 +378,9 @@ func TestStaticAssetsStartupOnlyAndPerAppIsolation(t *testing.T) {
 		}
 	}
 	t.Logf("startup directory: legacy=%d immutable=%d page aliases=%d retained bytes=%d", len(b.legacy), len(b.immutable), len(b.pages), retained)
-	// R45 adds the backup settings controller within the existing byte budget.
-	if len(b.legacy) != 346 || retained > 3<<20 {
+	// R45 adds the backup settings controller; device scores add the shared stamp
+	// sprite, stylesheet and controller, all within the existing byte budget.
+	if len(b.legacy) != 349 || retained > 3<<20 {
 		t.Fatal("unexpected resource footprint")
 	}
 }

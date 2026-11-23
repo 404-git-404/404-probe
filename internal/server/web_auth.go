@@ -148,6 +148,7 @@ func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	mux.Handle("PUT /api/v1/web/settings/youtube-ad-free-regions", a.requireWebMutation(http.HandlerFunc(a.handleYouTubeAdFreeRegions)))
 	mux.Handle("POST /api/v1/web/expenses/estimate", a.requireWebMutation(http.HandlerFunc(a.handleExpenseEstimate)))
 	mux.Handle("GET /api/v1/web/dashboard", a.requireWebSession(http.HandlerFunc(a.handleDashboard), true))
+	mux.Handle("GET /api/v1/web/scores", a.requireWebSession(http.HandlerFunc(a.handleDeviceScores), true))
 	mux.Handle("GET /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLoginPage)))
 	mux.Handle("POST /login", a.requireWebTarget(http.HandlerFunc(a.handleWebLogin)))
 	mux.Handle("GET /favicon.ico", a.requireWebTarget(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

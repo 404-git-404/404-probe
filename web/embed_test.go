@@ -238,7 +238,7 @@ func TestAgentCardsUseReadableResponsiveVPSLayout(t *testing.T) {
 		`cardObservations.observe(agent)`, `for(const agent of group.items)`,
 		`agentNameControl(agent, state)`,
 		`googleStatusPanel(agent)`, `detailPanel.className = 'card-detail-panel'`,
-		`detailToggle.textContent = '详情'`, `editHint.textContent = agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎'`,
+		`DeviceScores.stamp(document,'card'`, `editHint.textContent = agent.plan ? '编辑套餐 ✎' : '添加套餐 ✎'`,
 		`compactPrice(agent.plan)`,
 	} {
 		if !strings.Contains(javascript, required) {

@@ -18,7 +18,8 @@ type expenseDevice struct {
 	EstimatedFromPurchase bool    `json:"estimated_from_purchase"`
 	MonthlyOriginal       string  `json:"monthly_original"`
 	MonthlyUSD            *string `json:"monthly_usd"`
-	Exclusion             string  `json:"exclusion,omitempty"`
+	monthlyUSDExact       *big.Rat
+	Exclusion             string `json:"exclusion,omitempty"`
 }
 type expenseCurrency struct {
 	Currency        string  `json:"currency"`
@@ -118,6 +119,7 @@ func estimateExpenses(data storage.DashboardData, selected map[string]bool) expe
 				usd := new(big.Rat).Quo(month, rate)
 				display := usd.FloatString(12)
 				d.MonthlyUSD = &display
+				d.monthlyUSDExact = usd
 				total.Add(total, usd)
 				out.IncludedCount++
 			}

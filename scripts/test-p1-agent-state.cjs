@@ -91,11 +91,12 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
     // Keep the production reconciler, but resolve the intentionally stubbed renderer
     // at call time rather than capture the original DOM renderer during startup.
     reconcile:(store,read,changed,failed)=>State.reconcile(store,read,()=>vm.runInContext(file==='app.js'?'render()':'renderCurrentAgent()',sandbox),failed)},AbortController,TextEncoder,Node:{TEXT_NODE:3},console,URLSearchParams,Intl,Date,Map,Set,Number,Object,JSON,
-    location:{hash:'',search:'?id='+A,assign:p=>redirects.push(p),reload:()=>redirects.push('reload')},navigator:{clipboard:{writeText:async()=>{}}},
+    location:{hash:'',search:'?id='+A,assign:p=>redirects.push(p),reload:()=>redirects.push('reload')},navigator:{clipboard:{writeText:async()=>{}}},performance,
     document:{body:new Element(),getElementById:id=>getNode("#"+id),querySelector:getNode,querySelectorAll:()=>[],activeElement:null,createElement:()=>new Element(),addEventListener(){},removeEventListener(){}},
     ProbeTheme:{get:()=> 'light'},requestAnimationFrame:()=>1,cancelAnimationFrame(){},
     setInterval:()=>0,clearInterval(){},setTimeout,clearTimeout,queueMicrotask,addEventListener(type,f){windowListeners.set(type,f);},confirm:()=>true,
     crypto:{randomUUID:()=> 'c'.repeat(32),getRandomValues:a=>require('node:crypto').webcrypto.getRandomValues(a)},fetch:(url,options={})=>{
+      if(url==='/api/v1/web/scores') return Promise.resolve(response({computed_at:0,items:{}}));
       const d=deferred(), record={url,options,...d}; requests.push(record);
       if(route) {const value=route(url,options); if(value !== undefined) Promise.resolve(value).then(d.resolve,d.reject);}
       return d.promise;
@@ -118,7 +119,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/public-egress-check.js'),'utf8'),sandbox,{filename:'public-egress-check.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/agent-enrollment.js'),'utf8'),sandbox,{filename:'agent-enrollment.js'});
   // Upgrade tests load the current page dependencies; retain the old suite's baseline sandbox.
-  if(upgradeModules) for(const module of ['range-slider.js','latency-mini.js','card.js','youtube-status.js','dashboard-data.js','dashboard-view.js','organization-name.js','organization-api.js','organization-dialogs.js','expense-dialog.js'])
+  if(upgradeModules) for(const module of ['range-slider.js','latency-mini.js','card.js','youtube-status.js','dashboard-data.js','dashboard-view.js','organization-name.js','organization-api.js','organization-dialogs.js','expense-dialog.js','device-scores.js'])
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',module),'utf8'),sandbox,{filename:module});
   if(file==='app.js') vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/system-checks.js'),'utf8'),sandbox,{filename:'system-checks.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',file),'utf8'),sandbox,{filename:file});
