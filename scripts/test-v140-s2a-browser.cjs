@@ -22,7 +22,7 @@ async function setVisible(locator, visible) {
 }
 
 for (const theme of ['dark', 'light']) {
-  test(`${theme}: detection switches, unlimited traffic and disk acknowledgement across contexts`, {timeout: 90000}, async () => {
+  test(`${theme}: detection switches, unlimited traffic and disk acknowledgement across contexts`, {timeout: 180000}, async () => {
     const browser = await launch();
     let fixture;
     const panel = await open(browser, {
@@ -98,6 +98,18 @@ for (const theme of ['dark', 'light']) {
       const close = () => page.keyboard.press('Escape');
       const country = dialog.getByRole('checkbox', {name: '出口地区', exact: true});
       const youtube = dialog.getByRole('checkbox', {name: 'YouTube 检测', exact: true});
+      async function changeCheck(control, kind, enabled) {
+        const endpoint = '/api/v1/web/agents/' + ID(0) + '/checks/' + kind;
+        assert.equal(await control.isChecked(), !enabled);
+        const [reply] = await Promise.all([
+          page.waitForResponse(response => response.request().method() === 'PUT'
+            && new URL(response.url()).pathname === endpoint),
+          control.click(),
+        ]);
+        assert.equal(reply.status(), 200);
+        assert.deepEqual(reply.request().postDataJSON(), {enabled});
+        await control.and(page.locator(enabled ? ':enabled:checked' : ':enabled:not(:checked)')).waitFor();
+      }
       const manualRegion = dialog.getByRole('combobox', {name: 'YouTube 手动地区'});
       const filter = page.locator('#dashboard-youtube-free');
       const filterCount = page.locator('#dashboard-youtube-count');
@@ -108,8 +120,8 @@ for (const theme of ['dark', 'light']) {
       assert.equal(await youtube.isChecked(), true);
       assert.equal(await manualRegion.inputValue(), 'AL');
       await screenshot(page, theme, '02-management');
-      await country.uncheck();
-      await youtube.uncheck();
+      await changeCheck(country, 'country', false);
+      await changeCheck(youtube, 'youtube', false);
       await setVisible(manualRegion, false);
       assert.equal(await dialog.locator('#details-pane-management').getByText('检测已关闭', {exact: true}).count(), 2);
       await screenshot(page, theme, '03-checks-disabled');
@@ -124,8 +136,8 @@ for (const theme of ['dark', 'light']) {
       await screenshot(page, theme, '04-list');
       await page.locator(row(0)).locator('.banner-name').click();
       await tab('管理');
-      await country.check();
-      await youtube.check();
+      await changeCheck(country, 'country', true);
+      await changeCheck(youtube, 'youtube', true);
       await setVisible(manualRegion, true);
       assert.equal(await manualRegion.inputValue(), 'AL');
       await close();
