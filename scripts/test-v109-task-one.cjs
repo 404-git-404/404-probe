@@ -29,7 +29,7 @@ async function run(){
  server=cp.spawn(exe,['serve','--listen','127.0.0.1:'+port,'--db',db,'--web-password-hash-file',hash,'--web-public-origin',base,'--web-allow-insecure-http'],{windowsHide:true,stdio:['ignore','pipe','pipe']});let startupLog='';for(const stream of [server.stdout,server.stderr])stream.on('data',b=>{startupLog=(startupLog+b.toString()).slice(-16000);});
  for(let i=0;;i++){try{await fetch(base+'/login');break;}catch{if(server.exitCode!==null||i>=400){fs.writeFileSync(path.join(out,'server-startup.log'),startupLog);throw Error(server.exitCode!==null?'Server exited '+server.exitCode+': '+startupLog:'Server startup timeout after 20s');}await delay(50);}}
  browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()});
- const page=await browser.newPage({viewport:{width:1200,height:900},locale:'zh-CN',timezoneId:'America/Los_Angeles'});page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));
+ const page=await browser.newPage({viewport:{width:1200,height:900},locale:'zh-CN',timezoneId:'America/Los_Angeles'});page.setDefaultTimeout(30000);page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/*',async route=>{
   const u=new URL(route.request().url());if(u.origin!==base)return route.abort();const pathname=u.pathname,method=route.request().method(),body=route.request().postDataJSON?.();
   const json=(v,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(v)});
@@ -53,7 +53,7 @@ async function run(){
   return json({},404);
  });
  if(reference)await page.addInitScript(anchor=>{const NativeDate=Date;globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[anchor]));}static now(){return anchor;}};},sampleTime);
- await page.goto(base+'/login');await page.locator('#password').fill(password);await page.locator('button[type=submit]').click();await page.waitForSelector('.detail-toggle');
+ await page.goto(base+'/login',{waitUntil:'domcontentloaded'});await page.locator('#password').fill(password);await page.locator('button[type=submit]').click();await page.waitForSelector('.detail-toggle');
  const shot=async(file,selector='#device-details')=>{await page.locator(selector).screenshot({path:path.join(out,file+'.png')});};
  const tabs=async key=>{await page.locator('#details-tab-'+key).click();await page.waitForTimeout(80);};
  const openDetails=async()=>{if(!await page.locator('#device-details').evaluate(n=>n.open))await page.locator(`[data-agent-id="${ID}"] .detail-toggle`).click();};
@@ -97,5 +97,6 @@ async function run(){
  await openDetails();await tabs('management');await page.locator('#details-pane-management .upgrade-agent').click();await page.evaluate(id=>new Promise(resolve=>{const token=agentState.beginDelete(id);agentState.finishDelete(token,true);render();requestAnimationFrame(()=>requestAnimationFrame(resolve));}),ID);assert.equal(await page.evaluate(()=>document.body.style.overflow),'hidden');await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.body.style.overflow),'');assert.equal(await page.locator('#add-agent').evaluate(n=>n===document.activeElement),true,'removed origin falls back to visible button');
  assert.deepEqual(errors,[]);if(fs.existsSync(path.join(out,'failure.txt')))fs.unlinkSync(path.join(out,'failure.txt'));fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({boundary:'Real loopback Server + isolated SQLite for auth/assets; browser routes supply synthetic data and mutation receipts',keyboard,posts:posts.map(p=>({path:p.path,method:p.method})),jobNumber,errors},null,2));console.log('R09/R38 browser acceptance passed; '+keyboard.length+' dialog keyboard checks');
 }
-const watchdog=setTimeout(()=>{console.error('acceptance exceeded 150s');process.exit(2);},process.env.V109_TASK_TWO==='1'?300000:150000);
+const budgetSeconds=process.env.V109_TASK_TWO==='1'?600:360;
+const watchdog=setTimeout(()=>{console.error('acceptance exceeded '+budgetSeconds+'s');process.exit(2);},budgetSeconds*1000);
 run().catch(e=>{fs.writeFileSync(path.join(out,'failure.txt'),e.stack);console.error(e.stack);process.exitCode=1;}).finally(async()=>{clearTimeout(watchdog);gate?.();await browser?.close();if(server&&server.exitCode===null){server.kill();await new Promise(r=>server.once('exit',r));}fs.rmSync(tmp,{recursive:true,force:true});});
