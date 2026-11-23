@@ -1121,7 +1121,7 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
 let youtubeRegionKey='',youtubeRegionGeneration=0;
-function cardRenderKey(a){return JSON.stringify([a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,a.server_local,a.system_attention,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([globalThis.DeviceScores?.version(),a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,a.server_local,a.system_attention,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
@@ -1142,7 +1142,7 @@ function renderDashboard(dirty=null) {
   const allIds=[...agents.keys()],mounted=new Set();
   if(cards)for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
   for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);dormantCards.set(id,view);}
-  for(const id of dormantCards.keys())if(!agents.has(id)){dormantCards.delete(id);renderedCardKeys.delete(id);}
+  for(const [id,view] of dormantCards)if(!agents.has(id)){globalThis.DeviceScores?.unobserve(view.card);dormantCards.delete(id);renderedCardKeys.delete(id);}
   networkQuality.sync(allIds,mounted,agents);latencyCharts.sync(allIds);trafficCharts.sync(allIds);
   for(const id of allIds)if(!mounted.has(id)){latencyCharts.setVisible(id,false);trafficCharts.setVisible(id,false);}
   cardObservations.sync(allIds);selectorView.sync(allIds);cardFaces.sync(allIds);
@@ -1162,8 +1162,9 @@ function renderDashboard(dirty=null) {
     const title=`${collapsed?'▸':'▾'}  ${group.name} · ${group.items.length} 台`,headerKey=title+status;if(gv.header.dataset.key!==headerKey){gv.header.dataset.key=headerKey;let name=gv.header.querySelector('span'),note=gv.header.querySelector('small');if(!name){name=document.createElement('span');note=document.createElement('small');gv.header.append(name,note);}setCardText(name,title);setCardText(note,status);note.className=counts.online===group.items.length?'all-online':'';}gv.header.setAttribute('aria-expanded',String(!collapsed));gv.header.hidden=!model.segmented;gv.body.hidden=collapsed;
     if(layout!==lastLayout){if(gv.node!==groupPosition){if(gv.node.parentNode===container&&container.moveBefore)container.moveBefore(gv.node,groupPosition);else container.insertBefore(gv.node,groupPosition);}groupPosition=gv.node.nextElementSibling;}
     if(collapsed)continue;
-    let position=gv.body.firstElementChild;
+    let position=gv.body.firstElementChild,stackOrder=group.items.length;
     for(const agent of group.items){let view=agentCards.get(agent.agent_id);const remount=!view;
+      const order=stackOrder--;
       if(!view&&dormantCards.has(agent.agent_id)){view=dormantCards.get(agent.agent_id);dormantCards.delete(agent.agent_id);agentCards.set(agent.agent_id,view);}
       if(remount||dirty===null||dirty.has(agent.agent_id)){
        if(updated&&performance.now()>=deadline){deferred.add(agent.agent_id);if(!view)continue;}
@@ -1172,7 +1173,11 @@ function renderDashboard(dirty=null) {
        renderedCardKeys.set(agent.agent_id,key);
        }
       }
-      if(layout!==lastLayout&&view.card!==position){if(view.card.parentNode===gv.body&&gv.body.moveBefore)gv.body.moveBefore(view.card,position);else gv.body.insertBefore(view.card,position);}position=view.card.nextElementSibling;
+      if(layout!==lastLayout){
+        view.card.style.setProperty('--score-stack-order',order);
+        if(view.card!==position){if(view.card.parentNode===gv.body&&gv.body.moveBefore)gv.body.moveBefore(view.card,position);else gv.body.insertBefore(view.card,position);}
+      }
+      position=view.card.nextElementSibling;
     }
   }
   if(!deferred.size)lastLayout=layout;else render(deferred);
@@ -1510,15 +1515,20 @@ function createAgentCard(initialAgent) {
     card.append(googleTools);
     selectorView.refresh(agent.agent_id);
 
-    const detailToggle = document.createElement('button');
-    detailToggle.className = 'detail-toggle score-detail c7-detail';
-    detailToggle.type = 'button';
-    detailToggle.textContent = '详情';
+    const scoreStamp = DeviceScores.stamp(document,'card',trigger=>{
+      planRenewal.close();
+      deviceDetails.open(agent.agent_id,'overview',trigger);
+    });
+    const detailToggle = scoreStamp.button;
+    detailToggle.classList.add('detail-toggle','score-detail');
     detailToggle.dataset.focusKey = 'manage';
-    detailToggle.setAttribute('aria-haspopup', 'dialog');
-    detailToggle.title = '设备详情';
-    detailToggle.addEventListener('click', () => {planRenewal.close();deviceDetails.open(agent.agent_id,'overview',detailToggle);});
-    head.append(detailToggle);
+    const updateScore = () => {
+      const score = DeviceScores.forAgent(agent);
+      scoreStamp.update(score);
+      DeviceScores.setOverflow(card,score);
+    };
+    updateScore();
+    head.append(scoreStamp.slot);
 
     const deadline = planDeadline(agent);
     const editPlan = document.createElement('button');
@@ -1563,6 +1573,7 @@ function createAgentCard(initialAgent) {
 
     return {card, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
+      updateScore();
       const state = agent.state || {}, hasState = Boolean(agent.state);
       const metricsStale = Boolean(!agent.online || agent.disabled_at || state.stale);
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
@@ -1687,12 +1698,22 @@ function createAgentDetails(initial){
       setDetailCheck,canEditAgentControl,acknowledgeDiskFault,diskAckError,
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
     const systemSettings=SystemChecks.settingsEditor(document,saveSystemSettings,a=>canEditAgentControl(a,'system_settings'));
+    let scoreModel=DeviceScores.forAgent(agent);
+    let scoreSection=DeviceScores.details(document,scoreModel);
+    summary.overview.prepend(scoreSection);
     summary.management.append(systemSettings.node);
     systemSettings.update(agent);
     detailPanel.replaceChildren(summary.management);summary.update(agent,detailUpgradeTargets.get(agent.agent_id),serverBuild);
 
  return {management:detailPanel,overview:summary.overview,egressPanel,update(next){
   agent=next;egressPanel.update(agent);systemSettings.update(agent);
+      const nextScore=DeviceScores.forAgent(agent);
+      if(nextScore!==scoreModel){
+        scoreModel=nextScore;
+        const section=DeviceScores.details(document,scoreModel);
+        scoreSection.replaceWith(section);
+        scoreSection=section;
+      }
       const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
       remove.disabled = !mutationCSRFToken || agentState.blocked(agent.agent_id);
       stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
@@ -1864,8 +1885,15 @@ expenseDialog=ExpenseDialog.create({api:organizationAPI,visibleIDs:()=>Dashboard
 loadMutationSession();
 refresh();
 let suspended = false;
-setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); dashboardUI.refreshVersion(); if (!agentState.refreshing()) refresh(); }, 15000);
-document.addEventListener('visibilitychange',()=>{if(!suspended&&!document.hidden)dashboardData.reload();});
+function refreshScores(){
+  globalThis.DeviceScores?.refresh(readJSON,()=>{
+    document.dispatchEvent(new Event('device-scores-changed'));
+    render();
+  });
+}
+refreshScores();
+setInterval(() => { if (suspended||document.hidden) return; reconciliation.retry(); dashboardUI.refreshVersion(); refreshScores(); if (!agentState.refreshing()) refresh(); }, 15000);
+document.addEventListener('visibilitychange',()=>{if(!suspended&&!document.hidden){dashboardData.reload();refreshScores();}});
 addEventListener('pagehide', () => { suspended = true; clearTimeout(detailCheckTimer); planRenewal.shutdown(); planEditor.shutdown(); deviceDetails.shutdown(); organizationDialogs.close(); expenseDialog.close(); dashboardUI.close(); networkQuality.close(); latencyCharts.close(); trafficCharts.close(); monitorCoordinator.close(); for (const controller of [...planWriteControllers.values(), ...nameWriteControllers.values(), ...countryWriteControllers.values(), ...trafficResetControllers.values()]) controller.abort(); trafficResetControllers.clear();trafficResetRequests.clear();trafficResetFeedback.clear(); selectorController.closeAll(); events.close(); reconciliation.close(); pendingTelemetry.clear(); agentState.beginRefresh().controller.abort(); });
 // A bfcache restore must not retain closed reconciliation or a dead SSE stream.
 addEventListener('pageshow', event => { if (event.persisted) location.reload(); });

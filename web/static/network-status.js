@@ -146,7 +146,8 @@
         info('监测对象',lines.length+' 个 · '+(state.family==='ipv6'?'IPv6':'IPv4')+' · '+state.protocol.toUpperCase())+
         info('当前告警',machine.current_alerts?'<span class="net-danger">'+machine.current_alerts+'</span>':'0')+
         info('30 天告警',machine.alerts_30d+' 次')+info('慢门槛',machine.slow_threshold_ms+' ms')+
-        info('最近数据',seen+(machine.status==='paused'?'（已暂停）':'')+skew)+'</div>';
+        info('最近数据',seen+(machine.status==='paused'?'（已暂停）':'')+skew)+
+        info('网络评分','<button type="button" class="score-network-badge">数据不足</button>')+'</div>';
       const rows=lines.map(({object,name,color,line,history})=>{
         const stats=line?.stats||{},evening=line?.evening_p50_ms,delta=evening!=null&&stats.p50_ms>0?(evening/stats.p50_ms-1)*100:null;
         const comparison=delta==null?'':' <small'+(delta>25?' class="net-warn"':'')+'>'+(delta>=0?'+':'')+Math.round(delta)+'%</small>';
@@ -228,6 +229,12 @@
             (reasons?'<small>'+reasons+'</small>':'')+'</div>';
         }).join('');
     }
+    function updateScore(){
+      const badge=host.querySelector('.score-network-badge');
+      if(badge && lastResult?.machines[0] && root.DeviceScores){
+        root.DeviceScores.networkBadge(badge,root.DeviceScores.forAgent(lastResult.machines[0]));
+      }
+    }
     function repaint(){
       disposeCharts?.();disposeCharts=null;
       if(state.agent==null)return;
@@ -238,6 +245,7 @@
         return;
       }
       host.innerHTML=state.agent?renderMachine(lastResult):renderFleet(lastResult);
+      if(state.agent)updateScore();
       const boxes=[...host.querySelectorAll('.net-chart')];
       if(boxes.length)disposeCharts=charts.attach(boxes,{start:lastResult.start,end:lastResult.end,lines:objectLines(lastResult),
         metric:state.chart==='jitter'?'jitter_ms':state.metric,lossKey:lossKey(state.protocol),smooth:state.smooth,
@@ -326,6 +334,7 @@
       if(e.target.closest('[data-net-retry]'))void load();
     }
     host.addEventListener('click',handleClick,{signal:events.signal});
+    host.ownerDocument.addEventListener('device-scores-changed',updateScore,{signal:events.signal});
     nav?.addEventListener('click',handleClick,{signal:events.signal});
     host.addEventListener('change',e=>{
       if(e.target.matches('[data-net-smooth]')){state.smooth=e.target.checked;repaint();host.querySelector('[data-net-smooth]')?.focus();}

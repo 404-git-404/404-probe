@@ -64,10 +64,18 @@
    const node=el('div','banner-row banner-columns');node.dataset.agentId=a.agent_id;node.setAttribute('role','row');
    const cells=columns.map(([key])=>{const n=el('div','banner-cell');n.dataset.column=key;n.setAttribute('role','cell');node.append(n);return n;}),identity=el('div','banner-identity'),dot=el('i','banner-dot'),flag=el('span','banner-flag'),names=el('div','banner-names'),name=el('button','banner-name'),uptime=el('small');name.type='button';name.addEventListener('click',()=>onOpen(a.agent_id,name));const badges=el('div','banner-system-badges');names.append(name,uptime,badges);identity.append(dot,flag,names);cells[0].append(identity);
    const system=el('span','banner-os');cells[1].append(system);const metrics=[bar(),bar(),bar(true)];metrics.forEach((m,i)=>cells[2+i].append(m.box));const tx=el('span'),rx=el('small');cells[5].append(tx,rx);const traffic=bar();cells[6].append(traffic.box);const delay=el('span'),network=el('small','banner-network-warning','⚠ 网络异常');cells[7].append(delay,network);const youtube=el('span','banner-youtube');cells[9].append(youtube);
-   const cost=el('span'),renewalLine=el('small','banner-renewal-line');cells[10].append(cost,renewalLine);
+   const score=root.DeviceScores?.stamp(doc,'list',trigger=>onOpen(a.agent_id,trigger));
+   const cost=el('span'),renewalLine=el('small','banner-renewal-line');
+   if(score)cells[10].append(score.slot);
+   cells[10].append(cost,renewalLine);
    let renewalDate,go;
    node.addEventListener('click',e=>{if(e.target.closest('button,a,input,select')||root.getSelection?.()?.toString())return;onOpen(a.agent_id,name);});
    function update(v,agent){
+    if(score){
+     const model=root.DeviceScores.forAgent(agent);
+     score.update(model);
+     root.DeviceScores.setOverflow(node,model);
+    }
     node.dataset.lifecycle=v.lifecycle;node.setAttribute('aria-label',v.name);text(name,v.name);name.title=v.name;name.setAttribute('aria-label','查看 '+v.name+' 详情');text(uptime,v.uptime);const badgeKey=JSON.stringify(v.systemBadges);if(badges.dataset.key!==badgeKey){badges.dataset.key=badgeKey;badges.replaceChildren(...(root.SystemChecks?.badges(doc,agent)||[]));badges.hidden=!v.systemBadges.length;}if(flag.dataset.code!==v.country||flag.dataset.source!==v.countrySource){flag.dataset.code=v.country;flag.dataset.source=v.countrySource;flag.replaceChildren(root.countryMark(v.country,v.countrySource));}dot.dataset.state=v.lifecycle;dot.title=C.statusHint(agent);if(system.dataset.os!==v.os){system.dataset.os=v.os;system.replaceChildren(root.systemLogo(v.os));}system.title=v.os;
     const setBar=(m,v)=>{m.box.dataset.tone=v.tone;m.fill.style.width=v.fill+'%';text(m.label,v.text);};metrics.forEach((m,i)=>setBar(m,v.metrics[i]));text(tx,v.tx);text(rx,v.rx);setBar(traffic,v.traffic);text(delay,v.latency.text);network.hidden=!v.networkWarning;cells[7].title=v.latency.title;cells[7].dataset.state=v.latency.state;
     const {diskTone,startupDiskFailure}=v.metrics[2];metrics[2].badge.dataset.tone=diskTone;
@@ -95,11 +103,11 @@
     if(changed){if(gv.node!==position)grid.insertBefore(gv.node,position);position=gv.node.nextElementSibling;}if(collapsed)continue;
     let rowPosition=gv.body.firstElementChild;
     for(const a of group.items){const id=a.agent_id;visible.add(id);let rv=rows.get(id);if(!rv||dirty===null||dirty.has(id)){
-      if(updates&&performance.now()>=deadline){deferred.add(id);if(!rv)continue;}else{const v=projection(a,{slot:prefs.latencySlot||1,server,youtubeRegions,csrf:csrf(),blocked:blocked(id)}),key=JSON.stringify(v);updates++;if(!rv){rv=row(a);rows.set(id,rv);}if(key!==rv.key){rv.update(v,a);rv.key=key;}}
+      if(updates&&performance.now()>=deadline){deferred.add(id);if(!rv)continue;}else{const v=projection(a,{slot:prefs.latencySlot||1,server,youtubeRegions,csrf:csrf(),blocked:blocked(id)}),key=JSON.stringify([v,root.DeviceScores?.version()]);updates++;if(!rv){rv=row(a);rows.set(id,rv);}if(key!==rv.key){rv.update(v,a);rv.key=key;}}
      }if(changed||rv.node.parentNode!==gv.body){if(rv.node!==rowPosition)gv.body.insertBefore(rv.node,rowPosition);}rowPosition=rv.node.nextElementSibling;
     }
    }
-   for(const [id,rv]of rows)if(!visible.has(id)){rv.node.remove();if(!live.has(id))rows.delete(id);}
+   for(const [id,rv]of rows)if(!visible.has(id)){rv.node.remove();if(!live.has(id)){root.DeviceScores?.unobserve(rv.node);rows.delete(id);}}
    for(const [id,gv]of groups)if(!model.sections.some(g=>g.id===id)){gv.node.remove();groups.delete(id);}
    if(!deferred.size)lastLayout=layout;return deferred;
   }

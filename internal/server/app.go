@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -35,6 +36,7 @@ type App struct {
 	states                        map[string]storage.State
 	hub                           *hub
 	traffic                       *trafficCache
+	deviceScores                  atomic.Pointer[deviceScoreSnapshot]
 	controlMu                     sync.Mutex
 	controlWaiters                map[string]map[chan struct{}]struct{}
 	controlPollDuration           time.Duration
@@ -780,6 +782,7 @@ func (a *App) CleanupLoop() {
 	a.startDashboardNetworkWarmup()
 	if a.webAuth != nil {
 		go a.maintainNetworkFleetRollups()
+		go a.maintainDeviceScores()
 	}
 	if a.removalReceiptCleanupInterval <= 0 {
 		a.removalReceiptCleanupInterval = 5 * time.Minute
