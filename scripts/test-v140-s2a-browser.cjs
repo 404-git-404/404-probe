@@ -92,7 +92,7 @@ for (const theme of ['dark', 'light']) {
       await screenshot(page, theme, '01-cards');
 
       const dialog = page.locator('#device-details');
-      const openCard = () => page.locator(card(0)).locator('.c7-detail').click();
+      const openCard = () => page.locator(card(0)).locator('.score-stamp').click();
       const tab = name => dialog.getByRole('tab', {name, exact: true}).click();
       const close = () => page.keyboard.press('Escape');
       const country = dialog.getByRole('checkbox', {name: '出口地区', exact: true});

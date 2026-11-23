@@ -92,7 +92,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
     // at call time rather than capture the original DOM renderer during startup.
     reconcile:(store,read,changed,failed)=>State.reconcile(store,read,()=>vm.runInContext(file==='app.js'?'render()':'renderCurrentAgent()',sandbox),failed)},AbortController,TextEncoder,Node:{TEXT_NODE:3},console,URLSearchParams,Intl,Date,Map,Set,Number,Object,JSON,
     location:{hash:'',search:'?id='+A,assign:p=>redirects.push(p),reload:()=>redirects.push('reload')},navigator:{clipboard:{writeText:async()=>{}}},performance,
-    document:{body:new Element(),getElementById:id=>getNode("#"+id),querySelector:getNode,querySelectorAll:()=>[],activeElement:null,createElement:()=>new Element(),addEventListener(){},removeEventListener(){}},
+    document:{dispatchEvent(){return true;},body:new Element(),getElementById:id=>getNode("#"+id),querySelector:getNode,querySelectorAll:()=>[],activeElement:null,createElement:()=>new Element(),addEventListener(){},removeEventListener(){}},
     ProbeTheme:{get:()=> 'light'},requestAnimationFrame:()=>1,cancelAnimationFrame(){},
     setInterval:()=>0,clearInterval(){},setTimeout,clearTimeout,queueMicrotask,addEventListener(type,f){windowListeners.set(type,f);},confirm:()=>true,
     crypto:{randomUUID:()=> 'c'.repeat(32),getRandomValues:a=>require('node:crypto').webcrypto.getRandomValues(a)},fetch:(url,options={})=>{
@@ -101,7 +101,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
       if(route) {const value=route(url,options); if(value !== undefined) Promise.resolve(value).then(d.resolve,d.reject);}
       return d.promise;
     },EventSource:class {constructor(){this.listeners=new Map();sources.push(this);}close(){this.closed=true;}addEventListener(type,f){this.listeners.set(type,f);}}};
-  sandbox.DialogShell={attach:node=>({heading(){},setGuard(){},markSaved(){},close(){node.close();}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
+  sandbox.DialogShell={attach:node=>({heading(){},setGuard(){},markSaved(){},close(){node.close();}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});sandbox.CustomEvent=class CustomEvent{constructor(type,init){this.type=type;this.detail=init?.detail;}};vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/dashboard-model.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static/management.js'),'utf8'),sandbox,{filename:'management.js'});
   sandbox.DialogShell={attach:node=>({heading(){},setGuard(){},markSaved(){},close(){node.close();}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};

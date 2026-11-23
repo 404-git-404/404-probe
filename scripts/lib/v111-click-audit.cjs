@@ -47,7 +47,7 @@ async function audit({source=path.resolve(__dirname,'../..'),onResult=()=>{}}={}
  await run('IPv6',egress+' [data-family=ipv6]');
  await p.locator('#dashboard-settings:not([open]) > summary').click();
  await run('theme','#dashboard-settings [data-panel-theme]','theme');await run('quick','#overview-health','quick');await p.evaluate(()=>dashboardUI.clear());
- for(const [name,selector]of [['settings','#dashboard-settings > summary'],['logout','#logout'],['add','#add-agent'],['view cards','[data-view=cards]'],['view list','[data-view=list]'],['group','#dashboard-groups .dashboard-option'],['tag filter','#dashboard-tags .dashboard-options .dashboard-option'],['details','.c7-detail'],['edit name','.agent-name-display button'],['edit plan','.edit-plan'],['outbound','.selector-trigger'],['traffic','.c7-quota'],['renew','.renew-plan'],['sort','#dashboard-sort']])await run(name,selector);
+ for(const [name,selector]of [['settings','#dashboard-settings > summary'],['logout','#logout'],['add','#add-agent'],['view cards','[data-view=cards]'],['view list','[data-view=list]'],['group','#dashboard-groups .dashboard-option'],['tag filter','#dashboard-tags .dashboard-options .dashboard-option'],['details','.score-stamp'],['edit name','.agent-name-display button'],['edit plan','.edit-plan'],['outbound','.selector-trigger'],['traffic','.c7-quota'],['renew','.renew-plan'],['sort','#dashboard-sort']])await run(name,selector);
  // Audit every other enabled sidebar button as well, including the collapsed
  // panel, more filters, health/renewal summaries, expenses and management entry points.
  const known='[data-panel-theme],#logout,#overview-health,#dashboard-groups .dashboard-option';

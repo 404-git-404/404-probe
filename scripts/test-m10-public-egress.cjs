@@ -84,12 +84,12 @@ function loadApp() {
   const cancel = handle => { timers.delete(handle); clearTimeout(handle); };
   test.after(() => { for (const handle of timers) clearTimeout(handle); timers.clear(); });
   const sandbox = {ResizeObserver:class{observe(){} disconnect(){}},AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
-    document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
+    document: {dispatchEvent(){return true;},body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
     location: {hash: '', pathname: '/', search: '', assign() {}, replace() {}}, setInterval() {}, setTimeout: schedule, clearTimeout: cancel, queueMicrotask, addEventListener() {},
     requestAnimationFrame: fn => schedule(() => fn(Date.now()), 0), cancelAnimationFrame: cancel,
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
     fetch: () => new Promise(() => {}), EventSource: class {addEventListener() {} close() {}}};
-  sandbox.DialogShell={attach:()=>({heading(){},setGuard(){},markSaved(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});vm.createContext(sandbox);
+  sandbox.DialogShell={attach:()=>({heading(){},setGuard(){},markSaved(){}}),confirm:async()=>sandbox.confirm?sandbox.confirm():true};sandbox.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});sandbox.CustomEvent=class CustomEvent{constructor(type,init){this.type=type;this.detail=init?.detail;}};vm.createContext(sandbox);
   for (const file of ['dashboard-model.js','dashboard-data.js','management.js', 'selector.js', 'range-slider.js', 'network-quality-core.js', 'network-quality.js', 'traffic-chart.js', 'card-metrics.js', 'card.js', 'resource-history.js', 'system-checks.js', 'device-details.js', 'plan-editor.js', 'plan-renewal.js', 'overview.js','dashboard-view.js','organization-name.js','organization-api.js','organization-dialogs.js','expense-dialog.js', 'plan-units.js', 'youtube-status.js', 'public-egress-check.js', 'agent-enrollment.js', 'latency-mini.js', 'banner-view.js', 'app.js'])
     vm.runInContext((file==='app.js'?"globalThis.DialogShell={attach:()=>({heading(){},setGuard(){},markSaved(){}}),confirm:async()=>true};\n":'')+fs.readFileSync(path.join(__dirname, '../web/static', file), 'utf8'), sandbox);
   const render = input => {sandbox.input = input; return vm.runInContext('(()=>{const e=createPublicEgress("a");e.update(input);return e.element;})()', sandbox);};
