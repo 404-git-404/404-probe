@@ -53,6 +53,7 @@ def known_failures(source):
     for suite, cases in known.items():
         if (not re.fullmatch(r"scripts/(?:[\w.-]+/)*test-[\w.-]+\.cjs", suite)
                 or not (source / suite).is_file()
+                or "node:test" not in (source / suite).read_text(encoding="utf-8")
                 or not isinstance(cases, list) or not cases
                 or any(not isinstance(case, str) or not case.strip() or "\n" in case for case in cases)
                 or len(cases) != len(set(cases))):
@@ -189,6 +190,12 @@ class NodeFixtures:
             env["V109_COMPARE"] = str(self.temp / "v109-compare")
         if "V110_TEMP_ROOT" in variables:
             env["V110_TEMP_ROOT"] = str(self.temp)
+        if "V110_R44_SCREENS" in variables:
+            baseline = subprocess.run(["git", "cat-file", "-e", "v1.0.9^{commit}"],
+                                      cwd=self.release.source, capture_output=True)
+            if baseline.returncode:
+                return None, "R44 comparison requires the local v1.0.9 baseline tag"
+            env["V110_R44_SCREENS"] = str(self.temp / "r44-screens")
         return env, None
 
 

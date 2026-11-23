@@ -170,7 +170,7 @@ test('S3-C displays all score tiers, breakdowns and touch navigation',async t=>{
   }
 });
 
-test('S3-C compares 200-device card scrolling against S3-B',{skip:!baselineDir},async t=>{
+test('S3-C compares 200-device card scrolling against S3-B',{skip:!baselineDir&&'Optional S3-B comparison assets unavailable (S3C_BASELINE_STATIC)'},async t=>{
   const {chromium}=require(process.env.M02_PLAYWRIGHT);
   const browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM});
   const fixture=await scoreFleet(200);
