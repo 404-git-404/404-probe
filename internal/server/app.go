@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"404-probe/internal/backup"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
 	"404-probe/internal/server/updatecheck"
@@ -47,6 +48,7 @@ type App struct {
 	webAuth                       *webAuthenticator
 	buildInfo                     buildinfo.Info
 	updateCheck                   *updatecheck.Checker
+	offsiteBackup                 *backup.Manager
 	handler                       http.Handler
 	staticAssets                  *staticAssets
 	qualityLookup                 qualityLookupFunc

@@ -326,6 +326,8 @@ Usage:
   404-probe-install selector-order <absolute-sing-box-config.json>
   404-probe-install enroll <name>   create one Agent enrollment token
   404-probe-install oneclick-token <name> [--output <absolute-path>]
+  404-probe-install database verify
+  404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME) [--extract-to NEW_DIRECTORY]
                                     test machines: one-click registration token into a root-only file
   404-probe-install uninstall <server|agent|local-agent> [--confirm-delete-data]
 
@@ -1342,6 +1344,8 @@ server_residue_exists() {
 }
 usage() {
   printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | web-password reset | selector-order <sing-box-config.json> | setup-security | setup-local-agent | setup-root-collector | uninstall <server|agent|local-agent> [--confirm-delete-data] | recover-agent-removal\n'
+  printf '       404-probe-install database verify [--timeout DURATION]\n'
+  printf '       404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME [--r2-config PATH]) [--extract-to NEW_DIRECTORY]\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
@@ -1891,6 +1895,14 @@ case "${1:-}" in
   oneclick-token) shift; oneclick_token "$@" ;;
   domains) shift; domains "$@" ;;
   web-password) shift; reset_web_password "$@" ;;
+  database)
+    shift
+    case "${1:-}" in
+      verify) shift; exec runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" database verify "$@" --db "${SERVER_DATABASE}" ;;
+      restore-backup) shift; exec "${SERVER_BINARY}" database restore-backup "$@" --installed-init "${INSTALL_INIT}" ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    ;;
   selector-order) shift; selector_order "$@" ;;
   setup-security) shift; setup_security "$@" ;;
   setup-local-agent) shift; setup_local_agent "$@" ;;

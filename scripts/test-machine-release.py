@@ -40,7 +40,9 @@ def ssh(host, command, label, *, data=None, stream=None, timeout=2700):
 
 
 def remote(host, label, *args):
-    return ssh(host, ["python3", "-I", "-c", REMOTE.read_text(encoding="utf-8"), *args], label)
+    # The script goes over stdin: a multi-line quoted argument breaks on the
+    # Windows OpenSSH command line ("unexpected EOF while looking for matching").
+    return ssh(host, ["python3", "-I", "-", *args], label, data=REMOTE.read_bytes())
 
 
 def remote_directory(host):

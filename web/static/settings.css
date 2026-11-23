@@ -12,7 +12,7 @@
 .settings-error{color:var(--color-danger-text)}
 .settings-banner{padding:.55rem .7rem;border:1px solid currentColor;border-radius:.4rem}
 .settings-password-fields{display:grid;gap:.55rem .8rem;grid-template-columns:max-content minmax(10rem,17rem) minmax(0,1fr);align-items:center;margin-top:.9rem}
-.settings-password-fields input:not([type=checkbox]),#rg-search{box-sizing:border-box;width:100%;min-width:0;padding:.45rem .58rem;color:var(--color-text);border:1px solid var(--color-line-strong);background:var(--color-card);border-radius:.4rem;font:inherit}
+.settings-password-fields input:not([type=checkbox]),#rg-search,.backup-grid input{box-sizing:border-box;width:100%;min-width:0;padding:.45rem .58rem;color:var(--color-text);border:1px solid var(--color-line-strong);background:var(--color-card);border-radius:.4rem;font:inherit}
 .settings-password-input{display:grid;min-width:0;gap:.3rem}
 .settings-password-preview{min-width:0;padding:.25rem .58rem;background:var(--color-surface-hover);border-radius:.4rem;color:var(--color-text);white-space:pre-wrap;overflow-wrap:anywhere}
 .settings-password-fields input[aria-invalid=true]{border-color:var(--color-danger)}
@@ -31,5 +31,13 @@
 .settings-about{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:.5rem 1rem;margin:.6rem 0 0}
 .settings-about dt{color:var(--color-text-muted)}
 .settings-about dd{margin:0;overflow-wrap:anywhere}
+#backup-fields{border:0;padding:0;margin:0;min-width:0}
+.backup-grid{display:grid;grid-template-columns:max-content minmax(0,21rem);gap:.5rem .8rem;align-items:center;margin-top:.85rem}
+#backup-key{margin-top:.8rem;color:var(--color-warning-text)}
+#backup-private{font-family:monospace;overflow-wrap:anywhere;user-select:all}
+#backup-key .settings-check{margin-top:.75rem}
+#panel-backup-failure{color:var(--color-danger-text)}
+#backup .settings-about{margin-top:1rem}
+@media(max-width:39rem){.backup-grid{grid-template-columns:minmax(0,1fr);gap:.3rem}.backup-grid input{margin-bottom:.35rem}}
 
 @media(max-width:34rem){.settings-content section{padding:1rem}.settings-password-fields{grid-template-columns:minmax(0,1fr);gap:.3rem}.settings-password-fields label:not(:first-child){margin-top:.35rem}.settings-show{grid-column:1}.settings-region-list{grid-template-columns:1fr}}

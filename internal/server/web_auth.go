@@ -141,6 +141,7 @@ func webLoopbackHost(host string) bool {
 
 func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	a.organizationRoutes(mux)
+	a.backupRoutes(mux)
 	mux.Handle("PUT /api/v1/web/settings/update-check", a.requireWebMutation(http.HandlerFunc(a.handlePutUpdateCheck)))
 	mux.Handle("POST /api/v1/web/settings/password", a.requireWebMutation(http.HandlerFunc(a.handleChangeWebPassword)))
 	mux.Handle("GET /api/v1/web/settings/youtube-ad-free-regions", a.requireWebSession(http.HandlerFunc(a.handleYouTubeAdFreeRegions), true))

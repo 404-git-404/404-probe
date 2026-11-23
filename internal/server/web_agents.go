@@ -535,6 +535,7 @@ func newWebAgentSummaryView(record storage.AgentSnapshot) webAgentSummaryView {
 }
 
 type webVersionView struct {
+	BackupAvailable bool              `json:"backup_available,omitempty"`
 	Update          updatecheck.State `json:"update"`
 	Version         string            `json:"version"`
 	Commit          string            `json:"commit,omitempty"`
@@ -552,7 +553,7 @@ func (a *App) handleGetWebVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	info := a.buildInfo
-	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, SchemaVersion: schemaVersion, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible(), OneClickInstall: webOneClickAvailable(info), Update: a.updateCheck.Snapshot()})
+	writeJSON(w, http.StatusOK, webVersionView{Version: info.Version, Commit: info.Commit, SchemaVersion: schemaVersion, Dirty: info.Dirty, UpgradeEligible: info.UpgradeEligible(), OneClickInstall: webOneClickAvailable(info), Update: a.updateCheck.Snapshot(), BackupAvailable: a.offsiteBackup != nil})
 }
 
 func newWebAgentStateView(state storage.State, stale bool, asOf ...time.Time) *webAgentStateView {

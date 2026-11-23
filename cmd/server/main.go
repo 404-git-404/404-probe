@@ -29,6 +29,7 @@ import (
 
 	notices "404-probe"
 	"404-probe/internal/auth"
+	"404-probe/internal/backup"
 	"404-probe/internal/buildinfo"
 	"404-probe/internal/protocol"
 	"404-probe/internal/releasemetadata"
@@ -181,8 +182,11 @@ func versionCommand(args []string) error {
 }
 
 func databaseCommand(args []string) error {
+	if len(args) != 0 && args[0] == "restore-backup" {
+		return restoreBackupCommand(args[1:], os.Stdin, os.Stdout)
+	}
 	if len(args) == 0 || (args[0] != "verify" && args[0] != "migrate-copy" && args[0] != "migrate-protected") {
-		return errors.New("usage: 404-probe-server database <verify|migrate-copy|migrate-protected> --db path")
+		return errors.New("usage: 404-probe-server database <verify|migrate-copy|migrate-protected> --db path | database restore-backup --help")
 	}
 	mode := args[0]
 	flags := flag.NewFlagSet("database "+mode, flag.ContinueOnError)
@@ -400,6 +404,23 @@ func serve(args []string) error {
 			PasswordHash: passwordFile.PasswordHash, PublicOrigin: *webPublicOrigin, AllowInsecureHTTP: *webAllowInsecureHTTP,
 			PasswordFileSHA256: passwordFile.FileSHA256,
 		}))
+		if dir := store.StateDirectory(); dir != "" {
+			configPaths := map[string]string{
+				backup.ControlTokenName: *controlTokenFile,
+				backup.PasswordHashName: *webPasswordHashFile,
+				backup.UpdateCheckName:  filepath.Join(dir, backup.UpdateCheckName),
+			}
+			envPath := filepath.Join(filepath.Dir(*webPasswordHashFile), backup.EnvironmentName)
+			if _, err := os.Lstat(envPath); !errors.Is(err, os.ErrNotExist) || filepath.Dir(envPath) == "/etc/404-probe" {
+				configPaths[backup.EnvironmentName] = envPath
+			}
+			manager, err := backup.NewManager(context.Background(), store, configPaths, slog.Default())
+			if err != nil {
+				slog.Warn("offsite backup settings unavailable")
+			} else {
+				appOptions = append(appOptions, appserver.WithOffsiteBackup(manager))
+			}
+		}
 	}
 	app, err := appserver.NewApp(store, *offline, slog.Default(), appOptions...)
 	if err != nil {
@@ -408,6 +429,7 @@ func serve(args []string) error {
 	httpServer := &http.Server{Addr: *listen, Handler: app.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	cleanupDone := make(chan struct{})
 	schedulerDone := make(chan struct{})
+	backupDone := make(chan struct{})
 	go func() {
 		defer close(cleanupDone)
 		app.CleanupLoop()
@@ -416,10 +438,15 @@ func serve(args []string) error {
 		defer close(schedulerDone)
 		app.SchedulerLoop()
 	}()
+	go func() {
+		defer close(backupDone)
+		app.BackupLoop()
+	}()
 	defer func() {
 		app.Shutdown()
 		<-cleanupDone
 		<-schedulerDone
+		<-backupDone
 	}()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
