@@ -98,7 +98,20 @@ test('traffic modes and independent price/renewal formatter',()=>ui(async({page:
 }));
 test('row opens unified details; width fits names then caps; all columns survive narrow sticky scroll',()=>ui(async({page:p})=>{
  await row(p,0).locator('.banner-name').click();assert(await p.locator('#device-details').isVisible());await p.keyboard.press('Escape');
- const getWidth=()=>row(p,0).locator('[data-column=name]').evaluate(n=>n.getBoundingClientRect().width);const original=await getWidth();await p.evaluate(()=>{for(const a of agents.values())a.name='a';render();});await settle(p);const short=await getWidth();assert(short<original);await p.evaluate(()=>{agents.values().next().value.name='long-name-'.repeat(40);render();});await settle(p);const capped=await getWidth();assert(capped<=183);assert(await row(p,0).locator('.banner-name').evaluate(n=>n.scrollWidth>n.clientWidth&&n.title.length>100));
+ const cell=row(p,0).locator('[data-column=name]');
+ const name=row(p,0).locator('.banner-name');
+ const originalName='Synthetic fixture name wide enough for the name column';
+ await p.evaluate(value=>{for(const a of agents.values())a.name=value;render();},originalName);
+ await name.filter({hasText:originalName}).waitFor();
+ await settle(p);
+ const original=await cell.evaluate(n=>n.getBoundingClientRect().width);
+ await p.evaluate(()=>{for(const a of agents.values())a.name='a';render();});
+ await p.waitForFunction(({id,original})=>document.querySelector('.banner-row[data-agent-id="'+id+'"] [data-column=name]').getBoundingClientRect().width<original,{id:ID(0),original});
+ await p.evaluate(()=>{agents.values().next().value.name='long-name-'.repeat(40);render();});
+ await settle(p);
+ const capped=await cell.evaluate(n=>n.getBoundingClientRect().width);
+ assert(capped<=183);
+ assert(await name.evaluate(n=>n.scrollWidth>n.clientWidth&&n.title.length>100));
  await p.locator('#dashboard-all-groups').click();await settle(p);
  for(const width of [1440,1100,390]){await p.setViewportSize({width,height:1000});await p.locator('#agent-list').evaluate(n=>n.scrollLeft=250);assert(await row(p,0).locator('[data-column=name]').evaluate(n=>Math.abs(n.getBoundingClientRect().left-document.querySelector('#agent-list').getBoundingClientRect().left)<2));assert(await p.locator('.banner-group-header>span').first().evaluate(n=>n.getBoundingClientRect().left>=document.querySelector('#agent-list').getBoundingClientRect().left));assert.equal(await row(p,0).locator('.banner-cell').count(),12);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}
 }));
