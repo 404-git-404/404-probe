@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"time"
@@ -114,7 +115,7 @@ func qualityEncodeBucket(b qualityBucketData) ([]byte, error) {
 	return out.Bytes(), nil
 }
 func qualityDecodeBucket(wire []byte) (qualityBucketData, error) {
-	b := qualityNewBucket()
+	var b qualityBucketData
 	r := bytes.NewReader(wire)
 	v, err := r.ReadByte()
 	if err != nil || v != QualityHistogramVersion {
@@ -134,12 +135,12 @@ func qualityDecodeBucket(wire []byte) (qualityBucketData, error) {
 			return b, err
 		}
 	}
+	var fixed [8]byte
 	for _, p := range []*float64{&b.RTTSum, &b.JitterSum} {
-		var raw uint64
-		if err = binary.Read(r, binary.LittleEndian, &raw); err != nil {
+		if _, err = io.ReadFull(r, fixed[:]); err != nil {
 			return b, err
 		}
-		*p = math.Float64frombits(raw)
+		*p = math.Float64frombits(binary.LittleEndian.Uint64(fixed[:]))
 		if math.IsNaN(*p) || math.IsInf(*p, 0) {
 			return b, errors.New("invalid quality sum")
 		}
@@ -148,12 +149,14 @@ func qualityDecodeBucket(wire []byte) (qualityBucketData, error) {
 	if err != nil || n > 64 {
 		return b, errors.New("invalid quality categories")
 	}
+	s.Categories = make(map[string]int, n)
+	var name [64]byte
 	for i := 0; i < n; i++ {
 		size, e := get()
 		if e != nil || size > 64 || size > r.Len() {
 			return b, errors.New("invalid quality category")
 		}
-		raw := make([]byte, size)
+		raw := name[:size]
 		_, _ = r.Read(raw)
 		count, e := get()
 		if e != nil {
@@ -162,19 +165,16 @@ func qualityDecodeBucket(wire []byte) (qualityBucketData, error) {
 		s.Categories[string(raw)] = count
 	}
 	n, err = get()
-	if err != nil || n > 24001 {
+	if err != nil || n > 24001 || n > r.Len()/6 {
 		return b, errors.New("invalid quality histogram size")
 	}
+	b.Histogram = make(map[uint16]uint32, n)
 	total := uint64(0)
 	for i := 0; i < n; i++ {
-		var k uint16
-		var count uint32
-		if err = binary.Read(r, binary.LittleEndian, &k); err != nil {
+		if _, err = io.ReadFull(r, fixed[:6]); err != nil {
 			return b, err
 		}
-		if err = binary.Read(r, binary.LittleEndian, &count); err != nil {
-			return b, err
-		}
+		k, count := binary.LittleEndian.Uint16(fixed[:2]), binary.LittleEndian.Uint32(fixed[2:6])
 		if k > 24000 || count == 0 || b.Histogram[k] != 0 {
 			return b, errors.New("invalid quality histogram bin")
 		}
@@ -188,11 +188,10 @@ func qualityDecodeBucket(wire []byte) (qualityBucketData, error) {
 		}
 		*p = int64(v)
 	}
-	var incoming uint64
-	if err = binary.Read(r, binary.LittleEndian, &incoming); err != nil {
+	if _, err = io.ReadFull(r, fixed[:]); err != nil {
 		return b, err
 	}
-	b.IncomingJitter = math.Float64frombits(incoming)
+	b.IncomingJitter = math.Float64frombits(binary.LittleEndian.Uint64(fixed[:]))
 	flag, e := r.ReadByte()
 	if e != nil || flag > 1 || b.IncomingJitter < 0 || math.IsNaN(b.IncomingJitter) || math.IsInf(b.IncomingJitter, 0) {
 		return b, errors.New("invalid quality incoming edge")

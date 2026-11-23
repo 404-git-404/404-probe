@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/url"
 	"os"
@@ -20,7 +21,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 42
+const currentSchemaVersion = 43
 
 // 每个版本发布前按升级支持策略更新。v1.2.1 uses schema 37; v1.3.0 and v1.3.1 use schema 38.
 const minimumUpgradeSchemaVersion = 37
@@ -352,7 +353,14 @@ func migrateAndVerify(ctx context.Context, path, mode string) (DatabaseVerificat
 	if integrity != "ok" {
 		return DatabaseVerification{}, fmt.Errorf("integrity check returned %q", integrity)
 	}
-	return DatabaseVerification{SchemaVersion: version, Integrity: integrity, Mode: mode}, nil
+	// Prepare derived fleet data while the protected installer still has the
+	// Server stopped. Any remainder is repaired during service startup.
+	refreshCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	if _, err := store.RefreshNetworkFleet(refreshCtx); err != nil && refreshCtx.Err() == nil {
+		slog.Warn("prepare network fleet rollups", "error", err)
+	}
+	return DatabaseVerification{SchemaVersion: version, Integrity: integrity, Mode: mode}, ctx.Err()
 }
 
 func schemaVersion(ctx context.Context, db *sql.DB) (int, error) {
@@ -994,6 +1002,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	if version < 42 && !migration34Skip {
 		if err := migrateNetworkStatus42Tx(ctx, tx); err != nil {
 			return fmt.Errorf("migration 42: %w", err)
+		}
+	}
+	if version < 43 && !migration34Skip {
+		if err := migrateNetworkFleet43Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 43: %w", err)
 		}
 	}
 	return tx.Commit()

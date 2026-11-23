@@ -30,6 +30,9 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 func rewindNetworkStatusFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, q := range []string{
+		`DROP TRIGGER IF EXISTS quality_fleet_hour_insert`, `DROP TRIGGER IF EXISTS quality_fleet_hour_update`, `DROP TRIGGER IF EXISTS quality_fleet_hour_delete`,
+		`DROP TABLE IF EXISTS quality_fleet_rollups`, `DROP TABLE IF EXISTS quality_fleet_dirty`,
+		`DELETE FROM schema_migrations WHERE version=43`,
 		`DROP TRIGGER IF EXISTS quality_target_history_close`, `DROP TRIGGER IF EXISTS quality_target_history_insert`,
 		`DROP TRIGGER IF EXISTS agent_presence_pause`, `DROP TRIGGER IF EXISTS agent_presence_resume`, `DROP TRIGGER IF EXISTS agent_presence_register`,
 		`DROP TABLE IF EXISTS quality_target_history`, `DROP TABLE IF EXISTS quality_alert_history`,

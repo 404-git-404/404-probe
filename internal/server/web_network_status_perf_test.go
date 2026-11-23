@@ -22,7 +22,7 @@ func TestNetworkStatusSyntheticTimings(t *testing.T) {
 		t.Skip("set S3A_SYNTHETIC=1 for the 200-device SQLite timing fixture")
 	}
 	ctx := context.Background()
-	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 11, 22, 13, 47, 15, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "synthetic.db")
 	s, err := storage.Open(ctx, path)
 	if err != nil {
@@ -64,6 +64,12 @@ func TestNetworkStatusSyntheticTimings(t *testing.T) {
 	}
 	a.now = func() time.Time { return now }
 	seedNetworkStatusFleet(t, path, id, now)
+	warmStart := time.Now()
+	refreshed, err := s.RefreshNetworkFleet(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("initial rollups: %d series-days prepared in %s", refreshed, time.Since(warmStart))
 	rangeQuery := func(d time.Duration) string {
 		return fmt.Sprintf("start=%d&end=%d", now.Add(-d).UnixMilli(), now.UnixMilli())
 	}
@@ -71,11 +77,12 @@ func TestNetworkStatusSyntheticTimings(t *testing.T) {
 	for _, trial := range []struct {
 		name, url string
 		fleet     bool
+		limit     time.Duration
 	}{
-		{"range-7d", historyPath + rangeQuery(7*24*time.Hour), false},
-		{"range-30d", historyPath + rangeQuery(30*24*time.Hour), false},
-		{"fleet-200-24h", networkFleetPath + "?" + rangeQuery(24*time.Hour), true},
-		{"fleet-200-30d", networkFleetPath + "?" + rangeQuery(30*24*time.Hour), true},
+		{"range-7d", historyPath + rangeQuery(7*24*time.Hour), false, 0},
+		{"range-30d", historyPath + rangeQuery(30*24*time.Hour), false, 0},
+		{"fleet-200-24h", networkFleetPath + "?" + rangeQuery(24*time.Hour), true, time.Second},
+		{"fleet-200-30d", networkFleetPath + "?" + rangeQuery(30*24*time.Hour), true, 2 * time.Second},
 	} {
 		t.Run(trial.name, func(t *testing.T) {
 			var elapsed []time.Duration
@@ -102,6 +109,9 @@ func TestNetworkStatusSyntheticTimings(t *testing.T) {
 			}
 			sort.Slice(elapsed, func(i, j int) bool { return elapsed[i] < elapsed[j] })
 			t.Logf("min=%s median=%s max=%s body=%d bytes", elapsed[0], elapsed[1], elapsed[2], size)
+			if trial.limit > 0 && elapsed[len(elapsed)-1] > trial.limit {
+				t.Errorf("fleet request exceeded %s", trial.limit)
+			}
 		})
 	}
 }
@@ -163,13 +173,21 @@ func seedNetworkStatusFleet(t *testing.T, path, firstAgent string, now time.Time
 		t.Fatal(err)
 	}
 	for _, series := range []struct{ resolution, n int64 }{{60000, 1440}, {300000, 2016}, {3600000, 720}} {
+		res := series.resolution
+		edge := now.UnixMilli() / res * res
+		// All devices have source data at the non-aligned 24-hour window
+		// edges, where the query must use 1-minute and 5-minute buckets.
+		upper := edge + res
+		if res == 3600000 {
+			upper = edge
+		}
 		_, err := tx.Exec(`WITH RECURSIVE stamp(at) AS (
-				VALUES(?) UNION ALL SELECT at+? FROM stamp WHERE at+?<?
-			) INSERT INTO quality_buckets SELECT s.id,?,stamp.at,?
+				VALUES(?1) UNION ALL SELECT at+?2 FROM stamp WHERE at+?2<?3
+			) INSERT OR IGNORE INTO quality_buckets SELECT s.id,?2,stamp.at,?4
 			FROM quality_series s CROSS JOIN stamp
-			WHERE ?=3600000 OR s.agent_id=?`,
-			now.UnixMilli()-series.n*series.resolution, series.resolution, series.resolution, now.UnixMilli(),
-			series.resolution, wire, series.resolution, firstAgent)
+			WHERE ?2=3600000 OR s.agent_id=?5 OR
+				ABS(stamp.at-?6)<=3600000 OR ABS(stamp.at-(?6-86400000))<=3600000`,
+			edge-series.n*res, res, upper, wire, firstAgent, now.UnixMilli())
 		if err != nil {
 			t.Fatal(err)
 		}

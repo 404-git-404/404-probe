@@ -104,7 +104,7 @@ const networkBucketSelect = `WITH lanes AS MATERIALIZED (
 	)
 	SELECT l.slot,l.family,l.protocol,l.target_id,b.bucket_start,b.data
 	FROM lanes l CROSS JOIN quality_buckets b ON b.series_id=l.id
-	WHERE (b.resolution,b.bucket_start)>=(?,?) AND b.resolution=? AND b.bucket_start<?
+	WHERE b.resolution=? AND b.bucket_start>=? AND b.bucket_start<?
 	AND (?='' OR l.slot=?) AND (?='' OR l.family=?) AND (?='' OR l.protocol=?)
 	ORDER BY b.bucket_start,l.target_id`
 
@@ -112,8 +112,16 @@ const networkBucketSelect = `WITH lanes AS MATERIALIZED (
 // RTT represents individual echo replies. The legacy metric remains in v3.
 func scanNetworkBuckets(ctx context.Context, tx *sql.Tx, id string, line NetworkLine, start, end, resolution int64,
 	consume func(NetworkLine, string, int64, qualityBucketData)) error {
-	rows, err := tx.QueryContext(ctx, networkBucketSelect, id, protocol.QualityStagedSemantics,
-		resolution, start/resolution*resolution, resolution, end, line.Slot, line.Slot, line.Family, line.Family, line.Protocol, line.Protocol)
+	rows, err := tx.QueryContext(ctx, networkBucketSelect, networkBucketArgs(id, line, start, end, resolution)...)
+	return scanNetworkBucketRows(rows, err, consume)
+}
+
+func networkBucketArgs(id string, line NetworkLine, start, end, resolution int64) []any {
+	return []any{id, protocol.QualityStagedSemantics, resolution, start / resolution * resolution, end,
+		line.Slot, line.Slot, line.Family, line.Family, line.Protocol, line.Protocol}
+}
+
+func scanNetworkBucketRows(rows *sql.Rows, err error, consume func(NetworkLine, string, int64, qualityBucketData)) error {
 	if err != nil {
 		return err
 	}

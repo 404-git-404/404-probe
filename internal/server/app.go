@@ -775,6 +775,9 @@ func (a *App) CleanupLoop() {
 		a.updateCheck.Start(a.shutdown)
 	}
 	a.startDashboardNetworkWarmup()
+	if a.webAuth != nil {
+		go a.maintainNetworkFleetRollups()
+	}
 	if a.removalReceiptCleanupInterval <= 0 {
 		a.removalReceiptCleanupInterval = 5 * time.Minute
 	}

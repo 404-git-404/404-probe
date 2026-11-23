@@ -167,3 +167,20 @@ func (a *App) sweepNetworkStatus() {
 		a.logger.Error("record network alerts", "error", err)
 	}
 }
+
+func (a *App) maintainNetworkFleetRollups() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		ctx, cancel := context.WithTimeout(a.shutdown, 8*time.Second)
+		if _, err := a.store.RefreshNetworkFleet(ctx); err != nil && ctx.Err() == nil {
+			a.logger.Error("refresh network fleet rollups", "error", err)
+		}
+		cancel()
+		select {
+		case <-a.shutdown.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}

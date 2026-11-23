@@ -50,9 +50,28 @@ type NetworkFleet struct {
 
 type networkFleetAccumulator struct {
 	whole, evening qualityBucketData
-	spark          []qualityBucketData
-	latest         qualityBucketData
+	spark          []networkFleetSpark
+	latest         []networkFleetBucket
 	latestAt       int64
+}
+
+type networkFleetSpark struct {
+	bucket qualityBucketData
+	merged bool
+}
+
+func (s *networkFleetSpark) add(b qualityBucketData) {
+	if s.bucket.Histogram == nil {
+		s.bucket = b
+		return
+	}
+	if !s.merged {
+		// The first bucket's maps may still be used for the latest point.
+		merged := qualityNewBucket()
+		qualityMergeBucket(&merged, s.bucket)
+		s.bucket, s.merged = merged, true
+	}
+	qualityMergeBucket(&s.bucket, b)
 }
 
 type networkBucketSpan struct{ start, end, resolution int64 }
@@ -67,7 +86,7 @@ func networkFleetSpans(start, end, res, sparkStart, step int64) []networkBucketS
 	for at := first; at < last; {
 		cellEnd := min(last, sparkStart+(1+(at-sparkStart)/step)*step)
 		use := res
-		for _, candidate := range [...]int64{qualityHourMS, 5 * qualityMinuteMS} {
+		for _, candidate := range [...]int64{networkFleetDayMS, networkFleetShortMS, qualityHourMS, 5 * qualityMinuteMS} {
 			if candidate > res && at%candidate == 0 && at+candidate <= cellEnd {
 				use = candidate
 				break
@@ -138,18 +157,32 @@ func (s *Store) NetworkFleet(ctx context.Context, agentID, family, proto string,
 	}
 
 	first := start / res * res
-	// Preserve hour alignment for longer selections, which keeps coarse-bucket
-	// reads efficient and gives charts a stable, small grid.
+	// Use an aligned chart grid for the long windows so each point can
+	// reuse a complete fleet rollup with no change to the range edges.
 	sparkResolution := res
-	if end-first >= 24*qualityHourMS {
-		sparkResolution = qualityHourMS
+	switch {
+	case end-first > 7*networkFleetDayMS:
+		sparkResolution = networkFleetDayMS
+	case end-first >= 24*qualityHourMS:
+		sparkResolution = networkFleetShortMS
 	}
 	sparkStart := first / sparkResolution * sparkResolution
 	step := networkSparkStep(sparkStart, end, sparkResolution)
 	spans := networkFleetSpans(start, end, res, sparkStart, step)
+	raw, err := tx.PrepareContext(ctx, networkBucketSelect)
+	if err != nil {
+		return out, err
+	}
+	defer raw.Close()
+	rollup, err := tx.PrepareContext(ctx, networkFleetRollupSelect)
+	if err != nil {
+		return out, err
+	}
+	defer rollup.Close()
+	buckets := networkFleetBucketReader{raw: raw, rollup: rollup, staleBefore: networkFleetStaleBefore()}
 	for i := range out.Machines {
 		if err := fillNetworkMachine(ctx, tx, &out.Machines[i], NetworkLine{Family: family, Protocol: proto},
-			sparkStart, end, step, spans, out.Now); err != nil {
+			sparkStart, end, step, spans, out.Now, buckets); err != nil {
 			return out, err
 		}
 	}
@@ -157,7 +190,7 @@ func (s *Store) NetworkFleet(ctx context.Context, agentID, family, proto string,
 }
 
 func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine, filter NetworkLine, first, end, step int64,
-	spans []networkBucketSpan, now int64) error {
+	spans []networkBucketSpan, now int64, buckets networkFleetBucketReader) error {
 	current, err := networkCurrentTargets(ctx, tx, machine.ID)
 	if err != nil {
 		return err
@@ -179,29 +212,28 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 	for _, lane := range qualityLanes() {
 		line := NetworkLine(lane)
 		if (filter.Family == "" || line.Family == filter.Family) && (filter.Protocol == "" || line.Protocol == filter.Protocol) {
-			acc[line] = &networkFleetAccumulator{whole: qualityNewBucket(), evening: qualityNewBucket(), spark: make([]qualityBucketData, n)}
+			acc[line] = &networkFleetAccumulator{whole: qualityNewBucket(), evening: qualityNewBucket(), spark: make([]networkFleetSpark, n)}
 		}
 	}
 	for _, span := range spans {
-		err := scanNetworkBuckets(ctx, tx, machine.ID, filter, span.start, span.end, span.resolution,
-			func(line NetworkLine, _ string, at int64, b qualityBucketData) {
+		err := buckets.scan(ctx, machine.ID, filter, span,
+			func(line NetworkLine, b networkFleetBucket) {
 				a := acc[line]
 				if a == nil {
 					return
 				}
-				qualityMergeBucket(&a.whole, b)
-				if networkEvening(at) {
-					qualityMergeBucket(&a.evening, b)
+				qualityMergeBucket(&a.whole, b.whole)
+				if b.evening.Stats.Count > 0 {
+					qualityMergeBucket(&a.evening, b.evening)
 				}
-				i := (at - first) / step
-				if a.spark[i].Histogram == nil {
-					a.spark[i] = qualityNewBucket()
+				i := (b.at - first) / step
+				a.spark[i].add(b.whole)
+				if b.lastAt > a.latestAt {
+					a.latestAt, a.latest = b.lastAt, a.latest[:0]
 				}
-				qualityMergeBucket(&a.spark[i], b)
-				if a.latestAt != at {
-					a.latestAt, a.latest = at, qualityNewBucket()
+				if b.lastAt == a.latestAt {
+					a.latest = append(a.latest, b)
 				}
-				qualityMergeBucket(&a.latest, b)
 			})
 		if err != nil {
 			return err
@@ -209,7 +241,7 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 	}
 	recent := map[NetworkLine]qualityBucketData{}
 	if machine.Status == "online" && len(current) > 0 {
-		err := scanNetworkBuckets(ctx, tx, machine.ID, filter, now-15*qualityMinuteMS, now, 5*qualityMinuteMS,
+		err := buckets.scanRaw(ctx, machine.ID, filter, networkBucketSpan{now - 15*qualityMinuteMS, now, 5 * qualityMinuteMS},
 			func(line NetworkLine, target string, _ int64, b qualityBucketData) {
 				if current[line] == nil || current[line].ID != target {
 					return
@@ -236,10 +268,15 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 			Stats: networkStats(a.whole, line.Protocol), EveningP50: networkStats(a.evening, line.Protocol).P50,
 			Spark: make([]NetworkSparkPoint, n)}
 		for i, b := range a.spark {
-			out.Spark[i] = NetworkSparkPoint{Start: first + int64(i)*step, P50: networkP50(b)}
+			out.Spark[i] = NetworkSparkPoint{Start: first + int64(i)*step, P50: networkP50(b.bucket)}
 		}
 		if a.latestAt > 0 {
-			out.LatestBucketAt, out.LatestP50 = &a.latestAt, networkP50(a.latest)
+			var err error
+			out.LatestBucketAt = &a.latestAt
+			out.LatestP50, err = networkLatestP50(a.latest)
+			if err != nil {
+				return err
+			}
 		}
 		if machine.Status == "online" {
 			if alert, ok := open[line]; ok && out.Target != nil && alert.TargetID == out.Target.ID {
@@ -251,6 +288,22 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 		machine.Lines = append(machine.Lines, out)
 	}
 	return nil
+}
+
+func networkLatestP50(rows []networkFleetBucket) (*float64, error) {
+	last := qualityNewBucket()
+	for _, row := range rows {
+		b := row.whole
+		if row.lastWire != nil {
+			var err error
+			b, err = qualityDecodeBucket(row.lastWire)
+			if err != nil {
+				return nil, err
+			}
+		}
+		qualityMergeBucket(&last, b)
+	}
+	return networkP50(last), nil
 }
 
 func networkP50(b qualityBucketData) *float64 {
