@@ -25,7 +25,18 @@ clash=http.createServer((req,res)=>{record('clash-request',{method:req.method,ur
 browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()});context=await browser.newContext({viewport:{width:1440,height:1000},...(process.env.M02_RECORD_VIDEO==='0'?{}:{recordVideo:{dir:out}})});const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.url().includes('/api/'))record('browser-request',{method:r.method(),url:r.url(),payload:r.postData()})});page.on('response',r=>{if(r.url().includes('/api/'))record('browser-response',{url:r.url(),status:r.status()})});
 await page.addInitScript(()=>{window.m02Events=[];const log=(kind,detail)=>m02Events.push({time:performance.now(),kind,y:scrollY,active:document.activeElement?.outerHTML?.slice(0,180),...detail});for(const name of ['focus','scroll','wheel'])addEventListener(name,e=>log(name,{target:e.target?.id||e.target?.tagName}),true);const focus=HTMLElement.prototype.focus;HTMLElement.prototype.focus=function(...args){log('focus-call',{target:this.outerHTML.slice(0,180),args,stack:new Error().stack});return focus.apply(this,args)};const scroll=window.scrollTo;window.scrollTo=function(...args){log('scrollTo',{args,stack:new Error().stack});return scroll.apply(this,args)};});
 await login(page);const card=page.locator('[data-agent-id="'+agent.id+'"]'),trigger=card.locator('.selector-trigger');await trigger.waitFor();
-const snap=()=>page.evaluate(()=>{const dialog=document.querySelector('dialog.selector-dialog'),r=dialog?.getBoundingClientRect();return {y:scrollY,open:Boolean(dialog?.open),dialogY:r?.y,focusInside:Boolean(dialog?.contains(document.activeElement)),triggerFocused:document.activeElement?.classList.contains('selector-trigger'),active:document.activeElement?.dataset.selectorKind||document.activeElement?.tagName,overflow:document.body.style.overflow};});
+const snap=()=>page.evaluate(()=>{
+ const dialog=document.querySelector('dialog.selector-dialog');
+ const rect=dialog?.getBoundingClientRect();
+ return {
+  y:scrollY,open:Boolean(dialog?.open),
+  centerOffset:rect?rect.top+(rect.height-innerHeight)/2:null,
+  focusInside:Boolean(dialog?.contains(document.activeElement)),
+  triggerFocused:document.activeElement?.classList.contains('selector-trigger'),
+  active:document.activeElement?.dataset.selectorKind||document.activeElement?.tagName,
+  overflow:document.body.style.overflow,
+ };
+});
 await check('R33 dialog stays centered and focused through wheel/SSE; Esc restores trigger and keyboard page scroll (30 rounds)',async()=>{
  const rounds=[];
  for(let i=0;i<30;i++){
@@ -36,7 +47,7 @@ await check('R33 dialog stays centered and focused through wheel/SSE; Esc restor
   await trigger.scrollIntoViewIfNeeded();
   const before=await snap();
   await trigger.click();
-  await wait(50);
+  await page.locator('dialog.selector-dialog[open]').waitFor();
   const opened=await snap();
   await report();
   await page.waitForFunction(n=>agents.get(n.id)?.state.uptime===n.sequence,{id:agent.id,sequence});
@@ -54,9 +65,12 @@ await check('R33 dialog stays centered and focused through wheel/SSE; Esc restor
   await page.keyboard.press('Control+Home');
   await page.waitForFunction(()=>scrollY===0);
   const keyboard=await snap();
-  const pass=before.y>0&&opened.open&&opened.focusInside&&Math.abs(opened.y-before.y)<2&&
-    Math.abs(refreshed.y-opened.y)<2&&Math.abs(wheel.dialogY-opened.dialogY)<2&&
-    Math.abs(after.dialogY-opened.dialogY)<2&&Math.abs(after.y-wheel.y)<2&&
+  // The async pending-switch check can temporarily add a status row.
+  // Measure the modal's center so a height change still has to stay centered.
+  const centeredAndFocused=[opened,refreshed,wheel,after].every(state=>
+   state.open&&state.focusInside&&Math.abs(state.centerOffset)<2);
+  const pass=before.y>0&&centeredAndFocused&&Math.abs(opened.y-before.y)<2&&
+    Math.abs(refreshed.y-opened.y)<2&&Math.abs(after.y-wheel.y)<2&&
     !closed.open&&closed.triggerFocused&&keyboard.y===0;
   rounds.push({before,opened,refreshed,wheel,after,closed,keyboard,pass});
  }
