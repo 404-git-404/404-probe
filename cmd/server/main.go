@@ -516,10 +516,11 @@ func agentCommand(args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := store.AddServerLocalAgent(ctx, id, "Server", hash, time.Now()); err != nil {
+		id, epoch, err := store.RegisterServerLocalAgent(ctx, id, "Server", hash, time.Now())
+		if err != nil {
 			return err
 		}
-		_, err = fmt.Printf("PROBE_404_AGENT_ID=%s\nPROBE_404_TOKEN=%s\n", id, plain)
+		_, err = fmt.Printf("PROBE_404_AGENT_ID=%s\nPROBE_404_TOKEN=%s\nPROBE_404_LOCAL_AGENT_EPOCH_FLOOR=%d\n", id, plain, epoch)
 		return err
 	case "enroll-token":
 		// A one-click registration token (what the panel's install command carries), for test machines:

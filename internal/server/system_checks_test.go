@@ -27,8 +27,8 @@ func TestSystemChecksReportSettingsAndDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddServerLocalAgent(t.Context(), id, "Local", hash, now); err != nil {
-		t.Fatal(err)
+	if got, _, err := store.RegisterServerLocalAgent(t.Context(), id, "Local", hash, now); err != nil || got != id {
+		t.Fatalf("register local Agent: id=%q err=%v", got, err)
 	}
 	base := "/api/v1/web/agents/" + id
 	edit := `{"certificate_directories":["/opt/certs"],"watched_services":["nginx.service","nginx"]}`

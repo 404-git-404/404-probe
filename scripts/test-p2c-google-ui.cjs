@@ -44,6 +44,7 @@ function page(file) {
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/youtube-status.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/public-egress-check.js'),'utf8'),sandbox)
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/agent-enrollment.js'),'utf8'),sandbox);
+  if(file==='app.js') vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/system-checks.js'),'utf8'),sandbox,{filename:'system-checks.js'});
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static',file),'utf8'),sandbox);
   return {nodes,run:(code,input)=>{sandbox.input=input;return vm.runInContext(code,sandbox);}};
 }

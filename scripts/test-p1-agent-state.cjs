@@ -120,6 +120,7 @@ function dashboard(file = 'app.js', readTimeout = 1000, upgradeModules = false) 
   // Upgrade tests load the current page dependencies; retain the old suite's baseline sandbox.
   if(upgradeModules) for(const module of ['range-slider.js','latency-mini.js','card.js','youtube-status.js','dashboard-data.js','dashboard-view.js','organization-name.js','organization-api.js','organization-dialogs.js','expense-dialog.js'])
     vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',module),'utf8'),sandbox,{filename:module});
+  if(file==='app.js') vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../web/static/system-checks.js'),'utf8'),sandbox,{filename:'system-checks.js'});
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/static',file),'utf8'),sandbox,{filename:file});
   if(file === 'app.js') vm.runInContext("agentState.endRefresh(agentState.beginRefresh()); var actualDashboardRender=render; render = () => {}; mutationCSRFToken = 'test-token';",sandbox);
   else vm.runInContext("loadController.abort(); renderCurrentAgent = () => {currentAgent=agentState.agents.get(id);}; renderOutbounds=()=>{};renderAgentRuntime=()=>{};renderGoogleStatus=()=>{}; mutationCSRFToken='test-token';",sandbox);

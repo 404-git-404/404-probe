@@ -1129,7 +1129,7 @@ setup_local_agent() (
   if [[ -z "${configured_id}" || "${configured_id}" != "${current_id}" ]] || ! grep -Fxq "PROBE_404_SERVER=http://${listen}" "${envfile}"; then
     env_stage="$(mktemp "${LOCAL_AGENT_CONFIG}/.agent-env.XXXXXXXX")"
     if [[ -n "${current_id}" && "${configured_id}" == "${current_id}" ]]; then
-      grep -E '^PROBE_404_(AGENT_ID|TOKEN)=' "${envfile}" >"${env_stage}"
+      grep -E '^PROBE_404_(AGENT_ID|TOKEN|LOCAL_AGENT_EPOCH_FLOOR)=' "${envfile}" >"${env_stage}"
     else
       runuser -u "${SERVICE_USER}" -- "${SERVER_BINARY}" agent register-local --db "${SERVER_DATABASE}" >"${env_stage}"
     fi
@@ -2286,7 +2286,14 @@ EOF
       printf 'Install a local Agent to monitor this Server? [Y/n]: ' >/dev/tty
       IFS= read -r choice </dev/tty || true
     fi
-    case "${choice}" in n|N|no|No|0) ;; *) setup_local_agent ;; esac
+    case "${choice}" in
+      n|N|no|No|0) ;;
+      *)
+        if ! "${INSTALL_HELPER}" setup-local-agent; then
+          printf '404-probe installer: Server is installed and running. Local Agent setup failed. Retry with sudo 404-probe-install setup-local-agent.\n' >&2
+        fi
+        ;;
+    esac
   fi
 
   note "404-probe Server is installed and running."
