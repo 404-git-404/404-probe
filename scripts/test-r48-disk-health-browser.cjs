@@ -90,7 +90,7 @@ for (const theme of ['dark', 'light']) {
       await select(1, disk).waitFor();
 
       const details = async (i, expected, name, figure) => {
-        await select(i, '.c7-detail').click();
+        await select(i, '.score-stamp-card').click();
         const dialog = page.locator('#device-details');
         await dialog.locator('.details-disk-status').waitFor();
         assert.match(await dialog.locator('.details-disk-health').textContent(), expected);
@@ -115,7 +115,7 @@ for (const theme of ['dark', 'light']) {
       await page.locator('#dashboard-search').fill('');
       await select(0, disk).waitFor();
 
-      await page.evaluate(s => {window.r48Card = document.querySelector(s); window.r48Button = window.r48Card.querySelector('.c7-detail');}, card(0));
+      await page.evaluate(s => {window.r48Card = document.querySelector(s); window.r48Button = window.r48Card.querySelector('.score-stamp-card');}, card(0));
       red.state.host_health.disk.reasons = ['ext4_errors', 'stalled', 'read_eio', 'write_eio'];
       red.state.host_health.disk.stalled_since = now - 34000;
       red.tag_ids = [];
@@ -124,7 +124,7 @@ for (const theme of ['dark', 'light']) {
         const n = document.querySelector(s);
         return n?.querySelector('.dashboard-card-tags').hidden && !n.querySelector('.dashboard-disk-warning').hidden;
       }, card(0));
-      assert.equal(await page.evaluate(() => r48Card.isConnected && r48Button === r48Card.querySelector('.c7-detail')), true);
+      assert.equal(await page.evaluate(() => r48Card.isConnected && r48Button === r48Card.querySelector('.score-stamp-card')), true);
       assert.match(await select(0, disk).textContent(), /磁盘异常 · 写入失败/);
       await capture('08-tagless');
       await details(0, /写入失败（I\/O 错误） · 读回失败（I\/O 错误） · I\/O 卡住（已超过 \d+ 秒无响应） · ext4 记录到新错误/);

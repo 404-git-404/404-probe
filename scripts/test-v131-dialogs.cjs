@@ -56,7 +56,14 @@ async function run(theme,browser){
  const details= p.locator('#device-details');
  const openCustom=async()=>{await p.evaluate(id=>deviceDetails.open(id,'resources'),ID(0));if(!await details.locator('.details-custom').isVisible())await details.getByRole('button',{name:'自定义时间…',exact:true}).click();};
  const from=details.getByLabel('自定义开始时间'),to=details.getByLabel('自定义结束时间');
- const dates=await p.evaluate(()=>{const format=ms=>{const d=new Date(ms-Date.now()%1000);const two=v=>String(v).padStart(2,'0');return `${d.getFullYear()}-${two(d.getMonth()+1)}-${two(d.getDate())}T${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;};return {from:format(Date.now()-3600000),to:format(Date.now()-60000)};});
+ // Chromium omits zero seconds in the normalized datetime-local value.
+ const dates=await p.evaluate(()=>{
+  const format=ms=>{
+   const d=new Date(ms),two=v=>String(v).padStart(2,'0');
+   return [d.getFullYear(),two(d.getMonth()+1),two(d.getDate())].join('-')+'T'+[two(d.getHours()),two(d.getMinutes()),'15'].join(':');
+  };
+  return {from:format(Date.now()-3600000),to:format(Date.now()-60000)};
+ });
  await openCustom();await from.fill(dates.from);await p.keyboard.press('Escape');await prompt(p);await keep(p);assert.equal(await from.inputValue(),dates.from);await from.fill('');await p.keyboard.press('Escape');await waitClosed(p,'#device-details');
  await openCustom();await from.fill(dates.from);await outside(p,details);await prompt(p);await drop(p,'#device-details');await openCustom();assert.equal(await from.inputValue(),'');await from.fill(dates.from);await to.fill(dates.to);await details.getByRole('button',{name:'应用自定义范围',exact:true}).click();assert.equal(await details.locator('.details-range-error').textContent(),'');await p.keyboard.press('Escape');await waitClosed(p,'#device-details');assert.equal(await p.locator('#action-confirm[open]').count(),0);console.log('PASS '+theme+' details custom dates: keep, revert, discard clears draft, applied range closes without prompt');
  // A real pending save must neither dismiss nor show a discard prompt; success closes directly.

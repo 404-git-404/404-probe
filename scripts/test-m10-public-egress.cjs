@@ -84,7 +84,10 @@ function loadApp() {
   const cancel = handle => { timers.delete(handle); clearTimeout(handle); };
   test.after(() => { for (const handle of timers) clearTimeout(handle); timers.clear(); });
   const sandbox = {ResizeObserver:class{observe(){} disconnect(){}},AgentState: {...State, fetchJSON: () => new Promise(() => {})}, AbortController, URLSearchParams, Intl, Date, Map, Set, Number, Object, JSON,
-    document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}},
+    Event, CustomEvent: class extends Event {
+      constructor(type, {detail} = {}) { super(type); this.detail = detail; }
+    },
+    document: {body:new Element(),getElementById:id=>node('#'+id),querySelector: node, querySelectorAll: () => [], activeElement: null, createElement: tag => new Element(tag), addEventListener() {}, removeEventListener() {}, dispatchEvent() {}},
     location: {hash: '', pathname: '/', search: '', assign() {}, replace() {}}, setInterval() {}, setTimeout: schedule, clearTimeout: cancel, queueMicrotask, addEventListener() {},
     requestAnimationFrame: fn => schedule(() => fn(Date.now()), 0), cancelAnimationFrame: cancel,
     navigator: {clipboard: {writeText: async () => {}}}, crypto: {randomUUID: () => 'b'.repeat(32)},
