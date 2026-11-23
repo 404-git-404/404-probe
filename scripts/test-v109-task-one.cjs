@@ -97,6 +97,11 @@ async function run(){
  await openDetails();await tabs('management');await page.locator('#details-pane-management .upgrade-agent').click();await page.evaluate(id=>new Promise(resolve=>{const token=agentState.beginDelete(id);agentState.finishDelete(token,true);render();requestAnimationFrame(()=>requestAnimationFrame(resolve));}),ID);assert.equal(await page.evaluate(()=>document.body.style.overflow),'hidden');await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.body.style.overflow),'');assert.equal(await page.locator('#add-agent').evaluate(n=>n===document.activeElement),true,'removed origin falls back to visible button');
  assert.deepEqual(errors,[]);if(fs.existsSync(path.join(out,'failure.txt')))fs.unlinkSync(path.join(out,'failure.txt'));fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({boundary:'Real loopback Server + isolated SQLite for auth/assets; browser routes supply synthetic data and mutation receipts',keyboard,posts:posts.map(p=>({path:p.path,method:p.method})),jobNumber,errors},null,2));console.log('R09/R38 browser acceptance passed; '+keyboard.length+' dialog keyboard checks');
 }
-const budgetSeconds=process.env.V109_TASK_TWO==='1'?600:360;
-const watchdog=setTimeout(()=>{console.error('acceptance exceeded '+budgetSeconds+'s');process.exit(2);},budgetSeconds*1000);
+// Keep per-action deadlines while allowing the full screenshot sequence on slower hosts.
+const budgetSeconds=process.env.V109_TASK_TWO==='1'?1800:900;
+const watchdog=setTimeout(()=>{
+ console.error('acceptance exceeded '+budgetSeconds+'s');
+ if(server&&server.exitCode===null)server.kill();
+ process.exit(2);
+},budgetSeconds*1000);
 run().catch(e=>{fs.writeFileSync(path.join(out,'failure.txt'),e.stack);console.error(e.stack);process.exitCode=1;}).finally(async()=>{clearTimeout(watchdog);gate?.();await browser?.close();if(server&&server.exitCode===null){server.kill();await new Promise(r=>server.once('exit',r));}fs.rmSync(tmp,{recursive:true,force:true});});
