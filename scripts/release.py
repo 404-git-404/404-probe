@@ -15,6 +15,7 @@ import tempfile
 
 sys.dont_write_bytecode = True
 from release_prepare import prepare, version_key
+from release_node import run_node
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -101,6 +102,16 @@ class Release:
                  "| 步骤 | 结果 | 日志 / 说明 |", "|---|---|---|"]
         for row in self.state.get("steps", []):
             lines.append("| " + " | ".join(row) + " |")
+        if "node_suites" in self.state:
+            suites = self.state["node_suites"]
+            lines += ["", "## Node 套件", "", "| 套件 | 结果 |", "|---|---|"]
+            lines.extend(f"| {suite} | {status} |" for suite, status, _ in suites)
+            findings = [(suite, kind, detail) for suite, _, notes in suites for kind, detail in notes]
+            if findings:
+                lines += ["", "| 套件 | 状态 | 用例或原因 |", "|---|---|---|"]
+                for suite, kind, detail in findings:
+                    detail = " ".join(detail.replace("|", "\\|").splitlines())
+                    lines.append(f"| {suite} | {kind} | {detail} |")
         lines += ["", "| 文件 | 字节 | SHA-256 |", "|---|---:|---|"]
         for name in sorted(ASSETS | TEXT_ASSETS):
             path = self.assets / name
@@ -264,9 +275,7 @@ class Release:
         return "通过"
 
     def node(self):
-        for path, uses_runner in node_suites(self.source, self.changed()):
-            self.run(["node", *(["--test", "--test-force-exit"] if uses_runner else []), path])
-        return "通过"
+        return run_node(self, node_suites(self.source, self.changed()))
 
     def shell(self):
         for name in ("test-release-installer-manifest.sh", "test-release-rc.sh", "test-install-banner.sh"):

@@ -2,7 +2,7 @@
 
 ## 发布准备
 
-在干净的开发分支上用 Python 3.11+、Git、Bash、Node 及 go.mod 指定的 Go 运行。Windows 使用 Git Bash，race 还需要 PATH 中的 64 位 MinGW-w64 GCC。输出路径用仓库外的 ASCII 正斜杠绝对路径，无空格。
+在干净的开发分支上用 Python 3.11+、Git、Bash、支持 --test-force-exit 的 Node 及 go.mod 指定的 Go 运行。Windows 使用 Git Bash，race 还需要 PATH 中的 64 位 MinGW-w64 GCC。输出路径用仓库外的 ASCII 正斜杠绝对路径，无空格。
 
 ```powershell
 python -B scripts/release.py all --version v1.4.0 --from-version v1.3.1 --out D:/release-v140 --notes D:/release-notes-v140.md
@@ -11,9 +11,9 @@ python -B scripts/release.py all --version v1.4.0 --from-version v1.3.1 --out D:
 - 在 `--out/candidate` 建立独立克隆和提交。原分支保持干净。正式使用 Claude Code 审定的说明，标题为 `# 404-probe v1.4.0`，包含“支持从 v1.3.1 升级”和“手动替换二进制不保证”。候选预演可以省略 `--notes`，脚本会为版本和升级窗口生成简短说明。
 - 升级起点从 R31 注册表读取，校对本地 tag 和 schema。v1.4.0 只支持从 v1.3.1 开始。测试候选可用临时正式格式版本。
 - `build` 调用现有构建脚本。 `verify` 校对七个文件、LF、SHA-256、ELF 的 Go 版本和 Git 构建信息。单步重跑，例如 `python -B scripts/release.py verify --out D:/release-v140`。构建重跑把上一批文件保存在相邻目录。
-- `go` 运行全仓 vet 和测试，`race` 用上个 tag 到候选提交的 Go 文件选包，`node` 沿脚本引用选取相关套件。浏览器套件沿用本地 Playwright/Chromium 配置。若测试要求候选 Server，请按套件提示设置其运行参数。日志与 `results.md` 保留首次结果及单步重跑。平台跳过、历史基线和可选夹具须在验收记录说明。
+- `go` 运行全仓 vet 和测试，`race` 用上个 tag 到候选提交的 Go 文件选包，`node` 沿脚本引用选取相关套件。日志保留每次运行，`results.md` 列出最近一次 Node 的套件和用例结果。`release-node-known-failures.json` 按套件和用例名称记录历史失败。`KNOWN FAIL` 不阻塞，`XPASS` 提示已知用例变为通过，`FAIL` 阻塞发布。
 - 为 Linux 运行器创建具备 `sudo` 权限的非 root 用户，用该用户运行发布命令，并启用 IPv6 回环。动态安装器步骤还需要 `bubblewrap`、`strace`、Python 和无 404-probe 安装的 Linux 测试运行器。2 核机器上安装器步骤约需 1 小时，中途长时间没有输出是正常的。Windows 原生执行会将 Linux 动态夹具标为跳过。有本地 WSL 2 环境时可给同一命令加 `--wsl <发行版>`，也可在隔离的 Linux 运行器执行。
-- 浏览器套件使用 `M02_PLAYWRIGHT` 指向 Playwright 或 Playwright Core 1.55 及以上版本。`test-m02-real-chain.cjs` 还需要 `M02_ROOT` 指向隔离的本机夹具目录（含 `password.hash`），`M02_SERVER` 指向本机构建的 Server 可执行文件。每次运行在该目录写入新的场景子目录。
+- Node 阶段查找本机 Chromium、Chrome 或 Edge，复用已安装的 Playwright，或用 npm 安装固定版本的 Playwright Core 到临时目录。可用 `M02_CHROMIUM` 和 `M02_PLAYWRIGHT` 指定本机工具。阶段为 M02、V109、V110 和 R45 构建候选的本机 Server，配置各套件的临时数据库和环境变量。缺少工具或准备失败时，受影响套件标为 `SKIPPED` 并列明原因。
 - 准备命令只操作本地。发布时从干净候选克隆取准确提交，按 CLAUDE.md 推送、建 tag 和 release。
 
 ## 测试机
