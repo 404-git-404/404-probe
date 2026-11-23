@@ -727,11 +727,13 @@ test('P2a actual country timeout retains old operation and does not create an au
 });
 
 test('P2a actual traffic uncertain retry uses original ID, duplicate disabled, merge only traffic',async()=>{
-  const app=dashboard('history.js',20);seed(app.state,{...dto(),traffic:{rx_total:100,tx_total:200,started_at:1}});
+  const app=dashboard('history.js',10000);seed(app.state,{...dto(),traffic:{rx_total:100,tx_total:200,started_at:1}});
   app.eval(`currentAgent=agentState.agents.get('${A}')`);
   const button=app.nodes.get('#traffic-reset');button.disabled=false;
-  const first=button.emit('click');await button.emit('click');await first;
+  const first=button.emit('click');await button.emit('click');
+  assert.equal(app.requests.filter(request=>request.url.endsWith('/traffic/reset')).length,1);
   const one=app.request('/traffic/reset');const original=JSON.parse(one.options.body).request_id;
+  one.reject(Object.assign(new Error('Request timed out'),{name:'TimeoutError'}));await first;
   assert.equal(app.state.agents.get(A).traffic.rx_total,100);assert.equal(app.eval('trafficRequest'),original);
   assert.match(app.nodes.get('#traffic-reset-feedback').textContent,/结果未确认/);
   button.disabled=false;const second=button.emit('click');await flush();const two=app.request('/traffic/reset');assert.equal(JSON.parse(two.options.body).request_id,original);
