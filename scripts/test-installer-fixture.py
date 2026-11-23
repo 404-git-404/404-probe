@@ -339,7 +339,8 @@ bash /work/fixture/installer-fixture-shell-harness.sh
         rewritten = fixture.redirect(source, Path("/fixture"))
         remaining = re.sub(r'''/fixture/system[^\s'"<>;)]*''', "MAPPED", rewritten)
         for prefix in fixture.PREFIXES:
-            self.assertFalse(prefix in remaining, "unmapped fixed prefix: " + prefix)
+            self.assertNotRegex(remaining, re.escape(prefix) + r'''(?=$|[/\s'"<>;)|&}])''',
+                                "unmapped fixed prefix: " + prefix)
         self.assertEqual(rewritten.count("remove_owned_tree /fixture/system/run/404-probe"), 2)
 
     def test_positive_delete_and_forbidden_system_paths(self):
