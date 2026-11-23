@@ -26,8 +26,45 @@ browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHRO
 await page.addInitScript(()=>{window.m02Events=[];const log=(kind,detail)=>m02Events.push({time:performance.now(),kind,y:scrollY,active:document.activeElement?.outerHTML?.slice(0,180),...detail});for(const name of ['focus','scroll','wheel'])addEventListener(name,e=>log(name,{target:e.target?.id||e.target?.tagName}),true);const focus=HTMLElement.prototype.focus;HTMLElement.prototype.focus=function(...args){log('focus-call',{target:this.outerHTML.slice(0,180),args,stack:new Error().stack});return focus.apply(this,args)};const scroll=window.scrollTo;window.scrollTo=function(...args){log('scrollTo',{args,stack:new Error().stack});return scroll.apply(this,args)};});
 await login(page);const card=page.locator('[data-agent-id="'+agent.id+'"]'),trigger=card.locator('.selector-trigger');await trigger.waitFor();
 const snap=()=>page.evaluate(()=>{const dialog=document.querySelector('dialog.selector-dialog'),r=dialog?.getBoundingClientRect();return {y:scrollY,open:Boolean(dialog?.open),dialogY:r?.y,focusInside:Boolean(dialog?.contains(document.activeElement)),triggerFocused:document.activeElement?.classList.contains('selector-trigger'),active:document.activeElement?.dataset.selectorKind||document.activeElement?.tagName,overflow:document.body.style.overflow};});
-await check('R33 dialog stays centered and focused through wheel/SSE; Esc restores trigger and keyboard page scroll (30 rounds)',async()=>{const rounds=[];for(let i=0;i<30;i++){await page.keyboard.press('Control+Home');await page.waitForFunction(()=>scrollY===0);await trigger.scrollIntoViewIfNeeded();const before=await snap();await trigger.click();await wait(50);const opened=await snap();await report();await page.waitForFunction(n=>agents.get(n.id)?.state.uptime===n.sequence,{id:agent.id,sequence});await page.evaluate(()=>refresh());const refreshed=await snap();await page.locator('dialog.selector-dialog').hover();await page.mouse.wheel(0,-250);await wait(100);const wheel=await snap();await report();await page.waitForFunction(n=>agents.get(n.id)?.state.uptime===n.sequence,{id:agent.id,sequence});const after=await snap();await page.keyboard.press('Escape');const closed=await snap();await page.keyboard.press('Control+Home');await page.waitForFunction(()=>scrollY===0);const keyboard=await snap();const pass=before.y>0&&opened.open&&opened.focusInside&&Math.abs(opened.y-before.y)<2&&Math.abs(refreshed.y-opened.y)<2&&Math.abs(wheel.dialogY-opened.dialogY)<2&&Math.abs(after.dialogY-opened.dialogY)<2&&Math.abs(after.y-wheel.y)<2&&!closed.open&&closed.triggerFocused&&keyboard.y===0;rounds.push({before,opened,refreshed,wheel,after,closed,keyboard,pass});}fs.writeFileSync(path.join(out,'scroll.json'),JSON.stringify(rounds,null,2));return rounds.every(r=>r.pass)});
+await check('R33 dialog stays centered and focused through wheel/SSE; Esc restores trigger and keyboard page scroll (30 rounds)',async()=>{
+ const rounds=[];
+ for(let i=0;i<30;i++){
+  // Keep the simulated Agent's outbound snapshot fresh on slow browser hosts.
+  if(i%5===0)await snapshot();
+  await page.keyboard.press('Control+Home');
+  await page.waitForFunction(()=>scrollY===0);
+  await trigger.scrollIntoViewIfNeeded();
+  const before=await snap();
+  await trigger.click();
+  await wait(50);
+  const opened=await snap();
+  await report();
+  await page.waitForFunction(n=>agents.get(n.id)?.state.uptime===n.sequence,{id:agent.id,sequence});
+  await page.evaluate(()=>refresh());
+  const refreshed=await snap();
+  await page.locator('dialog.selector-dialog').hover();
+  await page.mouse.wheel(0,-250);
+  await wait(100);
+  const wheel=await snap();
+  await report();
+  await page.waitForFunction(n=>agents.get(n.id)?.state.uptime===n.sequence,{id:agent.id,sequence});
+  const after=await snap();
+  await page.keyboard.press('Escape');
+  const closed=await snap();
+  await page.keyboard.press('Control+Home');
+  await page.waitForFunction(()=>scrollY===0);
+  const keyboard=await snap();
+  const pass=before.y>0&&opened.open&&opened.focusInside&&Math.abs(opened.y-before.y)<2&&
+    Math.abs(refreshed.y-opened.y)<2&&Math.abs(wheel.dialogY-opened.dialogY)<2&&
+    Math.abs(after.dialogY-opened.dialogY)<2&&Math.abs(after.y-wheel.y)<2&&
+    !closed.open&&closed.triggerFocused&&keyboard.y===0;
+  rounds.push({before,opened,refreshed,wheel,after,closed,keyboard,pass});
+ }
+ fs.writeFileSync(path.join(out,'scroll.json'),JSON.stringify(rounds,null,2));
+ return rounds.every(r=>r.pass);
+});
 await page.screenshot({path:path.join(out,'before-switch.png'),fullPage:true});
+await report();await snapshot();
 await check('real switch A→B: select draft→explicit switch→Server→SQLite→Agent claim→target PUT→snapshot→result',async()=>{await trigger.click();const before=trace.filter(e=>e.kind==='browser-request'&&e.method==='POST'&&e.url.endsWith('/outbounds/switch')).length;await page.locator('select[data-selector-kind="choice"]').selectOption('B');assert.equal(trace.filter(e=>e.kind==='browser-request'&&e.method==='POST'&&e.url.endsWith('/outbounds/switch')).length,before,'select only updates draft');await page.locator('[data-selector-kind="submit"]').waitFor({state:'visible'});for(let i=0;i<60&&!await page.locator('[data-selector-kind="submit"]').isEnabled();i++)await wait(100);await page.locator('[data-selector-kind="submit"]').click();const result=await execute();await page.waitForFunction(id=>agents.get(id)?.outbounds?.selectors?.[0]?.current==='B',agent.id);await page.waitForFunction(id=>!selectorController.model(id).active,agent.id);const job=await page.evaluate(async id=>fetch('/api/v1/web/jobs/'+id).then(r=>r.json()),result.job.job_id);record('verified-job',job);return result.success&&job.operation_status==='success'&&current==='B'});
 await page.screenshot({path:path.join(out,'after-switch.png'),fullPage:true});await page.keyboard.press('Escape');
 await check('page refresh reads persisted B',async()=>{await page.reload();await page.waitForFunction(id=>agents.get(id)?.outbounds?.selectors?.[0]?.current==='B',agent.id);return true});
