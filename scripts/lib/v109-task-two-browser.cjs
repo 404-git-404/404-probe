@@ -82,7 +82,27 @@ module.exports=async({page,browser,current,ID,out,openDetails,tabs})=>{
   await page.locator('#network-quality-settings').waitFor({state:'hidden'});
  };
  await check('network reference and keyboard; opening/switching is draft-only',async()=>{
-  await set({name:'Synthetic-Test-2'});await network();await closeNetwork();await network();assert.ok(await page.locator('#network-quality-settings .nq-sub').evaluateAll(nodes=>nodes.filter(n=>n.getClientRects().length).every(n=>n.scrollWidth<=n.clientWidth+1)),'combination labels fit without clipping');const spacing=await page.locator('.nq-subs').first().evaluate(n=>({gap:parseFloat(getComputedStyle(n).columnGap),width:n.getBoundingClientRect().width,font:getComputedStyle(n.firstElementChild).fontSize}));assert.equal(spacing.gap,3);assert.equal(spacing.width,208);assert.equal(spacing.font,'12px');await capture('Dialog-Network','#network-quality-settings',true);await closeNetwork();await keyboardCheck('network',network,'#network-quality-settings',720,settingsTrigger);const before=mutations().length;await network();await page.locator('[data-nq-field=enabled]').uncheck();assert.equal(mutations().length,before);await closeNetwork();assert.equal(mutations().length,before);
+  await set({name:'Synthetic-Test-2'});await network();await closeNetwork();await network();
+  const obscuredLabels=await page.locator('#network-quality-settings .nq-sub:visible').evaluateAll(labels=>labels.filter(label=>{
+   const text=label.querySelector('span').getBoundingClientRect();
+   const row=label.parentElement;
+   const previous=label.previousElementSibling||row.previousElementSibling;
+   const next=label.nextElementSibling||row.nextElementSibling;
+   // Font widths vary by OS. Check what the browser can show between controls.
+   if(previous?.getClientRects().length&&text.left<previous.getBoundingClientRect().right)return true;
+   if(next?.getClientRects().length&&text.right>next.getBoundingClientRect().left)return true;
+   const dialog=label.closest('dialog');
+   for(let ancestor=label;ancestor;ancestor=ancestor.parentElement){
+    if(getComputedStyle(ancestor).overflowX!=='visible'){
+     const left=ancestor.getBoundingClientRect().left+ancestor.clientLeft;
+     if(text.left<left||text.right>left+ancestor.clientWidth)return true;
+    }
+    if(ancestor===dialog)break;
+   }
+   return false;
+  }).map(label=>label.textContent));
+  assert.deepEqual(obscuredLabels,[],'combination labels are visible without clipping or overlapping nearby controls');
+  const spacing=await page.locator('.nq-subs').first().evaluate(n=>({gap:parseFloat(getComputedStyle(n).columnGap),width:n.getBoundingClientRect().width,font:getComputedStyle(n.firstElementChild).fontSize}));assert.equal(spacing.gap,3);assert.equal(spacing.width,208);assert.equal(spacing.font,'12px');await capture('Dialog-Network','#network-quality-settings',true);await closeNetwork();await keyboardCheck('network',network,'#network-quality-settings',720,settingsTrigger);const before=mutations().length;await network();await page.locator('[data-nq-field=enabled]').uncheck();assert.equal(mutations().length,before);await closeNetwork();assert.equal(mutations().length,before);
  });
  await check('asymmetric bits and builtin labels survive save; removing an object leaves other keys intact',async()=>{
   const raw=configs.get(ID);Object.assign(raw.slots[0],{ipv4_tcp:true,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:true});raw.settings_revision=bump(raw.settings_revision);lanes(raw);await network();const before=clone(raw.slots[0]);await page.locator('[data-nq-field=save-bottom]').click();await page.waitForFunction(()=>!networkQuality.snapshot().panel.dirty);const payload=writes.at(-1).body;for(const key of ['kind','region','isp','ipv4_tcp','ipv4_icmp','ipv6_tcp','ipv6_icmp'])assert.equal(payload.slots[0][key],before[key],key);assert.equal(payload.slots[0].isp,'telecom');await page.locator('[data-nq-field=add]').click();assert.equal(await page.locator('.nq-slot:visible').count(),3);for(const bit of ['ipv4_tcp','ipv4_icmp','ipv6_tcp','ipv6_icmp'])assert.ok(await page.locator(`[data-nq-field=mobile-${bit}]`).isChecked());await page.locator('[data-nq-field=mobile-host]').fill('203.0.113.20');assert.equal(await page.locator('[data-nq-field=mobile-ipv6_tcp]').isChecked(),false);assert.ok(await page.locator('[data-nq-field=mobile-ipv6_tcp]').isDisabled());await page.locator('[data-nq-field=mobile-remove]').click();assert.equal((await page.evaluate(()=>networkQuality.snapshot().panel.draft.slots)).map(s=>s.slot).join(','),'telecom,unicom');await closeNetwork();
