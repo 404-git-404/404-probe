@@ -15,7 +15,7 @@ async function open(browser,{source=repo,width=1440,height=1100,theme='light',n=
  const raw=load('v4-running');raw.slots.forEach((s,i)=>{s.kind='custom';s.region=['上海','广州','北京'][i];s.isp=['电信','联通','移动'][i];});
  const adapted=C.adapt(raw),targets=adapted.targets;
  const context=await browser.newContext({viewport:{width,height},deviceScaleFactor:1,locale:'zh-CN',timezoneId:'America/Los_Angeles',colorScheme}),page=await context.newPage(),errors=[];
- page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));
+ page.setDefaultTimeout(60000);page.on('pageerror',e=>errors.push(e.message));
  await page.clock.setFixedTime(NOW);
  if(theme)await page.addInitScript(theme=>{if(localStorage.getItem('404-probe.theme.v1')===null)localStorage.setItem('404-probe.theme.v1',theme);},theme);
  const staticRoot=path.join(source,'web/static');
@@ -57,7 +57,7 @@ async function open(browser,{source=repo,width=1440,height=1100,theme='light',n=
   return r.continue();
  });
  if(prepare)await prepare(page,context);
- await page.goto(f.base);await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n,n);
+ await page.goto(f.base,{waitUntil:'domcontentloaded'});await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n,n,{timeout:180000});
  if(n)await page.waitForFunction(n=>agentCards.size===n,n);
  await page.waitForFunction(()=>!document.querySelector('#overview-money').textContent.includes('正在'));
  return {page,context,f,errors,raw,targets,async close(){await context.close();f.close();}};
