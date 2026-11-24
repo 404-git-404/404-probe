@@ -160,7 +160,14 @@ func readDeviceScoreLines(ctx context.Context, tx *sql.Tx, id string, start, end
 				icmpLoss = networkStats(paired.whole, "icmp").PacketLossPercent
 			}
 			line.FailurePercent = deviceScoreTCPFailure(stats.PacketLossPercent, stats.ErrorPercent, icmpLoss)
-			line.AlertMS = deviceScoreAlertDuration(alerts, line.NetworkLine, start, end)
+			// Historical episodes remain visible in K4. The score only counts the
+			// part of an episode within the time span of new TCP measurements.
+			coveredStart := max(start, a.whole.FirstTime)
+			coveredEnd := end
+			if a.whole.LastTime > 0 {
+				coveredEnd = min(end, (a.whole.LastTime/deviceScoreCoverageBucket+1)*deviceScoreCoverageBucket)
+			}
+			line.AlertMS = deviceScoreAlertDuration(alerts, line.NetworkLine, coveredStart, coveredEnd)
 		}
 	}
 	return lines, nil

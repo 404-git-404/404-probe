@@ -51,6 +51,16 @@ func TestDeviceScoreInputsReadStoredNetworkWithDNS(t *testing.T) {
 	if _, err := c.s.db.Exec(`UPDATE quality_series SET semantics=? WHERE id=?`, protocol.QualityTCPLossSemantics, series); err != nil {
 		t.Fatal(err)
 	}
+	bucket.FirstID, bucket.LastID = 1, 2
+	bucket.FirstTime = start.Add(10 * time.Minute).UnixMilli()
+	bucket.LastTime = start.Add(20 * time.Minute).UnixMilli()
+	target := c.targetID(c.cfg, "telecom", "ipv4", "tcp")
+	for _, at := range []time.Time{start.Add(2 * time.Minute), start.Add(15 * time.Minute)} {
+		if _, err := c.s.db.Exec(`INSERT INTO quality_alert_history(agent_id,slot,family,protocol,target_id,revision,start_at,end_at)
+   VALUES(?,'telecom','ipv4','tcp',?,1,?,?)`, c.id, target, at.UnixMilli(), at.Add(time.Minute).UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	c.versions(&bucket, "ipv4", "tcp")
 	wire, err := qualityEncodeBucket(bucket)
 	if err != nil {
@@ -74,7 +84,7 @@ func TestDeviceScoreInputsReadStoredNetworkWithDNS(t *testing.T) {
 		t.Fatalf("got %+v", out.Lines)
 	}
 	got := out.Lines[0]
-	if got.CoveredMS != deviceScoreNetworkWindow.Milliseconds()/2 || got.FailurePercent == nil || *got.FailurePercent != 10+100.0/90 || got.P50 == nil || *got.P50 != 50 || got.Evening == nil {
+	if got.CoveredMS != deviceScoreNetworkWindow.Milliseconds()/2 || got.FailurePercent == nil || *got.FailurePercent != 10+100.0/90 || got.P50 == nil || *got.P50 != 50 || got.Evening == nil || got.AlertMS != time.Minute.Milliseconds() {
 		t.Fatalf("stored line %+v", got)
 	}
 }
