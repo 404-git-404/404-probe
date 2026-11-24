@@ -8,6 +8,15 @@ import (
 )
 
 const QualityStagedSemantics = "staged_probe_v2"
+const QualityTCPLossSemantics = "tcp_connect_timeout_v1"
+const QualityTCPLossHeader = "X-404-Probe-Quality-TCP-Loss"
+const QualityTCPDefaultTimeoutMS = 1000
+const QualityTCPHighLatencyTimeoutMS = 3000
+
+func QualityValidTCPTimeout(ms int) bool {
+	return ms == QualityTCPDefaultTimeoutMS || ms == QualityTCPHighLatencyTimeoutMS
+}
+
 const QualitySemanticsHeader = "X-404-Probe-Quality-Semantics"
 
 // Echo order is send order, irrespective of reply order. One bounded round.
@@ -23,6 +32,7 @@ type QualityDetails struct {
 	DNSMS            float64       `json:"dns_ms"`
 	DNSOutcome       string        `json:"dns_outcome"`
 	ProbeComplete    bool          `json:"probe_complete"`
+	ConnectTimeoutMS int           `json:"connect_timeout_ms,omitempty"`
 	ConnectAttempted bool          `json:"connect_attempted,omitempty"`
 	ConnectComplete  bool          `json:"connect_complete,omitempty"`
 	ConnectMS        *float64      `json:"connect_ms,omitempty"`
@@ -93,6 +103,9 @@ func (s QualitySample) ValidateDetails(now time.Time, t QualityTarget) string {
 	switch d.ErrorCode {
 	case "", "dns_error", "dns_timeout", "no_address", "not_found", "timeout", "refused", "network_error", "permission_denied", "unsupported", "canceled", "icmp_error", "clock_error", "short_write", "unsafe_address":
 	default:
+		return "invalid"
+	}
+	if d.ConnectTimeoutMS != 0 && (t.Protocol != "tcp" || !QualityValidTCPTimeout(d.ConnectTimeoutMS)) {
 		return "invalid"
 	}
 	if t.Protocol == "tcp" {

@@ -695,6 +695,7 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
+	req.Header.Set(protocol.QualityTCPLossHeader, protocol.QualityTCPLossSemantics)
 	req.Header.Set(protocol.SystemCheckHeader, "1")
 	req.Header.Set(protocol.QualityVersionHeader, "2")
 	req.Header.Set(protocol.QualitySemanticsHeader, protocol.QualityStagedSemantics)

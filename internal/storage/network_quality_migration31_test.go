@@ -69,6 +69,8 @@ func asManualLines(t *testing.T, s *Store, id string, slots ...string) {
 
 func rerunMigration31(t *testing.T, s *Store, path string) *Store {
 	t.Helper()
+	dropColumnIfPresent(t, s.db, "quality_alert_history", "worst_loss")
+	dropColumnIfPresent(t, s.db, "quality_alert_history", "reason")
 	for _, statement := range []string{`DELETE FROM schema_migrations WHERE version>=31`, `DROP TABLE agent_enrollment_tokens`} {
 		if _, err := s.db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -217,6 +219,8 @@ func TestMigration31IsAtomic(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT choices FROM quality_config WHERE agent_id=?`, id).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
+	dropColumnIfPresent(t, s.db, "quality_alert_history", "worst_loss")
+	dropColumnIfPresent(t, s.db, "quality_alert_history", "reason")
 	if _, err := s.db.Exec(`DELETE FROM schema_migrations WHERE version>=31; CREATE TRIGGER block_manual_migration BEFORE UPDATE ON quality_targets BEGIN SELECT RAISE(ABORT,'blocked'); END;`); err != nil {
 		t.Fatal(err)
 	}

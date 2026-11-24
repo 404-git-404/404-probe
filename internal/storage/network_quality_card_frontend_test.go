@@ -35,13 +35,14 @@ func TestQualityTCPRightMatchesFrontendFromSameMinutes(t *testing.T) {
 				b.ConfigMin, b.ConfigMax, b.SlotMin, b.SlotMax = 1, 1, 2, 2
 				b.IntervalMin, b.IntervalMax = i30, i30
 				b.Stats.Count, b.Stats.ConnectAttempts = judged, judged
+				b.TCP = qualityTCPBucket{Samples: judged, Attempts: judged, Loss: failed}
 				b.Stats.ConnectSuccesses, b.Stats.ValidRTTs = judged-failed, judged-failed
 				if judged > failed {
 					b.Histogram[200] = uint32(judged - failed) // 50 ms, below the slow threshold
 				}
 				return b
 			}
-			tl := &qualityTimeline{First: 0}
+			tl := &qualityTimeline{First: 0, Frame: frame}
 			for m := int64(0); m < 70; m++ {
 				var b *qualityBucketData
 				put := func(judged, failed int) { value := bucket(judged, failed); b = &value }
@@ -70,7 +71,7 @@ func TestQualityTCPRightMatchesFrontendFromSameMinutes(t *testing.T) {
 			}
 			lane := QualityCardLane{TCP: QualityCardTCPLane{Status: "active"}}
 			for i := 0; i < QualityCardBlocks; i++ {
-				lane.TCP.Blocks = append(lane.TCP.Blocks, tl.classifyBlock(windowStart+int64(i)*QualityBlockMS, evalEnd, i30))
+				lane.TCP.Blocks = append(lane.TCP.Blocks, tl.classifyBlock(windowStart+int64(i)*QualityBlockMS, evalEnd))
 			}
 			fixtures = append(fixtures, fixture{Name: name, Lane: lane, Right: right})
 		}
@@ -98,13 +99,12 @@ for(const {name,lane,right} of fixtures){
  // roundoff here; the actual displayed percentage below must match exactly.
  if(percent!==null)assert.ok(Math.abs(percent-right.percent)<=Number.EPSILON*Math.max(1,Math.abs(right.percent)),name+' unrounded percentage');
  classes.add(right.samples);
- if(right.samples==='none'){
-  assert.equal(view.text,'—',name+' samples below minimum');
-  assert.match(view.title,/样本太少/,name);
+ if(judged===0){
+  assert.equal(view.text,'—',name+' empty');
  }else{
-  const value=Number.isInteger(right.percent)?String(right.percent):right.percent.toFixed(1);
-  assert.equal(view.text,'失败 '+value+'%',name+' displayed percentage');
-  assert.equal(view.title.includes('样本较少'),right.samples==='few',name+' few/ok sample judgement');
+  const value=require(process.argv[1]).percent(right.percent);
+  assert.equal(view.text,'丢包 '+value,name+' displayed percentage');
+  assert.ok(view.title.includes('（'+failed+'/'+judged+'）'),name+' available counts');
  }
 }
 assert.deepEqual([...classes].sort(),['few','none','ok']);

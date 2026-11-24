@@ -59,8 +59,10 @@
     const stopped = (checks?.services || []).filter(s => s.state !== 'active').length;
     const failed = (checks?.failed_units || []).length;
     const timeWarning = !!agent?.system_attention?.time;
-    const warnings = Number(expiring > 0) + Number(timeWarning);
-    const dangers = Number(expired > 0) + Number(stopped > 0 || failed > 0);
+    const restarts = checks?.service_restarts || [];
+    const serviceDanger = stopped > 0 || failed > 0 || restarts.some(s => s.count >= 3);
+    const warnings = Number(expiring > 0) + Number(timeWarning) + Number(restarts.length > 0 && !serviceDanger);
+    const dangers = Number(expired > 0) + Number(serviceDanger);
     if (!supportNote) {
       if (warnings) header.append(pill(doc, warnings + ' 项提醒', 'warning'));
       if (dangers) header.append(pill(doc, dangers + ' 项异常', 'danger'));
@@ -117,7 +119,8 @@
     }
 
     const serviceBadge = stopped ? pill(doc, stopped + ' 个未运行', 'danger') :
-      failed ? pill(doc, failed + ' 个失败单元', 'danger') : null;
+      failed ? pill(doc, failed + ' 个失败单元', 'danger') :
+      restarts.length ? pill(doc, serviceDanger ? '反复重启' : '偶发重启', serviceDanger ? 'danger' : 'warning') : null;
     const services = section('服务', false, serviceBadge);
     if (supportNote) note(services, supportNote);
     else {
@@ -127,6 +130,11 @@
       if (checks.service_status !== 'ok') note(services, reason(checks.service_status));
       else if (!checks.services?.length) note(services, '未设置关注的服务');
       if (checks.service_status === 'ok' || failed) fact(services, '失败的单元', (checks.failed_units || []).join('、') || '无', failed ? 'danger' : null);
+      for (const service of restarts) {
+        const recurring = service.count >= 3;
+        fact(services, service.unit, (recurring ? '反复重启' : '偶发重启') + ' · 最近 10 分钟重启 ' + service.count + ' 次',
+          recurring ? 'danger' : 'warning');
+      }
       note(services, '关注的服务在“管理”里设置。');
     }
 

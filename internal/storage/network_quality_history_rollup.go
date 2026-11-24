@@ -92,7 +92,7 @@ func (s *Store) qualityRollupWindow(ctx context.Context, id, targetID, view stri
 	if err != nil {
 		return out, err
 	}
-	for _, sem := range []string{protocol.QualityV2Semantics, protocol.QualityStagedSemantics} {
+	for _, sem := range []string{protocol.QualityV2Semantics, protocol.QualityStagedSemantics, protocol.QualityTCPLossSemantics} {
 		byTime, ok := buckets[sem]
 		if !ok {
 			continue
@@ -150,7 +150,7 @@ func qualityRevisionString(v int64) string {
 	return strconv.FormatInt(v, 10)
 }
 func qualityMetric(proto, sem string) string {
-	if sem == protocol.QualityStagedSemantics {
+	if sem == protocol.QualityStagedSemantics || sem == protocol.QualityTCPLossSemantics {
 		if proto == "tcp" {
 			return "pure_connect"
 		}
@@ -210,10 +210,7 @@ func (s *Store) qualityOpenBucket(ctx context.Context, id, target, sem, proto st
 		}
 		position++
 		r.position = position
-		actual := protocol.QualityV2Semantics
-		if r.sample.Staged() {
-			actual = protocol.QualityStagedSemantics
-		}
+		actual := qualitySampleSemantics(r.sample)
 		if actual == sem {
 			records = append(records, r)
 		}

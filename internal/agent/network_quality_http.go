@@ -132,6 +132,9 @@ func qualityValidateConfigFor(c protocol.QualityConfig, userTargets bool) error 
 		if t.Status != "active" && t.Status != "paused" && t.Status != "unavailable" && !(c.Version == 2 && t.Status == "not_scheduled_legacy") {
 			return errors.New("invalid quality status")
 		}
+		if t.ConnectTimeoutMS != 0 && (c.Semantics != protocol.QualityStagedSemantics || t.Protocol != "tcp" || !protocol.QualityValidTCPTimeout(t.ConnectTimeoutMS)) {
+			return errors.New("invalid TCP connect timeout")
+		}
 		if t.Status != "active" {
 			continue
 		}
@@ -247,6 +250,7 @@ func (r *Runner) qualityHTTPWith(ctx context.Context, path string, body []byte, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
+	req.Header.Set(protocol.QualityTCPLossHeader, protocol.QualityTCPLossSemantics)
 	if userTargets {
 		req.Header.Set(protocol.QualityTargetsHeader, protocol.QualityTargetsUserV1)
 		req.Header.Set(protocol.QualityObjectsHeader, "1")

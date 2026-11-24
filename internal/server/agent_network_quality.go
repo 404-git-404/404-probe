@@ -11,6 +11,10 @@ import (
 
 var errQualityResponseBudget = errors.New("quality config exceeds complete report response budget")
 
+func qualityTCPLossRequested(r *http.Request) bool {
+	return r.Header.Get(protocol.QualityTCPLossHeader) == protocol.QualityTCPLossSemantics
+}
+
 func (a *App) handleAgentQualityConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	r, cancel := qualityHTTPBudget(w, r)
@@ -39,7 +43,7 @@ func (a *App) handleAgentQualityConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	epoch, _ := protocol.QualityInteger(request.Epoch)
 	version := max(1, request.Version) // an absent version is the first generation
-	config, err := a.store.GetQualitySessionConfig(r.Context(), id, uint64(epoch), request.SessionID, version, r.Header.Get(protocol.QualityTargetsHeader) == protocol.QualityTargetsUserV1)
+	config, err := a.store.GetQualitySessionConfigAt(r.Context(), id, uint64(epoch), request.SessionID, version, r.Header.Get(protocol.QualityTargetsHeader) == protocol.QualityTargetsUserV1, qualityTCPLossRequested(r), a.now())
 	if err != nil {
 		qualityHTTPError(w, err)
 		return
@@ -141,7 +145,7 @@ func (a *App) qualityReportResponse(r *http.Request, response protocol.ReportRes
 	if report.NetworkQualityV2 != nil {
 		version = 2
 	}
-	config, err := a.store.GetQualitySessionConfig(ctx, id, report.Epoch, report.SessionID, version, report.QualityTargetsHeader)
+	config, err := a.store.GetQualitySessionConfigAt(ctx, id, report.Epoch, report.SessionID, version, report.QualityTargetsHeader, qualityTCPLossRequested(r), a.now())
 	if err == nil && config.Supported {
 		response.NetworkQuality = &config
 		wire, encodeErr := json.Marshal(response)

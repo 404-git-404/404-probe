@@ -84,12 +84,14 @@ type qualityMinute struct {
 	DNSFailures int
 	// Count, Sent, Received are the raw sample count and the complete ICMP echo windows of the minute.
 	Count, Sent, Received int
+	Bucket                *qualityBucketData
 }
 
 // qualityTimeline is the dense minute states of one lane from minute index First (inclusive).
 type qualityTimeline struct {
 	First int64
 	Mins  []qualityMinute
+	Frame qualityLaneFrame
 }
 
 func (t *qualityTimeline) at(m int64) qualityMinute {
@@ -152,6 +154,7 @@ func qualityJudgeMinute(frame qualityLaneFrame, start int64, bucket *qualityBuck
 		m.Kind = minuteUnusable
 		return m
 	}
+	m.Bucket = bucket
 	s := bucket.Stats
 	m.Count, m.IntervalMS = s.Count, bucket.IntervalMax
 	m.Sent, m.Received = s.Sent, s.Received
@@ -186,7 +189,7 @@ func qualityBuildTimeline(frame qualityLaneFrame, first, last int64, buckets map
 	if n < 0 {
 		n = 0
 	}
-	t := qualityTimeline{First: first, Mins: make([]qualityMinute, n)}
+	t := qualityTimeline{First: first, Mins: make([]qualityMinute, n), Frame: frame}
 	gapped := make([]bool, n)
 	for _, g := range gaps {
 		// A gap overlaps minute m when it starts before the minute ends and ends after it starts; a point
@@ -259,6 +262,42 @@ func (tl *qualityTimeline) intervalAt(t int64, fallbackMS int) float64 {
 // required relative to t itself, so for the current state t is the last evaluated minute and the last batch of
 // failures cannot prove itself fresh for ever.
 func (tl *qualityTimeline) redAt(t int64, fallbackIntervalMS int) bool {
+	return tl.lossRedAt(t, fallbackIntervalMS) || tl.latencyFailureRedAt(t, fallbackIntervalMS)
+}
+
+func (tl *qualityTimeline) lossRedAt(t int64, fallbackIntervalMS int) bool {
+	interval := max(1, int64(math.Ceil(tl.intervalAt(t, fallbackIntervalMS))))
+	window := max(5, interval+1)
+	var attempts, lost int
+	var first, last int64
+	for m := t; m > t-window; m-- {
+		x := tl.at(m)
+		if x.Kind == minuteUnusable {
+			break
+		}
+		if x.Bucket == nil {
+			continue
+		}
+		tcp := x.Bucket.TCP
+		if tcp.Samples == 0 {
+			break
+		}
+		if tcp.Attempts == 0 {
+			continue
+		}
+		if attempts == 0 {
+			last = m
+		} else if first-m > interval+1 {
+			break
+		}
+		first = m
+		attempts += tcp.Attempts
+		lost += tcp.Loss
+	}
+	return attempts >= 2 && t-last < interval && last-first+1 >= 5 && lost*5 >= attempts
+}
+
+func (tl *qualityTimeline) latencyFailureRedAt(t int64, fallbackIntervalMS int) bool {
 	p := qualityJudgeParamsFor(tl.intervalAt(t, fallbackIntervalMS))
 	freshFrom := t - int64(p.fresh) + 1
 	fresh := false
@@ -364,76 +403,37 @@ type QualityCardBlock struct {
 	MaxMS      *float64         `json:"max_ms,omitempty"`
 	InProgress bool             `json:"in_progress"`
 	Partial    bool             `json:"partial"`
-}
-
-// qualityMinSamples is the "enough samples" threshold of a block: half of the samples a block should hold
-// at the given check interval, at least one (design 1.4).
-func qualityMinSamples(intervalMS int) int {
-	if intervalMS <= 0 {
-		intervalMS = int(protocol.QualityMinIntervalMS)
-	}
-	expected := float64(QualityBlockMS) / float64(intervalMS)
-	return max(1, int(math.Ceil(expected/2)))
+	Metrics    NetworkStats     `json:"metrics"`
 }
 
 // classifyBlock colours the block that starts at blockStart (ms, a multiple of QualityBlockMS). Only minutes
 // that ended at or before evalEnd take part; the block is in progress when it ends after evalEnd.
-func (tl *qualityTimeline) classifyBlock(blockStart, evalEnd int64, fallbackIntervalMS int) QualityCardBlock {
-	b := QualityCardBlock{Start: blockStart, State: QualityCardGray, InProgress: blockStart+QualityBlockMS > evalEnd}
-	first := blockStart / qualityMinuteMS
-	intervalMS := 0
-	red := false
-	maxBin := -1
-	for i := int64(0); i < QualityBlockMS/qualityMinuteMS; i++ {
-		m := first + i
-		if (m+1)*qualityMinuteMS > evalEnd {
-			break // this minute is not judged yet
-		}
-		x := tl.at(m)
+func (tl *qualityTimeline) classifyBlock(blockStart, evalEnd int64) QualityCardBlock {
+	b := QualityCardBlock{Start: blockStart, InProgress: blockStart+QualityBlockMS > evalEnd}
+	combined := qualityNewBucket()
+	for start := blockStart; start < blockStart+QualityBlockMS && start+qualityMinuteMS <= evalEnd; start += qualityMinuteMS {
+		x := tl.at(start / qualityMinuteMS)
 		if x.Kind == minuteUnusable {
-			if !x.Outside {
-				b.Partial = true
-			}
+			b.Partial = b.Partial || !x.Outside
 			continue
 		}
 		b.Judged += x.J
 		b.Slow += x.S
 		b.Failed += x.F
 		b.Unjudged += x.Unjudged
-		if x.MaxBin > maxBin {
-			maxBin = x.MaxBin
-		}
-		if x.IntervalMS > intervalMS {
-			intervalMS = x.IntervalMS
-		}
-		if !red && tl.redAt(m, fallbackIntervalMS) {
-			red = true
+		if x.Bucket != nil {
+			qualityMergeBucket(&combined, *x.Bucket)
 		}
 	}
-	if maxBin >= 0 {
-		// The upper edge of the highest non-empty bin: a bin k covers [0.25k-0.125, 0.25k+0.125).
-		v := float64(maxBin)*protocolGrid + protocolGrid/2
-		b.MaxMS = &v
+	proto := "icmp"
+	if tl.Frame.TCP {
+		proto = "tcp"
 	}
-	if intervalMS == 0 {
-		intervalMS = fallbackIntervalMS
-	}
-	switch {
-	case b.Judged == 0:
-		b.State = QualityCardGray
-	case red:
-		b.State = QualityCardRed
-	case b.Judged < qualityMinSamples(intervalMS):
-		b.State = QualityCardGray
-	case b.Slow+b.Failed == 0:
-		b.State = QualityCardGreen
-	default:
-		b.State = QualityCardYellow
-	}
+	b.Metrics = networkStats(combined, proto)
+	b.State, b.Metrics.Reason = qualityCellColor(b.Metrics, tl.Frame.ThresholdMS)
+	b.MaxMS = b.Metrics.MaxMS
 	return b
 }
-
-const protocolGrid = QualityHistogramGridMS
 
 // qualityRun is a stretch of consecutive blocks with the same non-green colour, for the marks of face B.
 type QualityRun struct {
@@ -456,5 +456,20 @@ func qualityRuns(blocks []QualityCardBlock) []QualityRun {
 		runs = append(runs, QualityRun{Start: b.Start, End: b.Start + QualityBlockMS, State: b.State})
 	}
 	sort.SliceStable(runs, func(i, j int) bool { return runs[i].Start < runs[j].Start })
+	return runs
+}
+
+func (tl *qualityTimeline) alertRuns(start, end int64, interval int) []QualityRun {
+	var runs []QualityRun
+	for at := start; at < end; at += qualityMinuteMS {
+		if !tl.redAt(at/qualityMinuteMS-1, interval) {
+			continue
+		}
+		if n := len(runs); n > 0 && runs[n-1].End == at {
+			runs[n-1].End += qualityMinuteMS
+		} else {
+			runs = append(runs, QualityRun{Start: at, End: at + qualityMinuteMS, State: QualityCardRed})
+		}
+	}
 	return runs
 }

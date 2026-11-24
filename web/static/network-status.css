@@ -167,3 +167,14 @@
   .net-heat{min-width:0;grid-template-columns:2.3rem repeat(24,minmax(0,1fr));gap:1px}
   .net-heat-hour{font-size:.58rem}
 }
+
+.net-heat-cell[data-tone=normal]{background:var(--net-good)}
+.net-heat-cell[data-tone=slow]{background:var(--net-warning)}
+.net-heat-cell[data-tone=alert]{background:var(--net-danger)}
+.net-heat-cell[data-tone=no_data]{background:var(--color-bar)}
+.net-semantics{stroke:var(--net-warning)}
+.net-chart-alert,.net-bucket{fill:none;stroke-width:2}
+.net-chart-alert,.net-bucket-red{stroke:var(--net-danger)}
+.net-bucket-yellow{stroke:var(--net-warning)}
+.net-bucket-green{stroke:var(--net-good)}
+.net-bucket-gray{stroke:var(--color-bar)}

@@ -289,6 +289,7 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 		out := NetworkFleetLine{NetworkLine: line, Target: current[line], Status: "no_data",
 			Stats: networkStats(a.whole, line.Protocol), EveningP50: networkStats(a.evening, line.Protocol).P50,
 			Spark: make([]NetworkSparkPoint, n)}
+		out.Stats.State, out.Stats.Reason = qualityCellColor(out.Stats, machine.ThresholdMS)
 		for i, b := range a.spark {
 			out.Spark[i] = NetworkSparkPoint{Start: first + int64(i)*step, P50: networkP50(b.bucket)}
 		}
@@ -337,12 +338,13 @@ func networkP50(b qualityBucketData) *float64 {
 }
 
 func networkCurrentStatus(stats NetworkStats, threshold int) string {
-	if stats.P50 == nil && stats.FailurePercent == nil && stats.PacketLossPercent == nil {
+	if stats.P50 == nil && stats.FailurePercent == nil && stats.PacketLossPercent == nil && stats.ErrorPercent == nil {
 		return "no_data"
 	}
 	if (stats.P50 != nil && *stats.P50 > float64(threshold)) ||
 		(stats.FailurePercent != nil && *stats.FailurePercent > 5) ||
-		(stats.PacketLossPercent != nil && *stats.PacketLossPercent > 5) {
+		(stats.PacketLossPercent != nil && *stats.PacketLossPercent > 5) ||
+		(stats.ErrorPercent != nil && *stats.ErrorPercent > 0) {
 		return "slow"
 	}
 	return "normal"

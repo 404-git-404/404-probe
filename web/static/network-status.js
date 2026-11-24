@@ -4,8 +4,7 @@
   const HOUR=3600000, DAY=24*HOUR, BEIJING=8*HOUR;
   const windows={'1h':HOUR,'24h':DAY,'7d':7*DAY,'30d':30*DAY};
   const labels={normal:'正常',slow:'偏慢或失败多',alert:'告警',no_data:'没数据',disabled:'未启用',offline:'离线',paused:'暂停'};
-  const scopeNote='红色告警只按 TCP 判定，ICMP 显示偏慢或丢包，不产生红色告警。'+
-    '这里只显示新口径数据，更早的旧口径历史（含 DNS 的旧 TCP 延迟、单回包 ICMP）不显示。';
+  const scopeNote='告警只按 TCP 判定。TCP 丢包率按连接超时计算，旧口径仍显示延迟。';
   const reasonLabels={dns_error:'DNS',dns_timeout:'DNS 超时',not_found:'域名不存在',no_address:'无解析地址',unsafe_address:'非公网地址',icmp_error:'ICMP 错误',timeout:'超时',refused:'拒绝',network_error:'网络错误',
     connect_timeout:'连接超时',connect_refused:'连接被拒绝',icmp_timeout:'回包超时',no_route:'无路由',
     unsupported:'不支持',internal_error:'内部错误',target_abnormal:'目标异常',local_error:'本机错误'};
@@ -25,8 +24,10 @@
   const columns=headers=>'<thead><tr>'+headers.map(head=>'<th scope="col">'+escape(head)+'</th>').join('')+'</tr></thead>';
   const table=(headers,rows,extra='')=>'<div class="net-table-scroll"><table class="net-table '+extra+'">'+columns(headers)+'<tbody>'+rows+'</tbody></table></div>';
   const endpoint=(id,suffix)=>'/api/v1/web/agents/'+encodeURIComponent(id)+'/network-quality/'+suffix;
-  const lossKey=proto=>proto==='icmp'?'packet_loss_percent':'failure_percent';
-  const lossName=proto=>proto==='icmp'?'丢包':'失败率';
+  const lossKey=()=>'packet_loss_percent';
+  const lossName=()=>'丢包率';
+  const lossText=stats=>stats?.old_tcp&&stats.packet_loss_percent==null?'旧口径':percent(stats?.packet_loss_percent);
+  const qualityTone={gray:'no_data',green:'normal',yellow:'slow',red:'alert'};
   const targetLabel=(object,i)=>object.region||object.isp?root.NetworkQualityCore.cardLabel({slots:[object]},object.slot):object.host||'对象 '+(i+1);
   const tone=(status)=>Object.hasOwn(labels,status)?status:'no_data';
   const machineTone=m=>m.status==='online'?(m.current_alerts?'alert':'normal'):tone(m.status);
@@ -119,10 +120,10 @@
           const line=lines.get(object.slot),status=objectTone(object,line);
           const emptyLabel=status==='disabled'||status==='no_data'?labels[status]:'';
           const showStats=line&&(!emptyLabel||line.stats.samples>0);
-          return '<td><div class="net-cell" data-tone="'+status+'"><div>'+
+          return '<td><div class="net-cell" data-tone="'+(status==='disabled'?status:qualityTone[line?.stats?.state]||status)+'"><div>'+
             (name?'':'<small class="net-object-name">'+escape(targetLabel(object,i))+'</small>')+
             (showStats?(emptyLabel?'<small>'+emptyLabel+'</small>':'')+
-              '<strong>'+ms(line.stats.p50_ms)+'</strong><small>抖动 '+number(line.stats.jitter_ms)+' · '+loss+' '+percent(line.stats[key])+'</small>':
+              '<strong>'+ms(line.stats.p50_ms)+'</strong><small>抖动 '+number(line.stats.jitter_ms)+' · ' +loss+' '+lossText(line.stats)+'</small>':
               '<strong>'+emptyLabel+'</strong>')+'</div>'+(showStats?charts.spark(line.spark):'')+'</div></td>';
         }).join('');
         const alert=machine.lines.find(line=>line.alert);
@@ -136,13 +137,14 @@
       }).join('');
       return title('网络状态','全部 '+machines.length+' 台 · 每格显示所选时间的 p50 延迟')+controls()+
         (machines.length?table(['机器',...objects.map((name,i)=>name||'位置 '+(i+1)),'状态','30 天告警'],rows,'net-fleet'):'<p class="net-empty">尚无活动 Agent。</p>')+
-        '<p class="net-note">颜色：正常 / 偏慢或失败多（黄）/ 告警（红）/ 没数据或未启用（灰）。'+scopeNote+'点一行进入这台机器。</p>';
+        '<p class="net-note">颜色按格内中位延迟、丢包和错误判断。'+scopeNote+'点一行进入这台机器。</p>';
     }
     function objectLines(result){
       const machine=result.machines[0],histories=result.histories;
       return machine.objects.map((object,i)=>({object,name:targetLabel(object,i),color:charts.colors[i],hidden:state.hidden.has(object.slot),
         line:machine.lines.find(line=>line.slot===object.slot),history:histories[i],points:histories[i]?.points||[],
-        changes:histories[i]?.target_changes||[]}));
+        changes:histories[i]?.target_changes||[],semanticsChange:histories[i]?.semantics_change_at,
+        alerts:result.alerts.filter(alert=>alert.slot===object.slot&&alert.family===state.family&&alert.protocol===state.protocol)}));
     }
     function renderMachine(result){
       const machine=result.machines[0], loss=lossName(state.protocol),key=lossKey(state.protocol),lines=objectLines(result);
@@ -152,7 +154,7 @@
       const strip='<div class="net-strip">'+info('出口地区',escape(machine.country_code||'—'))+
         info('监测对象',lines.length+' 个 · '+(state.family==='ipv6'?'IPv6':'IPv4')+' · '+state.protocol.toUpperCase())+
         info('当前告警',machine.current_alerts?'<span class="net-danger">'+machine.current_alerts+'</span>':'0')+
-        info('30 天告警',machine.alerts_30d+' 次')+info('慢门槛',machine.slow_threshold_ms+' ms')+
+        info('30 天告警',machine.alerts_30d+' 次')+info('延迟门槛',machine.slow_threshold_ms+' ms（黄）/ '+2*machine.slow_threshold_ms+' ms（红）')+
         info('最近数据',seen+(machine.status==='paused'?'（已暂停）':'')+skew)+
         info('网络评分','<button type="button" class="score-network-badge">数据不足</button>')+'</div>';
       const rows=lines.map(({object,name,color,line,history})=>{
@@ -163,11 +165,11 @@
         const status=machine.status==='paused'&&laneStatus!=='disabled'?'paused':laneStatus;
         const text=status==='alert'?'告警 · 已持续 '+duration(line.alert?.duration_ms||0):labels[status];
         return '<tr><th scope="row">'+swatch(color)+escape(name)+(days==null?'':'<small class="net-changed">'+(days<1?'今天':days+' 天前')+'换过目标</small>')+
-          '</th>'+cell(targetText(object,state.protocol),'net-address')+cell(number(line?.latest_p50_ms))+cell(number(stats.p50_ms))+
+          '</th>'+cell(targetText(object,state.protocol)+(stats.relaxed_tcp?'<small class="net-changed">高延迟线路，丢包判断放宽</small>':''),'net-address')+cell(number(line?.latest_p50_ms))+cell(number(stats.p50_ms))+
           cell(number(stats.p95_ms))+cell(number(stats.jitter_ms))+cell('<strong>'+number(evening)+'</strong>'+comparison)+
-          cell(percent(stats[key]))+cell(pill(status,text),'')+'</tr>';
+          cell(lossText(stats))+(state.protocol==='tcp'?cell(stats.error_attempts?stats.error_count+'（'+percent(stats.error_percent)+'）':'—'):'')+cell(pill(status,text),'')+'</tr>';
       }).join('');
-      const tableHTML=lines.length?table(['名称','目标','最近','p50','p95','抖动','晚高峰 p50',loss,'状态'],rows):'<p class="net-empty">这台机器还没有监测对象。</p>';
+      const tableHTML=lines.length?table(['名称','目标','最近','p50','p95','抖动','晚高峰 p50',loss,...(state.protocol==='tcp'?['错误']:[]),'状态'],rows):'<p class="net-empty">这台机器还没有监测对象。</p>';
       const note='<p class="net-note">单位 ms。抖动：TCP = 相邻两次连接耗时之差，ICMP = 同一次探测内相邻回包之差，两者不要相比。晚高峰 = 北京时间 20:00–23:00。'+scopeNote+'</p>';
       return title(escape(machine.name)+badge(machine),'网络状态')+controls()+strip+tableHTML+note+
         (lines.length?chartSection(lines,loss)+heatSection(lines):'')+alertSection(result,lines);
@@ -186,7 +188,7 @@
         (state.zoom?'<button type="button" data-net-reset>重置</button>':'')+'</header>'+
         '<div class="net-chart" tabindex="0" role="group" aria-label="延迟或抖动图，方向键查看数据"></div>'+
         '<header class="net-panel-head"><h3>'+loss+'</h3></header><div class="net-chart" tabindex="0" role="group" aria-label="'+loss+'图，方向键查看数据"></div>'+
-        '<p class="net-note">竖虚线 = 换过目标；灰色竖条 = 没有数据；悬停看 p50 / p95 / 抖动 / '+loss+' / 失败原因。</p></section>';
+        '<p class="net-note">竖虚线标记换目标和 TCP 口径变更，红线标记告警时段，悬停查看格子颜色原因。</p></section>';
     }
     function heatSection(lines){
       return '<section class="net-panel" aria-label="晚高峰热力图"><header class="net-panel-head"><h3>晚高峰 · 时段 × 日期</h3>'+
@@ -197,20 +199,19 @@
       if(heatError)return '<p class="net-empty" role="status">热力图读取失败 <button type="button" data-net-heat-retry>重试</button></p>';
       if(!heatResult)return '<p class="net-empty" role="status">正在读取热力图…</p>';
       const key=state.heatMetric,fmt=key==='p50_ms'?ms:percent;
-      const values=heatResult.days.flatMap(day=>day.hours.map(h=>h[key])).filter(v=>v!=null);
-      const min=values.length?Math.min(...values):null,max=values.length?Math.max(...values):null;
       const evening=hour=>hour>=20&&hour<23?' net-heat-evening':'';
       const hours=Array.from({length:24},(_,i)=>'<span class="net-heat-hour'+evening(i)+'">'+(i%3===0||i===20||i===22?i:'')+'</span>').join('');
       const days=heatResult.days.map((day,i)=>'<span class="net-heat-day">'+escape(day.date.slice(5))+'</span>'+
         day.hours.map((hour,j)=>{
-          const value=hour[key],strength=value==null?null:Math.round(100*(value-min)/(max-min||1));
-          const hint=day.date+' '+String(j).padStart(2,'0')+':00 · '+(value==null?'没有数据':fmt(value));
+          const value=hour[key],tone=qualityTone[hour.state]||'no_data';
+          const reason=root.NetworkQualityCore.cellReasons[hour.reason]||'';
+          const metric=value==null?(key===lossKey()&&hour.old_tcp?'旧口径':'—'):fmt(value);
+          const hint=day.date+' '+String(j).padStart(2,'0')+':00 · '+metric+' · 样本 '+hour.samples+' · '+reason;
           return '<span class="net-heat-cell'+evening(j)+(i===heatResult.days.length-1?' net-heat-last':'')+'" title="'+escape(hint)+'"'+
-            (strength==null?' data-empty="true"':' style="--heat:'+strength+'%"')+'></span>';
+            ' data-tone="'+tone+'"></span>';
         }).join('')).join('');
       return '<div class="net-heat-scroll"><div class="net-heat"><span></span>'+hours+days+'</div></div>'+
-        '<div class="net-heat-legend"><span>'+fmt(min)+'</span><i aria-hidden="true"></i><span>'+fmt(max)+'</span>'+
-        '<span>框出的三列是 20:00–23:00，灰格表示没有数据。</span></div>';
+        '<div class="net-heat-legend"><span>框出的三列是 20:00–23:00，悬停查看数据和判色原因。</span></div>';
     }
     function alertSection(result,lines){
       const bySlot=new Map(lines.map(line=>[line.object.slot,line])),alerts=result.alerts;
@@ -219,21 +220,21 @@
         const worst=[alert.worst_p95_ms==null?'':'p95 '+ms(alert.worst_p95_ms),alert.worst_failure_percent==null?'':'失败 '+percent(alert.worst_failure_percent),
           alert.worst_packet_loss_percent==null?'':'丢包 '+percent(alert.worst_packet_loss_percent)].filter(Boolean).join(' · ');
         return '<tr><th scope="row">'+(line?swatch(line.color):'')+escape(name)+' <small class="net-muted">'+alert.family.toUpperCase().replace('IPV','IPv')+' · '+alert.protocol.toUpperCase()+'</small></th>'+
-          cell(dateTime(alert.start))+cell(alert.end==null?pill('alert','进行中'):dateTime(alert.end))+cell(duration(alert.duration_ms))+cell(worst||'—','net-muted')+'</tr>';
+          cell(dateTime(alert.start))+cell(alert.end==null?pill('alert','进行中'):dateTime(alert.end))+cell(duration(alert.duration_ms))+cell(alert.reason==='loss'?'丢包':'延迟 / 失败')+cell(worst||'—','net-muted')+'</tr>';
       }).join('');
       return '<section class="net-panel net-alerts"><header class="net-panel-head"><h3>告警记录 · 最近 30 天</h3><span class="net-spacer"></span><small class="net-muted">'+
-        alerts.length+' 次 · 北京时间</small></header>'+(rows?table(['线路','开始','结束','持续','最差时'],rows):'<p class="net-empty">最近 30 天没有告警。</p>')+'</section>';
+        alerts.length+' 次 · 北京时间</small></header>'+(rows?table(['线路','开始','结束','持续','原因','最差时'],rows):'<p class="net-empty">最近 30 天没有告警。</p>')+'</section>';
     }
     function tooltip(lines,at,marks){
       const key=lossKey(state.protocol),loss=lossName(state.protocol);
-      return '<strong>'+dateTime(at)+'（北京时间）</strong>'+(marks.length?'<small class="net-warn">'+marks.map(escape).join('、')+' 换过目标</small>':'')+
+      return '<strong>'+dateTime(at)+'（北京时间）</strong>'+(marks.length?'<small class="net-warn">'+marks.map(escape).join('、')+'</small>':'')+
         lines.map(line=>{
           const p=line.points.find(p=>p.start<=at&&p.end>at);
           const heading='<b>'+swatch(line.color)+escape(line.name)+'</b>';
           if(!p?.samples)return '<div>'+heading+' <small>没有数据</small></div>';
           const reasons=Object.entries(p.categories||{}).filter(([k,n])=>n>0&&!['success','ok'].includes(k))
             .map(([k,n])=>escape(reasonLabels[k]||k)+' '+n).join(' · ');
-          return '<div>'+heading+'<small>p50 '+ms(p.p50_ms)+' · p95 '+ms(p.p95_ms)+' · 抖动 '+ms(p.jitter_ms)+' · '+loss+' '+percent(p[key])+'</small>'+
+          return '<div>'+heading+'<small>'+escape(root.NetworkQualityCore.cellDetails(p))+'</small><small>p95 '+ms(p.p95_ms)+' · 抖动 '+ms(p.jitter_ms)+'</small>'+
             (reasons?'<small>'+reasons+'</small>':'')+'</div>';
         }).join('');
     }

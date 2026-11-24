@@ -156,20 +156,17 @@ func TestWatchedServicesAndFailedUnits(t *testing.T) {
 		if binary != "/usr/bin/systemctl" {
 			t.Fatalf("unexpected command %s", binary)
 		}
-		switch args[0] {
-		case "list-units":
-			return "fixture.timer loaded failed failed Fixture\nsecondary.mount loaded failed failed Secondary", nil
-		case "is-active":
-			return "active\ninactive", errors.New("inactive")
+		if args[0] != "show" {
+			t.Fatal(args)
 		}
-		t.Fatal(args)
-		return "", nil
+		return "Id=fixture.timer\nActiveState=failed\n\nId=secondary.mount\nActiveState=failed\n\nId=caddy.service\nActiveState=active\n\nId=nginx.service\nActiveState=inactive", nil
 	}
-	status, services, failed := collectServices(t.Context(), []string{"caddy", "nginx"}, true, run)
+	var tracker serviceRestartTracker
+	status, services, failed, _ := tracker.collect(t.Context(), time.Now(), []string{"caddy", "nginx"}, true, run)
 	if status != protocol.CheckOK || len(services) != 2 || services[1].State != "inactive" || !reflect.DeepEqual(failed, []string{"fixture.timer", "secondary.mount"}) {
 		t.Fatal(status, services, failed)
 	}
-	if status, _, _ := collectServices(t.Context(), nil, false, nil); status != protocol.CheckUnsupported {
+	if status, _, _, _ := tracker.collect(t.Context(), time.Now(), nil, false, nil); status != protocol.CheckUnsupported {
 		t.Fatal(status)
 	}
 }

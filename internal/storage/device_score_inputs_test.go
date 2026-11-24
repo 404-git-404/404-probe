@@ -43,6 +43,14 @@ func TestDeviceScoreInputsReadStoredNetworkWithDNS(t *testing.T) {
 	bucket := c.tcp(89, 0, 1, 600)
 	bucket.Stats.Count += 10
 	bucket.Stats.Categories["dns_error"] = 10
+	bucket.TCP = qualityTCPBucket{Samples: 100, Attempts: 90, Loss: 1, Errors: 10, DNS: 10}
+	prior, err := c.s.ReadDeviceScoreInputs(c.ctx, c.id, now)
+	if err != nil || len(prior.Lines) != 1 || prior.Lines[0].CoveredMS != 0 {
+		t.Fatalf("old series coverage: %+v (%v)", prior.Lines, err)
+	}
+	if _, err := c.s.db.Exec(`UPDATE quality_series SET semantics=? WHERE id=?`, protocol.QualityTCPLossSemantics, series); err != nil {
+		t.Fatal(err)
+	}
 	c.versions(&bucket, "ipv4", "tcp")
 	wire, err := qualityEncodeBucket(bucket)
 	if err != nil {
@@ -66,7 +74,7 @@ func TestDeviceScoreInputsReadStoredNetworkWithDNS(t *testing.T) {
 		t.Fatalf("got %+v", out.Lines)
 	}
 	got := out.Lines[0]
-	if got.CoveredMS != deviceScoreNetworkWindow.Milliseconds()/2 || got.FailurePercent == nil || *got.FailurePercent != 11 || got.P50 == nil || *got.P50 != 50 || got.Evening == nil {
+	if got.CoveredMS != deviceScoreNetworkWindow.Milliseconds()/2 || got.FailurePercent == nil || *got.FailurePercent != 10+100.0/90 || got.P50 == nil || *got.P50 != 50 || got.Evening == nil {
 		t.Fatalf("stored line %+v", got)
 	}
 }

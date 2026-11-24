@@ -255,3 +255,22 @@ func TestA2ICMPPermissionDetectionFact(t *testing.T) {
 		t.Fatal(r, d, err)
 	}
 }
+
+func TestStagedTCPConnectTimeoutIsIndependentOfDNS(t *testing.T) {
+	for _, ms := range []int{1000, 3000} {
+		var remaining time.Duration
+		executor := TCPExecutor{qualityResolver: &a2Resolver{delay: 20 * time.Millisecond}, qualityDial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("connect has no deadline")
+			}
+			remaining = time.Until(deadline)
+			return nil, context.DeadlineExceeded
+		}}
+		res := executor.qualityStagedProbe(t.Context(), protocol.QualityTarget{Host: "controlled.test", Port: 443, Family: "ipv4", Protocol: "tcp", ConnectTimeoutMS: ms})
+		d, err := protocol.DecodeQualityDetails(res.details)
+		if err != nil || d.ConnectTimeoutMS != ms || res.outcome != "timeout" || !d.ConnectComplete || remaining > time.Duration(ms)*time.Millisecond || remaining < time.Duration(ms-10)*time.Millisecond {
+			t.Fatalf("probe=%+v details=%+v deadline=%v err=%v", res, d, remaining, err)
+		}
+	}
+}

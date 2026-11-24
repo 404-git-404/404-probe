@@ -45,7 +45,9 @@
           if(point[key]!=null)largest=Math.max(largest,point[key]);
           if(point.samples)available.add(point.start);
         }
-        for(const change of line.changes)markers.set(change.at,line.name);
+        for(const change of line.changes)markers.set(change.at,{label:line.name+' 换过目标',className:'net-change'});
+        if(line.semanticsChange!=null)markers.set(line.semanticsChange,{label:line.name+' TCP 口径变更',className:'net-change net-semantics'});
+
       }
       const high=Math.ceil(largest/increment)*increment;
       const x=at=>left+(clamp(at,start,end)-start)*inner/span;
@@ -75,7 +77,22 @@
         svg+='<text x="'+x(at)+'" y="'+(height-6)+'" text-anchor="'+anchor+'">'+beijing(at,span)+'</text>';
       }
       if(!percent&&key!=='jitter_ms'&&threshold<=high)svg+='<line class="net-threshold" x1="'+left+'" x2="'+(width-right)+'" y1="'+y(threshold)+'" y2="'+y(threshold)+'"/>';
-      for(const at of markers.keys())svg+='<line class="net-change" x1="'+x(at)+'" x2="'+x(at)+'" y1="'+top+'" y2="'+lower+'"/>';
+      for(const [at,mark] of markers)svg+='<line class="'+mark.className+'" x1="'+x(at)+'" x2="'+x(at)+'" y1="'+top+'" y2="'+lower+'"/>';
+      visible.forEach((line,i)=>{
+        for(const alert of line.alerts||[]){
+          const a=Math.max(start,alert.start),b=Math.min(end,alert.end??end),row=top+3*i;
+          if(b>a)svg+='<line class="net-chart-alert" x1="'+x(a)+'" x2="'+x(b)+'" y1="'+row+'" y2="'+row+'"/>';
+        }
+        if(index===0){
+          const rows=Object.create(null),row=lower-3-3*i;
+          for(const p of line.points){
+            const tone=p.state;
+            if(!['green','yellow','red','gray'].includes(tone))continue;
+            (rows[tone]??=[]).push('M'+x(p.start).toFixed(1)+' '+row+'H'+x(p.end).toFixed(1));
+          }
+          for(const [tone,segments] of Object.entries(rows))svg+='<path class="net-bucket net-bucket-'+tone+'" d="'+segments.join('')+'"/>';
+        }
+      });
       for(const line of visible){
         const path=coordinates(line.points,p=>p[key],x,y,smooth);
         svg+='<path class="net-series" d="'+path+'" style="stroke:'+line.color+'"/>';
@@ -96,7 +113,7 @@
       }
       const plot=plots[index],points=plot.points;
       const point=points.length?points[clamp(Math.floor((at-points[0].start)/(points[0].end-points[0].start)),0,points.length-1)]:null;
-      const marks=[...plot.markers].filter(([timestamp])=>Math.abs(plot.x(timestamp)-plot.x(at))<=5).map(([,name])=>name);
+      const marks=[...plot.markers].filter(([timestamp])=>Math.abs(plot.x(timestamp)-plot.x(at))<=5).map(([,mark])=>mark.label);
       plot.tip.innerHTML=tooltip(visible,point?.start??at,marks);
       plot.tip.hidden=false;
       const px=plot.x(at),tipWidth=plot.tip.offsetWidth;

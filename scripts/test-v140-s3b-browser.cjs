@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {start,ID}=require('./lib/v110-dashboard-fixture.cjs');
-const {load}=require('./lib/r07-harness.cjs');
+const {load,v5Card}=require('./lib/r07-harness.cjs');
 
 const HOUR=3600000, DAY=24*HOUR, TZ=8*HOUR;
 const now=Date.UTC(2026,10,22,12,0);
@@ -27,14 +27,20 @@ const bucket=(i,j,time,family,protocol)=>{
   const congested=i===2&&j===2&&time>now-2.2*HOUR;
   const p50=150+j*16+i*9+(family==='ipv6'?14:0)-(protocol==='icmp'?12:0)+noise+evening*(28+j*7)*daily+(congested?501:0);
   const ratio=Math.max(0,.1+(noise+9)*.07+evening*2*daily+(congested?30:0));
-  return {samples:gap?0:2,p50_ms:gap?null:p50,p95_ms:gap?null:p50+Math.abs(noise)*4+10,
+  const old=protocol==='tcp'&&i===2&&time<now-4*HOUR;
+  const loss=gap||old?null:protocol==='icmp'?ratio/2:ratio;
+  const state=gap?'gray':loss>=20||p50>1000?'red':loss>0||p50>500?'yellow':'green';
+  const reason={gray:'no_data',red:'loss_red',yellow:'loss_yellow',green:'normal'}[state];
+  return {state,reason,old_tcp:old,samples:gap?0:6,p50_ms:gap?null:p50,p95_ms:gap?null:p50+Math.abs(noise)*4+10,
+    max_ms:gap?null:p50+80,loss_count:loss==null?0:Math.ceil(loss/100*6),loss_attempts:loss==null?0:6,
+    error_count:0,error_attempts:protocol==='tcp'&&!gap?6:0,error_percent:protocol==='tcp'&&!gap?0:null,
     mean_ms:gap?null:p50+4,jitter_ms:gap?null:Math.abs(noise)+1,
-    failure_percent:gap||protocol==='icmp'?null:ratio,packet_loss_percent:gap||protocol==='tcp'?null:ratio/2,
+    packet_loss_percent:loss,
     categories:!gap&&ratio>3?{timeout:3,refused:1}:{}};
 };
 const alerts=i=>i===2?[{
   slot:'mobile',family:'ipv4',protocol:'tcp',target_id:'a'.repeat(32),start:now-2.2*HOUR,end:null,duration_ms:2.2*HOUR,
-  worst_p95_ms:1180,worst_failure_percent:34,worst_packet_loss_percent:null
+  worst_p95_ms:1180,worst_failure_percent:null,worst_packet_loss_percent:34,reason:'loss'
 },...[2,9,21].map((days,j)=>({
   slot:slots[j],family:'ipv4',protocol:'tcp',target_id:'b'.repeat(32),start:now-days*DAY-HOUR,end:now-days*DAY,
   duration_ms:HOUR,worst_p95_ms:760-j*120,worst_failure_percent:22-j*5,worst_packet_loss_percent:null
@@ -90,7 +96,9 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
       const resolution=now-start<=DAY?60000:now-start<=7*DAY?300000:HOUR,points=[];
       for(let t=Math.floor(start/resolution)*resolution;t<end;t+=resolution)points.push({...bucket(i,j,t,family,protocol),start:t,end:t+resolution});
       const change=i===0&&j===1?now-3*DAY:null;
+      const semantics=i===2&&j===2&&protocol==='tcp'?now-4*HOUR:null;
       json({slot,start,end,resolution_ms:resolution,points,last_target_change_at:change,
+        semantics_change_at:semantics>=start&&semantics<end?semantics:null,
         target_changes:change&&start<=change&&change<end?[{at:change,from_target_id:'old',to_target_id:'new'}]:[],gaps:[]});
       return true;
     }
@@ -106,6 +114,24 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
       return true;
     }
     if(suffix==='alerts'){json(alerts(i));return true;}
+    if(i===0&&suffix==='v5/card'){
+      const card=v5Card(config,params.get('family')||'ipv4',now);
+      const tcp=card.lanes[0].tcp;
+      tcp.alert_runs=[{start:card.window_start+13*180000,end:card.window_start+18*180000}];
+      tcp.semantics_change_at=card.window_start+4*180000+60000;
+      for(const [index,b] of tcp.blocks.entries()){
+        const state=index===1?'gray':index===8?'yellow':index===13||index===15?'red':'green';
+        const loss=state==='red'?2:state==='yellow'?1:0;
+        const old=index<5;
+        b.state=state;
+        b.metrics={samples:state==='gray'?0:6,p50_ms:state==='gray'?null:state==='red'?1024:24,
+          max_ms:state==='gray'?null:state==='red'?1350:85,old_tcp:old,
+          packet_loss_percent:old?null:loss*100/6,loss_count:loss,loss_attempts:old?0:6,
+          error_count:0,error_attempts:6,error_percent:0,
+          reason:{green:'normal',yellow:'loss_yellow',red:'latency_red',gray:'no_data'}[state]};
+      }
+      json(card);return true;
+    }
     if(i===0&&suffix==='v4/config'){
       if(req.method==='PUT'){
         lastSave=body;
@@ -158,18 +184,35 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
     for(const theme of ['dark','light']){
       const {page,context}=await open(theme);
       try{
+        const qualityCard=page.locator('.agent-card[data-agent-id="'+ID(0)+'"] .network-quality');
+        await qualityCard.locator('.nq7-b-yellow').first().waitFor();
+        for(const state of ['green','yellow','red','gray']){
+          assert(await qualityCard.locator('.nq7-b-'+state).count());
+        }
+        assert.equal(await qualityCard.locator('.nq7-alert-run').count(),1);
+        assert.equal(await qualityCard.locator('.nq7-sem-change').count(),1);
+        await qualityCard.locator('.nq7-b-red').first().hover();
+        assert.match(await page.locator('.nq7-tip:visible').textContent(),/中位 1024 ms.*红：中位延迟/);
+        if(outDir){
+          fs.mkdirSync(outDir,{recursive:true});
+          const card=await qualityCard.boundingBox(),tip=await page.locator('.nq7-tip:visible').boundingBox();
+          const x=Math.floor(Math.min(card.x,tip.x))-4,y=Math.floor(Math.min(card.y,tip.y))-4;
+          const width=Math.ceil(Math.max(card.x+card.width,tip.x+tip.width)-x)+4;
+          const height=Math.ceil(Math.max(card.y+card.height,tip.y+tip.height)-y)+4;
+          await page.screenshot({path:path.join(outDir,theme+'-card-tooltip.png'),clip:{x,y,width,height}});
+        }
         await page.locator('#dashboard-network').click();await fleet(page);
         assert.equal(await page.locator('#dashboard-network-machines button').count(),8);
         assert.equal(await page.locator('.net-fleet thead th').nth(2).textContent(),'位置 2');
-        const scope=() => page.getByText(/ICMP 显示偏慢或丢包，不产生红色告警/);
-        assert.match(await scope().textContent(),/更早的旧口径历史.*不显示/);
+        const scope=() => page.getByText(/告警只按 TCP 判定/);
+        assert.match(await scope().textContent(),/旧口径仍显示延迟/);
         const fleetObjects=page.locator('.net-fleet tbody tr').nth(1).locator('.net-cell');
         assert.match(await fleetObjects.nth(0).textContent(),/未启用/);
         assert.equal(await fleetObjects.nth(0).locator('.net-spark').count(),1);
         assert.match(await fleetObjects.nth(2).textContent(),/没数据/);
         await capture(page,theme+'-fleet');
         await page.locator('.net-fleet tbody tr').nth(1).click();await charts(page);
-        assert.match(await scope().textContent(),/更早的旧口径历史.*不显示/);
+        assert.match(await scope().textContent(),/旧口径仍显示延迟/);
         const objectStatuses=page.locator('.net-table tbody .net-pill');
         assert.equal(await objectStatuses.nth(0).textContent(),'未启用');
         assert.equal(await objectStatuses.nth(2).textContent(),'没数据');
@@ -202,7 +245,7 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
         assert.equal(await page.locator('.net-chart').first().locator('.net-series').count(),4);
         await capture(page,theme+'-machine-hidden');
         await control(page,'protocol','icmp').click();await charts(page);
-        assert.equal(await page.locator('.net-charts h3').textContent(),'丢包');
+        assert.equal(await page.locator('.net-charts h3').textContent(),'丢包率');
         await capture(page,theme+'-machine-icmp');
         await control(page,'family','ipv6').click();await charts(page);
         assert.match(await page.locator('.net-strip').textContent(),/IPv6 · ICMP/);
@@ -215,6 +258,13 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
         await page.locator('#dashboard-network-machines button').nth(2).click();await charts(page);
         assert.equal(await page.locator('.net-alerts tbody tr').count(),4);
         await capture(page,theme+'-alerts','.net-alerts');
+        await control(page,'family','ipv4').click();await charts(page);
+        await control(page,'protocol','tcp').click();await charts(page);
+        await control(page,'window','24h').click();await charts(page);
+        assert.equal(await page.locator('.net-chart .net-semantics').count(),2);
+        assert.equal(await page.locator('.net-chart .net-chart-alert').count(),2);
+        assert.match(await page.locator('.net-alerts').textContent(),/丢包/);
+        await capture(page,theme+'-machine-loss');
       }finally{await context.close();}
     }
     for(const theme of ['dark','light']){

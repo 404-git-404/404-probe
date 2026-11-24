@@ -84,7 +84,7 @@ func qualityTCPConnectOutcome(ctx context.Context, err error) string {
 	return qualityCategory(category)
 }
 func (e *TCPExecutor) qualityStagedProbe(ctx context.Context, t protocol.QualityTarget) qualityProbeResult {
-	d := protocol.QualityDetails{Semantics: protocol.QualityStagedSemantics}
+	d := protocol.QualityDetails{Semantics: protocol.QualityStagedSemantics, ConnectTimeoutMS: t.ConnectTimeoutMS}
 	out := qualityProbeResult{}
 	ip, err := qualityResolve(ctx, e.qualityResolver, t, &d)
 	if err != nil {
@@ -115,13 +115,19 @@ func (e *TCPExecutor) qualityStagedProbe(ctx context.Context, t protocol.Quality
 	if t.Family == "ipv6" {
 		network = "tcp6"
 	}
+	connectCtx := ctx
+	if t.ConnectTimeoutMS != 0 {
+		var cancel context.CancelFunc
+		connectCtx, cancel = context.WithTimeout(ctx, time.Duration(t.ConnectTimeoutMS)*time.Millisecond)
+		defer cancel()
+	}
 	start := time.Now()
-	connection, err := dial(ctx, network, net.JoinHostPort(ip.String(), strconv.Itoa(t.Port)))
+	connection, err := dial(connectCtx, network, net.JoinHostPort(ip.String(), strconv.Itoa(t.Port)))
 	ms := qualityMS(time.Since(start))
 	d.ConnectAttempted = true
 	d.ConnectMS = &ms
 	if err != nil {
-		out.outcome = qualityTCPConnectOutcome(ctx, err)
+		out.outcome = qualityTCPConnectOutcome(connectCtx, err)
 		d.ErrorStage = "connect"
 		d.ErrorCode = out.outcome
 		d.ConnectComplete = out.outcome == "timeout" || out.outcome == "refused" || out.outcome == "network_error"
