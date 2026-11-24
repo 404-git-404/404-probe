@@ -153,3 +153,36 @@ func TestNetworkTCPLossIngestAndMarker(t *testing.T) {
 		t.Fatalf("missing card marker: %+v", card.TCP.SemanticsChangeAt)
 	}
 }
+
+func TestQualityTCPLossConfigNegotiatesHighLatency(t *testing.T) {
+	c := newCardKit(t)
+	sample := c.userTCPSample(c.cfg, 1, c.at(1), 700)
+	now := c.at(2)
+	if acks := c.upload(now, sample); len(acks) != 1 || acks[0] != "committed" {
+		t.Fatalf("sample: %v", acks)
+	}
+	for _, negotiated := range []bool{false, true} {
+		cfg, err := c.s.GetQualitySessionConfigAt(c.ctx, c.id, c.epoch, c.session, 2, true, negotiated, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := c.targetID(c.cfg, "telecom", "ipv4", "tcp")
+		found := false
+		for _, lane := range cfg.Targets {
+			if lane.ID != target {
+				continue
+			}
+			found = true
+			want := 0
+			if negotiated {
+				want = 3000
+			}
+			if lane.ConnectTimeoutMS != want {
+				t.Fatalf("negotiated=%t, got %d want %d", negotiated, lane.ConnectTimeoutMS, want)
+			}
+		}
+		if !found {
+			t.Fatal("missing target")
+		}
+	}
+}

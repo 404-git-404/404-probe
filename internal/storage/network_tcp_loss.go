@@ -10,10 +10,10 @@ import (
 )
 
 func qualityTargetTCPTimeout(ctx context.Context, tx *sql.Tx, target string, now time.Time) (int, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT rtt FROM quality_facts
-  WHERE target_id=? AND sample_time>=? AND sample_time<=? AND eligible=1
-  ORDER BY sample_time DESC,seq DESC,id DESC LIMIT 60`,
-		target, now.Add(-6*time.Hour).UnixMilli(), now.UnixMilli())
+	rows, err := tx.QueryContext(ctx, `SELECT f.rtt FROM quality_facts f JOIN quality_series s ON s.id=f.series_id
+  WHERE f.target_id=? AND f.sample_time>=? AND f.sample_time<=? AND f.eligible=1 AND s.semantics IN (?,?)
+  ORDER BY f.sample_time DESC,f.seq DESC,f.id DESC LIMIT 60`,
+		target, now.Add(-6*time.Hour).UnixMilli(), now.UnixMilli(), protocol.QualityStagedSemantics, protocol.QualityTCPLossSemantics)
 	if err != nil {
 		return 0, err
 	}

@@ -262,7 +262,7 @@ test('cards: the v5 answer is read for the shown family; blocks come from it, a 
   const cells = f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-blocks').querySelectorAll('.nq7-b');
   assert.equal(cells.length, 20); assert.ok(cells.every(c => /nq7-b-green/.test(c.className)));
   assert.match(cells[0].tipText, /正常/); assert.match(cells[19].tipText, /数据仍在到达/);
-  assert.match(f.node.querySelector('.nq7-sub').textContent, /门槛 500 ms/);
+  assert.match(f.node.querySelector('.nq7-sub').textContent, /门槛 500黄 \/ 1000红 ms/);
   const relabelled = clone(f.raw()); relabelled.settings_revision = inc(relabelled.settings_revision);
   relabelled.slots[0].region = '浙江'; relabelled.slots[0].isp = 'unicom';
   f.setRaw(relabelled);

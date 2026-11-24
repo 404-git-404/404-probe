@@ -204,9 +204,8 @@
       const days=heatResult.days.map((day,i)=>'<span class="net-heat-day">'+escape(day.date.slice(5))+'</span>'+
         day.hours.map((hour,j)=>{
           const value=hour[key],tone=qualityTone[hour.state]||'no_data';
-          const reason=root.NetworkQualityCore.cellReasons[hour.reason]||'';
           const metric=value==null?(key===lossKey()&&hour.old_tcp?'旧口径':'—'):fmt(value);
-          const hint=day.date+' '+String(j).padStart(2,'0')+':00 · '+metric+' · 样本 '+hour.samples+' · '+reason;
+          const hint=day.date+' '+String(j).padStart(2,'0')+':00 · '+metric+' · '+root.NetworkQualityCore.cellDetails(hour);
           return '<span class="net-heat-cell'+evening(j)+(i===heatResult.days.length-1?' net-heat-last':'')+'" title="'+escape(hint)+'"'+
             ' data-tone="'+tone+'"></span>';
         }).join('')).join('');

@@ -331,15 +331,9 @@ func networkTargetChanges(ctx context.Context, tx *sql.Tx, id string, line Netwo
 }
 
 type NetworkHeatCell struct {
-	Hour              int              `json:"hour"`
-	Start             int64            `json:"start"`
-	P50               *float64         `json:"p50_ms"`
-	State             QualityCardState `json:"state"`
-	Reason            string           `json:"reason"`
-	OldTCP            bool             `json:"old_tcp,omitempty"`
-	FailurePercent    *float64         `json:"failure_percent"`
-	PacketLossPercent *float64         `json:"packet_loss_percent"`
-	Samples           int              `json:"samples"`
+	Hour  int   `json:"hour"`
+	Start int64 `json:"start"`
+	NetworkStats
 }
 
 type NetworkHeatDay struct {
@@ -389,8 +383,8 @@ func (s *Store) NetworkHeatmap(ctx context.Context, id string, line NetworkLine,
 		for h := range out.Days[day].Hours {
 			i := day*24 + h
 			stats := networkStats(buckets[i], line.Protocol)
-			state, reason := qualityCellColor(stats, threshold)
-			out.Days[day].Hours[h] = NetworkHeatCell{h, start + int64(i)*qualityHourMS, stats.P50, state, reason, stats.OldTCP, stats.FailurePercent, stats.PacketLossPercent, stats.Samples}
+			stats.State, stats.Reason = qualityCellColor(stats, threshold)
+			out.Days[day].Hours[h] = NetworkHeatCell{Hour: h, Start: start + int64(i)*qualityHourMS, NetworkStats: stats}
 		}
 	}
 	return out, tx.Commit()

@@ -372,7 +372,7 @@
       return {text,tone:value>=20?'crit':value>0?'warn':'muted',title:'近 1 小时 TCP '+text+
         (attempts?`（${loss}/${attempts}）`:'')+(errorAttempts?` · 错误 ${errors}/${errorAttempts}（${percent(errors/errorAttempts*100)}）`:'')+icmp+relaxed};
     }
-    if(lane.icmp.blocks)return rightView(lane.right);
+    if(lane.icmp?.blocks)return rightView(lane.right);
     const blocks=lane.tcp.blocks||[],judged=blocks.reduce((n,b)=>n+b.judged,0),failed=blocks.reduce((n,b)=>n+b.failed,0);
     const latest=blocks.at(-1)?.state,tone=latest==='red'?'crit':latest==='yellow'?'warn':'muted';
     if(lane.tcp.status!=='active'||judged<3)return {text:'—',tone,title:'近 1 小时 TCP 样本太少或未测 TCP'};
