@@ -26,11 +26,7 @@ function run(args, options = {}) {
   return child.stdout;
 }
 
-async function listen(server) {
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  return server.address().port;
-}
+const {listen} = require('./lib/browser-safe-port.cjs');
 
 async function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-r45-'));

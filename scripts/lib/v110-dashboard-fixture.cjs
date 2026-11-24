@@ -61,7 +61,7 @@ async function start({n=28,handle=null}={}){
   }
   if(url.pathname.startsWith('/api/'))return fail('not_found',404);
   const file=path.resolve(root,'.'+(url.pathname==='/'?'/index.html':url.pathname));if(!file.startsWith(root+path.sep)||!fs.existsSync(file)){res.statusCode=404;return res.end();}res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.svg')?'image/svg+xml':'text/html'});res.end(fs.readFileSync(file));
- });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ });await require('./browser-safe-port.cjs').listen(server);
  return {base:'http://127.0.0.1:'+server.address().port,state,requests,catalog,expense,conflict(){conflict=true;},disconnect(){for(const s of streams)s.end();streams.clear();},publish(event,data){for(const s of streams)s.write('event: '+event+'\ndata: '+JSON.stringify(data)+'\n\n');},close(){server.closeAllConnections();server.close();}};
 }
 module.exports={start,ID,makeRows};

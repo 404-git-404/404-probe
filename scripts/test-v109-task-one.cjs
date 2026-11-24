@@ -25,7 +25,7 @@ function history(query){const now=reference?sampleTime:Date.now(),to=query.has('
 async function run(){
  fs.writeFileSync(path.join(tmp,'update-check.json'),JSON.stringify({enabled:false,latest:'',checked_at:0}),{mode:0o600});
  fs.writeFileSync(hash,cp.execFileSync(exe,['web','password-hash'],{input:password+'\n',windowsHide:true}),{mode:0o600});
- const portServer=http.createServer();await new Promise(r=>portServer.listen(0,'127.0.0.1',r));const port=portServer.address().port;await new Promise(r=>portServer.close(r));const base='http://127.0.0.1:'+port;
+ const portServer=http.createServer();await require('./lib/browser-safe-port.cjs').listen(portServer);const port=portServer.address().port;await new Promise(r=>portServer.close(r));const base='http://127.0.0.1:'+port;
  server=cp.spawn(exe,['serve','--listen','127.0.0.1:'+port,'--db',db,'--web-password-hash-file',hash,'--web-public-origin',base,'--web-allow-insecure-http'],{windowsHide:true,stdio:['ignore','pipe','pipe']});let startupLog='';for(const stream of [server.stdout,server.stderr])stream.on('data',b=>{startupLog=(startupLog+b.toString()).slice(-16000);});
  for(let i=0;;i++){try{await fetch(base+'/login');break;}catch{if(server.exitCode!==null||i>=400){fs.writeFileSync(path.join(out,'server-startup.log'),startupLog);throw Error(server.exitCode!==null?'Server exited '+server.exitCode+': '+startupLog:'Server startup timeout after 20s');}await delay(50);}}
  browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()});
