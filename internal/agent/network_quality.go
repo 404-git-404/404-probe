@@ -127,7 +127,11 @@ func (s *qualitySchedule) reconcile(c *protocol.QualityConfig, now time.Time, ra
 				delay = interval * time.Duration(i+1) / time.Duration(len(c.Targets))
 			}
 			s.lanes[key] = &qualityLane{target: t, semantics: c.Semantics, interval: interval, next: now.Add(delay)}
-		} else if interval != l.interval {
+		} else {
+			l.target.ConnectTimeoutMS = t.ConnectTimeoutMS
+			if interval == l.interval {
+				continue
+			}
 			// A new frequency applies to a running lane without waiting out the old period: a shorter one
 			// pulls the next probe forward, a longer one takes effect after the one already scheduled.
 			if interval < l.interval {

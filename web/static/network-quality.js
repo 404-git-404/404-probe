@@ -177,9 +177,9 @@
       const device=!!(card.agent.revoked||card.agent.disabled_at||card.agent.removal),summary=device?null:card.summary;
       for(const b of card.tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.focusKey===`nq-${card.family}`));
       const threshold=summary?.threshold_ms??card.config?.slow_threshold_ms??C.THRESHOLD_DEFAULT,interval=summary?.interval_ms??card.config?.effective_interval_ms??30000;
-      const subText=`TCP · 1h · 门槛 ${threshold} ms`;
+      const subText=`门槛 ${threshold}黄 / ${2*threshold}红 ms`;
       if(card.sub.textContent!==subText)card.sub.textContent=subText;
-      card.sub.title=`只看 TCP 线路（当前所选地址族）· 最近 1 小时，每格 3 分钟 · 慢 = 连接时间超过 ${threshold} ms · 检测间隔 ${interval/1000} 秒${interval>=240000?'；检测间隔较长，部分方块没有样本':''}`;
+      card.sub.title=`门槛 ${threshold} ms（黄）/ ${2*threshold} ms（红） · 当前所选地址族 · 最近 1 小时，每格 3 分钟 · 按格内中位延迟、丢包率和错误率判色 · 检测间隔 ${interval/1000} 秒${interval>=240000?'；检测间隔较长，部分方块没有样本':''}`;
       const live=new Set();let position=card.content.firstElementChild;
       const selected=targets(card);
       for(const key of C.cardSlots(card.config)) {
@@ -189,7 +189,7 @@
         if(view.node!==position)card.content.insertBefore(view.node,position);position=view.node.nextElementSibling;
         const label=C.cardLabel(card.config,key),lane=summary?.lanes.find(l=>l.slot===key)||configLane(card,key);
         let shown=C.laneView(lane);
-        if(shown.kind==='blocks'&&!lane.tcp.blocks)shown={kind:'text',key:'loading',text:'读取中…',title:'正在读取最近 1 小时的判断'};
+        if(shown.kind==='blocks'&&!shown.blocks)shown={kind:'text',key:'loading',text:'读取中…',title:'正在读取最近 1 小时的判断'};
         if(lane.tcp.status==='active'&&!summary&&!device)shown={kind:'text',key:'loading',text:card.summaryError||'读取中…',title:card.summaryError||'正在读取最近 1 小时的判断'};
         const right=C.tcpRightView(lane);
         const set=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
@@ -203,8 +203,22 @@
             if(cell.className!==cls)cell.className=cls;
             cell.tipText=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms}).text;cell.setAttribute('aria-label',cell.tipText);counts[block.state]++;
           });
+          const from=summary.window_start, span=summary.block_ms*shown.blocks.length;
+          const pos=at=>Math.max(0,Math.min(100,100*(at-from)/span));
+          for(const mark of view.blocks.querySelectorAll('.nq7-mark'))mark.remove();
+          for(const run of lane.tcp.alert_runs||[]){
+            if(run.end<=from||run.start>=from+span)continue;
+            const mark=el('span','nq7-mark nq7-alert-run');
+            mark.style.left=pos(run.start)+'%';mark.style.width=(pos(run.end)-pos(run.start))+'%';
+            view.blocks.append(mark);
+          }
+          const change=lane.tcp.semantics_change_at;
+          if(change!=null&&change>=from&&change<from+span){
+            const mark=el('span','nq7-mark nq7-sem-change');
+            mark.style.left=pos(change)+'%';mark.title='TCP 丢包口径变更';view.blocks.append(mark);
+          }
           view.text.title='';
-          view.node.setAttribute('aria-label',`${label}，TCP 最近 1 小时：正常 ${counts.green} 格，偶发慢或失败 ${counts.yellow} 格，持续告警 ${counts.red} 格，无数据 ${counts.gray} 格；${right.text}`);
+          view.node.setAttribute('aria-label',`${label}，${lane.tcp.status==='active'?'TCP':'ICMP'} 最近 1 小时：绿 ${counts.green} 格，黄 ${counts.yellow} 格，红 ${counts.red} 格，灰 ${counts.gray} 格；${right.text}`);
         } else {
           set(view.text,shown.text);view.text.title=shown.title;
           view.node.setAttribute('aria-label',`${label}，${shown.text}；${right.text}`);
@@ -217,7 +231,7 @@
       // One line for the whole card: a failed read says so (the old blocks stay, marked as not current).
       let reason=card.summaryError||card.error||C.cardNotice(card.config);
       if(device)reason=card.agent.removal?'设备正在移除，当前数据不可用':'设备已撤销/暂停，当前数据不可用';
-      card.head.title=card.sub.title+' · 正常 / 偶发慢或失败 / 持续告警 / 无数据或样本不足'+(reason?' · '+reason:'');
+      card.head.title=card.sub.title+' · 红线标记告警时段，竖虚线标记 TCP 丢包口径变更'+(reason?' · '+reason:'');
       card.node.dataset.alertActive=String(!!summary?.alert_active);
       const settings=card.head.querySelector('.nq-link');settings.title='网络质量设置：目标地址、检测频率、慢连接门槛、总开关';
     }
@@ -353,7 +367,7 @@
       const suggestions=el('datalist');suggestions.id='nq-isp-hints';for(const label of ['电信','联通','移动']){const option=el('option');option.value=label;suggestions.append(option);}body.append(suggestions);
       p.rows=el('div','nq-object-rows');body.append(p.rows);
       p.cardLimit=el('p','nq-muted');p.cardLimit.setAttribute('role','status');body.append(p.cardLimit);
-      p.add=button('+ 添加线路',()=>addSlot(p),'nq-add');p.add.dataset.nqField='add';body.append(p.add,el('p','nq-footnote','亮着的就会测，点一下关掉。这台机器没有 IPv6 时自动跳过 v6；容器里测不了 ICMP 时会自动变灰。'),el('p','nq-footnote','只检测你有权检测的目标。地区和运营商是你自己的标注，404-probe 不核对。'));
+      p.add=button('+ 添加线路',()=>addSlot(p),'nq-add');p.add.dataset.nqField='add';body.append(p.add,el('p','nq-footnote','亮着的就会测，点一下关掉。这台机器没有 IPv6 时自动跳过 v6；容器里测不了 ICMP 时会自动变灰。ICMP 可能被目标过滤，过滤时只看 TCP。'),el('p','nq-footnote','只检测你有权检测的目标。地区和运营商是你自己的标注，404-probe 不核对。'));
       p.messageNode=el('p','nq-status');p.messageNode.setAttribute('role','status');p.saveBottom=button('保存',()=>savePanel(),'nq-save');p.saveBottom.dataset.nqField='save-bottom';p.copyButton=button('从其他设备复制…',()=>openCopy(p),'nq-link');p.copyButton.dataset.nqField='copy';const cancel=button('取消',()=>{if(!p.saving&&!p.toggling)closePanel(true);},'nq-link');cancel.dataset.nqField='cancel';const foot=el('div','nq-dialog-foot');foot.append(p.copyButton,cancel,p.saveBottom);p.box.tabIndex=-1;p.box.append(header,p.guardEnable,p.guardConflict,body,p.messageNode,foot);n.append(p.box);
       let pressed=false;const outside=e=>{if(e.target!==n)return false;const r=n.getBoundingClientRect();return e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom;};n.addEventListener('pointerdown',e=>{pressed=e.button===0&&outside(e);});n.addEventListener('pointercancel',()=>{pressed=false;});n.addEventListener('click',e=>{const dismiss=pressed&&outside(e);pressed=false;if(dismiss&&!root.DialogShell)closePanel();});
     }
@@ -430,8 +444,10 @@
       try {
         const value=await read(C.historyKey(h.card.id,h.target.id,h.target.family,h.hours),dialogOwner,`${path(h.card.id)}v3/history?target_id=${encodeURIComponent(h.target.id)}&view=${h.hours===1?'1hour':'1day'}`);
         if(history!==h||h.generation!==generation||!historyActive(h)||value.target?.id!==h.target.id||value.target?.family!==h.target.family)return;
-        const group=value.groups?.find(g=>g.semantics==='staged_probe_v2'&&g.metric===(h.target.protocol==='tcp'?'pure_connect':'echo_rtt'));
-        h.data={...value,window:group?.window||{},blocks:(group?.points||[]).map(p=>({...p,gap:p.execution_coverage==='known_gap'}))};h.error='';renderHistory();
+        const group=value.groups?.find(g=>g.semantics==='tcp_connect_timeout_v1')||value.groups?.find(g=>g.semantics==='staged_probe_v2'&&g.metric===(h.target.protocol==='tcp'?'pure_connect':'echo_rtt'));
+        const newTCP=group?.semantics==='tcp_connect_timeout_v1';
+        h.data={...value,window:{...group?.window,tcp_loss_semantics:newTCP},
+          blocks:(group?.points||[]).map(p=>({...p,tcp_loss_semantics:newTCP,gap:p.execution_coverage==='known_gap'}))};h.error='';renderHistory();
       }catch(error){if(history===h&&h.generation===generation&&error.name!=='AbortError'){h.error='读取失败；保留上次结果，不代表当前状态';renderHistory();}}
       finally{if(history===h&&h.generation===generation)h.loading=false;}
     }
@@ -470,12 +486,12 @@
       const right=el('div','nq-history-device');right.append(device,close);header.append(title,right);
       const controls=el('div','nq-history-controls');
       for(const [v,text]of [[1,'1 小时'],[24,'24 小时']]){const b=button(text,()=>changeHistory('hours',v));b.dataset.nqField=`hours-${v}`;b.setAttribute('aria-pressed',String(h.hours===v));controls.append(b);}
-      for(const [kind,text]of [['latency','延迟'],['ratio',C.ratio({},h.target.protocol).label]]){const b=button(text,()=>changeHistory('kind',kind));b.dataset.nqField=`kind-${kind}`;b.setAttribute('aria-pressed',String(h.kind===kind));controls.append(b);}
+      for(const [kind,text]of [['latency','延迟'],['ratio',C.ratio(h.data?.window,h.target.protocol).label]]){const b=button(text,()=>changeHistory('kind',kind));b.dataset.nqField=`kind-${kind}`;b.setAttribute('aria-pressed',String(h.kind===kind));controls.append(b);}
       const stats=h.data?.window||{},r=C.ratio(stats,h.target.protocol);
-      const summary=el('p','nq-window',`窗口统计：P50 ${C.ms(stats.p50_ms)} · P95 ${C.ms(stats.p95_ms)} · P95−P50 ${C.ms(stats.p95_minus_p50_ms)} · Jitter ${C.ms(stats.jitter_ms)}（${stats.jitter_pairs||0} 对） · ${r.label} ${C.percent(r.value)} (${r.fraction}) · 端点成功 ${stats.probe_successes||0}/${stats.probe_attempts||0} · 样本 ${stats.count||0} · 未执行 ${stats.not_executed||0}`);
+      const summary=el('p','nq-window',`窗口统计：P50 ${C.ms(stats.p50_ms)} · P95 ${C.ms(stats.p95_ms)} · P95−P50 ${C.ms(stats.p95_minus_p50_ms)} · Jitter ${C.ms(stats.jitter_ms)}（${stats.jitter_pairs||0} 对） · ${r.label} ${C.percent(r.value)} (${r.fraction})  ${stats.error_percent!=null?'· 错误 '+C.percent(stats.error_percent):''} · 端点成功 ${stats.probe_successes||0}/${stats.probe_attempts||0} · 样本 ${stats.count||0} · 未执行 ${stats.not_executed||0}`);
       const status=el('p','nq-status',h.error||(!h.data?'正在读取指定目标…':`${C.cardGroup(h.data,h.target)?.stale?'当前过期；历史独立保留 · ':''}${stats.completeness||'no_data'} · ${stats.execution_coverage||'unverified'}（不承诺完整采集）${h.data.migration_pending?' · 正在回填':''} · Server ${C.time(h.data.now)}`));
       const chart=el('div','nq-plot'),tooltip=el('output','nq-chart-detail');tooltip.setAttribute('aria-live','polite');
-      dialog.replaceChildren(header,controls,summary,status,el('small','nq-muted','每点为 Server 真实时间桶聚合；1h 为五分钟桶，24h 为一分钟桶；仅 staged_probe_v2，TCP 为纯 Connect。缺测断线，不是原始每30秒点。'),chart,tooltip);
+      dialog.replaceChildren(header,controls,summary,status,el('small','nq-muted','每点为 Server 时间桶聚合，缺测处断线。TCP 延迟为连接耗时。'),chart,tooltip);
       if(focused)dialog.querySelector(`[data-nq-field="${focused}"]`)?.focus();
       const adapted=C.columns(h.data?.blocks,h.target.protocol,h.kind),data=adapted.data;
       const measured=data[0].filter((_x,i)=>data.slice(1).some(col=>C.finite(col[i]))).length;

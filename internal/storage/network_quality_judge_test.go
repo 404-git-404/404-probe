@@ -13,7 +13,7 @@ import (
 
 // tlOf makes a timeline of n minutes, all empty (usable, no judged sample), from minute index 0.
 func tlOf(n int) *qualityTimeline {
-	tl := &qualityTimeline{First: 0, Mins: make([]qualityMinute, n)}
+	tl := &qualityTimeline{First: 0, Mins: make([]qualityMinute, n), Frame: qualityLaneFrame{TCP: true, ThresholdMS: 500}}
 	for i := range tl.Mins {
 		tl.Mins[i] = qualityMinute{Kind: minuteEmpty, MaxBin: -1}
 	}
@@ -22,7 +22,15 @@ func tlOf(n int) *qualityTimeline {
 
 // data sets a minute with j judged, b bad and f failed samples; the interval is the given one (ms).
 func (tl *qualityTimeline) data(m int, j, b, f int, intervalMS int) *qualityTimeline {
-	tl.Mins[m] = qualityMinute{Kind: minuteData, J: j, B: b, F: f, S: b - f, IntervalMS: intervalMS, MaxBin: -1}
+	bucket := qualityNewBucket()
+	bucket.Stats.Count, bucket.Stats.ConnectAttempts, bucket.Stats.ConnectSuccesses, bucket.Stats.ValidRTTs = j, j, j-f, j-f
+	if j > b {
+		bucket.Histogram[200] = uint32(j - b)
+	}
+	if b > f {
+		bucket.Histogram[2400] = uint32(b - f)
+	}
+	tl.Mins[m] = qualityMinute{Kind: minuteData, J: j, B: b, F: f, S: b - f, IntervalMS: intervalMS, MaxBin: -1, Bucket: &bucket}
 	return tl
 }
 
@@ -148,17 +156,17 @@ func TestBlockCountsAreTheSumOfTheirMinutesAndAMissingMinuteIsNotNormal(t *testi
 		t.Fatalf("a connect success without RTT: %+v", m)
 	}
 	// Three buckets added up equal the merged bucket counted at once.
-	tl := qualityTimeline{First: 0}
+	tl := qualityTimeline{First: 0, Frame: frame}
 	for i := int64(0); i < 3; i++ {
 		tl.Mins = append(tl.Mins, qualityJudgeMinute(frame, i*qualityMinuteMS, bucket(3, 4, 3, map[uint16]uint32{400: 2, 2400: 1}), false))
 	}
-	blk := tl.classifyBlock(0, 3*qualityMinuteMS, i30)
-	if blk.Judged != 12 || blk.Slow != 3 || blk.Failed != 3 || blk.State != QualityCardYellow || blk.InProgress {
+	blk := tl.classifyBlock(0, 3*qualityMinuteMS)
+	if blk.Judged != 12 || blk.Slow != 3 || blk.Failed != 3 || blk.State != QualityCardGreen || blk.InProgress {
 		t.Fatalf("block %+v", blk)
 	}
 	// A missing bucket is "no sample", never "normal": the block has fewer judged samples, not extra normal ones.
 	tl.Mins[1] = qualityJudgeMinute(frame, qualityMinuteMS, nil, false)
-	if blk = tl.classifyBlock(0, 3*qualityMinuteMS, i30); blk.Judged != 8 || tl.Mins[1].Kind != minuteEmpty {
+	if blk = tl.classifyBlock(0, 3*qualityMinuteMS); blk.Judged != 8 || tl.Mins[1].Kind != minuteEmpty {
 		t.Fatalf("block with a missing minute %+v", blk)
 	}
 }
@@ -180,11 +188,7 @@ func TestJudgeParametersFollowTheDesignTable(t *testing.T) {
 			t.Errorf("interval %v: %+v, want look=%d fresh=%d gap=%d minJudged=%d", c.interval, p, c.look, c.fresh, c.gap, c.minJudged)
 		}
 	}
-	for _, c := range []struct{ ms, want int }{{30000, 3}, {60000, 2}, {90000, 1}, {120000, 1}, {180000, 1}, {240000, 1}, {300000, 1}} {
-		if got := qualityMinSamples(c.ms); got != c.want {
-			t.Errorf("interval %d: m=%d, want %d", c.ms, got, c.want)
-		}
-	}
+
 }
 
 func TestRedB3IsolatedFailuresNeverTurnRed(t *testing.T) {
@@ -194,7 +198,7 @@ func TestRedB3IsolatedFailuresNeverTurnRed(t *testing.T) {
 		t.Fatal("B3-a: two isolated failures with a missing minute are red")
 	}
 	// ... and the 3-minute block: J=2 < m=3, not red, gray.
-	if b := tl.classifyBlock(0, 10*qualityMinuteMS, i30); b.State != QualityCardGray || b.Judged != 2 {
+	if b := tl.classifyBlock(0, 10*qualityMinuteMS); b.State != QualityCardGray || b.Judged != 2 {
 		t.Fatalf("B3-a block: %+v", b)
 	}
 	// B3-b: the middle minute holds DNS failures only: a bucket with no judged sample is an empty minute.
@@ -352,9 +356,8 @@ func TestRedB4RecoveredLineIsNotCurrentlyRed(t *testing.T) {
 	if tl.red(29, i30) {
 		t.Fatal("B4: the recovered line is red now")
 	}
-	// The history keeps its red block, the current state does not.
-	if b := tl.classifyBlock(0, 30*qualityMinuteMS, i30); b.State != QualityCardRed {
-		t.Fatalf("the history block of minutes 0-2 is %s", b.State)
+	if runs := tl.alertRuns(0, 30*qualityMinuteMS, i30); len(runs) != 1 || runs[0].Start != 3*qualityMinuteMS || runs[0].End != 5*qualityMinuteMS {
+		t.Fatalf("alert runs: %+v", runs)
 	}
 }
 
@@ -469,7 +472,7 @@ func TestUsableMinutesF1UniqueResultsPerShape(t *testing.T) {
 	frame := qualityLaneFrame{SlotRevision: slot, IntervalStart: 0, HasInterval: true, ThresholdMS: 500, TCP: true}
 	three := func(a, b, c *qualityBucketData, gaps ...protocol.QualityGap) QualityCardBlockForTest {
 		tl := timelineOfBuckets(frame, 0, 3, map[int64]*qualityBucketData{0: a, 1: b, 2: c}, gaps...)
-		return QualityCardBlockForTest{tl.classifyBlock(0, 3*qualityMinuteMS, i30), tl}
+		return QualityCardBlockForTest{tl.classifyBlock(0, 3*qualityMinuteMS), tl}
 	}
 	// B1-a: every minute bucket holds two configuration versions: three unusable minutes, J=0, gray, partial.
 	mixed := func() *qualityBucketData { return judgeBucket(7, 1, 2, slot, slot, 2, 0) }
@@ -566,10 +569,10 @@ func TestUsableMinutesIntervalStartAndBoundaries(t *testing.T) {
 		}
 	}
 	// A block entirely before the start is gray and not partial; the block of the start minute is partial.
-	if b := tl.classifyBlock(0, 14*qualityMinuteMS, i30); b.State != QualityCardGray || b.Partial {
+	if b := tl.classifyBlock(0, 14*qualityMinuteMS); b.State != QualityCardGray || b.Partial {
 		t.Fatalf("a block before the start: %+v", b)
 	}
-	if b := tl.classifyBlock(9*qualityMinuteMS, 14*qualityMinuteMS, i30); !b.Partial {
+	if b := tl.classifyBlock(9*qualityMinuteMS, 14*qualityMinuteMS); !b.Partial {
 		t.Fatalf("the block of the start minute: %+v", b)
 	}
 	// An interval that starts exactly on a minute uses that minute.
@@ -668,65 +671,14 @@ func TestRedPermanentlyDeadLine(t *testing.T) {
 	}
 }
 
-// Blocks: J = 0 is always gray, 0 < J < m is gray unless red, in progress marks the last block.
-func TestBlockStatesGrayRedAndInProgress(t *testing.T) {
-	// 30 s, m = 3.
-	tl := tlOf(12).fill(0, 3, 2, 0, 0, i30)
-	if b := tl.classifyBlock(0, 12*qualityMinuteMS, i30); b.State != QualityCardGreen {
-		t.Fatalf("green block: %+v", b)
-	}
-	tl.Mins[0].J, tl.Mins[1].J, tl.Mins[2].J = 1, 1, 0
-	if b := tl.classifyBlock(0, 12*qualityMinuteMS, i30); b.State != QualityCardGray {
-		t.Fatalf("J=2 < m=3 must be gray: %+v", b)
-	}
-	tl.Mins[2].J = 1
-	if b := tl.classifyBlock(0, 12*qualityMinuteMS, i30); b.State != QualityCardGreen {
-		t.Fatalf("J=3 = m must be judged: %+v", b)
-	}
-	// J=0 after a red block: gray, never red.
-	dead := tlOf(12).fill(0, 3, 2, 2, 2, i30)
-	if b := dead.classifyBlock(0, 12*qualityMinuteMS, i30); b.State != QualityCardRed {
-		t.Fatalf("dead block: %+v", b)
-	}
-	if b := dead.classifyBlock(3*qualityMinuteMS, 12*qualityMinuteMS, i30); b.State != QualityCardGray || b.Judged != 0 {
-		t.Fatalf("a block without judged samples after a red one: %+v", b)
-	}
-	// 0 < J < m with a red condition shows red.
-	red := tlOf(12).fill(0, 4, 1, 1, 1, i30) // one failure per minute: J=1 per minute
-	if b := red.classifyBlock(3*qualityMinuteMS, 12*qualityMinuteMS, i30); b.State != QualityCardRed || b.Judged != 1 {
-		t.Fatalf("0 < J < m and red: %+v", b)
-	}
-	// In progress: the block ends after the cut-off, minutes after it are not read.
-	mid := tlOf(6).fill(0, 6, 2, 0, 0, i30)
-	if b := mid.classifyBlock(3*qualityMinuteMS, 4*qualityMinuteMS, i30); !b.InProgress || b.Judged != 2 {
-		t.Fatalf("in progress: %+v", b)
-	}
-	if b := mid.classifyBlock(0, 3*qualityMinuteMS, i30); b.InProgress {
-		t.Fatalf("a block that ends at the cut-off is complete: %+v", b)
-	}
-}
-
-// Grey on a long interval: the sample count a block needs follows the interval.
-func TestBlockEnoughSamplesPerInterval(t *testing.T) {
-	for _, c := range []struct {
-		interval, m int
-	}{{30000, 3}, {60000, 2}, {90000, 1}, {120000, 1}, {240000, 1}, {300000, 1}} {
-		for n := 0; n <= 6; n++ {
-			tl := tlOf(6)
-			if n > 0 {
-				tl.data(0, n, 0, 0, c.interval)
-			}
-			b := tl.classifyBlock(0, 6*qualityMinuteMS, c.interval)
-			want := QualityCardGreen
-			switch {
-			case n == 0:
-				want = QualityCardGray
-			case n < c.m:
-				want = QualityCardGray
-			}
-			if b.State != want {
-				t.Errorf("interval %d, %d samples: %s, want %s", c.interval, n, b.State, want)
-			}
+func TestBlockColorNeedsOnlyLocalData(t *testing.T) {
+	for _, interval := range []int{i30, i60, i120, i300} {
+		tl := tlOf(6).data(0, 1, 0, 0, interval)
+		if b := tl.classifyBlock(0, qualityMinuteMS); b.State != QualityCardGreen || !b.InProgress || b.Judged != 1 {
+			t.Fatalf("green partial block: %+v", b)
+		}
+		if b := tl.classifyBlock(3*qualityMinuteMS, 6*qualityMinuteMS); b.State != QualityCardGray || b.InProgress {
+			t.Fatalf("empty complete block: %+v", b)
 		}
 	}
 }

@@ -251,7 +251,12 @@
   }
   const historyKey = (agent,target,family,hours) => JSON.stringify(['history',agent,target,family,hours]);
   function ratio(stats,protocol) {
-    const s=stats||{},icmp=protocol==='icmp',modern=finite(s.connect_attempts),denominator=icmp?s.sent:modern?s.connect_attempts:s.attempts;
+    const s=stats||{};
+    if(protocol==='tcp'&&s.tcp_loss_semantics){
+      const attempts=s.connect_attempts||0;
+      return {label:'丢包率',value:s.packet_loss_percent??null,fraction:attempts>0?`${s.categories?.timeout||0} / ${attempts}`:'无实际分母'};
+    }
+    const icmp=protocol==='icmp',modern=finite(s.connect_attempts),denominator=icmp?s.sent:modern?s.connect_attempts:s.attempts;
     const failures=icmp?s.sent-s.received:modern?s.connect_attempts-s.connect_successes:s.failures;
     const value=icmp?s.packet_loss_percent:modern&&denominator>0?100*failures/denominator:s.failure_percent;
     return {label:icmp?'丢包率':modern?'Connect 失败率':'连接失败率',value:denominator>0&&finite(value)?value:null,
@@ -281,7 +286,7 @@
   }
   function cardGroup(h,target) {
     const metric=target?.protocol==='tcp'?'pure_connect':'echo_rtt';
-    return h?.current?.find(g=>g.semantics==='staged_probe_v2'&&g.metric===metric);
+    return h?.current?.find(g=>g.semantics==='tcp_connect_timeout_v1'&&g.metric===metric)||h?.current?.find(g=>g.semantics==='staged_probe_v2'&&g.metric===metric);
   }
   // ---- R28: the card answer (v5/card). The Server judges every block; these functions check the shape and word it. ----
   const CARD_STATES=['gray','green','yellow','red'],BLOCK_COUNT=20;
@@ -297,18 +302,17 @@
     const lanes=v.lanes.map((l,i)=>{
       if(!l||!objectID(l.slot)||seen.has(l.slot)||(v.objects!==true&&l.slot!==slots[i])||!l.tcp||!l.icmp||!l.right||typeof l.tcp.status!=='string'||typeof l.icmp.status!=='string')fail('卡槽 '+(i+1));
       seen.add(l.slot);
-      let blocks=null;
-      if(l.tcp.status==='active') {
-        if(!Array.isArray(l.tcp.blocks)||l.tcp.blocks.length!==BLOCK_COUNT)fail('方块数量');
-        blocks=l.tcp.blocks.map(b=>{
+      function blocksOf(raw){
+        if(!Array.isArray(raw)||raw.length!==BLOCK_COUNT)fail('方块数量');
+        return raw.map(b=>{
           if(!b||!finite(b.start)||!CARD_STATES.includes(b.state)||![b.judged,b.slow,b.failed,b.unjudged].every(wholeCount)||typeof b.in_progress!=='boolean'||typeof b.partial!=='boolean'||(b.max_ms!=null&&!finite(b.max_ms)))fail('方块');
-          return {start:b.start,state:b.state,judged:b.judged,slow:b.slow,failed:b.failed,unjudged:b.unjudged,max_ms:b.max_ms??null,in_progress:b.in_progress,partial:b.partial};
+          return {start:b.start,state:b.state,judged:b.judged,slow:b.slow,failed:b.failed,unjudged:b.unjudged,max_ms:b.max_ms??null,in_progress:b.in_progress,partial:b.partial,metrics:b.metrics};
         });
       }
       const r=l.right;
       if(!['icmp_loss','tcp_failure','none'].includes(r.kind)||!['ok','few','none'].includes(r.samples)||!wholeCount(r.numerator)||!wholeCount(r.denominator)||(r.percent!=null&&!finite(r.percent)))fail('右侧数字');
-      return {slot:l.slot,tcp:{status:l.tcp.status,condition:l.tcp.condition||'',blocks,red:!!l.tcp.red?.active,dns_failing:!!l.tcp.dns_failing},
-        icmp:{status:l.icmp.status,condition:l.icmp.condition||''},right:{kind:r.kind,percent:r.percent??null,numerator:r.numerator,denominator:r.denominator,samples:r.samples}};
+      return {slot:l.slot,tcp:{status:l.tcp.status,condition:l.tcp.condition||'',blocks:l.tcp.status==='active'?blocksOf(l.tcp.blocks):null,red:!!l.tcp.red?.active,dns_failing:!!l.tcp.dns_failing,alert_runs:l.tcp.alert_runs||[],semantics_change_at:l.tcp.semantics_change_at,relaxed_tcp:!!l.tcp.relaxed_tcp},
+        icmp:{status:l.icmp.status,condition:l.icmp.condition||'',blocks:l.icmp.blocks?blocksOf(l.icmp.blocks):null},right:{kind:r.kind,percent:r.percent??null,numerator:r.numerator,denominator:r.denominator,samples:r.samples}};
     });
     return {now:v.now,eval_end:v.eval_end,family,settings_revision:String(v.settings_revision??''),config_revision:String(v.config_revision??''),
       threshold_ms:v.threshold_ms,interval_ms:v.interval_ms,block_ms:v.block_ms,window_start:v.window_start,lanes,alert_active:v.alert_active};
@@ -321,12 +325,24 @@
   }
   const clock=v=>new Date(v).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false});
   const peak=v=>v>=1000?String(Math.round(v)):v>=100?v.toFixed(0):v.toFixed(1);
+  const cellReasons={normal:'绿：延迟、丢包和错误均未超过门槛',no_data:'灰：没有可用数据',
+    latency_red:'红：中位延迟超过红色门槛',loss_red:'红：丢包率达到 20%',error_red:'红：错误率达到 20%',
+    latency_yellow:'黄：中位延迟超过黄色门槛',loss_yellow:'黄：存在丢包',error_yellow:'黄：存在错误'};
+  function cellDetails(m){
+    const ratio=(count,attempts,value)=>attempts>0?`${count}/${attempts}（${percent(value)}）`:'—';
+    const loss=m.old_tcp&&m.packet_loss_percent==null?'旧口径':ratio(m.loss_count,m.loss_attempts,m.packet_loss_percent);
+    return [`样本 ${m.samples}`,m.p50_ms!=null?`中位 ${peak(m.p50_ms)} ms`:'',m.max_ms!=null?`最高约 ${peak(m.max_ms)} ms`:'',
+      '丢包 '+loss,m.error_attempts>0?'错误 '+ratio(m.error_count,m.error_attempts,m.error_percent):'',
+      m.old_tcp&&m.packet_loss_percent!=null?'含旧口径样本，丢包率只计新口径':'',
+      m.relaxed_tcp?'高延迟线路，丢包判断放宽':'',cellReasons[m.reason]||''].filter(Boolean).join(' · ');
+  }
   // The text of one 3-minute block, for the hover card and for assistive technology. It restates the Server's numbers only.
   function blockView(b,{label='',threshold=500,intervalMS=30000,blockMS=180000}={}) {
-    const lines=[`${label?label+' · ':''}${clock(b.start)}–${clock(b.start+blockMS)} · ${STATE_TEXT[b.state]}`];
-    if(b.judged>0)lines.push(`本格 ${b.judged} 个样本：慢 ${b.slow} · 失败 ${b.failed}${b.max_ms!=null?` · 最高约 ${peak(b.max_ms)} ms`:''}${b.unjudged?` · 未判断 ${b.unjudged}`:''}`);
+    const lines=[`${label?label+' · ':''}${clock(b.start)}–${clock(b.start+blockMS)} · ${b.metrics?{green:"绿",yellow:"黄",red:"红",gray:"灰"}[b.state]:STATE_TEXT[b.state]}`];
+    if(b.metrics)lines.push(cellDetails(b.metrics));
+    else if(b.judged>0)lines.push(`本格 ${b.judged} 个样本：慢 ${b.slow} · 失败 ${b.failed}${b.max_ms!=null?` · 最高约 ${peak(b.max_ms)} ms`:''}${b.unjudged?` · 未判断 ${b.unjudged}`:''}`);
     else if(b.state==='gray')lines.push(b.unjudged?`本格没有可判断的样本（${b.unjudged} 个未判断）`:'本格没有可用样本');
-    if(b.state==='gray'&&b.judged>0)lines.push('样本不足，不判断');
+    if(!b.metrics&&b.state==='gray'&&b.judged>0)lines.push('样本不足，不判断');
     if(b.state==='gray'&&intervalMS>=240000)lines.push('检测间隔较长，部分方块没有样本');
     lines.push(`门槛 ${threshold} ms`);
     if(b.partial)lines.push('含配置变更或缺测，部分分钟未计入');
@@ -345,19 +361,32 @@
   // Sum the Server's disjoint judged blocks. This is the same window and cutoff as
   // qualityTCPRight, even when the legacy right field contains ICMP loss instead.
   function tcpRightView(lane) {
+    const metrics=(lane.tcp.blocks||[]).map(b=>b.metrics).filter(Boolean);
+    if(metrics.length){
+      const sum=key=>metrics.reduce((n,m)=>n+(m[key]||0),0);
+      const attempts=sum('loss_attempts'),loss=sum('loss_count'),errors=sum('error_count'),errorAttempts=sum('error_attempts');
+      const value=attempts?loss/attempts*100:null;
+      const text=value==null?(metrics.some(m=>m.old_tcp)?'旧口径':'—'):'丢包 '+percent(value);
+      const icmp=lane.right.kind==='icmp_loss'&&lane.right.percent!=null?' · ICMP 丢包 '+percent(lane.right.percent):'';
+      const relaxed=lane.tcp.relaxed_tcp?' · 高延迟线路，丢包判断放宽':'';
+      return {text,tone:value>=20?'crit':value>0?'warn':'muted',title:'近 1 小时 TCP '+text+
+        (attempts?`（${loss}/${attempts}）`:'')+(errorAttempts?` · 错误 ${errors}/${errorAttempts}（${percent(errors/errorAttempts*100)}）`:'')+icmp+relaxed};
+    }
+    if(lane.icmp?.blocks)return rightView(lane.right);
     const blocks=lane.tcp.blocks||[],judged=blocks.reduce((n,b)=>n+b.judged,0),failed=blocks.reduce((n,b)=>n+b.failed,0);
     const latest=blocks.at(-1)?.state,tone=latest==='red'?'crit':latest==='yellow'?'warn':'muted';
     if(lane.tcp.status!=='active'||judged<3)return {text:'—',tone,title:'近 1 小时 TCP 样本太少或未测 TCP'};
-    const percent=failed/judged*100,value=Number.isInteger(percent)?String(percent):percent.toFixed(1);
+    const rate=failed/judged*100,value=Number.isInteger(rate)?String(rate):rate.toFixed(1);
     return {text:`失败 ${value}%`,tone,title:`近 1 小时 ${failed} / ${judged} 次 TCP 连接失败${judged<10?'；样本较少，仅供参考':''}`};
   }
   // What a lane shows in place of the 20 blocks, or its blocks.
   function laneView(lane) {
     const tcp=lane.tcp,icmp=lane.icmp;
     if(tcp.status==='active') {
-      if(tcp.dns_failing)return {kind:'text',key:'dns',text:'解析失败',title:'最近的检测都在解析目标域名时失败；这些样本不计入慢 / 失败的判断'};
+      if(tcp.dns_failing&&!tcp.blocks?.some(b=>b.metrics))return {kind:'text',key:'dns',text:'解析失败',title:'最近的检测都在解析目标域名时失败；这些样本不计入慢 / 失败的判断'};
       return {kind:'blocks',blocks:tcp.blocks,red:tcp.red};
     }
+    if(icmp.blocks)return {kind:'blocks',blocks:icmp.blocks,red:false};
     if(tcp.status==='inactive'&&icmp.status==='active')return {kind:'text',key:'icmp-only',text:'未测 TCP（只开了 ICMP）',title:'这个卡槽只开了 ICMP，没有测 TCP；ICMP 丢包率见 B 面'};
     const n=statusNotice(tcp.status,tcp.condition);
     return {kind:'text',key:n.key,text:n.text,title:n.detail};
@@ -372,6 +401,6 @@
     const fitsBelow=below+height<=viewport.clientHeight-margin;
     tip.style.top=Math.max(margin,Math.min(fitsBelow?below:above,viewport.clientHeight-height-margin))+'px';
   }
-  const api={positionCardTip,slots,names,cardSlots,MAX_OBJECTS,MAX_CARD_OBJECTS,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,rightView,tcpRightView,laneView,STATE_TEXT};
+  const api={positionCardTip,slots,names,cardSlots,MAX_OBJECTS,MAX_CARD_OBJECTS,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,cellDetails,cellReasons,rightView,tcpRightView,laneView,STATE_TEXT};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);

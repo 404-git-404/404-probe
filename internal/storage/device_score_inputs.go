@@ -105,6 +105,9 @@ func readDeviceScoreLines(ctx context.Context, tx *sql.Tx, id string, start, end
 		lines = append(lines, DeviceScoreLine{NetworkLine: line, CoveredMS: covered})
 		if covered >= (end-start)/2 {
 			acc[line] = &networkFleetAccumulator{whole: qualityNewBucket(), evening: qualityNewBucket()}
+			if icmp := (NetworkLine{line.Slot, line.Family, "icmp"}); line.Protocol == "tcp" && targets[icmp] != nil {
+				acc[icmp] = &networkFleetAccumulator{whole: qualityNewBucket(), evening: qualityNewBucket()}
+			}
 		}
 		if len(lines) == 3 {
 			break
@@ -123,7 +126,7 @@ func readDeviceScoreLines(ctx context.Context, tx *sql.Tx, id string, start, end
 		return nil, err
 	}
 	defer rollup.Close()
-	reader := networkFleetBucketReader{raw: raw, rollup: rollup, staleBefore: networkFleetStaleBefore()}
+	reader := networkFleetBucketReader{raw: raw, rollup: rollup, staleBefore: networkFleetStaleBefore(), newTCPOnly: true}
 	for _, span := range networkFleetSpans(start, end, deviceScoreCoverageBucket, start, end-start) {
 		err := reader.scan(ctx, id, NetworkLine{}, span, func(line NetworkLine, bucket networkFleetBucket) {
 			if a := acc[line]; a != nil {
@@ -152,15 +155,19 @@ func readDeviceScoreLines(ctx context.Context, tx *sql.Tx, id string, start, end
 		line.Evening = networkP50(a.evening)
 		line.FailurePercent = stats.PacketLossPercent
 		if line.Protocol == "tcp" {
-			// M18 counts connection attempts plus DNS failures. The probe and
-			// connection success percentages each use a different denominator.
-			dns := a.whole.Stats.Categories["dns_error"]
-			if attempts := a.whole.Stats.ConnectAttempts + dns; attempts > 0 {
-				failed := attempts - a.whole.Stats.ConnectSuccesses
-				rate := 100 * float64(failed) / float64(attempts)
-				line.FailurePercent = &rate
+			var icmpLoss *float64
+			if paired := acc[NetworkLine{line.Slot, line.Family, "icmp"}]; paired != nil {
+				icmpLoss = networkStats(paired.whole, "icmp").PacketLossPercent
 			}
-			line.AlertMS = deviceScoreAlertDuration(alerts, line.NetworkLine, start, end)
+			line.FailurePercent = deviceScoreTCPFailure(stats.PacketLossPercent, stats.ErrorPercent, icmpLoss)
+			// Historical episodes remain visible in K4. The score only counts the
+			// part of an episode within the time span of new TCP measurements.
+			coveredStart := max(start, a.whole.FirstTime)
+			coveredEnd := end
+			if a.whole.LastTime > 0 {
+				coveredEnd = min(end, (a.whole.LastTime/deviceScoreCoverageBucket+1)*deviceScoreCoverageBucket)
+			}
+			line.AlertMS = deviceScoreAlertDuration(alerts, line.NetworkLine, coveredStart, coveredEnd)
 		}
 	}
 	return lines, nil
@@ -176,7 +183,7 @@ func deviceScoreCoverage(ctx context.Context, tx *sql.Tx, id string, line Networ
 		WHERE s.agent_id=? AND s.semantics=? AND b.resolution=? AND b.bucket_start>=? AND b.bucket_start<?
 		AND json_extract(t.payload,'$.slot')=? AND json_extract(t.payload,'$.family')=?
 		AND json_extract(t.payload,'$.protocol')=?`,
-		id, protocol.QualityStagedSemantics, deviceScoreCoverageBucket, start, end,
+		id, deviceScoreSemantics(line.Protocol), deviceScoreCoverageBucket, start, end,
 		line.Slot, line.Family, line.Protocol).Scan(&buckets)
 	return buckets * deviceScoreCoverageBucket, err
 }
@@ -199,4 +206,28 @@ func deviceScoreAlertDuration(alerts []NetworkAlert, line NetworkLine, start, en
 		}
 	}
 	return duration
+}
+
+func deviceScoreSemantics(proto string) string {
+	if proto == "tcp" {
+		return protocol.QualityTCPLossSemantics
+	}
+	return protocol.QualityStagedSemantics
+}
+
+func deviceScoreTCPFailure(tcpLoss, errors, icmpLoss *float64) *float64 {
+	if tcpLoss == nil && errors == nil {
+		return nil
+	}
+	loss, errorRate := 0.0, 0.0
+	for _, value := range []*float64{tcpLoss, icmpLoss} {
+		if value != nil {
+			loss = max(loss, *value)
+		}
+	}
+	if errors != nil {
+		errorRate = *errors
+	}
+	rate := min(100, loss+errorRate)
+	return &rate
 }

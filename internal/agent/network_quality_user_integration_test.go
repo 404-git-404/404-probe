@@ -415,7 +415,7 @@ func TestA1RealRunnerV2TCPFamiliesStoreAndUnavailableICMP(t *testing.T) {
 				continue
 			}
 			g, err := stagedGroup(s, ctx, id, target.ID)
-			if err != nil || g == nil || g.Window.ConnectSuccesses < 1 || g.Latest == nil || g.Latest.ResolvedIP != expectedIP(target) {
+			if err != nil || g == nil || g.Semantics != protocol.QualityTCPLossSemantics || g.Window.ConnectSuccesses < 1 || g.Latest == nil || g.Latest.ResolvedIP != expectedIP(target) {
 				return false
 			}
 		}
@@ -479,7 +479,7 @@ func stagedGroup(s *storage.Store, ctx context.Context, id, target string) (*sto
 		return nil, err
 	}
 	for i := range h.Groups {
-		if h.Groups[i].Semantics == protocol.QualityStagedSemantics {
+		if h.Groups[i].Semantics == protocol.QualityStagedSemantics || h.Groups[i].Semantics == protocol.QualityTCPLossSemantics {
 			return &h.Groups[i], nil
 		}
 	}

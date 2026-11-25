@@ -113,6 +113,8 @@ func TestMigration44PreservesLegacyQualityHistory(t *testing.T) {
 		`ALTER TABLE quality_slot_settings DROP COLUMN show_on_card`,
 		`ALTER TABLE quality_config DROP COLUMN objects_configured`,
 		`DROP TABLE offsite_backup`,
+		`ALTER TABLE quality_alert_history DROP COLUMN worst_loss`,
+		`ALTER TABLE quality_alert_history DROP COLUMN reason`,
 		`DELETE FROM schema_migrations WHERE version>=44`,
 	} {
 		if _, err := k.s.db.Exec(statement); err != nil {

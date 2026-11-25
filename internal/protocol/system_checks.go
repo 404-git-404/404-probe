@@ -16,6 +16,7 @@ const (
 	MaxCertificates           = 64
 	MaxUnreadableDirectories  = 32
 	MaxFailedUnits            = 64
+	MaxServiceRestarts        = 64
 	MaxFail2banJails          = 64
 	MaxFail2banIPsPerJail     = 200
 	MaxFail2banIPs            = 2000
@@ -84,8 +85,14 @@ type CertificateScan struct {
 }
 
 type WatchedService struct {
-	Name  string `json:"name"`
-	State string `json:"state"`
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	SubState string `json:"sub_state,omitempty"`
+}
+
+type ServiceRestart struct {
+	Unit  string `json:"unit"`
+	Count uint64 `json:"count"`
 }
 
 type Fail2banJail struct {
@@ -112,6 +119,7 @@ type SystemChecks struct {
 	ServiceStatus   string           `json:"service_status,omitempty"`
 	Services        []WatchedService `json:"services,omitempty"`
 	FailedUnits     []string         `json:"failed_units,omitempty"`
+	ServiceRestarts []ServiceRestart `json:"service_restarts,omitempty"`
 	NTPStatus       string           `json:"ntp_status,omitempty"`
 	NTPSynchronized bool             `json:"ntp_synchronized"`
 	ClockMeasured   bool             `json:"clock_measured,omitempty"`
@@ -129,7 +137,7 @@ type SystemChecks struct {
 func (s SystemChecks) Validate() error {
 	if len(s.Certificates) > MaxCertificates || len(s.Unreadable) > MaxUnreadableDirectories ||
 		s.UnreadableCount < len(s.Unreadable) || len(s.Services) > MaxWatchedServices ||
-		len(s.FailedUnits) > MaxFailedUnits || len(s.Virtualization) > 80 ||
+		len(s.FailedUnits) > MaxFailedUnits || len(s.ServiceRestarts) > MaxServiceRestarts || len(s.Virtualization) > 80 ||
 		len(s.Fail2ban.Jails) > MaxFail2banJails || s.Fail2ban.JailCount < len(s.Fail2ban.Jails) ||
 		s.Packages.Security < 0 || s.Packages.Upgradable < s.Packages.Security {
 		return errors.New("invalid system check limits")
@@ -145,13 +153,18 @@ func (s SystemChecks) Validate() error {
 		}
 	}
 	for _, service := range s.Services {
-		if !serviceName.MatchString(service.Name) || len(service.State) > 32 {
+		if !serviceName.MatchString(service.Name) || len(service.State) > 32 || len(service.SubState) > 32 {
 			return errors.New("invalid service observation")
 		}
 	}
 	for _, unit := range s.FailedUnits {
 		if len(unit) > 255 {
 			return errors.New("invalid failed unit observation")
+		}
+	}
+	for _, service := range s.ServiceRestarts {
+		if len(service.Unit) > 255 || !strings.HasSuffix(service.Unit, ".service") || service.Count == 0 {
+			return errors.New("invalid service restart observation")
 		}
 	}
 	total := 0

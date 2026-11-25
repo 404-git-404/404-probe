@@ -14,6 +14,7 @@ type QualityStatsV2 struct {
 	ProbeAttempts         int            `json:"probe_attempts"`
 	ProbeSuccesses        int            `json:"probe_successes"`
 	ConnectAttempts       int            `json:"connect_attempts"`
+	ErrorPercent          *float64       `json:"error_percent,omitempty"`
 	ConnectSuccesses      int            `json:"connect_successes"`
 	NotExecuted           int            `json:"not_executed"`
 	Categories            map[string]int `json:"categories"`
@@ -73,6 +74,7 @@ func qualityStatsV2(rows []qualityHistoryRow, proto string, gaps []protocol.Qual
 	o := QualityStatsV2{Categories: map[string]int{}, Completeness: "complete", ExecutionCoverage: "unverified"}
 	values := []float64{}
 	jitterSum := 0.0
+	var tcp qualityTCPBucket
 	var prior *qualityHistoryRow
 	crossesGap := func(a, b int64) bool {
 		for _, g := range gaps {
@@ -133,6 +135,9 @@ func qualityStatsV2(rows []qualityHistoryRow, proto string, gaps []protocol.Qual
 		if d != nil {
 			connectComplete = d.ConnectComplete
 		}
+		if proto == "tcp" && d != nil && protocol.QualityValidTCPTimeout(d.ConnectTimeoutMS) {
+			tcp.add(qualityTCPContribution(s, d))
+		}
 		if proto == "tcp" && connectComplete {
 			o.ConnectAttempts++
 			if success {
@@ -157,6 +162,10 @@ func qualityStatsV2(rows []qualityHistoryRow, proto string, gaps []protocol.Qual
 			}
 		}
 		prior = r
+	}
+	if tcp.Samples > 0 {
+		o.PacketLossPercent = qualityPercent(tcp.Loss, tcp.Attempts)
+		o.ErrorPercent = qualityPercent(tcp.Errors, tcp.Attempts+tcp.DNS)
 	}
 	o.ValidRTTs = len(values)
 	if len(values) > 0 {
@@ -234,10 +243,7 @@ func (s *Store) qualityHistoryV2Raw(ctx context.Context, id, targetID string, ho
 			out.Truncated = true
 			break
 		}
-		sem := protocol.QualityV2Semantics
-		if r.sample.Staged() {
-			sem = protocol.QualityStagedSemantics
-		}
+		sem := qualitySampleSemantics(r.sample)
 		groups[sem] = append(groups[sem], r)
 	}
 	err = rows.Err()
@@ -250,7 +256,7 @@ func (s *Store) qualityHistoryV2Raw(ctx context.Context, id, targetID string, ho
 	if err = s.db.QueryRowContext(ctx, `SELECT epoch,session_id FROM agent_state WHERE agent_id=?`, id).Scan(&epoch, &session); err != nil {
 		return out, err
 	}
-	for _, sem := range []string{protocol.QualityV2Semantics, protocol.QualityStagedSemantics} {
+	for _, sem := range []string{protocol.QualityV2Semantics, protocol.QualityStagedSemantics, protocol.QualityTCPLossSemantics} {
 		records, ok := groups[sem]
 		if !ok {
 			continue
@@ -259,7 +265,7 @@ func (s *Store) qualityHistoryV2Raw(ctx context.Context, id, targetID string, ho
 		if out.Target.Protocol == "tcp" {
 			metric = "legacy_dial_including_dns"
 		}
-		if sem == protocol.QualityStagedSemantics {
+		if sem == protocol.QualityStagedSemantics || sem == protocol.QualityTCPLossSemantics {
 			metric = "echo_rtt"
 			if out.Target.Protocol == "tcp" {
 				metric = "pure_connect"

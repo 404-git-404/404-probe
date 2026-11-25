@@ -18,6 +18,7 @@ const QualityRawRetention = 8 * time.Hour
 const QualityReceiptRetention = 48 * time.Hour
 const QualityHistoryRetention = 30 * 24 * time.Hour
 const QualityHistogramVersion = 1
+const qualityTCPHistogramVersion = 2
 const QualityHistogramGridMS = .25
 const QualityPercentileMaxErrorMS = .125
 
@@ -27,6 +28,7 @@ var qualityBucketRetentions = []time.Duration{24 * time.Hour, 7 * 24 * time.Hour
 // RTT sum and jitter sum are original Float64 values, never histogram estimates.
 type qualityBucketData struct {
 	Stats                                                   QualityStatsV2
+	TCP                                                     qualityTCPBucket
 	RTTSum, JitterSum                                       float64
 	Partial, Gaps, IntervalMin, IntervalMax                 int
 	Histogram                                               map[uint16]uint32
@@ -42,7 +44,11 @@ func qualityNewBucket() qualityBucketData {
 }
 func qualityEncodeBucket(b qualityBucketData) ([]byte, error) {
 	var out bytes.Buffer
-	out.WriteByte(QualityHistogramVersion)
+	if b.TCP.Samples > 0 {
+		out.WriteByte(qualityTCPHistogramVersion)
+	} else {
+		out.WriteByte(QualityHistogramVersion)
+	}
 	put := func(x int) error {
 		if x < 0 {
 			return errors.New("negative quality aggregate")
@@ -112,13 +118,20 @@ func qualityEncodeBucket(b qualityBucketData) ([]byte, error) {
 	} else {
 		out.WriteByte(0)
 	}
+	if b.TCP.Samples > 0 {
+		for _, count := range []int{b.TCP.Samples, b.TCP.Attempts, b.TCP.Loss, b.TCP.Errors, b.TCP.DNS, b.TCP.Relaxed} {
+			if err := put(count); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return out.Bytes(), nil
 }
 func qualityDecodeBucket(wire []byte) (qualityBucketData, error) {
 	var b qualityBucketData
 	r := bytes.NewReader(wire)
 	v, err := r.ReadByte()
-	if err != nil || v != QualityHistogramVersion {
+	if err != nil || (v != QualityHistogramVersion && v != qualityTCPHistogramVersion) {
 		return b, errors.New("unsupported quality histogram encoding")
 	}
 	get := func() (int, error) {
@@ -197,6 +210,18 @@ func qualityDecodeBucket(wire []byte) (qualityBucketData, error) {
 		return b, errors.New("invalid quality incoming edge")
 	}
 	b.IncomingPair = flag == 1
+	if v == qualityTCPHistogramVersion {
+		for _, count := range []*int{&b.TCP.Samples, &b.TCP.Attempts, &b.TCP.Loss, &b.TCP.Errors, &b.TCP.DNS, &b.TCP.Relaxed} {
+			*count, err = get()
+			if err != nil {
+				return b, err
+			}
+		}
+		if b.TCP.Samples == 0 || b.TCP.Samples > s.Count || b.TCP.Attempts > b.TCP.Samples ||
+			b.TCP.Loss > b.TCP.Attempts || b.TCP.Errors > b.TCP.Samples || b.TCP.DNS > b.TCP.Errors || b.TCP.Relaxed > b.TCP.Samples {
+			return b, errors.New("invalid TCP loss aggregate")
+		}
+	}
 	if r.Len() != 0 || total != uint64(s.ValidRTTs) {
 		return b, errors.New("quality histogram count mismatch")
 	}
@@ -231,6 +256,7 @@ func qualityMergeBucket(a *qualityBucketData, b qualityBucketData) {
 		a.SlotMin = b.SlotMin
 	}
 	a.SlotMax = max(a.SlotMax, b.SlotMax)
+	a.TCP.add(b.TCP)
 	a.Stats.Count += b.Stats.Count
 	a.Stats.ValidRTTs += b.Stats.ValidRTTs
 	a.Stats.ProbeAttempts += b.Stats.ProbeAttempts
@@ -290,6 +316,10 @@ func qualityBucketStats(b qualityBucketData) QualityStatsV2 {
 		x := 100 * float64(s.ConnectSuccesses) / float64(s.ConnectAttempts)
 		s.ConnectSuccessPercent = &x
 	}
+	if b.TCP.Samples > 0 {
+		s.PacketLossPercent = qualityPercent(b.TCP.Loss, b.TCP.Attempts)
+		s.ErrorPercent = qualityPercent(b.TCP.Errors, b.TCP.Attempts+b.TCP.DNS)
+	}
 	if s.Sent > 0 {
 		x := 100 * float64(s.Sent-s.Received) / float64(s.Sent)
 		s.PacketLossPercent = &x
@@ -310,6 +340,9 @@ func qualityContribution(sample protocol.QualitySample, proto string) (qualityBu
 	d, err := protocol.DecodeQualityDetails(sample.Details)
 	if err != nil {
 		return b, err
+	}
+	if proto == "tcp" && d != nil && protocol.QualityValidTCPTimeout(d.ConnectTimeoutMS) {
+		b.TCP = qualityTCPContribution(sample, d)
 	}
 	b.IntervalMin = 30000
 	if d != nil && d.IntervalMS > 0 {
@@ -445,10 +478,7 @@ func qualityIncomingEdgeTx(ctx context.Context, tx *sql.Tx, series, res, t int64
 	return err
 }
 func qualityRollupTx(ctx context.Context, tx *sql.Tx, id string, epoch int64, session string, rawID int64, sample protocol.QualitySample, target protocol.QualityTarget, digest []byte, length int, now time.Time) error {
-	sem := protocol.QualityV2Semantics
-	if sample.Staged() {
-		sem = protocol.QualityStagedSemantics
-	}
+	sem := qualitySampleSemantics(sample)
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO quality_series(agent_id,target_id,semantics) VALUES(?,?,?)`, id, target.ID, sem); err != nil {
 		return err
 	}

@@ -16,7 +16,9 @@ const networkFleetRollupSelect = `WITH RECURSIVE
 		SELECT s.id,s.target_id,json_extract(t.payload,'$.slot') slot,
 			json_extract(t.payload,'$.family') family,json_extract(t.payload,'$.protocol') protocol
 		FROM quality_series s JOIN quality_targets t ON t.id=s.target_id
-		WHERE s.agent_id=?1 AND s.semantics=?2
+		WHERE s.agent_id=?1 AND (
+   s.semantics=?2 OR s.semantics=?10 AND (?11 OR json_extract(t.payload,'$.protocol')='icmp')
+  )
 	), starts(at) AS (
 		VALUES(?3) UNION ALL SELECT at+?4 FROM starts WHERE at+?4<?5
 	), plan AS MATERIALIZED (
@@ -44,11 +46,12 @@ type networkFleetBucket struct {
 type networkFleetBucketReader struct {
 	raw, rollup *sql.Stmt
 	staleBefore int64
+	newTCPOnly  bool
 }
 
 func (r networkFleetBucketReader) scanRaw(ctx context.Context, id string, filter NetworkLine, span networkBucketSpan,
 	consume func(NetworkLine, string, int64, qualityBucketData)) error {
-	rows, err := r.raw.QueryContext(ctx, networkBucketArgs(id, filter, span.start, span.end, span.resolution)...)
+	rows, err := r.raw.QueryContext(ctx, networkBucketArgs(id, filter, span.start, span.end, span.resolution, !r.newTCPOnly)...)
 	return scanNetworkBucketRows(rows, err, consume)
 }
 
@@ -63,8 +66,8 @@ func (r networkFleetBucketReader) scan(ctx context.Context, id string, filter Ne
 			consume(line, row)
 		})
 	}
-	rows, err := r.rollup.QueryContext(ctx, id, protocol.QualityStagedSemantics, span.start, span.resolution, span.end,
-		filter.Family, filter.Protocol, r.staleBefore, r.staleBefore+networkFleetMaxStale.Milliseconds())
+	rows, err := r.rollup.QueryContext(ctx, id, protocol.QualityTCPLossSemantics, span.start, span.resolution, span.end,
+		filter.Family, filter.Protocol, r.staleBefore, r.staleBefore+networkFleetMaxStale.Milliseconds(), protocol.QualityStagedSemantics, !r.newTCPOnly)
 	if err != nil {
 		return err
 	}

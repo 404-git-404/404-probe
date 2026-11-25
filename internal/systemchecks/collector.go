@@ -24,6 +24,7 @@ type Collector struct {
 	scanKey  string
 	scanNext time.Time
 	scan     protocol.CertificateScan
+	restarts serviceRestartTracker
 }
 
 // Snapshot keeps filesystem walks and system commands off the report loop.

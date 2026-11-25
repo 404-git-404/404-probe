@@ -46,7 +46,7 @@ func (s *Store) QualityHistoryV2(ctx context.Context, id, target string, hours i
 		prior[g.Semantics] = g
 	}
 	out.Groups = []QualityHistoryGroup{}
-	for _, sem := range []string{protocol.QualityV2Semantics, protocol.QualityStagedSemantics} {
+	for _, sem := range []string{protocol.QualityV2Semantics, protocol.QualityStagedSemantics, protocol.QualityTCPLossSemantics} {
 		byTime, ok := stored[sem]
 		if !ok {
 			continue

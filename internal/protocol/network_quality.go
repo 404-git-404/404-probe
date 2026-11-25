@@ -62,17 +62,18 @@ type QualityConfigUpdate struct {
 type QualityTarget struct {
 	// Targets come from the embedded catalog only. Host/Port are empty for a slot that is not set;
 	// they are not executable endpoints without a target ID/authorization.
-	ID              string `json:"id,omitempty"`
-	Slot            string `json:"slot"`
-	Family          string `json:"family"`
-	SlotRevision    string `json:"slot_revision"`
-	Region          string `json:"region,omitempty"`
-	Source          string `json:"source"`
-	Protocol        string `json:"protocol"`
-	Host            string `json:"host,omitempty"`
-	Port            int    `json:"port,omitempty"`
-	EndpointVersion string `json:"endpoint_version,omitempty"`
-	Status          string `json:"status"`
+	ID               string `json:"id,omitempty"`
+	Slot             string `json:"slot"`
+	Family           string `json:"family"`
+	SlotRevision     string `json:"slot_revision"`
+	Region           string `json:"region,omitempty"`
+	Source           string `json:"source"`
+	Protocol         string `json:"protocol"`
+	Host             string `json:"host,omitempty"`
+	Port             int    `json:"port,omitempty"`
+	ConnectTimeoutMS int    `json:"connect_timeout_ms,omitempty"`
+	EndpointVersion  string `json:"endpoint_version,omitempty"`
+	Status           string `json:"status"`
 	// Kind and ISP are the slot's current user labels. They are added by the Server to history
 	// read models only; they are never part of a stored payload or of an Agent configuration.
 	Kind string `json:"kind,omitempty"`

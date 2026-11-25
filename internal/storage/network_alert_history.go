@@ -17,6 +17,7 @@ type NetworkAlert struct {
 	WorstP95     *float64 `json:"worst_p95_ms"`
 	WorstFailure *float64 `json:"worst_failure_percent"`
 	WorstLoss    *float64 `json:"worst_packet_loss_percent"`
+	Reason       string   `json:"reason"`
 }
 
 func (s *Store) NetworkAlerts(ctx context.Context, id string, now time.Time) ([]NetworkAlert, error) {
@@ -36,7 +37,7 @@ func (s *Store) NetworkAlerts(ctx context.Context, id string, now time.Time) ([]
 }
 
 func readNetworkAlerts(ctx context.Context, tx *sql.Tx, id string, now int64, onlyOpen bool) ([]NetworkAlert, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT slot,family,protocol,target_id,start_at,end_at,worst_p95,worst_failure
+	rows, err := tx.QueryContext(ctx, `SELECT slot,family,protocol,target_id,start_at,end_at,worst_p95,worst_failure,worst_loss,reason
 		FROM quality_alert_history WHERE agent_id=? AND start_at<=?
 		AND (end_at IS NULL OR (?=0 AND end_at>=?)) ORDER BY start_at DESC,id DESC`,
 		id, now, onlyOpen, now-QualityHistoryRetention.Milliseconds())
@@ -47,7 +48,7 @@ func readNetworkAlerts(ctx context.Context, tx *sql.Tx, id string, now int64, on
 	alerts := []NetworkAlert{}
 	for rows.Next() {
 		var a NetworkAlert
-		if err := rows.Scan(&a.Slot, &a.Family, &a.Protocol, &a.TargetID, &a.Start, &a.End, &a.WorstP95, &a.WorstFailure); err != nil {
+		if err := rows.Scan(&a.Slot, &a.Family, &a.Protocol, &a.TargetID, &a.Start, &a.End, &a.WorstP95, &a.WorstFailure, &a.WorstLoss, &a.Reason); err != nil {
 			return nil, err
 		}
 		end := now
@@ -176,7 +177,8 @@ func advanceNetworkAlerts(ctx context.Context, tx *sql.Tx, id string, line Netwo
 	}
 	for minute := first; minute < last; minute++ {
 		at := (minute + 1) * qualityMinuteMS
-		if !tl.redAt(minute, interval) {
+		lossAlert := tl.lossRedAt(minute, interval)
+		if !lossAlert && !tl.latencyFailureRedAt(minute, interval) {
 			if alertID != 0 {
 				if _, err := tx.ExecContext(ctx, `UPDATE quality_alert_history SET end_at=MAX(start_at,?) WHERE id=?`, at, alertID); err != nil {
 					return err
@@ -185,15 +187,19 @@ func advanceNetworkAlerts(ctx context.Context, tx *sql.Tx, id string, line Netwo
 			}
 			continue
 		}
-		var p95, failure *float64
+		var p95, failure, loss *float64
+		reason := "latency_failure"
+		if lossAlert {
+			reason = "loss"
+		}
 		if b, ok := buckets[minute]; ok && tl.at(minute).Kind == minuteData {
 			stats := networkStats(b, "tcp")
-			p95, failure = stats.P95, stats.FailurePercent
+			p95, failure, loss = stats.P95, stats.FailurePercent, stats.PacketLossPercent
 		}
 		if alertID == 0 {
 			inserted, err := tx.ExecContext(ctx, `INSERT INTO quality_alert_history
-				(agent_id,slot,family,protocol,target_id,revision,start_at,worst_p95,worst_failure) VALUES(?,?,?,?,?,?,?,?,?)`,
-				id, line.Slot, line.Family, line.Protocol, target, revision, at, p95, failure)
+				(agent_id,slot,family,protocol,target_id,revision,start_at,worst_p95,worst_failure,worst_loss,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+				id, line.Slot, line.Family, line.Protocol, target, revision, at, p95, failure, loss, reason)
 			if err != nil {
 				return err
 			}
@@ -201,11 +207,13 @@ func advanceNetworkAlerts(ctx context.Context, tx *sql.Tx, id string, line Netwo
 			if err != nil {
 				return err
 			}
-		} else if p95 != nil || failure != nil {
+		} else if p95 != nil || failure != nil || loss != nil || lossAlert {
 			if _, err := tx.ExecContext(ctx, `UPDATE quality_alert_history SET
 				worst_p95=CASE WHEN worst_p95 IS NULL OR worst_p95<? THEN ? ELSE worst_p95 END,
-				worst_failure=CASE WHEN worst_failure IS NULL OR worst_failure<? THEN ? ELSE worst_failure END WHERE id=?`,
-				p95, p95, failure, failure, alertID); err != nil {
+				worst_failure=CASE WHEN worst_failure IS NULL OR worst_failure<? THEN ? ELSE worst_failure END,
+    worst_loss=CASE WHEN worst_loss IS NULL OR worst_loss<? THEN ? ELSE worst_loss END,
+    reason=CASE WHEN ? THEN 'loss' ELSE reason END WHERE id=?`,
+				p95, p95, failure, failure, loss, loss, lossAlert, alertID); err != nil {
 				return err
 			}
 		}

@@ -192,9 +192,9 @@ func TestCardSummaryShapeAndStatuses(t *testing.T) {
 
 func TestCardBlocksFollowTheStoredMinutesAndTheThreshold(t *testing.T) {
 	c := newCardKit(t)
-	// 18 minutes of an even line, then 6 minutes where every other sample took 600 ms.
+	// 18 minutes of an even line, then 6 minutes where the median is 600 ms.
 	c.fillTCP("ipv4", c.minute(0), c.minute(18), 2, 0, 0, 0)
-	c.fillTCP("ipv4", c.minute(18), c.minute(24), 1, 1, 0, 600)
+	c.fillTCP("ipv4", c.minute(18), c.minute(24), 0, 2, 0, 600)
 	now := c.at(27)
 	lane := c.telecom(c.summary(now, "ipv4"))
 	states := blockStates(lane.TCP.Blocks)
@@ -288,8 +288,8 @@ func TestCardRedAndAlertFollowTheCurrentStateNotTheHistory(t *testing.T) {
 	if lane.TCP.Red.Active || after.AlertActive {
 		t.Fatalf("recovered: red=%v alert=%v", lane.TCP.Red.Active, after.AlertActive)
 	}
-	if !strings.Contains(blockStates(lane.TCP.Blocks), "R") {
-		t.Fatalf("the history lost its red block: %s", blockStates(lane.TCP.Blocks))
+	if len(lane.TCP.AlertRuns) == 0 || strings.Contains(blockStates(lane.TCP.Blocks), "R") {
+		t.Fatalf("alert line must survive without changing legacy cell colors: %+v, %s", lane.TCP.AlertRuns, blockStates(lane.TCP.Blocks))
 	}
 	// B4-b: an outage that is still red when the line goes silent turns grey after FRESH minutes.
 	c2 := newCardKit(t)
@@ -452,17 +452,17 @@ func TestCardDNSFailingNote(t *testing.T) {
 		c.put("telecom", "ipv4", "tcp", c.minute(m), b)
 	}
 	lane := c.telecom(c.summary(time.UnixMilli(c.minute(6)*qualityMinuteMS+qualityEvalLagMS), "ipv4"))
-	if !lane.TCP.DNSFailing || strings.Contains(blockStates(lane.TCP.Blocks), "R") || strings.Contains(blockStates(lane.TCP.Blocks), "y") {
+	if !lane.TCP.DNSFailing || !strings.Contains(blockStates(lane.TCP.Blocks), "R") || len(lane.TCP.AlertRuns) != 0 {
 		t.Fatalf("resolver failures: dns_failing=%v blocks=%s", lane.TCP.DNSFailing, blockStates(lane.TCP.Blocks))
 	}
 }
 
 func TestMarksAgreeWithTheBlocksOfTheCard(t *testing.T) {
 	c := newCardKit(t)
-	// A slow stretch (yellow) and a dead stretch (red) inside an otherwise good hour.
+	// Slow and very slow stretches inside an otherwise good hour.
 	c.fillTCP("ipv4", c.minute(0), c.minute(45), 2, 0, 0, 0)
-	c.fillTCP("ipv4", c.minute(10), c.minute(13), 1, 1, 0, 800)
-	c.fillTCP("ipv4", c.minute(30), c.minute(36), 0, 0, 2, 0)
+	c.fillTCP("ipv4", c.minute(9), c.minute(18), 0, 2, 0, 800)
+	c.fillTCP("ipv4", c.minute(30), c.minute(36), 0, 2, 0, 1200)
 	now := c.at(46)
 	s := c.summary(now, "ipv4")
 	blocks := c.telecom(s).TCP.Blocks
@@ -632,23 +632,6 @@ func TestCardIgnoresAFutureSampleInTheNextMinuteToo(t *testing.T) {
 	}
 	if slow(time.UnixMilli((floorDiv64(future.StartedAt, QualityBlockMS)+1)*QualityBlockMS+qualityEvalLagMS)) != 1 {
 		t.Fatal("the sample never appeared")
-	}
-}
-
-// A block takes the largest check interval of its minutes: a card whose interval changed inside a block needs
-// the samples of the slower interval (design 1.4).
-func TestBlockUsesTheLargestIntervalOfItsMinutes(t *testing.T) {
-	tl := tlOf(6).data(0, 3, 0, 0, i30).data(1, 0, 0, 0, i60).data(2, 0, 0, 0, i60)
-	tl.Mins[1].Kind, tl.Mins[2].Kind = minuteEmpty, minuteEmpty
-	// 3 judged samples: enough at 30 s (m=3); at 60 s (m=2) too. A single sample is enough at neither/either:
-	// with minutes of 60 s the block needs 2.
-	one := tlOf(6).data(0, 1, 0, 0, i30).data(1, 0, 0, 0, i60)
-	one.Mins[1].Kind = minuteEmpty
-	if b := one.classifyBlock(0, 6*qualityMinuteMS, i30); b.State != QualityCardGray {
-		t.Fatalf("1 sample with a mixed 30/60 s interval: %+v", b)
-	}
-	if b := tl.classifyBlock(0, 6*qualityMinuteMS, i30); b.State != QualityCardGreen {
-		t.Fatalf("3 samples: %+v", b)
 	}
 }
 

@@ -25,15 +25,25 @@ func (l NetworkLine) valid() bool {
 }
 
 type NetworkStats struct {
-	Samples           int            `json:"samples"`
-	P50               *float64       `json:"p50_ms"`
-	P95               *float64       `json:"p95_ms"`
-	Mean              *float64       `json:"mean_ms"`
-	Jitter            *float64       `json:"jitter_ms"`
-	FailurePercent    *float64       `json:"failure_percent"`
-	PacketLossPercent *float64       `json:"packet_loss_percent"`
-	Categories        map[string]int `json:"categories"`
-	Completeness      string         `json:"completeness"`
+	Samples           int              `json:"samples"`
+	P50               *float64         `json:"p50_ms"`
+	P95               *float64         `json:"p95_ms"`
+	Mean              *float64         `json:"mean_ms"`
+	Jitter            *float64         `json:"jitter_ms"`
+	FailurePercent    *float64         `json:"failure_percent"`
+	PacketLossPercent *float64         `json:"packet_loss_percent"`
+	Categories        map[string]int   `json:"categories"`
+	ErrorPercent      *float64         `json:"error_percent"`
+	LossCount         int              `json:"loss_count"`
+	LossAttempts      int              `json:"loss_attempts"`
+	ErrorCount        int              `json:"error_count"`
+	ErrorAttempts     int              `json:"error_attempts"`
+	MaxMS             *float64         `json:"max_ms"`
+	OldTCP            bool             `json:"old_tcp,omitempty"`
+	RelaxedTCP        bool             `json:"relaxed_tcp,omitempty"`
+	State             QualityCardState `json:"state,omitempty"`
+	Reason            string           `json:"reason,omitempty"`
+	Completeness      string           `json:"completeness"`
 }
 
 type NetworkPoint struct {
@@ -51,15 +61,16 @@ type NetworkTargetChange struct {
 
 type NetworkHistory struct {
 	NetworkLine
-	Start        int64                 `json:"start"`
-	End          int64                 `json:"end"`
-	ResolutionMS int64                 `json:"resolution_ms"`
-	Stats        NetworkStats          `json:"stats"`
-	EveningP50   *float64              `json:"evening_p50_ms"`
-	Points       []NetworkPoint        `json:"points"`
-	LastChangeAt *int64                `json:"last_target_change_at"`
-	Changes      []NetworkTargetChange `json:"target_changes"`
-	Gaps         []protocol.QualityGap `json:"gaps"`
+	Start             int64                 `json:"start"`
+	End               int64                 `json:"end"`
+	ResolutionMS      int64                 `json:"resolution_ms"`
+	Stats             NetworkStats          `json:"stats"`
+	EveningP50        *float64              `json:"evening_p50_ms"`
+	Points            []NetworkPoint        `json:"points"`
+	LastChangeAt      *int64                `json:"last_target_change_at"`
+	SemanticsChangeAt *int64                `json:"semantics_change_at,omitempty"`
+	Changes           []NetworkTargetChange `json:"target_changes"`
+	Gaps              []protocol.QualityGap `json:"gaps"`
 }
 
 func networkStatusResolution(start, end int64, now time.Time) (int64, error) {
@@ -84,9 +95,27 @@ func networkStats(bucket qualityBucketData, proto string) NetworkStats {
 	if out.Categories == nil {
 		out.Categories = map[string]int{}
 	}
+	out.MaxMS = qualityMaximum(bucket.Histogram)
 	if proto == "icmp" {
 		out.PacketLossPercent = stats.PacketLossPercent
-	} else if stats.ConnectAttempts > 0 {
+		out.LossCount, out.LossAttempts = stats.Sent-stats.Received, stats.Sent
+	} else {
+		out.OldTCP = stats.Count > bucket.TCP.Samples
+		out.RelaxedTCP = bucket.TCP.Relaxed > 0
+		out.LossCount, out.LossAttempts = bucket.TCP.Loss, bucket.TCP.Attempts
+		out.ErrorCount, out.ErrorAttempts = bucket.TCP.Errors, bucket.TCP.Attempts+bucket.TCP.DNS
+		out.PacketLossPercent = qualityPercent(out.LossCount, out.LossAttempts)
+		out.ErrorPercent = qualityPercent(out.ErrorCount, out.ErrorAttempts)
+		if bucket.TCP.Samples == 0 {
+			dns := stats.Categories["dns_error"]
+			out.ErrorCount = dns + stats.Categories["refused"] + stats.Categories["network_error"]
+			if out.ErrorCount > 0 || stats.ConnectSuccesses > 0 {
+				out.ErrorAttempts = stats.ConnectAttempts + dns
+				out.ErrorPercent = qualityPercent(out.ErrorCount, out.ErrorAttempts)
+			}
+		}
+	}
+	if proto == "tcp" && bucket.TCP.Samples == 0 && stats.ConnectAttempts > 0 {
 		v := 100 * float64(stats.ConnectAttempts-stats.ConnectSuccesses) / float64(stats.ConnectAttempts)
 		out.FailurePercent = &v
 	}
@@ -96,7 +125,9 @@ func networkStats(bucket qualityBucketData, proto string) NetworkStats {
 const networkBucketSelect = `WITH lanes AS MATERIALIZED (
 	SELECT s.id,s.target_id,json_extract(t.payload,'$.slot') AS slot,
 		json_extract(t.payload,'$.family') AS family,json_extract(t.payload,'$.protocol') AS protocol
-	FROM quality_series s JOIN quality_targets t ON t.id=s.target_id WHERE s.agent_id=? AND s.semantics=?
+	FROM quality_series s JOIN quality_targets t ON t.id=s.target_id WHERE s.agent_id=? AND (
+  s.semantics=? OR s.semantics=? AND (? OR json_extract(t.payload,'$.protocol')='icmp')
+ )
 	)
 	SELECT l.slot,l.family,l.protocol,l.target_id,b.bucket_start,b.data
 	FROM lanes l CROSS JOIN quality_buckets b ON b.series_id=l.id
@@ -108,12 +139,12 @@ const networkBucketSelect = `WITH lanes AS MATERIALIZED (
 // RTT represents individual echo replies. The legacy metric remains in v3.
 func scanNetworkBuckets(ctx context.Context, tx *sql.Tx, id string, line NetworkLine, start, end, resolution int64,
 	consume func(NetworkLine, string, int64, qualityBucketData)) error {
-	rows, err := tx.QueryContext(ctx, networkBucketSelect, networkBucketArgs(id, line, start, end, resolution)...)
+	rows, err := tx.QueryContext(ctx, networkBucketSelect, networkBucketArgs(id, line, start, end, resolution, true)...)
 	return scanNetworkBucketRows(rows, err, consume)
 }
 
-func networkBucketArgs(id string, line NetworkLine, start, end, resolution int64) []any {
-	return []any{id, protocol.QualityStagedSemantics, resolution, start / resolution * resolution, end,
+func networkBucketArgs(id string, line NetworkLine, start, end, resolution int64, includeOldTCP bool) []any {
+	return []any{id, protocol.QualityTCPLossSemantics, protocol.QualityStagedSemantics, includeOldTCP, resolution, start / resolution * resolution, end,
 		line.Slot, line.Slot, line.Family, line.Family, line.Protocol, line.Protocol}
 }
 
@@ -185,6 +216,16 @@ func (s *Store) NetworkHistory(ctx context.Context, id string, line NetworkLine,
 	if err := networkAgentExists(ctx, tx, id); err != nil {
 		return out, err
 	}
+	threshold, err := networkCellThreshold(ctx, tx, id)
+	if err != nil {
+		return out, err
+	}
+	if line.Protocol == "tcp" {
+		out.SemanticsChangeAt, err = networkTCPSemanticsChange(ctx, tx, id, line, start, end)
+		if err != nil {
+			return out, err
+		}
+	}
 	whole, evening := qualityNewBucket(), qualityNewBucket()
 	buckets := make([]qualityBucketData, n)
 	err = scanNetworkBuckets(ctx, tx, id, line, start, end, res, func(_ NetworkLine, _ string, at int64, b qualityBucketData) {
@@ -218,7 +259,9 @@ func (s *Store) NetworkHistory(ctx context.Context, id string, line NetworkLine,
 				break
 			}
 		}
-		out.Points[i] = NetworkPoint{at, at + res, networkStats(bucket, line.Protocol)}
+		stats := networkStats(bucket, line.Protocol)
+		stats.State, stats.Reason = qualityCellColor(stats, threshold)
+		out.Points[i] = NetworkPoint{at, at + res, stats}
 	}
 	changes, err := networkTargetChanges(ctx, tx, id, line, now.Add(-QualityHistoryRetention).UnixMilli(), now.UnixMilli()+1)
 	if err != nil {
@@ -288,12 +331,9 @@ func networkTargetChanges(ctx context.Context, tx *sql.Tx, id string, line Netwo
 }
 
 type NetworkHeatCell struct {
-	Hour              int      `json:"hour"`
-	Start             int64    `json:"start"`
-	P50               *float64 `json:"p50_ms"`
-	FailurePercent    *float64 `json:"failure_percent"`
-	PacketLossPercent *float64 `json:"packet_loss_percent"`
-	Samples           int      `json:"samples"`
+	Hour  int   `json:"hour"`
+	Start int64 `json:"start"`
+	NetworkStats
 }
 
 type NetworkHeatDay struct {
@@ -323,6 +363,10 @@ func (s *Store) NetworkHeatmap(ctx context.Context, id string, line NetworkLine,
 	if err := networkAgentExists(ctx, tx, id); err != nil {
 		return out, err
 	}
+	threshold, err := networkCellThreshold(ctx, tx, id)
+	if err != nil {
+		return out, err
+	}
 	buckets := make([]qualityBucketData, days*24)
 	if err := scanNetworkBuckets(ctx, tx, id, line, start, now.UnixMilli(), qualityHourMS, func(_ NetworkLine, _ string, at int64, b qualityBucketData) {
 		i := (at - start) / qualityHourMS
@@ -339,7 +383,8 @@ func (s *Store) NetworkHeatmap(ctx context.Context, id string, line NetworkLine,
 		for h := range out.Days[day].Hours {
 			i := day*24 + h
 			stats := networkStats(buckets[i], line.Protocol)
-			out.Days[day].Hours[h] = NetworkHeatCell{h, start + int64(i)*qualityHourMS, stats.P50, stats.FailurePercent, stats.PacketLossPercent, stats.Samples}
+			stats.State, stats.Reason = qualityCellColor(stats, threshold)
+			out.Days[day].Hours[h] = NetworkHeatCell{Hour: h, Start: start + int64(i)*qualityHourMS, NetworkStats: stats}
 		}
 	}
 	return out, tx.Commit()

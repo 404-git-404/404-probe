@@ -131,3 +131,19 @@ func TestSystemAttentionBoundaries(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestSystemRestartAttentionLevels(t *testing.T) {
+	for _, tc := range []struct {
+		count uint64
+		want  string
+	}{{0, ""}, {1, "warning"}, {2, "warning"}, {3, "danger"}} {
+		checks := protocol.SystemChecks{Supported: true}
+		if tc.count > 0 {
+			checks.ServiceRestarts = []protocol.ServiceRestart{{Unit: "unwatched.service", Count: tc.count}}
+		}
+		got := checkAttention(&checks, time.Now())
+		if got.Service || got.ServiceRestart != tc.want {
+			t.Fatalf("count=%d attention=%+v", tc.count, got)
+		}
+	}
+}

@@ -50,6 +50,10 @@ func qualityChoicesTx(ctx context.Context, tx *sql.Tx, id string) ([]protocol.Qu
 // old Agent, gets the old format with nothing enabled so that its own validation accepts it and
 // it stops all lanes.
 func (s *Store) GetQualitySessionConfig(ctx context.Context, id string, epoch uint64, session string, version int, header bool) (protocol.QualityConfig, error) {
+	return s.GetQualitySessionConfigAt(ctx, id, epoch, session, version, header, false, time.Time{})
+}
+
+func (s *Store) GetQualitySessionConfigAt(ctx context.Context, id string, epoch uint64, session string, version int, header, tcpLoss bool, now time.Time) (protocol.QualityConfig, error) {
 	if epoch == 0 || epoch > math.MaxInt64 || session == "" || (version != 1 && version != 2) {
 		return protocol.QualityConfig{}, ErrQualityUnsupported
 	}
@@ -142,6 +146,21 @@ func (s *Store) GetQualitySessionConfig(ctx context.Context, id string, epoch ui
 	}
 	if err := rows.Err(); err != nil {
 		return out, err
+	}
+	if err := rows.Close(); err != nil {
+		return out, err
+	}
+	if tcpLoss && out.Semantics == protocol.QualityStagedSemantics {
+		for i := range out.Targets {
+			t := &out.Targets[i]
+			if t.Status == "active" && t.Protocol == "tcp" {
+				timeout, err := qualityTargetTCPTimeout(ctx, tx, t.ID, now)
+				if err != nil {
+					return out, err
+				}
+				t.ConnectTimeoutMS = timeout
+			}
+		}
 	}
 	budget.apply(&out)
 	return out, nil

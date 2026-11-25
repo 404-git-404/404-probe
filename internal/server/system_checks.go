@@ -18,9 +18,10 @@ import (
 const systemCheckFreshness = 3 * time.Minute
 
 type systemAttention struct {
-	Certificate string `json:"certificate,omitempty"`
-	Service     bool   `json:"service,omitempty"`
-	Time        bool   `json:"time,omitempty"`
+	Certificate    string `json:"certificate,omitempty"`
+	Service        bool   `json:"service,omitempty"`
+	ServiceRestart string `json:"service_restart,omitempty"`
+	Time           bool   `json:"time,omitempty"`
 }
 
 func checkAttention(checks *protocol.SystemChecks, now time.Time) systemAttention {
@@ -39,6 +40,13 @@ func checkAttention(checks *protocol.SystemChecks, now time.Time) systemAttentio
 		}
 	}
 	attention.Service = len(checks.FailedUnits) != 0
+	for _, service := range checks.ServiceRestarts {
+		if service.Count >= 3 {
+			attention.ServiceRestart = "danger"
+			break
+		}
+		attention.ServiceRestart = "warning"
+	}
 	for _, service := range checks.Services {
 		attention.Service = attention.Service || service.State != "active"
 	}

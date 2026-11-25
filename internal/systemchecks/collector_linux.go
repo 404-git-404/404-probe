@@ -133,7 +133,7 @@ func (c *Collector) collect(ctx context.Context, settings protocol.SystemCheckSe
 		}
 	}
 	_, systemdErr := os.Stat("/run/systemd/system")
-	result.ServiceStatus, result.Services, result.FailedUnits = collectServices(ctx, settings.WatchedServices, systemdErr == nil, runShort)
+	result.ServiceStatus, result.Services, result.FailedUnits, result.ServiceRestarts = c.restarts.collect(ctx, now, settings.WatchedServices, systemdErr == nil, runShort)
 	result.NTPStatus, result.NTPSynchronized = collectNTP(ctx)
 	result.RebootStatus, result.RebootRequired = rebootRequired()
 	if value, _ := runShort(ctx, "/usr/bin/systemd-detect-virt"); value != "" && len(value) <= 80 {
@@ -163,43 +163,6 @@ func mergeCertificates(agent, root protocol.CertificateScan) protocol.Certificat
 	out.UnreadableCount += agent.UnreadableCount - len(agent.Unreadable)
 	out.Limited = out.Limited || agent.Limited
 	return out
-}
-
-func collectServices(ctx context.Context, names []string, systemd bool, run commandRunner) (string, []protocol.WatchedService, []string) {
-	if !systemd {
-		return protocol.CheckUnsupported, nil, nil
-	}
-	list, err := run(ctx, "/usr/bin/systemctl", "list-units", "--state=failed", "--no-legend", "--plain", "--no-pager")
-	if err != nil {
-		return protocol.CheckError, nil, nil
-	}
-	var failed []string
-	for _, line := range strings.Split(list, "\n") {
-		parts := strings.Fields(line)
-		if len(parts) > 0 && len(parts[0]) <= 255 && len(failed) < protocol.MaxFailedUnits {
-			failed = append(failed, parts[0])
-		}
-	}
-	var services []protocol.WatchedService
-	if len(names) == 0 {
-		return protocol.CheckOK, services, failed
-	}
-	args := []string{"is-active", "--"}
-	for _, name := range names {
-		args = append(args, name+".service")
-	}
-	output, _ := run(ctx, "/usr/bin/systemctl", args...)
-	states := strings.Split(output, "\n")
-	if len(states) != len(names) {
-		return protocol.CheckError, services, failed
-	}
-	for i, name := range names {
-		if states[i] == "" || len(states[i]) > 32 {
-			return protocol.CheckError, services, failed
-		}
-		services = append(services, protocol.WatchedService{Name: name, State: states[i]})
-	}
-	return protocol.CheckOK, services, failed
 }
 
 func collectNTP(ctx context.Context) (string, bool) {

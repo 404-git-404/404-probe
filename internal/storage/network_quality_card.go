@@ -35,12 +35,16 @@ type QualityCardTCPLane struct {
 	Red    *QualityLaneRed    `json:"red,omitempty"`
 	// DNSFailing is set when the lane's latest minutes hold only resolver failures: those samples are not
 	// judged, so without this the lane would just look empty.
-	DNSFailing bool `json:"dns_failing,omitempty"`
+	DNSFailing        bool         `json:"dns_failing,omitempty"`
+	AlertRuns         []QualityRun `json:"alert_runs,omitempty"`
+	SemanticsChangeAt *int64       `json:"semantics_change_at,omitempty"`
+	RelaxedTCP        bool         `json:"relaxed_tcp,omitempty"`
 }
 
 type QualityCardICMPLane struct {
-	Status    string `json:"status"`
-	Condition string `json:"condition"`
+	Status    string             `json:"status"`
+	Condition string             `json:"condition"`
+	Blocks    []QualityCardBlock `json:"blocks,omitempty"`
 }
 
 type QualityCardRight struct {
@@ -194,8 +198,8 @@ func (r *qualityJudgeReader) timelineOf(ctx context.Context, slot, family, proto
 	}
 	last := r.last
 	buckets := map[int64]qualityBucketData{}
-	rows, err := r.tx.QueryContext(ctx, `SELECT b.bucket_start,b.data FROM quality_series s CROSS JOIN quality_buckets b ON b.series_id=s.id WHERE s.agent_id=? AND s.target_id=? AND s.semantics=? AND b.resolution=60000 AND b.bucket_start>=? AND b.bucket_start<?`,
-		r.id, *lane.TargetID, protocol.QualityStagedSemantics, r.first*qualityMinuteMS, last*qualityMinuteMS)
+	rows, err := r.tx.QueryContext(ctx, `SELECT b.bucket_start,b.data FROM quality_series s CROSS JOIN quality_buckets b ON b.series_id=s.id WHERE s.agent_id=? AND s.target_id=? AND s.semantics IN (?,?) AND b.resolution=60000 AND b.bucket_start>=? AND b.bucket_start<?`,
+		r.id, *lane.TargetID, protocol.QualityStagedSemantics, protocol.QualityTCPLossSemantics, r.first*qualityMinuteMS, last*qualityMinuteMS)
 	if err != nil {
 		return qualityTimeline{}, false, err
 	}
@@ -211,7 +215,12 @@ func (r *qualityJudgeReader) timelineOf(ctx context.Context, slot, family, proto
 			rows.Close()
 			return qualityTimeline{}, false, err
 		}
-		buckets[start/qualityMinuteMS] = b
+		minute := start / qualityMinuteMS
+		if prior, ok := buckets[minute]; ok {
+			qualityMergeBucket(&prior, b)
+			b = prior
+		}
+		buckets[minute] = b
 	}
 	err = rows.Err()
 	rows.Close()
@@ -302,14 +311,32 @@ func (s *Store) QualityCardSummary(ctx context.Context, agentID, family string, 
 		if tcpActive {
 			lane.TCP.Blocks = make([]QualityCardBlock, 0, QualityCardBlocks)
 			for i := 0; i < QualityCardBlocks; i++ {
-				lane.TCP.Blocks = append(lane.TCP.Blocks, tcp.classifyBlock(windowStart+int64(i)*QualityBlockMS, evalEnd, r.cfg.EffectiveIntervalMS))
+				lane.TCP.Blocks = append(lane.TCP.Blocks, tcp.classifyBlock(windowStart+int64(i)*QualityBlockMS, evalEnd))
 			}
 			lane.TCP.Red = &QualityLaneRed{Active: r.laneRed(&tcp)}
 			lane.TCP.DNSFailing = qualityDNSFailing(&tcp, evalEnd)
+			lane.TCP.AlertRuns = tcp.alertRuns(windowStart, evalEnd, r.cfg.EffectiveIntervalMS)
+			lane.TCP.SemanticsChangeAt, err = networkTCPSemanticsChange(ctx, tx, agentID, NetworkLine{slot, family, "tcp"}, windowStart, evalEnd)
+			if err != nil {
+				return out, err
+			}
+			if cfg, found := r.lane(slot, family, "tcp"); found && cfg.TargetID != nil {
+				timeout, err := qualityTargetTCPTimeout(ctx, tx, *cfg.TargetID, now)
+				if err != nil {
+					return out, err
+				}
+				lane.TCP.RelaxedTCP = timeout == protocol.QualityTCPHighLatencyTimeoutMS
+			}
 		}
 		icmp, icmpActive, err := r.timelineOf(ctx, slot, family, "icmp")
 		if err != nil {
 			return out, err
+		}
+		if icmpActive && !tcpActive {
+			lane.ICMP.Blocks = make([]QualityCardBlock, 0, QualityCardBlocks)
+			for i := 0; i < QualityCardBlocks; i++ {
+				lane.ICMP.Blocks = append(lane.ICMP.Blocks, icmp.classifyBlock(windowStart+int64(i)*QualityBlockMS, evalEnd))
+			}
 		}
 		switch {
 		case icmpActive:
@@ -403,7 +430,7 @@ func (s *Store) QualityMarks(ctx context.Context, agentID, family string, from, 
 		}
 		blocks := []QualityCardBlock{}
 		for start := alignedFrom; start < end; start += QualityBlockMS {
-			blocks = append(blocks, tl.classifyBlock(start, r.evalEnd, r.cfg.EffectiveIntervalMS))
+			blocks = append(blocks, tl.classifyBlock(start, r.evalEnd))
 		}
 		out.Lanes = append(out.Lanes, QualityMarksLane{Slot: slot, Runs: qualityRuns(blocks)})
 	}
