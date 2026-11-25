@@ -15,6 +15,17 @@ def version_key(version):
     return parts
 
 
+def retarget_readme_lines(text, previous, target, protected=()):
+    """Move active README commands and links from the outgoing version to the target."""
+    lines = []
+    for line in text.split("\n"):
+        keep = (line.startswith("> " + previous + " Stable") or any(mark in line for mark in protected)
+                or previous not in line
+                or not re.search(r"发布说明|快速开始|PROBE_404_VERSION|Alpine|不是当前", line))
+        lines.append(line if keep else line.replace(previous, target))
+    return "\n".join(lines)
+
+
 def prepare(root, target, start, notes):
     files = {}
 
@@ -123,12 +134,10 @@ def prepare(root, target, start, notes):
          r"Preserve the protected upgrade backup and do not directly\s+downgrade the migrated database\.",
          f"the current {target} Server supports upgrades from {start} (schema {floor_schema}).\n"
          "Preserve the protected upgrade backup and do not directly downgrade the migrated database.")
-    for line in read(readme).splitlines():
-        if line.startswith("> " + previous + " Stable"):
-            continue
-        if previous not in line or not re.search(r"发布说明|快速开始|PROBE_404_VERSION|Alpine|不是当前", line):
-            continue
-        edit(readme, "^" + re.escape(line) + "$", lambda match: match[0].replace(previous, target))
+    # The lines generated above name the supported start, which equals the outgoing
+    # version when the window starts at the previous release. Never retarget them.
+    files[readme] = retarget_readme_lines(read(readme), previous, target, (
+        f"本版支持从 {start} 升级", f"现有 Server 升级（支持 {start}）"))
 
     notes_name = f"RELEASE_NOTES_{target}.md"
     notes_path = root / notes_name
