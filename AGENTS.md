@@ -1,6 +1,6 @@
 # AGENTS.md
 
-先读 `CLAUDE.md` 和本机未提交的 `CLAUDE.local.md`。任务清单在 `roadmap` 分支。
+先读 `CLAUDE.md` 和本机未提交的 `CLAUDE.local.md`。任务清单在 `roadmap` 分支。Gemini（Antigravity）承担施工时，同样适用本文件的施工规则和回复格式。
 
 - Codex 用 gpt-6.2-sol（high）做明确授权的施工，S0 试用，不顺手可退回 gpt-6.1-sol。按任务书验收，只提交和推送授权的分支。Claude Code（Sonnet 5.5）负责评审、合并、测试机安装与升级、真机验证及发布。同时最多两个会话，按施工和评审流水线推进。
 - 任务书写目标、范围、验收标准。脚本或环境故障自行修复重跑。改变产品方向、操作正式环境或可能丢失数据时停下来问。
