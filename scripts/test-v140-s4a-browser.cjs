@@ -70,6 +70,10 @@ for (const theme of ['dark', 'light']) {
       const card = i => page.locator('.agent-card[data-agent-id="' + ID(i) + '"]');
       const row = i => page.locator('.banner-row[data-agent-id="' + ID(i) + '"]');
       await card(0).locator('.system-pill[data-tone=warning]').waitFor();
+      await card(2).locator('.system-pill[data-tone=danger]', {hasText: '⚠ 服务异常'}).waitFor();
+      await card(4).locator('.system-pill[data-tone=warning]').waitFor();
+      await card(7).locator('.system-pill[data-tone=server]').waitFor();
+      await page.waitForFunction(() => !renderFrame);
       assert.equal(await card(0).locator('.system-pill').textContent(), '⚠ 证书将到期');
       assert.equal(await card(2).locator('.system-pill[data-tone=danger]').textContent(), '⚠ 服务异常');
       assert.equal(await card(4).locator('.system-pill[data-tone=warning]').textContent(), '⚠ 时间未同步');
@@ -81,6 +85,8 @@ for (const theme of ['dark', 'light']) {
       await page.locator('#overview-health').click();
       await choose(page, 'list');
       await row(7).locator('.system-pill[data-tone=server]').waitFor();
+      await row(2).locator('.banner-system-badges .system-pill', {hasText: '⚠ 服务异常'}).waitFor();
+      await page.waitForFunction(() => !renderFrame);
       assert.equal(await row(2).locator('.banner-system-badges .system-pill').textContent(), '⚠ 服务异常');
       await capture(page, theme, 'list');
 
