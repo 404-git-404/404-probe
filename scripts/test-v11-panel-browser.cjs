@@ -54,7 +54,7 @@ test('390px overlay closes on backdrop, left swipe and Escape, preserving stacke
  await p.keyboard.press('Escape');
  assert.equal(await p.evaluate(()=>document.body.style.overflow),'');
 },{width:390,height:844}));
-test('group, tag, country and status filters intersect and All Devices clears the left side',()=>ui(async({page:p})=>{
+test('group, tag, country and status filters intersect and Devices row clears all filters',()=>ui(async({page:p})=>{
  const online=await p.locator('#overview-online').textContent();
  for(const [key,label] of [['groups','常用'],['tags','GIA'],['countries','美国'],['statuses','在线']]){
   const host=p.locator('#dashboard-'+key);
@@ -63,15 +63,15 @@ test('group, tag, country and status filters intersect and All Devices clears th
   if(['groups','tags'].includes(key)) await option.click();
   else await option.locator('input').check();
  }
- await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='1 / 28 台');
+ await p.waitForFunction(()=>document.querySelector('#dashboard-devices-count').textContent==='1 / 28');
+ assert.equal(await p.locator('#dashboard-devices > summary').getAttribute('aria-pressed'),'false');
  assert.equal(await p.locator('#overview-online').textContent(),online);
  await p.locator('#dashboard-countries summary').click();
  assert.equal(await p.locator('#dashboard-countries .panel-summary').textContent(),'美国');
- await p.locator('#dashboard-all').click();
- await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='7 / 28 台');
- assert.equal(await p.locator('#dashboard-all').getAttribute('aria-pressed'),'true');
- await p.locator('#dashboard-tags-clear').click();
- await p.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='28 / 28 台');
+ await p.locator('#dashboard-devices > summary').click();
+ await p.waitForFunction(()=>document.querySelector('#dashboard-devices-count').textContent==='28');
+ assert.equal(await p.locator('#dashboard-devices > summary').getAttribute('aria-pressed'),'true');
+ assert.equal(await p.locator('#dashboard-tags-clear').getAttribute('aria-pressed'),'true');
 }));
 test('release notice requires true newer and canonical stable version, never uses supplied URLs or cache age',()=>ui(async({page:p,state})=>{
  assert.equal(await p.locator('#panel-update').isVisible(),true);assert.equal(await p.locator('#panel-update').getAttribute('href'),'https://github.com/404-git-404/404-probe/releases/tag/v1.1.1');assert.equal(await p.locator('#panel-update').getAttribute('rel'),'noopener noreferrer');

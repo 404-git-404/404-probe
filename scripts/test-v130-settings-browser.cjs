@@ -41,9 +41,9 @@ test('settings saves region edits explicitly and refreshes an already open dashb
     const youtube = panel.locator('#dashboard-youtube-free');
     assert.equal(await panel.locator('#dashboard-youtube-count').textContent(),'3');
     await youtube.check();
-    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '3 / 6 台');
+    await panel.waitForFunction(() => document.querySelector('#dashboard-devices-count').textContent === '3 / 6');
     await panel.reload();
-    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '3 / 6 台');
+    await panel.waitForFunction(() => document.querySelector('#dashboard-devices-count').textContent === '3 / 6');
     assert(await youtube.isChecked());
     assert.equal(await panel.locator('.agent-card[data-agent-id="'+ID(1)+'"] .check-result').getAttribute('data-region-tone'), 'crit');
 
@@ -65,7 +65,7 @@ test('settings saves region edits explicitly and refreshes an already open dashb
     await settings.waitForFunction(() => document.querySelector('#rg-status').textContent.includes('已保存'));
     await panel.waitForFunction(() => !dashboardData.catalog().youtube_ad_free_regions.includes('MO') && !renderFrame);
     assert(await youtube.isChecked());
-    await panel.waitForFunction(() => document.querySelector('#dashboard-count').textContent === '1 / 6 台');
+    await panel.waitForFunction(() => document.querySelector('#dashboard-devices-count').textContent === '1 / 6');
     await youtube.uncheck();
     assert.equal(await panel.locator(`.agent-card[data-agent-id="${ID(1)}"] .check-result`).getAttribute('data-region-tone'), 'ok');
     await settings.locator('#rg-reset').click();

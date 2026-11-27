@@ -85,7 +85,7 @@
   const attention=a.system_attention||{};
   if(attention.certificate==='danger')badges.push(['证书已过期','danger']);
   if(attention.certificate==='warning')badges.push(['证书将到期','warning']);
-  if(attention.service)badges.push(['服务停止','danger']);
+  if(attention.service)badges.push(['服务异常','danger']);
   if(attention.service_restart==='danger')badges.push(['服务反复重启','danger']);
   if(attention.service_restart==='warning')badges.push(['服务偶发重启','warning']);
   if(attention.time)badges.push(['时间未同步','warning']);
