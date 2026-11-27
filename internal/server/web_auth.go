@@ -181,6 +181,9 @@ func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	mux.Handle("/api/v1/web/agents/{agent_id}/traffic/reset", a.requireWebSession(http.HandlerFunc(a.handleWebAgentTrafficMethodNotAllowed), true))
 	mux.Handle("PUT /api/v1/web/agents/{agent_id}/name", a.requireWebMutation(http.HandlerFunc(a.handlePutWebAgentName)))
 	mux.Handle("PUT /api/v1/web/agents/{agent_id}/system-checks", a.requireWebMutation(http.HandlerFunc(a.handlePutSystemCheckSettings)))
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
+		mux.Handle(method+" /api/v1/web/agents/{agent_id}/system-check-ignores", a.requireWebMutation(http.HandlerFunc(a.handleSystemCheckIgnore)))
+	}
 	mux.Handle("/api/v1/web/agents/{agent_id}/name", a.requireWebSession(http.HandlerFunc(a.handleWebAgentNameMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/outbounds/switch", a.requireWebMutation(http.HandlerFunc(a.handleWebSelectorSwitch)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/outbounds/switch", a.requireWebSession(http.HandlerFunc(a.handleWebSelectorSwitchMethodNotAllowed), true))

@@ -9,6 +9,7 @@
     paused:'监控已暂停', no_history:'暂无足够历史数据',
     no_card_lines:'没有启用并在卡片显示的线路', network_coverage:'近 7 天没有达到覆盖要求的线路',
     line_coverage:'有数据的时长不到 1 小时', no_probe_results:'没有可计分的探测结果',
+    no_evening_data:'还没有晚高峰数据',
     no_presence:'暂无在线或离线记录', no_resources:'暂无资源使用记录',
     once:'一次性付费', fewer_than_two:'可比较的计费设备少于 2 台', missing_rate:'没有设置该币种的汇率',
     missing_price:'未设置价格', invalid_price:'价格无效', missing_currency:'未设置币种', invalid_currency:'币种无效',
@@ -94,7 +95,8 @@
       if(part.key==='network' && shown(model?.network)){
         const sub = element(doc,'div','score-subparts');
         for(const item of model.network.parts || []){
-          sub.append(element(doc,'span','',partNames[item.key]+' '+format(item.score)));
+          const text = typeof item.score === 'number' ? format(item.score) : '未计入 · '+reason(item.reason);
+          sub.append(element(doc,'span','',partNames[item.key]+' '+text));
         }
         content.append(sub);
       }

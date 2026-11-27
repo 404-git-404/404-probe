@@ -28,7 +28,15 @@
     return root.DashboardModel.systemBadges(agent).map(([text, tone]) => pill(doc, text, tone));
   }
 
-  function systemPane(doc, agent, now) {
+  async function writeIgnore(id, kind, item, ignored) {
+    const session = await root.AgentState.fetchJSON('/api/v1/web/session', {fetcher: root.fetch});
+    if (!session.csrf_token) throw new Error('会话已失效');
+    return root.Management.write('/api/v1/web/agents/' + encodeURIComponent(id) + '/system-check-ignores', {
+      method: ignored ? 'DELETE' : 'PUT', csrf: session.csrf_token, payload: {kind, item},
+    });
+  }
+
+  function systemPane(doc, agent, now, hydrate) {
     const frame = doc.createDocumentFragment();
     const checks = agent?.online ? agent.system_checks : null;
     const unsupported = checks && !checks.supported;
@@ -51,17 +59,62 @@
       const row = element(doc, 'div', 'details-fact');
       row.append(element(doc, 'span', 'details-label', label), tone ? pill(doc, value, tone) : element(doc, 'span', '', value));
       box.append(row);
+      return row;
     };
+    const attention = agent?.system_attention || {};
+    const key = (kind, item) => JSON.stringify([kind, item]);
+    const active = new Set((attention.items || []).map(({kind, item}) => key(kind, item)));
+    const ignored = new Set((attention.ignored || []).map(({kind, item}) => key(kind, item)));
+    const seenActions = new Set();
+    function action(row, target, kind, item) {
+      const id = key(kind, item);
+      const muted = ignored.has(id);
+      if (muted) row.classList.add('system-ignore-muted');
+      if ((!active.has(id) && !muted) || seenActions.has(id)) return;
+      seenActions.add(id);
+      const controls = element(doc, 'span', 'system-ignore-actions');
+      if (muted) controls.append(element(doc, 'span', 'system-ignore-label', '已忽略'));
+      const label = muted ? '取消忽略' : '忽略';
+      const button = element(doc, 'button', 'system-ignore-button', label);
+      button.type = 'button';
+      const subject = kind === 'time' ? '时间同步' : kind === 'service_restart' ? item + ' 重启' : item;
+      button.setAttribute('aria-label', label + ' ' + subject);
+      const error = element(doc, 'span', 'system-ignore-error');
+      error.setAttribute('role', 'status');
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        error.textContent = '';
+        let saved = false;
+        try {
+          await writeIgnore(agent.agent_id, kind, item, muted);
+          saved = true;
+          const result = await hydrate(agent.agent_id);
+          if (result?.[0]?.status === 'rejected') throw result[0].reason;
+        } catch (err) {
+          error.textContent = saved ? '已保存，刷新失败' :
+            err?.status === 400 ? '保存失败，请检查忽略条数或项目格式' : '保存失败，请重试';
+        } finally {
+          button.disabled = false;
+        }
+      });
+      controls.append(button, error);
+      target.append(controls);
+    }
     const reason = status => statusText[status] || '未知';
     const certs = checks?.certificates || [];
-    const expired = certs.filter(c => c.expires_at <= now).length;
-    const expiring = certs.filter(c => c.expires_at > now && c.expires_at - now <= 7 * day).length;
-    const stopped = (checks?.services || []).filter(s => s.state !== 'active').length;
-    const failed = (checks?.failed_units || []).length;
-    const timeWarning = !!agent?.system_attention?.time;
+    const alarmCerts = certs.filter(c => !ignored.has(key('certificate', c.path)));
+    const expired = alarmCerts.filter(c => c.expires_at <= now).length;
+    const expiring = alarmCerts.filter(c => c.expires_at > now && c.expires_at - now <= 7 * day).length;
+    const watchedUnit = name => name.endsWith('.service') ? name : name + '.service';
+    const failedUnits = checks?.failed_units || [];
+    const stopped = (checks?.services || []).filter(s => s.state !== 'active' && !ignored.has(key('service', watchedUnit(s.name)))).length;
+    const failed = failedUnits.filter(unit => !ignored.has(key('service', unit))).length;
+    const timeWarning = !!attention.time;
+    const timeIgnored = ignored.has(key('time', 'time'));
     const restarts = checks?.service_restarts || [];
-    const serviceDanger = stopped > 0 || failed > 0 || restarts.some(s => s.count >= 3);
-    const warnings = Number(expiring > 0) + Number(timeWarning) + Number(restarts.length > 0 && !serviceDanger);
+    const alarmRestarts = restarts.filter(s => !ignored.has(key('service_restart', s.unit)));
+    const serviceDanger = stopped > 0 || failed > 0 || alarmRestarts.some(s => s.count >= 3);
+    const warnings = Number(expiring > 0) + Number(timeWarning) + Number(alarmRestarts.length > 0 && !serviceDanger);
     const dangers = Number(expired > 0) + Number(serviceDanger);
     if (!supportNote) {
       if (warnings) header.append(pill(doc, warnings + ' 项提醒', 'warning'));
@@ -99,6 +152,7 @@
         const file = element(doc, 'td');
         file.append(code(cert.path));
         row.append(element(doc, 'td', '', cert.domains), element(doc, 'td', '', new Date(cert.expires_at).toISOString().slice(0, 10)), remains, file);
+        if (tone !== 'ok') action(row, file, 'certificate', cert.path);
         body.append(row);
       }
       table.append(thead, body);
@@ -120,30 +174,37 @@
 
     const serviceBadge = stopped ? pill(doc, stopped + ' 个未运行', 'danger') :
       failed ? pill(doc, failed + ' 个失败单元', 'danger') :
-      restarts.length ? pill(doc, serviceDanger ? '反复重启' : '偶发重启', serviceDanger ? 'danger' : 'warning') : null;
+      alarmRestarts.length ? pill(doc, serviceDanger ? '反复重启' : '偶发重启', serviceDanger ? 'danger' : 'warning') : null;
     const services = section('服务', false, serviceBadge);
     if (supportNote) note(services, supportNote);
     else {
       for (const service of checks.services || []) {
-        fact(services, service.name, service.state === 'active' ? '运行中' : '未运行', service.state === 'active' ? 'ok' : 'danger');
+        const row = fact(services, service.name, service.state === 'active' ? '运行中' : '未运行', service.state === 'active' ? 'ok' : 'danger');
+        if (service.state !== 'active') action(row, row, 'service', watchedUnit(service.name));
       }
       if (checks.service_status !== 'ok') note(services, reason(checks.service_status));
       else if (!checks.services?.length) note(services, '未设置关注的服务');
-      if (checks.service_status === 'ok' || failed) fact(services, '失败的单元', (checks.failed_units || []).join('、') || '无', failed ? 'danger' : null);
+      if (!failedUnits.length && checks.service_status === 'ok') fact(services, '失败的单元', '无');
+      for (const unit of failedUnits) {
+        const row = fact(services, '失败的单元', unit, 'danger');
+        action(row, row, 'service', unit);
+      }
       for (const service of restarts) {
         const recurring = service.count >= 3;
-        fact(services, service.unit, (recurring ? '反复重启' : '偶发重启') + ' · 最近 10 分钟重启 ' + service.count + ' 次',
+        const row = fact(services, service.unit, (recurring ? '反复重启' : '偶发重启') + ' · 最近 10 分钟重启 ' + service.count + ' 次',
           recurring ? 'danger' : 'warning');
+        action(row, row, 'service_restart', service.unit);
       }
       note(services, '关注的服务在“管理”里设置。');
     }
 
     const clock = section('时间同步', false, timeWarning ? pill(doc, '提醒', 'warning') :
-      checks?.ntp_status === 'ok' ? pill(doc, '正常', 'ok') : null);
+      !timeIgnored && checks?.ntp_status === 'ok' ? pill(doc, '正常', 'ok') : null);
     if (supportNote) note(clock, supportNote);
     else {
       fact(clock, 'NTP', checks.ntp_status !== 'ok' ? reason(checks.ntp_status) : checks.ntp_synchronized ? '已同步' : '未同步');
-      fact(clock, '与 Server 相差', (Math.abs(checks.time_offset_ms) / 1000).toFixed(1) + ' 秒');
+      const offset = fact(clock, '与 Server 相差', (Math.abs(checks.time_offset_ms) / 1000).toFixed(1) + ' 秒');
+      action(clock, offset, 'time', 'time');
       note(clock, '未同步，或与 Server 相差超过 5 秒为黄。');
     }
 

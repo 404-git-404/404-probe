@@ -13,6 +13,7 @@ import (
 )
 
 const deviceScoreInterval = 10 * time.Minute
+const networkEveningPart = 3
 
 type scorePart struct {
 	Key             string   `json:"key"`
@@ -136,7 +137,7 @@ func scoreNetworkLine(line storage.DeviceScoreLine) [len(networkScoreParts)]floa
 			scores[2] = 0.7 * scoreDescending(spread, 0.2, 1.5)
 		}
 		if line.Evening != nil {
-			scores[3] = scoreDescending(scoreLatencyRatio(*line.Evening, *line.P50), 1.1, 2.0)
+			scores[networkEveningPart] = scoreDescending(scoreLatencyRatio(*line.Evening, *line.P50), 1.1, 2.0)
 		}
 	}
 	if line.Jitter != nil {
@@ -150,6 +151,7 @@ func scoreMachineNetwork(lines []storage.DeviceScoreLine, paused bool) deviceNet
 	parts := append([]scorePart(nil), networkScoreParts[:]...)
 	var out deviceNetworkScore
 	var sums [len(networkScoreParts)]float64
+	var weights [len(networkScoreParts)]float64
 	count := 0
 	reason := ""
 	for _, line := range lines {
@@ -161,11 +163,23 @@ func scoreMachineNetwork(lines []storage.DeviceScoreLine, paused bool) deviceNet
 			item.Reason = "no_probe_results"
 		default:
 			scores := scoreNetworkLine(line)
+			hasEvening := line.Evening != nil && line.P50 != nil
+			weightTotal := 100
+			if !hasEvening {
+				weightTotal -= parts[networkEveningPart].Weight
+			}
 			total := 0.0
 			for i, score := range scores {
-				sums[i] += score
-				total += score * float64(parts[i].Weight) / 100
+				if i == networkEveningPart && !hasEvening {
+					continue
+				}
+				weight := float64(parts[i].Weight) / float64(weightTotal)
+				contribution := score * weight
+				sums[i] += contribution
+				weights[i] += weight
+				total += contribution
 			}
+			total = min(100, total)
 			item.Score = &total
 			count++
 		}
@@ -179,15 +193,28 @@ func scoreMachineNetwork(lines []storage.DeviceScoreLine, paused bool) deviceNet
 	case count == 0:
 		reason = "network_coverage"
 	}
-	for i := range parts {
-		if reason == "" {
-			value := sums[i] / float64(count)
-			parts[i].Score = &value
-		} else {
+	out.scoreSummary = scoreSummary{Parts: parts, Reason: reason}
+	if reason != "" {
+		for i := range parts {
 			parts[i].Reason = reason
 		}
+		return out
 	}
-	out.scoreSummary = summarizeScore(parts, reason)
+	// Each eligible line contributes equally. Average its effective weight
+	// and weighted score so the displayed parts still explain the total.
+	var sum float64
+	for i := range parts {
+		if weights[i] == 0 {
+			parts[i].Reason = "no_evening_data"
+			continue
+		}
+		value := min(100, sums[i]/weights[i])
+		parts[i].Score = &value
+		parts[i].EffectiveWeight = 100 * weights[i] / float64(count)
+		sum += sums[i]
+	}
+	score := min(100, sum/float64(count))
+	out.Score, out.Grade = &score, deviceScoreGrade(score)
 	return out
 }
 

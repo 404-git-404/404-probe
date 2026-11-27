@@ -103,6 +103,7 @@ func TestQualityObjectsRetainHistoryAndCardOrder(t *testing.T) {
 
 func TestMigration44PreservesLegacyQualityHistory(t *testing.T) {
 	k := v4Base(t, true)
+	rewindSystemCheckIgnoresFixture(t, k.s.db)
 	before := k.get()
 	measured := k.tick()
 	if receipt := k.upload(measured.Add(time.Second), k.sample(before, "telecom", "ipv4", "tcp", 1, measured, "success")); receipt[0] != "committed" {

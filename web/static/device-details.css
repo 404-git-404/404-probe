@@ -118,6 +118,15 @@ html { scrollbar-gutter: stable; }
 .system-certificates td:nth-child(2),.system-certificates td:nth-child(3){white-space:nowrap}
 .system-certificates td,.system-access-note,.system-jail-ips{overflow-wrap:anywhere}
 .system-access-note{margin:0;padding:8px 10px;border-radius:8px;color:var(--color-warning-text);background:var(--color-surface-11)}
+.system-ignore-actions{display:flex;flex-wrap:wrap;align-items:center;gap:5px 8px}
+.details-fact .system-ignore-actions{grid-column:2}
+.system-certificates .system-ignore-actions{margin-top:4px}
+.device-details .system-ignore-button{font-size:11px;padding:2px 6px;line-height:1.3}
+.system-ignore-muted,.system-ignore-muted .system-pill,.system-ignore-label{color:var(--color-text-muted)}
+.system-ignore-muted .system-pill{background:var(--color-surface-module);border-color:var(--color-line-soft)}
+.system-ignore-label,.system-ignore-error{font-size:12px}
+.system-ignore-error{color:var(--color-danger-text)}
+.system-ignore-error:empty{display:none}
 .system-fail2ban{margin-bottom:14px}
 .system-jail summary{cursor:pointer}
 .system-jail-ips{margin:6px 0;font-family:monospace}

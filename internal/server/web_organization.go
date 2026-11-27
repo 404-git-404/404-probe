@@ -213,6 +213,25 @@ func (a *App) handleOrganizationMutation(w http.ResponseWriter, r *http.Request,
 	}
 	var err error
 	switch {
+	case kind == "create_tag" || kind == "rename_tag":
+		var input struct {
+			ExpectedRevision int64           `json:"expected_revision"`
+			Name             *string         `json:"name"`
+			Color            json.RawMessage `json:"color"`
+		}
+		err = readOrganizationJSON(w, r, &input)
+		c.ExpectedRevision = input.ExpectedRevision
+		if input.Name != nil {
+			c.Name = *input.Name
+			if c.Name == "" {
+				err = storage.ErrOrganizationInvalid
+			}
+		}
+		if input.Color != nil {
+			if decodeErr := json.Unmarshal(input.Color, &c.Color); decodeErr != nil || c.Color == nil {
+				err = storage.ErrOrganizationInvalid
+			}
+		}
 	case strings.HasPrefix(kind, "create_") || strings.HasPrefix(kind, "rename_"):
 		var input struct {
 			ExpectedRevision int64  `json:"expected_revision"`
