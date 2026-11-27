@@ -147,13 +147,13 @@ func seedDeviceScoreFleet(t *testing.T, database, templateID string, now time.Ti
 	for _, resolution := range []time.Duration{5 * time.Minute, time.Hour} {
 		query(`WITH RECURSIVE score_buckets(at) AS (VALUES(?1) UNION ALL SELECT at+?2 FROM score_buckets WHERE at+?2<?3)
 			INSERT OR IGNORE INTO quality_buckets SELECT s.id,?2,score_buckets.at,?4
-			FROM quality_series s CROSS JOIN score_buckets`, now.Add(-deviceScoreWindow).Truncate(resolution).UnixMilli(),
+			FROM quality_series s CROSS JOIN score_buckets`, now.Add(-storage.DeviceScoreWindow).Truncate(resolution).UnixMilli(),
 			resolution.Milliseconds(), now.Truncate(resolution).UnixMilli(), wire)
 	}
 	query(`WITH RECURSIVE minutes(at) AS (VALUES(?1) UNION ALL SELECT at+60000 FROM minutes WHERE at+60000<?2)
 		INSERT INTO minute_metrics(agent_id,bucket,samples,cpu_sum,ram_sum,swap_sum,disk_sum,load1_sum,load5_sum,load15_sum,rx_rate_sum,tx_rate_sum,rx_total,tx_total)
 		SELECT id,at,3,30,75,0,90,0,0,0,0,0,0,0 FROM agents CROSS JOIN minutes`,
-		now.Add(-deviceScoreWindow).UnixMilli(), now.UnixMilli())
+		now.Add(-storage.DeviceScoreWindow).UnixMilli(), now.UnixMilli())
 	query(`INSERT INTO agent_presence_events(agent_id,at,kind) SELECT id,?,'online' FROM agents`, now.Add(-30*24*time.Hour).UnixMilli())
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)

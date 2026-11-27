@@ -68,14 +68,16 @@ func TestSystemChecksReportSettingsAndDashboard(t *testing.T) {
 	}
 	report.Sequence++
 	report.CollectedAt = now.Add(-6 * time.Second).UnixMilli()
-	report.SystemChecks = &protocol.SystemChecks{
+	checks := &protocol.SystemChecks{
 		Supported: true, DebianMajor: 13, RebootStatus: protocol.CheckOK, RebootRequired: true,
+		RebootPackages: []string{"linux-image-6.12.x-amd64", "libc6"}, RebootPackagesTruncated: true,
 		CertificateScan: protocol.CertificateScan{Certificates: []protocol.Certificate{
 			{Domains: "node.example.test", Path: "/opt/certs/node.crt", Fingerprint: strings.Repeat("a", 64), ExpiresAt: now.Add(7 * 24 * time.Hour).UnixMilli()},
 		}},
 		Services: []protocol.WatchedService{{Name: "nginx", State: "inactive"}},
 		Fail2ban: protocol.Fail2banCheck{Status: protocol.CheckOK, JailCount: 1, Jails: []protocol.Fail2banJail{{Name: "sshd", Total: 500, IPs: []string{"192.0.2.15"}}}},
 	}
+	report.SystemChecks = checks
 	settings := send(report, true).SystemCheckSettings
 	wantSettings := &protocol.SystemCheckSettings{CertificateDirectories: []string{"/opt/certs"}, WatchedServices: []string{"nginx"}}
 	if !reflect.DeepEqual(settings, wantSettings) {
@@ -91,8 +93,20 @@ func TestSystemChecksReportSettingsAndDashboard(t *testing.T) {
 	}
 	want := systemAttention{Certificate: "warning", Service: true, Time: true}
 	if !detail.ServerLocal || detail.SystemChecks == nil || !detail.SystemChecks.RebootRequired ||
+		!reflect.DeepEqual(detail.SystemChecks.RebootPackages, checks.RebootPackages) || !detail.SystemChecks.RebootPackagesTruncated ||
 		detail.SystemAttention != want || len(detail.SystemChecks.Fail2ban.Jails) != 1 {
 		t.Fatalf("detail = %+v", detail)
+	}
+	report.Sequence++
+	legacyChecks := *checks
+	legacyChecks.RebootPackages, legacyChecks.RebootPackagesTruncated = nil, false
+	report.SystemChecks = &legacyChecks
+	send(report, true)
+	w = organizationHTTP(t, app, http.MethodGet, base, "", true, false)
+	detail = webAgentDetailView{}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &detail) != nil || detail.SystemChecks == nil ||
+		!detail.SystemChecks.RebootRequired || strings.Contains(w.Body.String(), "reboot_packages") {
+		t.Fatalf("legacy system checks: %d %s", w.Code, w.Body.String())
 	}
 	w = organizationHTTP(t, app, http.MethodGet, "/api/v1/web/dashboard?ids="+id, "", true, false)
 	var dashboard dashboardResponse

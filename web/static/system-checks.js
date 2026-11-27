@@ -160,6 +160,9 @@
     if (supportNote) note(reboot, supportNote);
     else {
       fact(reboot, '状态', checks.reboot_status === 'ok' ? checks.reboot_required ? '需要重启' : '无需重启' : reason(checks.reboot_status));
+      if (checks.reboot_status === 'ok' && checks.reboot_required && checks.reboot_packages?.length) {
+        fact(reboot, '原因', checks.reboot_packages.join('、') + (checks.reboot_packages_truncated ? ' 等' : ''));
+      }
       const uptime = agent.state?.uptime;
       if (Number.isFinite(uptime)) fact(reboot, '已运行', Math.floor(uptime / 86400) + ' 天 ' + Math.floor(uptime % 86400 / 3600) + ' 时');
     }

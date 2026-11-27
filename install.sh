@@ -328,7 +328,9 @@ Usage:
   404-probe-install oneclick-token <name> [--output <absolute-path>]
                                     test machines: one-click registration token into a root-only file
   404-probe-install database verify
-  404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME) [--extract-to NEW_DIRECTORY]
+  404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME [--r2-config PATH]) [--extract-to NEW_DIRECTORY]
+    --r2-config PATH reads R2 connection settings from a private JSON file for --from-r2 only.
+    If omitted, restore reads the saved R2 settings from /var/lib/404-probe/404-probe.db.
   404-probe-install uninstall <server|agent|local-agent> [--confirm-delete-data]
 
 Uninstall permanently removes the selected role's services, binaries,
@@ -1346,6 +1348,8 @@ usage() {
   printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | web-password reset | selector-order <sing-box-config.json> | setup-security | setup-local-agent | setup-root-collector | uninstall <server|agent|local-agent> [--confirm-delete-data] | recover-agent-removal\n'
   printf '       404-probe-install database verify [--timeout DURATION]\n'
   printf '       404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME [--r2-config PATH]) [--extract-to NEW_DIRECTORY]\n'
+  printf '         --r2-config PATH reads R2 connection settings from a private JSON file for --from-r2 only.\n'
+  printf '         If omitted, restore reads the saved R2 settings from /var/lib/404-probe/404-probe.db.\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"

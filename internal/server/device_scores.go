@@ -12,8 +12,7 @@ import (
 	"404-probe/internal/storage"
 )
 
-const deviceScoreWindow = 7 * 24 * time.Hour
-const deviceScoreInterval = time.Hour
+const deviceScoreInterval = 10 * time.Minute
 
 type scorePart struct {
 	Key             string   `json:"key"`
@@ -47,8 +46,11 @@ type deviceScore struct {
 	Overall       scoreSummary       `json:"overall"`
 	OnlinePercent *float64           `json:"online_percent,omitempty"`
 	OnlineKnownMS int64              `json:"online_known_ms,omitempty"`
-	ValueRank     int                `json:"value_rank,omitempty"`
-	ValueCount    int                `json:"value_count,omitempty"`
+	ValueRank     int                `json:"value_rank"`
+	ValueCount    int                `json:"value_count"`
+	ValueScore    *float64           `json:"value_score"`
+	ValueReason   string             `json:"value_reason,omitempty"`
+	HighValue     bool               `json:"high_value"`
 }
 
 type deviceScoreSnapshot struct {
@@ -153,7 +155,7 @@ func scoreMachineNetwork(lines []storage.DeviceScoreLine, paused bool) deviceNet
 	for _, line := range lines {
 		item := scoreLine{NetworkLine: line.NetworkLine, CoveredMS: line.CoveredMS}
 		switch {
-		case line.CoveredMS < deviceScoreWindow.Milliseconds()/2:
+		case line.CoveredMS < storage.DeviceScoreMinLineCoverage.Milliseconds():
 			item.Reason = "line_coverage"
 		case line.FailurePercent == nil:
 			item.Reason = "no_probe_results"
@@ -196,53 +198,26 @@ type deviceValueScore struct {
 	reason      string
 }
 
-func monthlyTrafficTB(plan *storage.AgentPlan) float64 {
-	if plan.QuotaBytes == nil {
-		if plan.TrafficMode != "" {
-			return 10
-		}
-		return 0
-	}
-	quota := float64(*plan.QuotaBytes) / 1e12
-	count := float64(max(1, plan.CycleCount))
-	switch plan.CycleKind {
-	case "yearly":
-		return quota / (12 * count)
-	case "days":
-		return quota * (30 / count)
-	default:
-		return quota / count
-	}
-}
-
-func scoreDeviceValues(data storage.DashboardData) map[string]deviceValueScore {
-	prices := map[string]expenseDevice{}
-	for _, device := range estimateExpenses(data, nil).Devices {
-		prices[device.ID] = device
-	}
-	result := make(map[string]deviceValueScore, len(data.Records))
-	eligible := make([]string, 0, len(data.Records))
-	for _, record := range data.Records {
-		agent, state := record.Snapshot.Agent, record.Snapshot.State
-		if agent.Revoked {
+func scoreDeviceValues(data storage.DashboardData, scores map[string]deviceScore) map[string]deviceValueScore {
+	result := make(map[string]deviceValueScore, len(scores))
+	eligible := make([]string, 0, len(scores))
+	for _, price := range estimateExpenses(data, nil).Devices {
+		device, found := scores[price.ID]
+		if !found {
 			continue
 		}
-		price := prices[agent.ID]
 		item := deviceValueScore{reason: price.Exclusion}
 		switch {
-		case price.monthlyUSDExact == nil:
-			if item.reason == "" {
-				item.reason = "missing_price"
-			}
-		case state == nil || state.CPUCores == 0 || state.RAMTotal == 0 || state.DiskTotal == 0:
-			item.reason = "missing_capacity"
+		case item.reason != "":
+		case price.monthlyUSDExact.Sign() <= 0:
+			item.reason = "invalid_price"
+		case device.Overall.Score == nil:
+			item.reason = device.Overall.Reason
 		default:
-			capacity := float64(state.CPUCores) + float64(state.RAMTotal)/(1<<30) +
-				float64(state.DiskTotal)/(20*(1<<30)) + monthlyTrafficTB(record.Plan)
-			item.ratio = new(big.Rat).Quo(price.monthlyUSDExact, new(big.Rat).SetFloat64(capacity))
-			eligible = append(eligible, agent.ID)
+			item.ratio = new(big.Rat).Quo(new(big.Rat).SetFloat64(*device.Overall.Score), price.monthlyUSDExact)
+			eligible = append(eligible, price.ID)
 		}
-		result[agent.ID] = item
+		result[price.ID] = item
 	}
 	if len(eligible) < 2 {
 		for _, id := range eligible {
@@ -251,7 +226,7 @@ func scoreDeviceValues(data storage.DashboardData) map[string]deviceValueScore {
 		return result
 	}
 	sort.Slice(eligible, func(i, j int) bool {
-		return result[eligible[i]].ratio.Cmp(result[eligible[j]].ratio) < 0
+		return result[eligible[i]].ratio.Cmp(result[eligible[j]].ratio) > 0
 	})
 	lastRank := len(eligible) - 1
 	worst := result[eligible[lastRank]].ratio
@@ -266,7 +241,7 @@ func scoreDeviceValues(data storage.DashboardData) map[string]deviceValueScore {
 		}
 		value := 50.0
 		if lastRank != 0 {
-			value = 100 * (1 - float64(rank)/float64(lastRank))
+			value = 100 * float64(lastRank-rank) / float64(lastRank)
 		}
 		item.rank, item.count, item.score = rank+1, len(eligible), &value
 		result[id] = item
@@ -274,32 +249,33 @@ func scoreDeviceValues(data storage.DashboardData) map[string]deviceValueScore {
 	return result
 }
 
-func scoreOverall(agent storage.Agent, inputs storage.DeviceScoreInputs, value deviceValueScore, now time.Time) deviceScore {
+func (d *deviceScore) setValueRanking(value deviceValueScore) {
+	d.ValueRank, d.ValueCount, d.ValueScore, d.ValueReason = value.rank, value.count, value.score, value.reason
+	d.HighValue = value.score != nil && *value.score >= 80 && d.Overall.Score != nil && *d.Overall.Score >= 65
+}
+
+func scoreOverall(agent storage.Agent, inputs storage.DeviceScoreInputs) deviceScore {
 	paused := agent.DisabledAt != nil
 	out := deviceScore{Network: scoreMachineNetwork(inputs.Lines, paused)}
 	parts := []scorePart{
-		{Key: "network", Weight: 40, Score: out.Network.Score, Reason: out.Network.Reason},
-		{Key: "uptime", Weight: 25, Reason: "no_presence"},
-		{Key: "value", Weight: 20, Score: value.score, Reason: value.reason},
-		{Key: "resources", Weight: 15, Reason: "no_resources"},
+		{Key: "network", Weight: 50, Score: out.Network.Score, Reason: out.Network.Reason},
+		{Key: "uptime", Weight: 30, Reason: "no_presence"},
+		{Key: "resources", Weight: 20, Reason: "no_resources"},
 	}
 	reason := ""
 	switch {
 	case paused:
 		reason = "paused"
-	case out.Network.Score == nil && agent.CreatedAt > now.Add(-deviceScoreWindow).UnixMilli():
-		reason = "new_machine"
 	default:
 		out.OnlinePercent = inputs.Presence.OnlinePercent
 		out.OnlineKnownMS = inputs.Presence.OnlineMS + inputs.Presence.OfflineMS
-		out.ValueRank, out.ValueCount = value.rank, value.count
 		if out.OnlinePercent != nil {
 			uptime := scoreDescending(100-*out.OnlinePercent, 0, 5)
 			parts[1].Score, parts[1].Reason = &uptime, ""
 		}
 		if r := inputs.Resources; r != nil {
 			headroom := max(0, min(100, 100-(0.4*r.CPU+0.4*r.RAM+0.2*r.Disk)))
-			parts[3].Score, parts[3].Reason = &headroom, ""
+			parts[2].Score, parts[2].Reason = &headroom, ""
 		}
 	}
 	if reason != "" {
@@ -316,7 +292,6 @@ func (a *App) calculateDeviceScores(ctx context.Context, now time.Time) (*device
 	if err != nil {
 		return nil, err
 	}
-	values := scoreDeviceValues(data)
 	snapshot := &deviceScoreSnapshot{ComputedAt: now.UnixMilli(), Items: make(map[string]deviceScore, len(data.Records))}
 	for _, record := range data.Records {
 		agent := record.Snapshot.Agent
@@ -333,7 +308,12 @@ func (a *App) calculateDeviceScores(ctx context.Context, now time.Time) (*device
 				return nil, err
 			}
 		}
-		snapshot.Items[agent.ID] = scoreOverall(agent, inputs, values[agent.ID], now)
+		snapshot.Items[agent.ID] = scoreOverall(agent, inputs)
+	}
+	for id, value := range scoreDeviceValues(data, snapshot.Items) {
+		device := snapshot.Items[id]
+		device.setValueRanking(value)
+		snapshot.Items[id] = device
 	}
 	return snapshot, nil
 }

@@ -8,8 +8,9 @@ import (
 	"404-probe/internal/protocol"
 )
 
-const deviceScoreNetworkWindow = 7 * 24 * time.Hour
+const DeviceScoreWindow = 7 * 24 * time.Hour
 const deviceScoreCoverageBucket = 5 * qualityMinuteMS
+const DeviceScoreMinLineCoverage = time.Hour
 
 type DeviceScoreLine struct {
 	NetworkLine
@@ -34,7 +35,7 @@ type DeviceScoreInputs struct {
 func (s *Store) ReadDeviceScoreInputs(ctx context.Context, id string, now time.Time) (DeviceScoreInputs, error) {
 	var out DeviceScoreInputs
 	end := now.Truncate(5 * time.Minute).UnixMilli()
-	start := end - deviceScoreNetworkWindow.Milliseconds()
+	start := end - DeviceScoreWindow.Milliseconds()
 	tx, err := s.beginNetworkStatusRead(ctx)
 	if err != nil {
 		return out, err
@@ -48,8 +49,8 @@ func (s *Store) ReadDeviceScoreInputs(ctx context.Context, id string, now time.T
 	var cpu, ram, disk sql.NullFloat64
 	err = tx.QueryRowContext(ctx, `SELECT SUM(cpu_sum)/NULLIF(SUM(samples),0),
 		SUM(ram_sum)/NULLIF(SUM(samples),0),SUM(disk_sum)/NULLIF(SUM(samples),0)
-		FROM minute_metrics WHERE agent_id=? AND bucket>=? AND bucket<?`,
-		id, now.Add(-deviceScoreNetworkWindow).Truncate(time.Minute).UnixMilli(),
+		FROM minute_metrics WHERE agent_id=? AND bucket>=? AND bucket<=?`,
+		id, now.Add(-DeviceScoreWindow).Truncate(time.Minute).UnixMilli(),
 		now.Truncate(time.Minute).UnixMilli()).Scan(&cpu, &ram, &disk)
 	if err != nil {
 		return out, err
@@ -60,7 +61,7 @@ func (s *Store) ReadDeviceScoreInputs(ctx context.Context, id string, now time.T
 	if err = tx.Commit(); err != nil {
 		return out, err
 	}
-	out.Presence, err = s.AgentPresenceHistory(ctx, id, now.Add(-QualityHistoryRetention).UnixMilli(), now.UnixMilli(), now)
+	out.Presence, err = s.agentPresenceHistory(ctx, id, now.Add(-DeviceScoreWindow).UnixMilli(), now.UnixMilli(), now, true)
 	return out, err
 }
 
@@ -103,7 +104,7 @@ func readDeviceScoreLines(ctx context.Context, tx *sql.Tx, id string, start, end
 			return nil, err
 		}
 		lines = append(lines, DeviceScoreLine{NetworkLine: line, CoveredMS: covered})
-		if covered >= (end-start)/2 {
+		if covered >= DeviceScoreMinLineCoverage.Milliseconds() {
 			acc[line] = &networkFleetAccumulator{whole: qualityNewBucket(), evening: qualityNewBucket()}
 			if icmp := (NetworkLine{line.Slot, line.Family, "icmp"}); line.Protocol == "tcp" && targets[icmp] != nil {
 				acc[icmp] = &networkFleetAccumulator{whole: qualityNewBucket(), evening: qualityNewBucket()}

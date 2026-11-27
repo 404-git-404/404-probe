@@ -13,14 +13,18 @@ const part = (key,score,weight,reason) => ({key,score,weight,effective_weight:re
 const fixtureScore = i => {
   const score = points[i%8], grade = expected[i%8];
   if(score==null) return {overall:{score,reason:'paused'},network:{score,reason:'paused'}};
-  const network = {score,grade,parts:[
+  const newMachine = i%8===6;
+  const noRank = i%8===3;
+  const rank = noRank ? 0 : i%8+1-(i%8>3?1:0);
+  const value = noRank ? null : 100*(6-rank)/5;
+  const network = newMachine ? {score:null,reason:'no_card_lines'} : {score,grade,parts:[
     part('availability',score,30),part('latency',score,25),part('stability',score,20),
     part('evening',score,15),part('alerts',score,10),
   ]};
-  const value = i%8===3 ? part('value',null,20,'once') : part('value',score,20);
   return {network,overall:{score,grade,parts:[
-    part('network',score,40),part('uptime',score,25),value,part('resources',score,15),
-  ]},online_percent:95+score/20,value_rank:value.score==null?0:i+1,value_count:value.score==null?0:8};
+    part('network',network.score,50,network.reason),part('uptime',score,30),part('resources',score,20),
+  ]},online_percent:95+score/20,value_rank:rank,value_count:noRank?0:6,value_reason:noRank?'once':undefined,
+    value_score:value,high_value:value>=80&&score>=65};
 };
 
 async function scoreFleet(n){
@@ -55,6 +59,13 @@ async function scoreFleet(n){
 
 const captureDir = process.env.S3C_SCREENSHOTS;
 const baselineDir = process.env.S3C_BASELINE_STATIC;
+const s1Screens = process.env.V141_S1_SCREENSHOTS;
+async function captureTooltip(tooltip, name) {
+  if (!s1Screens) return;
+  fs.mkdirSync(s1Screens, {recursive:true});
+  await tooltip.page().evaluate(() => document.fonts.ready);
+  await tooltip.screenshot({path:path.join(s1Screens, name+'.png'), animations:'disabled'});
+}
 async function capture(page,name,options={}){
   if(!captureDir)return;
   fs.mkdirSync(captureDir,{recursive:true});
@@ -109,15 +120,33 @@ test('S3-C displays all score tiers, breakdowns and touch navigation',async t=>{
       await top.hover();
       const tooltip=page.getByRole('tooltip');
       await tooltip.waitFor();
-      assert.match(await tooltip.textContent(),/可用性.*晚高峰.*告警.*近 30 天在线率.*排名.*点击查看详情/);
+      assert.match(await tooltip.textContent(),/可用性.*晚高峰.*告警.*近 7 天在线率.*性价比 第 1 \/ 6 名.*点击查看详情/);
+      assert.deepEqual(await tooltip.locator('.score-part-label').allTextContents(),['网络','在线率','资源余量']);
+      if (theme==='light') await captureTooltip(tooltip, '01-score-ranked');
       await capture(page,theme+'-hover');
       await top.click();
       const dialog=page.locator('#device-details[open]');
       await dialog.waitFor();
-      assert.match(await dialog.locator('.score-breakdown').textContent(),/综合评分 SSS.*98/);
+      assert.match(await dialog.locator('.score-breakdown').textContent(),/综合评分 SSS.*98.*性价比 第 1 \/ 6 名/);
       await capture(page,theme+'-details');
       await page.keyboard.press('Escape');
       await dialog.waitFor({state:'hidden'});
+      const excluded = page.locator('.score-stamp-card[data-tier="A"]');
+      await excluded.hover();
+      await tooltip.getByText('性价比 不参与排名（一次性付费）', {exact:true}).waitFor();
+      if (theme==='light') await captureTooltip(tooltip, '02-score-unranked');
+      await excluded.click();
+      await dialog.getByText('性价比 不参与排名（一次性付费）', {exact:true}).waitFor();
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({state:'hidden'});
+      const newStamp = page.locator('.score-stamp-card[data-tier="D"]');
+      await newStamp.scrollIntoViewIfNeeded();
+      await page.waitForFunction(() => !document.documentElement.classList.contains('score-scrolling'));
+      await page.mouse.move(0,0);
+      await newStamp.hover();
+      await tooltip.getByText('未计入 · 没有启用并在卡片显示的线路', {exact:true}).waitFor();
+      assert.deepEqual(await tooltip.locator('.score-part-label').allTextContents(),['网络','在线率','资源余量']);
+      if (theme==='light') await captureTooltip(tooltip, '03-score-new-no-network');
       await page.locator('[data-view=list]').click();
       const listStamp=page.locator('.score-stamp-list[data-tier="SSS"]');
       await listStamp.waitFor();
