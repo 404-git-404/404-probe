@@ -50,6 +50,8 @@ type EngineConfig struct {
 	LiveBinary                string
 	StagedBinary              string
 	PreviousBinary            string
+	InstallHelper             string
+	ApplyInstallHelper        func(context.Context, []byte) error
 	HTTPClient                *http.Client
 	ReleaseBase               string
 	Inspect                   Inspector
@@ -133,6 +135,14 @@ func NewEngine(config EngineConfig) (*Engine, error) {
 func (e *Engine) Recover() {
 	e.mu.Lock()
 	status := e.state.Status
+	if status == "succeeded" && !e.running && !e.state.HelperUpdateComplete && e.config.InstallHelper != "" &&
+		e.config.CurrentVersion == e.state.TargetVersion && SupportsInstallHelperUpdate(e.state.TargetVersion) {
+		// An older updater committed the binary and re-executed into this version.
+		e.running = true
+		e.mu.Unlock()
+		go e.finishLegacyHelperUpdate()
+		return
+	}
 	if !isActiveLocalStatus(status) || e.running {
 		e.mu.Unlock()
 		return
@@ -277,12 +287,13 @@ func (e *Engine) StartAgentRemoval(request Request) error {
 func (e *Engine) run(request Request) {
 	installed := false
 	failureCode := ""
+	var checksums []byte
 	if err := e.setStatus("downloading", "", ""); err != nil {
 		failureCode = "stage_failed"
 	} else if err := func() error {
 		ctx, cancel := context.WithTimeoutCause(context.Background(), e.config.DownloadTimeout, errDownloadDeadline)
 		defer cancel()
-		return e.downloadAndVerify(ctx, request.TargetVersion)
+		return e.downloadAndVerify(ctx, request.TargetVersion, &checksums)
 	}(); err != nil {
 		failureCode = classifyDownloadFailure(err)
 	} else if err := e.setStatus("staging", "", ""); err != nil {
@@ -322,7 +333,7 @@ func (e *Engine) run(request Request) {
 	e.mu.Unlock()
 	select {
 	case <-health:
-		if err := e.setStatus("succeeded", "", ""); err != nil {
+		if err := e.finishSuccessfulUpgrade(checksums); err != nil {
 			e.finishFailure(true, "stage_failed")
 			return
 		}
@@ -338,7 +349,7 @@ func (e *Engine) run(request Request) {
 	}
 }
 
-func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
+func (e *Engine) downloadAndVerify(ctx context.Context, target string, checksums *[]byte) error {
 	asset, err := assetName(e.config.GOOS, e.config.GOARCH)
 	if err != nil {
 		return err
@@ -421,6 +432,7 @@ func (e *Engine) downloadAndVerify(ctx context.Context, target string) error {
 	if requiresLinkedVersion(target) && info.Version != target {
 		return errors.New("candidate_version_mismatch")
 	}
+	*checksums = checksumBody
 	return nil
 }
 
@@ -975,7 +987,7 @@ func (e *Engine) recoverInstalled() {
 	e.mu.Unlock()
 	select {
 	case <-health:
-		if err := e.setStatus("succeeded", "", ""); err != nil {
+		if err := e.finishSuccessfulUpgrade(nil); err != nil {
 			e.finishFailure(true, "stage_failed")
 			return
 		}

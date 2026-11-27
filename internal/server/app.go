@@ -34,6 +34,7 @@ type App struct {
 	shutdown                      context.Context
 	cancel                        context.CancelFunc
 	mu                            sync.RWMutex
+	reportLifecycleMu             sync.RWMutex
 	states                        map[string]storage.State
 	hub                           *hub
 	traffic                       *trafficCache
@@ -233,11 +234,15 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	authenticatedID, err := a.store.Authenticate(r.Context(), token)
 	if err != nil {
+		if errors.Is(err, storage.ErrAgentDeleted) {
+			a.logger.Warn("rejected credential for permanently deleted Agent")
+		}
 		if errors.Is(err, storage.ErrAgentRevoked) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
 			return
 		}
 		if errors.Is(err, storage.ErrAgentDisabled) {
+			a.recordPausedAgentContact(r.Context(), token)
 			writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
 			return
 		}
@@ -274,6 +279,8 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if report.NetworkQualityV2 != nil {
 		report.NetworkQualityV2.Objects = r.Header.Get(protocol.QualityObjectsHeader) == "1"
 	}
+	a.reportLifecycleMu.RLock()
+	defer a.reportLifecycleMu.RUnlock()
 	received := a.now()
 	owner := a.traffic.capture(authenticatedID, received)
 	// Retired slots can be evicted; pending removal is authoritative even then.
@@ -288,6 +295,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, storage.ErrAgentDisabled) {
+			a.recordPausedAgentContact(r.Context(), token)
 			writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
 			return
 		}
@@ -498,6 +506,9 @@ func (a *App) authenticateJobRequest(w http.ResponseWriter, r *http.Request, ope
 	}
 	agentID, err := a.store.Authenticate(r.Context(), token)
 	if err != nil {
+		if errors.Is(err, storage.ErrAgentDeleted) {
+			a.logger.Warn("rejected credential for permanently deleted Agent")
+		}
 		if errors.Is(err, storage.ErrAgentRevoked) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
 			return "", false

@@ -19,6 +19,9 @@ const removeAgentInput = document.querySelector('#remove-agent-input');
 const removeAgentPrompt = document.querySelector('#remove-agent-prompt');
 const removeAgentConfirm = document.querySelector('#remove-agent-confirm');
 const removeAgentError = document.querySelector('#remove-agent-error');
+const removeAgentDeleteWarning = document.querySelector('#remove-agent-delete-warning');
+const deleteAgentOnlineMessage = '设备在线时不能删除。先在机器上卸载 Agent 或等它离线';
+let permanentAgentRemoval = false;
 const serverVersion = document.querySelector('#server-version');
 const upgradeAgentDialog = document.querySelector('#upgrade-agent-dialog');
 const upgradeAgentForm = document.querySelector('#upgrade-agent-form');
@@ -244,6 +247,7 @@ const enrollmentDialog = AgentEnrollment.createController({
     choiceName: document.querySelector('#add-agent-choice-name'), next: document.querySelector('#add-agent-next'),
     chooseOneClick: document.querySelector('#add-agent-choose-oneclick'), chooseManual: document.querySelector('#add-agent-choose-manual'),
     reason: document.querySelector('#add-agent-oneclick-reason'), form: document.querySelector('#oneclick-form'),
+    rootOption: document.querySelector('#oneclick-root-option'), rootCollector: document.querySelector('#oneclick-root-collector'),
     name: document.querySelector('#oneclick-name'), error: document.querySelector('#oneclick-error'), submit: document.querySelector('#oneclick-submit'),
     oneclickBack: document.querySelector('#oneclick-back'), command: document.querySelector('#oneclick-command'),
     copy: document.querySelector('#oneclick-copy'), countdown: document.querySelector('#oneclick-countdown'),
@@ -256,7 +260,7 @@ const enrollmentDialog = AgentEnrollment.createController({
 });
 
 let manualEnrollmentGeneration=0,manualCredential='',manualEnrollmentPending=false;
-addShell.setGuard({read:()=>[document.querySelector('#add-agent-choice-name').value,document.querySelector('#add-agent-choose-oneclick').getAttribute('aria-checked')],busy:()=>manualEnrollmentPending||enrollmentDialog.busy});
+addShell.setGuard({read:()=>[document.querySelector('#add-agent-choice-name').value,document.querySelector('#add-agent-choose-oneclick').getAttribute('aria-checked'),document.querySelector('#oneclick-root-collector').checked],busy:()=>manualEnrollmentPending||enrollmentDialog.busy});
 upgradeShell.setGuard({busy:()=>!!pendingUpgradeAgentID&&agentState.busy(pendingUpgradeAgentID,'upgrade')});
 removeShell.setGuard({busy:()=>removeAgentInput.disabled});
 for(const node of document.querySelectorAll('[data-agent-server]'))node.textContent=location.origin;
@@ -327,27 +331,40 @@ addAgentForm.addEventListener('submit', async event => {
 
 function clearRemoveAgentDialog() {
   pendingRemoveAgentID = '';
+  permanentAgentRemoval = false;
   removeAgentName.textContent = '';
   removeAgentError.classList.add('hidden');
   removeAgentInput.value='';removeAgentInput.disabled=false;removeAgentConfirm.disabled = true;
 }
 
-function openRemoveAgentDialog(agent) {
-  removeShell.heading('撤销 Agent',agent.name);
+function openRemoveAgentDialog(agent, permanent = false) {
   clearRemoveAgentDialog();
+  permanentAgentRemoval = permanent;
+  removeShell.heading(permanent ? '彻底删除设备' : '撤销 Agent', permanent ? '' : agent.name);
+  for (const id of ['remove-agent-revoke-help', 'remove-agent-revoke-warning', 'remove-agent-identity']) {
+    document.getElementById(id).hidden = permanent;
+  }
+  removeAgentDeleteWarning.hidden = !permanent;
+  removeAgentConfirm.textContent = permanent ? '彻底删除' : '确认撤销';
   pendingRemoveAgentID = agent.agent_id;
   removeAgentName.textContent = agent.name || '未命名 Agent';removeAgentPrompt.textContent='输入设备名 '+removeAgentName.textContent+' 以确认';
+  removeAgentDeleteWarning.textContent = permanent ? `将永久删除「${agent.name}」及其全部历史数据（资源、流量、网络、事件、评分、套餐、备注、标签和分组分配、忽略设置），删除后无法恢复。` : '';
   removeAgentDialog.showModal();
 }
 
-removeAgentInput.addEventListener('input',()=>{removeAgentConfirm.disabled=removeAgentInput.disabled||!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);});
+function matchesRemovalName() {
+  return permanentAgentRemoval ? removeAgentInput.value === removeAgentName.textContent : Management.matchesDeviceName(removeAgentInput.value, removeAgentName.textContent);
+}
+
+removeAgentInput.addEventListener('input',()=>{removeAgentConfirm.disabled=removeAgentInput.disabled||!matchesRemovalName();});
 document.querySelector('#remove-agent-cancel').addEventListener('click', () => removeAgentDialog.close());
 removeAgentDialog.addEventListener('close',()=>{if(!removeAgentDialog.open)clearRemoveAgentDialog();});
 
 removeAgentForm.addEventListener('submit', async event => {
   event.preventDefault();
   const agentID = pendingRemoveAgentID;
-  if (!mutationCSRFToken || !agentID || removeAgentInput.disabled || !Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent)) return;
+  const permanent = permanentAgentRemoval;
+  if (!mutationCSRFToken || !agentID || removeAgentInput.disabled || !matchesRemovalName()) return;
   const barrier = agentState.beginDelete(agentID);
   if (!barrier) return;
   reconciliation.cancel(agentID);
@@ -361,19 +378,24 @@ removeAgentForm.addEventListener('submit', async event => {
   removeAgentConfirm.disabled = true;removeAgentInput.disabled=true;
   removeAgentError.classList.add('hidden');
   try {
-    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agentID)}/revoke`, {
+    const request = {
       method: 'POST',
       cache: 'no-store',
       headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
       body: '{}',
-    });
+    };
+    if (permanent) request.body = JSON.stringify({name: removeAgentInput.value});
+    const action = permanent ? '/delete' : '/revoke';
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agentID)}${action}`, request);
     if (response.status === 401) {
       location.assign('/login');
       return;
     }
-    if (!response.ok) throw new Error(response.statusText);
-    const revoked = await response.json();
-    if (!revoked.agent || !revoked.agent.revoked) throw new Error('Agent was not revoked');
+    if (!response.ok) {
+      const code = permanent ? (await response.json().catch(() => null))?.error?.code : '';
+      throw new Error(code);
+    }
+    if (permanent ? response.status !== 204 : !(await response.json()).agent?.revoked) throw new Error('unexpected removal response');
     removed = true;
     agentState.finishDelete(barrier, true);
     editingAgentNames.delete(agentID); agentNameDrafts.delete(agentID);
@@ -383,7 +405,12 @@ removeAgentForm.addEventListener('submit', async event => {
     render();
     await refresh();
   } catch (error) {
-    if(pendingRemoveAgentID===agentID){removeAgentError.classList.remove('hidden');removeAgentInput.disabled=false;removeAgentConfirm.disabled=!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);}
+    if (pendingRemoveAgentID === agentID) {
+      removeAgentError.textContent = error.message === 'agent_online' ? deleteAgentOnlineMessage : error.message === 'agent_name_mismatch' ? '设备名称已经更改，请刷新后重新确认。' : '移除失败，请重试。';
+      removeAgentError.classList.remove('hidden');
+      removeAgentInput.disabled = false;
+      removeAgentConfirm.disabled = !matchesRemovalName();
+    }
   } finally {
     if (!removed) {
       agentState.finishDelete(barrier, false);
@@ -1694,6 +1721,7 @@ function createAgentDetails(initial){
 
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
+      deleteAgent:a=>openRemoveAgentDialog(a,true),canDeleteAgent:a=>Boolean(mutationCSRFToken&&!agentState.blocked(a.agent_id)),deleteOnlineMessage:deleteAgentOnlineMessage,
       youtubeRegions,saveYouTubeRegion,canSaveYouTubeRegion,youtubeError:a=>agentActionErrors.get(`${a.agent_id}/youtube-region`)||'',serverNow:dashboardData.serverNow,
       setDetailCheck,canEditAgentControl,acknowledgeDiskFault,diskAckError,
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
@@ -1869,7 +1897,7 @@ async function pollActiveDetail(){
  if(suspended)return;
  const generation=detailPollGeneration;
  const active=deviceDetails.snapshot(),agent=active.open&&!document.hidden&&agents.get(active.id);
- const pending=agent&&(['requested','delivered'].includes(agent.country_code_lookup_operation?.status)||agent.google_status?.pending);
+ const pending=agent&&(['requested','delivered'].includes(agent.country_code_lookup_operation?.status)||agent.google_status?.pending||(active.tab==='management'&&agent.disabled_at));
  const results=pending?await hydrateActiveDetail(active.id):null;
  if(generation!==detailPollGeneration)return;
  detailPollDelay=results?.some(result=>result.status==='rejected')
@@ -1922,5 +1950,5 @@ events.addEventListener('agent', event => {
  const detail=deviceDetails.snapshot();
  if(detail.open&&detail.id===id&&(agentState.fullEvent(update)||(['system','security'].includes(detail.tab)&&update.system_checked_at!==previous?.system_checked_at)))hydrateActiveDetail(id);
 });
-events.addEventListener('dashboard',event=>{try{const value=JSON.parse(event.data);dashboardData.metadata(value);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===value.agent_id&&!value.revoked)hydrateActiveDetail(value.agent_id);}catch{}});
+events.addEventListener('dashboard',event=>{try{const value=JSON.parse(event.data);dashboardData.metadata(value);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===value.agent_id&&!value.revoked&&value.kind!=='delete')hydrateActiveDetail(value.agent_id);}catch{}});
 events.addEventListener('organization',event=>{try{const value=JSON.parse(event.data);dashboardData.organization(value);}catch{}});

@@ -54,8 +54,10 @@ func rewindNetworkStatusFixture(t *testing.T, db *sql.DB) {
 func rewindSystemCheckIgnoresFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
 	dropColumnIfPresent(t, db, "tags", "color")
-	if _, err := db.Exec(`DROP TABLE IF EXISTS agent_system_check_ignores;
-		DELETE FROM schema_migrations WHERE version=47`); err != nil {
+	dropColumnIfPresent(t, db, "agents", "paused_contact_at")
+	if _, err := db.Exec(`DROP TABLE IF EXISTS deleted_agent_credentials;
+		DROP TABLE IF EXISTS agent_system_check_ignores;
+		DELETE FROM schema_migrations WHERE version>=47`); err != nil {
 		t.Fatal(err)
 	}
 }

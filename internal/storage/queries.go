@@ -37,10 +37,11 @@ type AgentQuery struct {
 }
 
 type AgentSnapshot struct {
-	Agent      Agent
-	State      *State
-	Online     bool
-	StateStale bool
+	Agent         Agent
+	State         *State
+	Online        bool
+	StateStale    bool
+	RecentContact bool
 }
 
 type ProbeScheduleQuery struct {
@@ -414,9 +415,9 @@ func readAgentSnapshotTx(ctx context.Context, tx *sql.Tx, agentID string, nowMil
 	var record AgentSnapshot
 	var revoked int
 	var disabledAt sql.NullInt64
-	var updatedAt int64
-	err := tx.QueryRowContext(ctx, `SELECT id,name,revoked,disabled_at,created_at,updated_at FROM agents WHERE id=?`, agentID).Scan(
-		&record.Agent.ID, &record.Agent.Name, &revoked, &disabledAt, &record.Agent.CreatedAt, &updatedAt)
+	var updatedAt, lastPaused int64
+	err := tx.QueryRowContext(ctx, `SELECT id,name,revoked,disabled_at,created_at,updated_at,paused_contact_at FROM agents WHERE id=?`, agentID).Scan(
+		&record.Agent.ID, &record.Agent.Name, &revoked, &disabledAt, &record.Agent.CreatedAt, &updatedAt, &lastPaused)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentSnapshot{}, false, nil
 	}
@@ -443,6 +444,7 @@ func readAgentSnapshotTx(ctx context.Context, tx *sql.Tx, agentID string, nowMil
 		record.StateStale = record.Agent.DisabledAt != nil || state.LastSeen < updatedAt
 		record.Online = !record.Agent.Revoked && record.Agent.DisabledAt == nil && state.LastSeen > 0 && state.LastSeen >= nowMillis-offlineMillis
 	}
+	record.RecentContact = agentContactRecent(state.LastSeen, lastPaused, disabledAt, nowMillis, offlineMillis)
 	return record, true, nil
 }
 

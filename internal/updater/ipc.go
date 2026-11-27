@@ -90,19 +90,20 @@ type State struct {
 	// Deprecated: old v1.0.1 journals may contain this flag. Accept and ignore
 	// it until all journals predating the supported upgrade window are retired;
 	// MarshalJSON never writes it, so any subsequent persistence removes it.
-	LocalMigration  bool   `json:"local_migration,omitempty"`
-	SourceVersion   string `json:"source_version,omitempty"`
-	ServerVersion   string `json:"server_version,omitempty"`
-	ProtocolVersion int    `json:"protocol_version,omitempty"`
-	Channel         string `json:"channel,omitempty"`
-	TargetCommit    string `json:"target_commit,omitempty"`
-	OperationID     string `json:"operation_id"`
-	TargetVersion   string `json:"target_version"`
-	ReleaseCommit   string `json:"release_commit,omitempty"`
-	Status          string `json:"status"`
-	FailureCode     string `json:"failure_code,omitempty"`
-	FailureMessage  string `json:"failure_message,omitempty"`
-	UpdatedAt       int64  `json:"updated_at"`
+	LocalMigration       bool   `json:"local_migration,omitempty"`
+	SourceVersion        string `json:"source_version,omitempty"`
+	ServerVersion        string `json:"server_version,omitempty"`
+	ProtocolVersion      int    `json:"protocol_version,omitempty"`
+	Channel              string `json:"channel,omitempty"`
+	TargetCommit         string `json:"target_commit,omitempty"`
+	OperationID          string `json:"operation_id"`
+	TargetVersion        string `json:"target_version"`
+	ReleaseCommit        string `json:"release_commit,omitempty"`
+	Status               string `json:"status"`
+	FailureCode          string `json:"failure_code,omitempty"`
+	FailureMessage       string `json:"failure_message,omitempty"`
+	HelperUpdateComplete bool   `json:"helper_update_complete,omitempty"`
+	UpdatedAt            int64  `json:"updated_at"`
 }
 
 func (s State) MarshalJSON() ([]byte, error) {

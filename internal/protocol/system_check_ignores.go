@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"net/netip"
 	"regexp"
 	"strings"
 	"unicode"
@@ -12,6 +13,7 @@ const (
 	SystemCheckRestart     = "service_restart"
 	SystemCheckCertificate = "certificate"
 	SystemCheckTime        = "time"
+	SystemCheckDNS         = "dns"
 )
 
 type SystemCheckKey struct {
@@ -36,6 +38,9 @@ func (key SystemCheckKey) Valid() bool {
 			strings.IndexFunc(item, unicode.IsControl) < 0
 	case SystemCheckTime:
 		return item == SystemCheckTime
+	case SystemCheckDNS:
+		addr, err := netip.ParseAddr(item)
+		return err == nil && addr.Zone() == "" && addr.IsLoopback() && !addr.Is4In6() && addr.String() == item
 	default:
 		return false
 	}

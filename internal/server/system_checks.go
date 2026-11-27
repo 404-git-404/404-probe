@@ -24,6 +24,7 @@ type systemAttention struct {
 	Service        bool                  `json:"service,omitempty"`
 	ServiceRestart string                `json:"service_restart,omitempty"`
 	Time           bool                  `json:"time,omitempty"`
+	DNS            bool                  `json:"dns,omitempty"`
 	Items          []systemAttentionItem `json:"items,omitempty"`
 	Ignored        []systemAttentionItem `json:"ignored,omitempty"`
 }
@@ -91,6 +92,23 @@ func checkAttention(checks *protocol.SystemChecks, now time.Time, ignores storag
 	if len(clock) > 0 {
 		add(protocol.SystemCheckTime, protocol.SystemCheckTime, "warning", strings.Join(clock, "，"))
 	}
+	if dns := checks.LocalDNS; dns != nil {
+		for _, server := range dns.Servers {
+			if server.ConsecutiveFailures < 2 {
+				continue
+			}
+			reason := "服务器错误"
+			switch server.Result {
+			case protocol.DNSTimeout:
+				reason = "超时"
+			case protocol.DNSRefused:
+				reason = "拒绝连接"
+			case protocol.DNSNoRecord:
+				reason = "无记录"
+			}
+			add(protocol.SystemCheckDNS, server.Address, "danger", fmt.Sprintf("%s 解析 %s 失败：%s", server.Address, dns.Query, reason))
+		}
+	}
 	for _, item := range attention.Items {
 		switch item.Kind {
 		case protocol.SystemCheckCertificate:
@@ -101,6 +119,8 @@ func checkAttention(checks *protocol.SystemChecks, now time.Time, ignores storag
 			attention.ServiceRestart = maxAttentionLevel(attention.ServiceRestart, item.Level)
 		case protocol.SystemCheckTime:
 			attention.Time = true
+		case protocol.SystemCheckDNS:
+			attention.DNS = true
 		}
 	}
 	return attention

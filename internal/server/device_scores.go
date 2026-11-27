@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"maps"
 	"math"
 	"math/big"
 	"net/http"
@@ -349,11 +350,13 @@ func (a *App) maintainDeviceScores() {
 	ticker := time.NewTicker(deviceScoreInterval)
 	defer ticker.Stop()
 	for {
+		previous := a.deviceScores.Load()
 		ctx, cancel := context.WithTimeout(a.shutdown, 2*time.Minute)
 		snapshot, err := a.calculateDeviceScores(ctx, a.now())
 		cancel()
 		if err == nil {
-			a.deviceScores.Store(snapshot)
+			// A deletion after this calculation started invalidates its snapshot.
+			a.deviceScores.CompareAndSwap(previous, snapshot)
 		} else if a.shutdown.Err() == nil {
 			a.logger.Warn("device score refresh failed", "error", err)
 		}
@@ -361,6 +364,21 @@ func (a *App) maintainDeviceScores() {
 		case <-a.shutdown.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+func (a *App) removeDeviceScore(id string) {
+	for {
+		previous := a.deviceScores.Load()
+		next := &deviceScoreSnapshot{Items: map[string]deviceScore{}}
+		if previous != nil {
+			next.ComputedAt = previous.ComputedAt
+			next.Items = maps.Clone(previous.Items)
+			delete(next.Items, id)
+		}
+		if a.deviceScores.CompareAndSwap(previous, next) {
+			return
 		}
 	}
 }

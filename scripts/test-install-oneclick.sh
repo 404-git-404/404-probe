@@ -185,6 +185,18 @@ attempt install_agent_oneclick
 [[ "${status}" -eq 0 && "${output}" == 'install_agent  server=https://probe.example.com name=web 1' ]]
 printf 'PASS a clean machine proceeds to the Agent install\n'
 
+setup_root_collector() { printf 'root collector setup\n'; }
+for mode in systemd openrc; do
+  INSTALL_INIT="${mode}" PROBE_404_SETUP_ROOT_COLLECTOR=1 attempt install_agent_oneclick
+  [[ "${status}" -eq 0 && "${output}" == 'install_agent '* ]]
+  if [[ "${mode}" == systemd ]]; then
+    [[ "${output}" == *$'\nroot collector setup' ]]
+  else
+    [[ "${output}" == *'已跳过 root 采集：仅 Debian 支持。'* && "${output}" != *'root collector setup'* ]]
+  fi
+done
+printf 'PASS root collection runs after Debian install and is skipped successfully on Alpine\n'
+
 # 12. Non-root: refused first, with the guidance and without using the token.
 reset; set_complete
 current_euid() { printf '1000'; }
