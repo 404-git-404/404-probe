@@ -81,6 +81,10 @@ func (s *Store) SweepPresence(ctx context.Context, now time.Time) error {
 }
 
 func (s *Store) AgentPresenceHistory(ctx context.Context, id string, start, end int64, now time.Time) (PresenceHistory, error) {
+	return s.agentPresenceHistory(ctx, id, start, end, now, false)
+}
+
+func (s *Store) agentPresenceHistory(ctx context.Context, id string, start, end int64, now time.Time, forScore bool) (PresenceHistory, error) {
 	out := PresenceHistory{Start: start, End: end, Events: []PresenceEvent{}, InitialState: "unknown"}
 	if _, err := networkStatusResolution(start, end, now); err != nil {
 		return out, err
@@ -107,7 +111,12 @@ func (s *Store) AgentPresenceHistory(ctx context.Context, id string, start, end 
 		state = "offline"
 	}
 	out.InitialState = presenceState(state)
-	rows, err := tx.QueryContext(ctx, `SELECT at,kind FROM agent_presence_events WHERE agent_id=? AND at>=? AND at<? ORDER BY at,id`, id, start, end)
+	eventEnd := end
+	if forScore {
+		// A heartbeat recorded in the scoring millisecond is already an observation.
+		eventEnd++
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT at,kind FROM agent_presence_events WHERE agent_id=? AND at>=? AND at<? ORDER BY at,id`, id, start, eventEnd)
 	if err != nil {
 		return out, err
 	}
@@ -128,7 +137,17 @@ func (s *Store) AgentPresenceHistory(ctx context.Context, id string, start, end 
 	if deadline >= start && deadline < end {
 		out.Events = append(out.Events, PresenceEvent{At: deadline, Kind: "offline"})
 	}
-	at := start
+	if forScore && state == "unknown" {
+		for len(out.Events) > 0 {
+			event := out.Events[0]
+			if event.Kind == "online" || event.Kind == "offline" {
+				out.Start = event.At
+				break
+			}
+			out.Events = out.Events[1:]
+		}
+	}
+	at := out.Start
 	for _, event := range out.Events {
 		out.addDuration(state, event.At-at)
 		at, state = event.At, event.Kind
@@ -136,6 +155,9 @@ func (s *Store) AgentPresenceHistory(ctx context.Context, id string, start, end 
 	out.addDuration(state, end-at)
 	if observed := out.OnlineMS + out.OfflineMS; observed > 0 {
 		percent := 100 * float64(out.OnlineMS) / float64(observed)
+		out.OnlinePercent = &percent
+	} else if forScore && state == "online" {
+		percent := 100.0
 		out.OnlinePercent = &percent
 	}
 	return out, tx.Commit()

@@ -21,6 +21,54 @@ import (
 	"404-probe/internal/protocol"
 )
 
+func TestReadRebootPackages(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "run", "reboot-required.pkgs")
+	fallback := filepath.Join(dir, "var", "run", "reboot-required.pkgs")
+	for _, path := range []string{primary, fallback} {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, contents string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(want []string, more bool) {
+		t.Helper()
+		got, truncated := readRebootPackages(primary, fallback)
+		if !reflect.DeepEqual(got, want) || truncated != more {
+			t.Fatalf("got %q (%t truncated), want %q (%t truncated)", got, truncated, want, more)
+		}
+	}
+	check(nil, false)
+	write(fallback, "fallback-package\n")
+	check([]string{"fallback-package"}, false)
+	long := strings.Repeat("a", 70_000)
+	write(primary, " linux-image-6.12.x-amd64\r\n\nlibc6\nlibc6\n \n"+long)
+	check([]string{"linux-image-6.12.x-amd64", "libc6", long[:protocol.MaxRebootPackageBytes]}, false)
+	var packages []string
+	for i := range protocol.MaxRebootPackages {
+		packages = append(packages, fmt.Sprintf("package-%d", i))
+	}
+	full := strings.Join(packages, "\n")
+	write(primary, full+"\npackage-0\n")
+	check(packages, false)
+	write(primary, full+"\npackage-overflow\n")
+	check(packages, true)
+	write(primary, "\n")
+	check(nil, false)
+	if err := os.Remove(primary); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(primary, 0700); err != nil {
+		t.Fatal(err)
+	}
+	check(nil, false)
+}
+
 func TestCertificateScannerLimitsAndPrivacy(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()

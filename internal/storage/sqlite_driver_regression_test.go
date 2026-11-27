@@ -18,14 +18,15 @@ import (
 
 var sqliteRegressionScalarSequence atomic.Uint64
 
-func registerBlockingSQLiteScalar(t *testing.T, queryContexts <-chan context.Context, entered chan<- struct{}) string {
+func registerBlockingSQLiteScalar(t *testing.T, ctx context.Context, entered chan<- struct{}, stop *atomic.Bool) string {
 	t.Helper()
 	name := fmt.Sprintf("storage_regression_wait_%d", sqliteRegressionScalarSequence.Add(1))
-	err := sqlite.RegisterScalarFunction(name, 0, func(_ *sqlite.FunctionContext, _ []driver.Value) (driver.Value, error) {
-		queryCtx := <-queryContexts
-		entered <- struct{}{}
-		<-queryCtx.Done()
-		return int64(42), nil
+	err := sqlite.RegisterScalarFunction(name, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if args[0] == int64(0) {
+			entered <- struct{}{}
+			<-ctx.Done()
+		}
+		return !stop.Load(), nil
 	})
 	if err != nil {
 		t.Fatalf("register scalar function %q: %v", name, err)
@@ -58,10 +59,12 @@ func TestSQLiteRuntimeVersionPinned(t *testing.T) {
 }
 
 func TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint(t *testing.T) {
-	const maxCancellationAttempts = 20
-	queryContexts := make(chan context.Context, maxCancellationAttempts)
-	entered := make(chan struct{}, maxCancellationAttempts)
-	scalarName := registerBlockingSQLiteScalar(t, queryContexts, entered)
+	queryCtx, cancelQuery := context.WithCancel(t.Context())
+	defer cancelQuery()
+	entered := make(chan struct{}, 1)
+	var stop atomic.Bool
+	defer stop.Store(true)
+	scalarName := registerBlockingSQLiteScalar(t, queryCtx, entered, &stop)
 
 	path := filepath.Join(t.TempDir(), "cancelled-query.db")
 	store, err := Open(context.Background(), path)
@@ -101,66 +104,37 @@ func TestCanceledSQLiteQueryReleasesRowsAndAllowsCheckpoint(t *testing.T) {
 		t.Fatalf("initial WAL checkpoint left frames behind: checkpointed=%d frames=%d", initialCheckpointed, initialFrames)
 	}
 
-	type queryResult struct {
-		rows *sql.Rows
-		err  error
-	}
-	cancellationHits, completedRaces := 0, 0
-	for attempt := 1; attempt <= maxCancellationAttempts; attempt++ {
-		queryCtx, cancelQuery := context.WithCancel(context.Background())
-		queryContexts <- queryCtx
-		queryDone := make(chan queryResult, 1)
-		go func() {
-			rows, queryErr := store.db.QueryContext(queryCtx, "SELECT "+scalarName+"() FROM cancellation_rows")
-			queryDone <- queryResult{rows: rows, err: queryErr}
-		}()
-
-		select {
-		case <-entered:
-			// The scalar remains blocked on queryCtx.Done(), proving cancellation
-			// is requested while SQLite is inside the query rather than after it.
-		case <-time.After(5 * time.Second):
-			cancelQuery()
-			select {
-			case result := <-queryDone:
-				if result.rows != nil {
-					_ = result.rows.Close()
-				}
-				t.Fatalf("blocking SQLite scalar was not entered on cancellation attempt %d; query returned rows=%t error=%v", attempt, result.rows != nil, result.err)
-			case <-time.After(5 * time.Second):
-				t.Fatalf("blocking SQLite scalar was not entered and query did not return on cancellation attempt %d", attempt)
-			}
+	// The seed reads the table and signals that SQLite is executing the query.
+	// The aggregate cannot produce a row until SQLite interrupts the recursion.
+	query := fmt.Sprintf(`WITH RECURSIVE pending(n) AS (
+		SELECT id FROM cancellation_rows WHERE %[1]s(0)
+		UNION ALL SELECT n+1 FROM pending WHERE %[1]s(1)
+	) SELECT max(n) FROM pending`, scalarName)
+	queryDone := make(chan error, 1)
+	go func() {
+		rows, err := store.db.QueryContext(queryCtx, query)
+		if rows != nil {
+			_ = rows.Close()
+			queryDone <- errors.New("canceled query unexpectedly returned Rows")
+			return
 		}
+		queryDone <- err
+	}()
+	select {
+	case <-entered:
 		cancelQuery()
-
-		var result queryResult
-		select {
-		case result = <-queryDone:
-		case <-time.After(5 * time.Second):
-			t.Fatalf("SQLite query did not return after cancellation attempt %d", attempt)
-		}
-		if result.rows != nil {
-			if err := result.rows.Close(); err != nil {
-				t.Fatalf("close Rows returned during cancellation attempt %d: %v", attempt, err)
-			}
-			if result.err != nil {
-				t.Fatalf("cancellation attempt %d returned both Rows and error: %v", attempt, result.err)
-			}
-			completedRaces++
-			t.Logf("cancellation attempt %d completed before the asynchronous interrupt won; Rows explicitly closed (completion races=%d)", attempt, completedRaces)
-			cancelQuery()
-			continue
-		}
-		if !isSQLiteCancellation(result.err) {
-			t.Fatalf("cancellation attempt %d error = %v, want context cancellation or SQLite interrupt", attempt, result.err)
-		}
-		cancellationHits++
-		cancelQuery()
-		t.Logf("cancellation attempt %d observed cancellation/interrupt (actual hits=%d, completion races=%d)", attempt, cancellationHits, completedRaces)
-		break
+	case err := <-queryDone:
+		t.Fatalf("query ended before entering the blocking scalar: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("SQLite did not reach the blocking scalar")
 	}
-	if cancellationHits == 0 {
-		t.Fatalf("cancellation was requested while the scalar was executing, but no cancellation/interrupt result was observed in %d attempts (completed races=%d); cancellation behavior remains uncovered", maxCancellationAttempts, completedRaces)
+	select {
+	case err := <-queryDone:
+		if !isSQLiteCancellation(err) {
+			t.Fatalf("query error = %v, want context cancellation or SQLite interrupt", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SQLite did not interrupt the running query")
 	}
 
 	writeCtx, cancelWrites := context.WithTimeout(context.Background(), 45*time.Second)

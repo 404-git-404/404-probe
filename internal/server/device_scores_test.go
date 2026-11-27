@@ -34,16 +34,16 @@ func TestDeviceNetworkScoreComponents(t *testing.T) {
 	}
 }
 
-func TestDeviceNetworkScoreUsesHalfWindowAndAveragesLines(t *testing.T) {
-	half := deviceScoreWindow.Milliseconds() / 2
-	best := storage.DeviceScoreLine{CoveredMS: half, FailurePercent: scoreNumber(0), P50: scoreNumber(50), P95: scoreNumber(60), Jitter: scoreNumber(5), Evening: scoreNumber(50)}
-	worst := storage.DeviceScoreLine{CoveredMS: half + 1, FailurePercent: scoreNumber(10), P50: scoreNumber(600), P95: scoreNumber(1500), Jitter: scoreNumber(50), Evening: scoreNumber(1200), AlertMS: (24 * time.Hour).Milliseconds()}
+func TestDeviceNetworkScoreUsesOneHourAndAveragesLines(t *testing.T) {
+	best := storage.DeviceScoreLine{CoveredMS: time.Hour.Milliseconds(), FailurePercent: scoreNumber(0), P50: scoreNumber(50), P95: scoreNumber(60), Jitter: scoreNumber(5), Evening: scoreNumber(50)}
+	worst := storage.DeviceScoreLine{CoveredMS: (61 * time.Minute).Milliseconds(), FailurePercent: scoreNumber(10), P50: scoreNumber(600), P95: scoreNumber(1500), Jitter: scoreNumber(50), Evening: scoreNumber(1200), AlertMS: (24 * time.Hour).Milliseconds()}
 	short := best
-	short.CoveredMS = half - 1
+	short.CoveredMS = (59 * time.Minute).Milliseconds()
 	if got := scoreMachineNetwork([]storage.DeviceScoreLine{short}, false); got.Score != nil || got.Lines[0].Reason != "line_coverage" {
 		t.Fatal(got)
 	}
-	if got := scoreMachineNetwork([]storage.DeviceScoreLine{short, best, worst}, false); got.Score == nil || *got.Score != 50 || got.Grade != "C" || *got.Parts[1].Score != 50 {
+	if got := scoreMachineNetwork([]storage.DeviceScoreLine{short, best, worst}, false); got.Score == nil || *got.Score != 50 || got.Grade != "C" || *got.Parts[1].Score != 50 ||
+		got.Lines[1].Score == nil || got.Lines[2].Score == nil {
 		t.Fatal(got)
 	}
 }
@@ -61,62 +61,109 @@ func TestDeviceScoreGradeBoundaries(t *testing.T) {
 
 func TestDeviceOverallScoreRenormalizesAndHandlesNewAndPaused(t *testing.T) {
 	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
-	agent := storage.Agent{CreatedAt: now.Add(-8 * 24 * time.Hour).UnixMilli()}
-	for _, value := range []float64{0, 50, 100} {
-		inputs := storage.DeviceScoreInputs{
-			Presence:  storage.PresenceHistory{OnlinePercent: scoreNumber(95 + value/20)},
-			Resources: &storage.DeviceResourceAverage{CPU: 100 - value, RAM: 100 - value, Disk: 100 - value},
-		}
-		got := scoreOverall(agent, inputs, deviceValueScore{reason: "once"}, now)
-		if got.Overall.Score == nil || *got.Overall.Score != value || got.Overall.Parts[1].EffectiveWeight != 62.5 || got.Overall.Parts[3].EffectiveWeight != 37.5 {
-			t.Fatalf("value %v, got %+v", value, got.Overall)
-		}
-		if got.Overall.Parts[2].Reason != "once" || got.Overall.Parts[0].Reason != "no_card_lines" {
-			t.Fatal(got.Overall.Parts)
-		}
+	agent := storage.Agent{CreatedAt: now.Add(-time.Minute).UnixMilli()}
+	uptime := storage.PresenceHistory{OnlinePercent: scoreNumber(99)}
+	resources := &storage.DeviceResourceAverage{CPU: 20, RAM: 40, Disk: 80}
+	lines := []storage.DeviceScoreLine{{CoveredMS: time.Hour.Milliseconds(), FailurePercent: scoreNumber(0),
+		P50: scoreNumber(50), P95: scoreNumber(60), Jitter: scoreNumber(5), Evening: scoreNumber(50)}}
+	for _, tc := range []struct {
+		name    string
+		inputs  storage.DeviceScoreInputs
+		score   float64
+		weights [3]float64
+	}{
+		{"all parts", storage.DeviceScoreInputs{Lines: lines, Presence: uptime, Resources: resources}, 86, [3]float64{50, 30, 20}},
+		{"no card lines", storage.DeviceScoreInputs{Presence: uptime, Resources: resources}, 72, [3]float64{0, 60, 40}},
+		{"only resources", storage.DeviceScoreInputs{Resources: resources}, 60, [3]float64{0, 0, 100}},
+		{"only uptime", storage.DeviceScoreInputs{Presence: uptime}, 80, [3]float64{0, 100, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scoreOverall(agent, tc.inputs)
+			if got.Overall.Score == nil || *got.Overall.Score != tc.score || len(got.Overall.Parts) != len(tc.weights) {
+				t.Fatalf("overall = %+v, want score %v", got.Overall, tc.score)
+			}
+			for i, part := range got.Overall.Parts {
+				if part.EffectiveWeight != tc.weights[i] || part.Weight != [...]int{50, 30, 20}[i] {
+					t.Errorf("part %q = %+v", part.Key, part)
+				}
+			}
+		})
 	}
-	inputs := storage.DeviceScoreInputs{Resources: &storage.DeviceResourceAverage{CPU: 20, RAM: 40, Disk: 80}}
-	if got := scoreOverall(agent, inputs, deviceValueScore{}, now); *got.Overall.Score != 60 {
-		t.Fatal(got)
-	}
-	agent.CreatedAt = now.Add(-time.Hour).UnixMilli()
-	if got := scoreOverall(agent, inputs, deviceValueScore{}, now); got.Overall.Score != nil || got.Overall.Reason != "new_machine" {
-		t.Fatal(got)
+	if got := scoreOverall(agent, storage.DeviceScoreInputs{}); got.Overall.Score != nil || got.Overall.Reason != "no_history" {
+		t.Fatalf("empty inputs = %+v", got)
 	}
 	agent.DisabledAt = &agent.CreatedAt
-	if got := scoreOverall(agent, inputs, deviceValueScore{}, now); got.Overall.Score != nil || got.Overall.Reason != "paused" || got.Network.Reason != "paused" {
+	if got := scoreOverall(agent, storage.DeviceScoreInputs{Resources: resources}); got.Overall.Score != nil || got.Overall.Reason != "paused" || got.Network.Reason != "paused" {
 		t.Fatal(got)
 	}
 }
 
 func TestDeviceValueScoreUsesOwnerRatesAndRecurringPlans(t *testing.T) {
 	data := expenseFixture([3]string{"84", "yearly", "CNY"}, [3]string{"2", "monthly", "USD"},
-		[3]string{"4", "monthly", "USD"}, [3]string{"50", "once", "USD"})
-	quota := uint64(12e12)
-	for i := range data.Records {
-		data.Records[i].Snapshot.State = &storage.State{CPUCores: 1, RAMTotal: 1 << 30, DiskTotal: 20 << 30}
-		data.Records[i].Plan.QuotaBytes = &quota
-		data.Records[i].Plan.CycleKind = "yearly"
+		[3]string{"2", "monthly", "USD"}, [3]string{"4", "monthly", "USD"},
+		[3]string{"4", "monthly", "USD"}, [3]string{"50", "once", "USD"},
+		[3]string{"0", "monthly", "USD"}, [3]string{"2", "monthly", "JPY"},
+		[3]string{"", "", ""}, [3]string{"1", "monthly", "USD"})
+	id := func(i int) string { return data.Records[i].Snapshot.Agent.ID }
+	scores := make(map[string]deviceScore)
+	for i, overall := range []float64{65, 80, 80, 80, 80, 100, 100, 100, 100} {
+		scores[id(i)] = deviceScore{Overall: scoreSummary{Score: scoreNumber(overall)}}
 	}
-	got := scoreDeviceValues(data)
-	for i, want := range []float64{100, 50, 0} {
-		score := got[data.Records[i].Snapshot.Agent.ID]
-		if score.score == nil || *score.score != want || score.rank != i+1 || score.count != 3 {
-			t.Fatalf("rank %d: %+v", i, score)
+	scores[id(9)] = deviceScore{Overall: scoreSummary{Reason: "no_history"}}
+	got := scoreDeviceValues(data, scores)
+	for i, want := range []struct {
+		rank  int
+		score float64
+	}{{1, 100}, {2, 100.0 * 2 / 3}, {2, 100.0 * 2 / 3}, {4, 0}, {4, 0}} {
+		value := got[id(i)]
+		if value.score == nil || *value.score != want.score || value.rank != want.rank || value.count != 5 {
+			t.Errorf("device %d: %+v, want rank %d with score %v", i, value, want.rank, want.score)
 		}
 	}
-	if once := got[data.Records[3].Snapshot.Agent.ID]; once.score != nil || once.reason != "once" {
-		t.Fatal(once)
+	for i, reason := range []string{"once", "invalid_price", "missing_rate", "missing_price", "no_history"} {
+		if value := got[id(i+5)]; value.score != nil || value.rank != 0 || value.reason != reason {
+			t.Errorf("device %d: %+v, want %q", i+5, value, reason)
+		}
 	}
-	if q := monthlyTrafficTB(data.Records[0].Plan); q != 1 {
-		t.Fatalf("monthly quota = %v", q)
-	}
-	if q := monthlyTrafficTB(&storage.AgentPlan{TrafficMode: "sum"}); q != 10 {
-		t.Fatalf("unlimited quota = %v", q)
+	allTied := data
+	allTied.Records = data.Records[1:3]
+	for _, value := range scoreDeviceValues(allTied, scores) {
+		if value.rank != 1 || value.count != 2 || value.score == nil || *value.score != 50 {
+			t.Errorf("all tied: %+v, want shared first rank and the existing midpoint score", value)
+		}
 	}
 	data.Records = data.Records[:1]
-	if only := scoreDeviceValues(data)[data.Records[0].Snapshot.Agent.ID]; only.score != nil || only.reason != "fewer_than_two" {
+	if only := scoreDeviceValues(data, scores)[id(0)]; only.score != nil || only.reason != "fewer_than_two" {
 		t.Fatal(only)
+	}
+}
+
+func TestDeviceValueHighValueBoundaries(t *testing.T) {
+	ranked := expenseFixture([3]string{"1", "monthly", "USD"}, [3]string{"2", "monthly", "USD"}, [3]string{"3", "monthly", "USD"},
+		[3]string{"4", "monthly", "USD"}, [3]string{"5", "monthly", "USD"}, [3]string{"6", "monthly", "USD"})
+	scores := make(map[string]deviceScore)
+	for _, record := range ranked.Records {
+		scores[record.Snapshot.Agent.ID] = deviceScore{Overall: scoreSummary{Score: scoreNumber(65)}}
+	}
+	value := scoreDeviceValues(ranked, scores)[ranked.Records[1].Snapshot.Agent.ID]
+	if value.score == nil || *value.score != 80 {
+		t.Fatalf("second of six = %+v, want 80", value)
+	}
+	for _, tc := range []struct {
+		overall, value *float64
+		want           bool
+	}{
+		{scoreNumber(65), value.score, true},
+		{scoreNumber(64.999), value.score, false},
+		{scoreNumber(65), scoreNumber(79.999), false},
+		{scoreNumber(100), nil, false},
+		{nil, value.score, false},
+	} {
+		device := deviceScore{Overall: scoreSummary{Score: tc.overall}}
+		device.setValueRanking(deviceValueScore{score: tc.value})
+		if device.HighValue != tc.want {
+			t.Errorf("high_value = %t, want %t for %+v", device.HighValue, tc.want, tc)
+		}
 	}
 }
 
@@ -139,7 +186,8 @@ func TestDeviceScoreAPIUsesAuthenticatedCache(t *testing.T) {
 		t.Fatalf("response %d %s: %v", res.Code, res.Body, err)
 	}
 	device, ok := got.Items[id]
-	if !ok || got.ComputedAt != now.UnixMilli() || device.Overall.Score != nil || device.Network.Score != nil || len(device.Overall.Parts) != 4 || len(device.Network.Parts) != 5 {
+	if !ok || got.ComputedAt != now.UnixMilli() || device.Network.Score != nil || len(device.Overall.Parts) != 3 || len(device.Network.Parts) != 5 ||
+		device.ValueScore != nil || device.HighValue || device.ValueReason != "missing_price" {
 		t.Fatalf("unexpected snapshot %+v", got)
 	}
 }

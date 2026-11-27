@@ -2,19 +2,20 @@
   'use strict';
   const gradeNames = new Set(['SSS','SS','S','A','B','C','D']);
   const partNames = {
-    network:'网络', uptime:'在线率', value:'性价比', resources:'资源余量',
+    network:'网络', uptime:'在线率', resources:'资源余量',
     availability:'可用性', latency:'延迟', stability:'稳定性', evening:'晚高峰', alerts:'告警',
   };
   const reasons = {
-    paused:'监控已暂停', new_machine:'建档未满 7 天，网络数据不足', no_history:'暂无足够历史数据',
+    paused:'监控已暂停', no_history:'暂无足够历史数据',
     no_card_lines:'没有启用并在卡片显示的线路', network_coverage:'近 7 天没有达到覆盖要求的线路',
-    line_coverage:'近 7 天有数据的时长不到一半', no_probe_results:'没有可计分的探测结果',
+    line_coverage:'有数据的时长不到 1 小时', no_probe_results:'没有可计分的探测结果',
     no_presence:'暂无在线或离线记录', no_resources:'暂无资源使用记录',
     once:'一次性付费', fewer_than_two:'可比较的计费设备少于 2 台', missing_rate:'没有设置该币种的汇率',
     missing_price:'未设置价格', invalid_price:'价格无效', missing_currency:'未设置币种', invalid_currency:'币种无效',
-    missing_period:'未设置付费周期', invalid_period:'付费周期无效', missing_capacity:'配置量数据不足',
+    missing_period:'未设置付费周期', invalid_period:'付费周期无效',
   };
   const paused = {overall:{reason:'paused'},network:{reason:'paused'}};
+  const refreshInterval = 10 * 60 * 1000;
   let items = {}, computedAt = 0, nextRead = 0, request;
   const attached = new WeakMap();
   let active, popup;
@@ -98,14 +99,17 @@
         content.append(sub);
       }
       if(part.key==='uptime' && model.online_percent!=null){
-        content.append(element(doc,'div','score-note','近 30 天在线率 '+format(model.online_percent)+'%'));
-      }
-      if(part.key==='value' && model.value_count>0){
-        content.append(element(doc,'div','score-note','计费设备排名 '+model.value_rank+' / '+model.value_count));
+        content.append(element(doc,'div','score-note','近 7 天在线率 '+format(model.online_percent)+'%'));
       }
     }
     if(!network && score?.parts?.some(part => part.score==null) && shown(score)){
       content.append(element(doc,'div','score-note','已按原比例放大计入项的权重。'));
+    }
+    if(!network){
+      const text = model?.value_rank>0
+        ? '性价比 第 '+model.value_rank+' / '+model.value_count+' 名'
+        : '性价比 不参与排名（'+reason(model?.value_reason || score?.reason)+'）';
+      content.append(element(doc,'div','score-note',text));
     }
     if(layout==='tip' && !network){
       content.append(element(doc,'div','score-tip-action','点击查看详情'));
@@ -216,8 +220,8 @@
     try{
       const snapshot = await read('/api/v1/web/scores',request.signal);
       if(!snapshot.computed_at) return;
-      const untilRefresh = snapshot.computed_at+3600000-(snapshot.server_now||Date.now());
-      nextRead = performance.now()+Math.max(30000,Math.min(3600000,untilRefresh+1000));
+      const untilRefresh = snapshot.computed_at+refreshInterval-(snapshot.server_now||Date.now());
+      nextRead = performance.now()+Math.max(30000,Math.min(refreshInterval,untilRefresh+1000));
       if(snapshot.computed_at!==computedAt){
         items = snapshot.items || {};
         computedAt = snapshot.computed_at;

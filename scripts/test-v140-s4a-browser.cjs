@@ -6,6 +6,7 @@ const {test} = require('node:test');
 const {launch, open, ID} = require('./lib/v11-panel-fixture.cjs');
 
 const screenshots = process.env.V140_S4A_SCREENS;
+const s1Screens = process.env.V141_S1_SCREENSHOTS;
 const day = 86400000;
 const choose = (page, view) => page.locator('[data-view=' + view + ']').click();
 
@@ -14,6 +15,13 @@ async function capture(page, theme, scene) {
   fs.mkdirSync(screenshots, {recursive: true});
   await page.mouse.move(0, 0);
   await page.screenshot({path: path.join(screenshots, theme + '-' + scene + '.png'), animations: 'disabled'});
+}
+
+async function captureReboot(section, name) {
+  if (!s1Screens) return;
+  fs.mkdirSync(s1Screens, {recursive: true});
+  await section.page().evaluate(() => document.fonts.ready);
+  await section.screenshot({path: path.join(s1Screens, name + '.png'), animations: 'disabled'});
 }
 
 for (const theme of ['dark', 'light']) {
@@ -56,6 +64,8 @@ for (const theme of ['dark', 'light']) {
         };
         row.debian_stable_major = 13;
       }
+      const checks = f.state.items[0].system_checks;
+      checks.reboot_packages = ['linux-image-6.12.x-amd64', 'libc6'];
       await page.evaluate(() => dashboardData.reload());
       const card = i => page.locator('.agent-card[data-agent-id="' + ID(i) + '"]');
       const row = i => page.locator('.banner-row[data-agent-id="' + ID(i) + '"]');
@@ -83,6 +93,24 @@ for (const theme of ['dark', 'light']) {
       assert.match(await system.textContent(), /404-probe-install setup-root-collector/);
       assert.match(await system.textContent(), /待更新软件包未开启/);
       assert.match(await page.locator('.details-machine').textContent(), /Debian 13.6 · KVM/);
+      const reboot = system.locator('section').filter({has: page.getByRole('heading', {name: '需要重启', exact: true})});
+      const rebootReason = reboot.locator('.details-fact').filter({hasText: '原因'});
+      assert.equal(await rebootReason.textContent(), '原因linux-image-6.12.x-amd64、libc6');
+      if (theme === 'light') await captureReboot(reboot, '04-reboot-with-packages');
+      const rerenderSystem = async () => {
+        await page.getByRole('tab', {name: '安全', exact: true}).click();
+        await page.getByRole('tab', {name: '系统', exact: true}).click();
+      };
+      checks.reboot_packages = Array.from({length: 20}, (_, i) => 'package-' + i);
+      checks.reboot_packages_truncated = true;
+      await rerenderSystem();
+      assert.match(await rebootReason.textContent(), /package-18、package-19 等$/);
+      delete checks.reboot_packages;
+      delete checks.reboot_packages_truncated;
+      await rerenderSystem();
+      assert.equal(await rebootReason.count(), 0);
+      await reboot.getByText('需要重启', {exact: true}).last().waitFor();
+      if (theme === 'light') await captureReboot(reboot, '05-reboot-without-packages');
       await capture(page, theme, 'system');
       await system.getByRole('heading', {name: '机器', exact: true}).scrollIntoViewIfNeeded();
       await capture(page, theme, 'system-lower');
