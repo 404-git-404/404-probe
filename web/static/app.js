@@ -1142,7 +1142,7 @@ function renderDashboard(dirty=null) {
   const allIds=[...agents.keys()],mounted=new Set();
   if(cards)for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
   for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);dormantCards.set(id,view);}
-  for(const [id,view] of dormantCards)if(!agents.has(id)){globalThis.DeviceScores?.unobserve(view.card);dormantCards.delete(id);renderedCardKeys.delete(id);}
+  for(const [id,view] of dormantCards)if(!agents.has(id)){view.destroy?.();globalThis.DeviceScores?.unobserve(view.card);dormantCards.delete(id);renderedCardKeys.delete(id);}
   networkQuality.sync(allIds,mounted,agents);latencyCharts.sync(allIds);trafficCharts.sync(allIds);
   for(const id of allIds)if(!mounted.has(id)){latencyCharts.setVisible(id,false);trafficCharts.setVisible(id,false);}
   cardObservations.sync(allIds);selectorView.sync(allIds);cardFaces.sync(allIds);
@@ -1150,7 +1150,7 @@ function renderDashboard(dirty=null) {
   selectorView.refreshActive();
   empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
   if(!devices)empty.classList.add('hidden');
-  if(list)for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,youtubeRegions:youtubeRegions(),deadline}))deferred.add(id);
+  if(list)for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,catalog,youtubeRegions:youtubeRegions(),deadline}))deferred.add(id);
   const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([dashboardUI.page(),prefs.viewMode,model.segmented,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
   for(const [id,view]of groupViews)if(!liveGroups.has(id)){view.node.remove();groupViews.delete(id);}
   let groupPosition=container.firstElementChild;
@@ -1415,22 +1415,16 @@ function createAgentCard(initialAgent) {
     head.append(mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
-    const tags=document.createElement('div');tags.className='dashboard-card-tags';
+    const statusRow=StatusRow.create({document,variant:'card'});
+    const tags=statusRow.node;
     const diskBadge=document.createElement('span');diskBadge.className='dashboard-warning dashboard-disk-warning';
     const diskLabel=document.createElement('span'),diskAck=document.createElement('button');
     diskAck.type='button';diskAck.className='disk-fault-ack';diskAck.textContent='知道了';
     diskAck.addEventListener('click',event=>{event.stopPropagation();acknowledgeDiskFault(agent);});
     diskBadge.append(diskLabel,diskAck);
+    let warnings=DashboardModel.flags(agent,serverBuild);
     const updateTags=()=>{
-      const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);
-      const badges=DashboardModel.systemBadges(agent);
-      const signature=JSON.stringify([key,badges]);
-      if(tags.dataset.signature!==signature){
-        tags.dataset.signature=signature;
-        tags.replaceChildren();
-        for(const [,name] of key){const n=document.createElement('span');n.textContent=name;n.title=name;tags.append(n);}
-        tags.append(...SystemChecks.badges(document,agent));
-      }
+      statusRow.update(StatusRow.items(agent,{catalog:dashboardData.catalog(),server:serverBuild,warnings}));
       const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
       const reason=tone==='crit'?DashboardModel.diskFaults(health?.disk,{short:true})[0]:'';
       const label=agent.startup_disk_failure?DashboardModel.STARTUP_DISK_FAILURE_LABEL:
@@ -1439,11 +1433,9 @@ function createAgentCard(initialAgent) {
       setCardText(diskLabel,label+(tone==='warn'&&error?' · '+error:''));diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
       diskBadge.classList.toggle('startup-disk-failure',!!agent.startup_disk_failure);
       diskAck.hidden=tone!=='warn';diskAck.disabled=!canEditAgentControl(agent,'disk');
-      tags.hidden=!key.length&&!badges.length;
       systemFailure.hidden=!health?.os_read_failed;
         return tone==='crit';
     };
-    let warnings=DashboardModel.flags(agent,serverBuild);
     const diskFault=updateTags();card.append(tags);
 
     // ---- machine ----
@@ -1469,12 +1461,7 @@ function createAgentCard(initialAgent) {
     const latencyNode = latencyCharts.mount(agent);
     const networkModule = Card.createModule({document, key: 'network', label: '网络', host: qualityNode, a: networkQuality.faceNode(agent.agent_id), b: latencyNode,
       onFace: face => { networkQuality.setFace(agent.agent_id, face); latencyCharts.setActive(agent.agent_id, face === 'B'); }});
-    const networkWarning = document.createElement('span');
-    networkWarning.className='dashboard-warning dashboard-network-warning';
-    networkWarning.textContent='⚠ 网络异常';
-    qualityNode.append(networkWarning);
     function updateWarnings(){
-      networkWarning.hidden=!warnings.network;
       version.className=warnings.upgrade?'dashboard-version-upgrade':'';
       version.hidden=!warnings.upgrade;
       setCardText(version,warnings.upgrade?(agent.version+' · 待升级'):'');
@@ -1519,15 +1506,18 @@ function createAgentCard(initialAgent) {
       planRenewal.close();
       deviceDetails.open(agent.agent_id,'overview',trigger);
     });
+    const valueRibbon = DeviceScores.valueRibbon(document,'card');
     const detailToggle = scoreStamp.button;
     detailToggle.classList.add('detail-toggle','score-detail');
     detailToggle.dataset.focusKey = 'manage';
     const updateScore = () => {
       const score = DeviceScores.forAgent(agent);
       scoreStamp.update(score);
+      valueRibbon.update(score);
       DeviceScores.setOverflow(card,score);
     };
     updateScore();
+    head.prepend(valueRibbon.node);
     head.append(scoreStamp.slot);
 
     const deadline = planDeadline(agent);
@@ -1571,7 +1561,7 @@ function createAgentCard(initialAgent) {
     showOffline();
     card.append(offline);
 
-    return {card, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
+    return {card, modules, destroy(){statusRow.destroy();}, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
       updateScore();
       const state = agent.state || {}, hasState = Boolean(agent.state);
@@ -1579,6 +1569,7 @@ function createAgentCard(initialAgent) {
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
       const stateName = cardLifecycle(agent);
       card.className = `card agent-card c7 state-${stateName}`;
+      warnings=DashboardModel.flags(agent,serverBuild);
       const diskFault=updateTags();
       card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
       status.className = `status ${stateName}`; status.dataset.agentState = stateName;
@@ -1603,7 +1594,6 @@ function createAgentCard(initialAgent) {
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }
       setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
-      warnings=DashboardModel.flags(agent,serverBuild);
       machine.update(Card.machineView(agent, observed, oldMetrics, diskFault, warnings.resources));
       updateWarnings();
       updateTraffic();

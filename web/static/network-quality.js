@@ -141,7 +141,7 @@
         card.tip.replaceChildren(el('strong','',lines.shift()),el('span','',lines.length?'\n'+lines.join('\n'):''));
       }
       const at=cell.getBoundingClientRect();
-      C.positionCardTip(doc,card.tip,at,at.left+at.width/2,220);
+      C.positionCardTip(doc,card.tip,at,at.left+at.width/2,260);
     }
     function buildFaceA(card) {
       const faceA=el('div','nq7-face nq7-a');faceA.dataset.face='A';
@@ -198,20 +198,19 @@
         view.node.dataset.lane=shown.kind==='blocks'?(shown.red?'red':'blocks'):shown.key;
         if(shown.kind==='blocks') {
           const counts={green:0,yellow:0,red:0,gray:0};
+          const alertRuns=lane.tcp.status==='active'?(lane.tcp.alert_runs||[]):[];
           shown.blocks.forEach((block,i)=>{
             const cell=view.cells[i],cls=`nq7-b nq7-b-${block.state}${block.in_progress?' is-live':''}`;
             if(cell.className!==cls)cell.className=cls;
-            cell.tipText=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms}).text;cell.setAttribute('aria-label',cell.tipText);counts[block.state]++;
+            const info=C.blockView(block,{label,threshold,intervalMS:interval,blockMS:summary.block_ms,alertRuns,now:summary.now});
+            cell.tipText=info.text;cell.setAttribute('aria-label',cell.tipText);counts[block.state]++;
+            if(info.alert){
+              if(!cell.alertMark){cell.alertMark=el('span','nq7-mark nq7-alert-run');cell.append(cell.alertMark);}
+            }else if(cell.alertMark){cell.alertMark.remove();cell.alertMark=null;}
           });
           const from=summary.window_start, span=summary.block_ms*shown.blocks.length;
           const pos=at=>Math.max(0,Math.min(100,100*(at-from)/span));
-          for(const mark of view.blocks.querySelectorAll('.nq7-mark'))mark.remove();
-          for(const run of lane.tcp.alert_runs||[]){
-            if(run.end<=from||run.start>=from+span)continue;
-            const mark=el('span','nq7-mark nq7-alert-run');
-            mark.style.left=pos(run.start)+'%';mark.style.width=(pos(run.end)-pos(run.start))+'%';
-            view.blocks.append(mark);
-          }
+          for(const mark of view.blocks.querySelectorAll('.nq7-sem-change'))mark.remove();
           const change=lane.tcp.semantics_change_at;
           if(change!=null&&change>=from&&change<from+span){
             const mark=el('span','nq7-mark nq7-sem-change');

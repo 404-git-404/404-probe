@@ -277,4 +277,20 @@
     <rect x="8" y="9" width="1" height="1" fill="#ffffff" opacity=".8"/>
     <text x="16" y="16.6" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="900" font-size="14" letter-spacing="0" fill="#f4f5f7" stroke="#1c1e22" stroke-width="1.3" stroke-linejoin="round" paint-order="stroke">D</text>
   </symbol>
+  <symbol id="value-ribbon-card" viewBox="0 0 68 18" shape-rendering="crispEdges">
+    <path fill="#9A6A00" d="M3 0h62v1H3zM1 1h2v1H1zM65 1h2v1H65zM0 2h1v14H0zM67 2h1v14H67zM1 16h2v1H1zM65 16h2v1H65zM3 17h62v1H3z"/>
+    <path fill="#FFD34D" d="M3 1h62v16H3zM1 2h2v14H1zM65 2h2v14H65z"/>
+    <path fill="#FFF1A8" d="M3 1h62v2H3zM2 2h1v2H2zM65 2h1v2H65z"/>
+    <path fill="#E5A910" d="M3 15h62v2H3zM2 14h1v2H2zM65 14h1v2H65z"/>
+    <path fill="#9A6A00" d="M2 2h1v1H2zM65 2h1v1H65zM2 15h1v1H2zM65 15h1v1H65zM5 8h2v2H5zM61 8h2v2H61z"/>
+    <path fill="#FFF8CC" d="M5 8h1v1H5zM61 8h1v1H61z"/>
+  </symbol>
+  <symbol id="value-ribbon-icon" viewBox="0 0 16 16" shape-rendering="crispEdges">
+    <path fill="#9A6A00" d="M5 1h6v1H5zM3 2h2v1H3zM11 2h2v1H11zM2 3h1v2H2zM13 3h1v2H13zM1 5h1v4H1zM14 5h1v4H14zM2 9h1v2H2zM13 9h1v2H13zM3 11h1v4H3zM4 14h1v1H4zM5 13h1v1H5zM6 12h1v1H6zM7 11h2v1H7zM9 12h1v1H9zM10 13h1v1H10zM11 14h1v1H11zM12 11h1v4H12z"/>
+    <path fill="#FFD34D" d="M5 2h6v1H5zM3 3h10v2H3zM2 5h12v4H2zM3 9h10v2H3zM4 11h3v1H4zM4 12h2v1H4zM4 13h1v1H4zM9 11h3v1H9zM10 12h2v1H10zM11 13h1v1H11z"/>
+    <path fill="#FFF1A8" d="M5 2h5v1H5zM3 3h3v1H3zM3 4h2v1H3z"/>
+    <path fill="#E5A910" d="M11 8h2v1H11zM5 10h6v1H5zM4 12h1v2H4zM11 12h1v2H11z"/>
+    <path fill="#3B2A00" d="M7 5h2v1H7zM6 6h4v2H6zM7 8h2v1H7z"/>
+    <path fill="#FFF8CC" d="M7 6h1v1H7z"/>
+  </symbol>
 </svg>

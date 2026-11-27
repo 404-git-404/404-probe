@@ -199,15 +199,20 @@
       if(heatError)return '<p class="net-empty" role="status">热力图读取失败 <button type="button" data-net-heat-retry>重试</button></p>';
       if(!heatResult)return '<p class="net-empty" role="status">正在读取热力图…</p>';
       const key=state.heatMetric,fmt=key==='p50_ms'?ms:percent;
+      const slotAlerts=(lastResult?.alerts||[]).filter(a=>a.slot===state.heatSlot&&a.family===state.family&&a.protocol===state.protocol);
+      const alertNow=lastResult?.now??now();
       const evening=hour=>hour>=20&&hour<23?' net-heat-evening':'';
       const hours=Array.from({length:24},(_,i)=>'<span class="net-heat-hour'+evening(i)+'">'+(i%3===0||i===20||i===22?i:'')+'</span>').join('');
       const days=heatResult.days.map((day,i)=>'<span class="net-heat-day">'+escape(day.date.slice(5))+'</span>'+
         day.hours.map((hour,j)=>{
           const value=hour[key],tone=qualityTone[hour.state]||'no_data';
           const metric=value==null?(key===lossKey()&&hour.old_tcp?'旧口径':'—'):fmt(value);
-          const hint=day.date+' '+String(j).padStart(2,'0')+':00 · '+metric+' · '+root.NetworkQualityCore.cellDetails(hour);
+          const overlapMS=hour.start!=null?root.NetworkQualityCore.alertOverlapMS(hour.start,hour.start+HOUR,slotAlerts,alertNow):0;
+          const hasData=hour.samples>0||hour.p50_ms!=null||hour.packet_loss_percent!=null;
+          const range=day.date+' '+String(j).padStart(2,'0')+':00–'+String((j+1)%24).padStart(2,'0')+':00';
+          const hint=hasData?root.NetworkQualityCore.blockMetricsSummary(range,hour,overlapMS):day.date+' '+String(j).padStart(2,'0')+':00 · '+metric+' · '+root.NetworkQualityCore.cellDetails(hour);
           return '<span class="net-heat-cell'+evening(j)+(i===heatResult.days.length-1?' net-heat-last':'')+'" title="'+escape(hint)+'"'+
-            ' data-tone="'+tone+'"></span>';
+            ' data-tone="'+tone+'">'+(overlapMS>0?'<span class="nq7-alert-run net-heat-alert"></span>':'')+'</span>';
         }).join('')).join('');
       return '<div class="net-heat-scroll"><div class="net-heat"><span></span>'+hours+days+'</div></div>'+
         '<div class="net-heat-legend"><span>框出的三列是 20:00–23:00，悬停查看数据和判色原因。</span></div>';

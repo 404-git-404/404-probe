@@ -125,7 +125,7 @@ for (const theme of ['dark', 'light']) {
       f.publish('agent', {...red, sequence: 20});
       await page.waitForFunction(s => {
         const n = document.querySelector(s);
-        return n?.querySelector('.dashboard-card-tags').hidden && !n.querySelector('.dashboard-disk-warning').hidden;
+        return n?.querySelector('.dashboard-card-tags')?.dataset.empty === 'true' && !n.querySelector('.dashboard-disk-warning').hidden;
       }, card(0));
       assert.equal(await page.evaluate(() => r48Card.isConnected && r48Button === r48Card.querySelector('.score-stamp-card')), true);
       assert.match(await select(0, disk).textContent(), /磁盘异常 · 写入失败/);

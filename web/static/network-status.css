@@ -144,11 +144,12 @@
 .net-tooltip div{padding:.22rem 0;border-top:1px solid var(--color-line-soft)}
 .net-tooltip small{display:block;color:var(--color-text-muted);line-height:1.3}
 .net-heat{
-  display:grid;grid-template-columns:2.8rem repeat(24,minmax(.9rem,1fr));gap:2px;min-width:28rem;
+  display:grid;grid-template-columns:2.8rem repeat(24,minmax(.9rem,1fr));gap:4px 2px;min-width:28rem;
 }
 .net-heat-hour,.net-heat-day{font-size:.65rem;color:var(--color-text-muted);text-align:center}
 .net-heat-hour{border-top:1px solid transparent}
-.net-heat-cell{height:1.06rem;border-radius:.15rem;background:color-mix(in srgb,var(--net-heat-high) var(--heat),var(--net-heat-low))}
+.net-heat-cell{position:relative;height:1.06rem;border-radius:.15rem;background:color-mix(in srgb,var(--net-heat-high) var(--heat),var(--net-heat-low))}
+.net-heat-alert{position:absolute;left:0;right:0;bottom:-3px;height:2px;background:var(--net-danger);pointer-events:none}
 .net-heat-cell[data-empty=true]{background:var(--color-bar)}
 .net-heat-evening{outline:1px solid color-mix(in srgb,var(--net-warning) 65%,transparent)}
 .net-heat-hour.net-heat-evening,.net-heat-last.net-heat-evening{background-clip:padding-box;color:var(--net-warning)}
