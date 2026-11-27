@@ -2,7 +2,7 @@ const {test,before,after}=require('node:test'),assert=require('node:assert/stric
 const {start,ID}=require('./lib/v110-dashboard-fixture.cjs');
 const {chromium}=require(process.env.M02_PLAYWRIGHT||(()=>{throw Error('Set M02_PLAYWRIGHT to the required local dependency or artifact path');})());
 let browser;before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()});});after(async()=>browser?.close());
-async function ui(n,run,{width=1440,preferences=null,prepare=null}={}){const f=await start({n}),context=await browser.newContext({viewport:{width,height:1100},locale:'zh-CN',timezoneId:'America/Los_Angeles'}),page=await context.newPage(),errors=[];page.setDefaultTimeout(60000);page.on('pageerror',e=>errors.push(e.message));await context.route('**/*',r=>new URL(r.request().url()).origin===f.base?r.continue():r.abort());if(prepare)prepare(f);if(preferences)await page.addInitScript(p=>localStorage.setItem('404-probe.dashboard.v1',JSON.stringify(p)),preferences);try{await page.goto(f.base,{waitUntil:'domcontentloaded'});await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n,n,{timeout:240000});await page.waitForFunction(()=>!renderFrame&&document.querySelector('#dashboard-count').textContent.includes(' / '),null,{timeout:240000});await run(page,f);assert.deepEqual(errors,[]);}finally{await context.close();f.close();}}
+async function ui(n,run,{width=1440,preferences=null,prepare=null}={}){const f=await start({n}),context=await browser.newContext({viewport:{width,height:1100},locale:'zh-CN',timezoneId:'America/Los_Angeles'}),page=await context.newPage(),errors=[];page.setDefaultTimeout(60000);page.on('pageerror',e=>errors.push(e.message));await context.route('**/*',r=>new URL(r.request().url()).origin===f.base?r.continue():r.abort());if(prepare)prepare(f);if(preferences)await page.addInitScript(p=>localStorage.setItem('404-probe.dashboard.v1',JSON.stringify(p)),preferences);try{await page.goto(f.base,{waitUntil:'domcontentloaded'});await page.waitForFunction(n=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&agents.size===n,n,{timeout:240000});await page.waitForFunction(n=>!renderFrame&&document.querySelector('#dashboard-devices-count').textContent.includes(String(n)),n,{timeout:240000});await run(page,f);assert.deepEqual(errors,[]);}finally{await context.close();f.close();}}
 const settle=page=>page.waitForFunction(()=>!renderFrame,null,{timeout:240000}),card=(page,id)=>page.locator(`.agent-card[data-agent-id="${id}"]`);
 test('native DOM panel health follows the deduplicated union when category counts stay equal',async()=>ui(3,async(page,f)=>{
  assert.equal(await page.locator('#overview-health').textContent(),'⚠ 1 台需要关注');
@@ -24,11 +24,11 @@ test('native DOM segmented selection is single-choice and persists with independ
  await choose(page,'statuses','在线');
  assert.equal(await page.locator('.dashboard-group-header:visible').count(),1);
  assert.match(await page.locator('.dashboard-group-header:visible').textContent(),/备用/);
- const count=await page.locator('#dashboard-count').textContent();
+ const count=await page.locator('#dashboard-devices-count').textContent();
  assert.equal(await page.locator('#overview-online').textContent(),before);
  await page.reload({waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>typeof dashboardData!=='undefined'&&dashboardData.ready()&&!renderFrame,null,{timeout:240000});
- assert.equal(await page.locator('#dashboard-count').textContent(),count);
+ assert.equal(await page.locator('#dashboard-devices-count').textContent(),count);
  await choose(page,'groups','备用',false);
  assert.equal(await page.locator('.dashboard-group-header:visible').count(),0);
 }));
@@ -46,14 +46,14 @@ test('native DOM overview filters are exclusive, reversible, composable and keep
  for(const [id,count] of [['health',3],['renewal',2],['upgrade',2]]){
   await page.locator('#overview-'+id).click();
   await settle(page);
-  assert.equal(await page.locator('#dashboard-count').textContent(),count+' / 28 台');
+  assert.equal(await page.locator('#dashboard-devices-count').textContent(),count+' / 28');
   assert.equal(await page.locator('.panel-overview button[aria-pressed=true]:not([data-period])').count(),1);
  }
  await choose(page,'tags','GIA');
- assert.equal(await page.locator('#dashboard-count').textContent(),'2 / 28 台');
+ assert.equal(await page.locator('#dashboard-devices-count').textContent(),'2 / 28');
  await page.locator('#overview-upgrade').click();
  await settle(page);
- assert.equal(await page.locator('#dashboard-count').textContent(),'7 / 28 台');
+ assert.equal(await page.locator('#dashboard-devices-count').textContent(),'7 / 28');
  await page.locator('#overview-expense').click();
  await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));
  assert.equal(await page.locator('#expense-monthly').textContent(),'$86.39');
@@ -80,7 +80,7 @@ test('native DOM expense empty filtered scope, string rates, missing rates and C
  await page.locator('#dashboard-search').fill('not-a-device');await settle(page);await page.locator('#overview-expense').click();await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));await page.locator('[data-expense-scope=filtered]').click();await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent==='$0.00');assert.deepEqual(f.requests.filter(r=>r.path.endsWith('/expenses/estimate')).at(-1).body,{scope:'filtered',agent_ids:[]});await page.locator('[data-expense-scope=all]').click();await settle(page);await page.locator('#expense-rate-CNY').fill('7.000000');await page.getByRole('button',{name:'保存汇率',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#expense-dialog .dashboard-dialog-error').textContent==='汇率已保存。');const put=f.requests.find(r=>r.method==='PUT'&&r.path.endsWith('/exchange-rates'));assert.equal(put.body.rates.find(r=>r.currency==='CNY').units_per_usd,'7.000000');await page.locator('.expense-rate').filter({has:page.locator('#expense-rate-EUR')}).getByRole('button',{name:'删除',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#expense-excluded').textContent.includes('缺汇率'));const del=f.requests.find(r=>r.method==='DELETE'&&r.path.endsWith('/EUR'));assert(del.headers['if-match']);assert.equal(del.body,null);f.conflict();await page.locator('#expense-rate-CNY').fill('8');await page.getByRole('button',{name:'保存汇率',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#expense-dialog .dashboard-dialog-error').textContent.includes('已被其他页面修改'));assert.equal(f.requests.filter(r=>r.method==='PUT'&&r.path.endsWith('/exchange-rates')).length,2);assert.equal(await page.locator('#expense-rate-CNY').inputValue(),'7.000000');
 }));
 
-test('native DOM mobile toolbar remains visible after jumping to the bottom',async()=>ui(28,async page=>{await page.evaluate(()=>scrollTo(0,document.documentElement.scrollHeight-innerHeight));await page.waitForFunction(()=>scrollY>100&&document.querySelector('#dashboard-toolbar').getBoundingClientRect().top===0);assert.equal(await page.locator('#dashboard-search').count(),1);assert.equal(await page.locator('#dashboard-count').isVisible(),true);assert.match(await page.locator('#dashboard-count').textContent(),/28/);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));},{width:390}));
+test('native DOM mobile toolbar remains visible after jumping to the bottom',async()=>ui(28,async page=>{await page.evaluate(()=>scrollTo(0,document.documentElement.scrollHeight-innerHeight));await page.waitForFunction(()=>scrollY>100&&document.querySelector('#dashboard-toolbar').getBoundingClientRect().top===0);assert.equal(await page.locator('#dashboard-search').count(),1);assert.equal(await page.locator('#dashboard-count').count(),0);assert.equal(await page.locator('#dashboard-sort').isVisible(),true);assert.equal(await page.locator('#dashboard-direction').isVisible(),true);assert.equal(await page.locator('#dashboard-devices-count').textContent(),'28');assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));},{width:390}));
 test('native DOM realtime dirty IDs coalesce per frame; reconnect reloads the full dashboard',async()=>ui(28,async(page,f)=>{
  f.requests.length=0;f.state.items[0].name='同步后的名字';for(let i=0;i<20;i++)f.publish('dashboard',{event:'dashboard',kind:'name',agent_id:ID(i%2),revoked:false});await page.waitForFunction(()=>document.querySelector('[data-agent-id="00000000000000000000000000000001"]').textContent.includes('同步后的名字'));await settle(page);const partial=f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&r.query.includes('ids='));assert.equal(partial.length,1);assert.deepEqual(new URLSearchParams(partial[0].query).get('ids').split(',').sort(),[ID(0),ID(1)]);assert.equal(f.requests.some(r=>/\/agents\/[a-f0-9]{32}$/.test(r.path)),false);
  f.state.items[0].name='重连后的名字';f.disconnect();await page.waitForFunction(()=>document.querySelector('[data-agent-id="00000000000000000000000000000001"]').textContent.includes('重连后的名字'));assert.equal(f.requests.filter(r=>r.path==='/api/v1/web/dashboard'&&!r.query).length,1);
@@ -96,7 +96,7 @@ test('native DOM segmented expense period, accessible explanations, missing pric
  f.state.items.forEach(a=>{a.plan=null;a.renewal={type:'missing'};});await page.evaluate(()=>dashboardData.reload());await settle(page);assert.equal(await page.locator('#overview-money').textContent(),'—');assert(await page.locator('#overview-renewal').isDisabled());
 }));
 test('native DOM panel filters stay independent; dialogs read only directory',async()=>ui(28,async(page,f)=>{
- const group=page.locator('#dashboard-groups');await group.locator('.dashboard-option').first().click();await settle(page);assert.equal(await group.evaluate(n=>n.open),true);await page.locator('#dashboard-all').click();
+ const group=page.locator('#dashboard-groups');await group.locator('.dashboard-option').first().click();await settle(page);assert.equal(await group.evaluate(n=>n.open),true);await page.locator('#dashboard-devices > summary').click();
  f.requests.length=0;await page.locator('#overview-expense').click();await page.waitForFunction(()=>document.querySelector('#expense-monthly').textContent.startsWith('$'));assert(f.requests.some(r=>r.path==='/api/v1/web/organization/catalog'));assert(!f.requests.some(r=>r.path==='/api/v1/web/dashboard'));assert.equal(await page.locator('.expense-devices summary').textContent(),'按设备查看');assert.match(await page.locator('.expense-table tbody tr').filter({hasText:'CNY'}).textContent(),/CNY [0-9]/);
 }));
 test('native DOM telemetry updates runtime immediately without immediate summary read and only dirties its card',async()=>ui(200,async(page,f)=>{

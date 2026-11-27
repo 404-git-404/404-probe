@@ -6,7 +6,9 @@
   function create({document:doc=root.document,onchange=()=>{},onManage=()=>{},read=url=>root.fetch(url).then(r=>r.json())}={}){
     const preferences = M.preferences(), p = preferences.value, get = id => doc.getElementById(id);
     const search = get('dashboard-search'), sort = get('dashboard-sort'), direction = get('dashboard-direction');
-    const count = get('dashboard-count'), allDevices = get('dashboard-all'), allGroups = get('dashboard-all-groups');
+    const devicesDrawer = get('dashboard-devices'), devicesSummary = devicesDrawer.querySelector('summary');
+    const devicesCount = get('dashboard-devices-count'), allGroups = get('dashboard-all-groups');
+    const viewToggle = get('panel-view-toggle');
     const tagAll = get('dashboard-tags-clear'), tagMore = get('dashboard-tags-more');
     const tagMenu = tagMore.querySelector('.dashboard-tag-overflow');
     const panel = get('dashboard-panel'), app = doc.querySelector('.dashboard-app'), mobile = get('panel-mobile-dialog');
@@ -38,12 +40,17 @@
     }
     const mobileShell = root.DialogShell.attach(mobile,{decorate:false,guard:false,onclose:()=>app.prepend(panel)});
 
+    function paintDevicesActive(){
+      pressed(devicesSummary, page==='devices' && !M.active(p));
+    }
+
     function paintPage(){
       const devices = page==='devices';
       get('dashboard-toolbar').hidden = !devices;
       get('network-placeholder').hidden = !networkPage();
       network?.show(networkPage()?page.slice(8):null);
       get('dashboard-settings-content').hidden = !settings.includes(page);
+      paintDevicesActive();
       pressed(networkButton,page==='network');
       for(const item of doc.querySelectorAll('[data-settings]')){
         const active = item.dataset.settings===page;
@@ -103,25 +110,33 @@
     sort.addEventListener('change',()=>{p.sort=sort.value;change();});
     search.addEventListener('input',()=>{p.search=search.value;navigate('devices');change();});
     const views = [...doc.querySelectorAll('[data-view]')];
-    function paintView(){for(const button of views) pressed(button,button.dataset.view===p.viewMode);}
-    for(const button of views) button.addEventListener('click',()=>{
-      if(p.viewMode!==button.dataset.view&&button.dataset.view==='list') order.reset();
-      p.viewMode=button.dataset.view;
+    function paintView(){
+      for(const button of views) pressed(button,button.dataset.view===p.viewMode);
+      if(viewToggle){
+        const cards = p.viewMode==='cards';
+        const tip = cards ? '当前：卡片，点击切换到列表' : '当前：列表，点击切换到卡片';
+        viewToggle.title = tip;
+        viewToggle.setAttribute('aria-label', tip);
+        viewToggle.dataset.currentView = p.viewMode;
+      }
+    }
+    function setView(next){
+      if(p.viewMode!==next&&next==='list') order.reset();
+      p.viewMode=next;
       paintView();
       change();
-    });
+    }
+    for(const button of views) button.addEventListener('click',()=>setView(button.dataset.view));
+    viewToggle?.addEventListener('click',()=>setView(p.viewMode==='cards'?'list':'cards'));
     paintView();
 
     function clear(){
-      for(const key of ['groups','countries','statuses','youtubeRegions','quick']) p[key]=[];
-      p.sort = sort.value = 'name';
-      p.sortDir = 'asc';
+      for(const key of ['groups','countries','statuses','youtubeRegions','quick','tags']) p[key]=[];
+      p.search = search.value = '';
       order.reset();
-      showDirection();
-      navigate('devices',{closeMobile:true});
+      navigate('devices');
       change();
     }
-    allDevices.addEventListener('click',clear);
     function selectGroup(id){
       p.groups=p.groups.includes(id)?[]:[id];
       navigate('devices');
@@ -147,9 +162,19 @@
     for(const key of ['devices','groups','countries','statuses','settings']){
       const host = drawer(key);
       host.open = !p.panelSectionsClosed.includes(key);
-      if(key==='devices'||key==='settings'){
+      if(key==='devices'){
+        devicesSummary.addEventListener('click',event=>{
+          event.preventDefault();
+          if(app.classList.contains('panel-collapsed')){
+            setCollapsed(false);
+            host.open=true;
+          }else{
+            host.open=page!=='devices'||!host.open;
+          }
+          clear();
+        });
+      }else if(key==='settings'){
         host.querySelector('summary').addEventListener('click',event=>{
-          if(key==='devices') { navigate('devices'); onchange(); }
           if(!app.classList.contains('panel-collapsed')) return;
           event.preventDefault();
           setCollapsed(false);
@@ -228,6 +253,7 @@
     });
     get('manage-tags').addEventListener('click',event=>onManage('tags',event.currentTarget));
     get('overview-expense').addEventListener('click',()=>mobileShell.close(),{capture:true});
+    get('add-agent')?.addEventListener('click',()=>mobileShell.close(),{capture:true});
     layout();
 
     function fitTags(){
@@ -255,7 +281,8 @@
     // Observe the row rather than the tag list, whose width changes while fitting.
     const tagResize = new root.ResizeObserver(scheduleTags);
     tagResize.observe(get('dashboard-toolbar'));
-    tagResize.observe(count);
+    const toolbarActions = doc.querySelector('.dashboard-toolbar-actions');
+    if(toolbarActions) tagResize.observe(toolbarActions);
     const initialPage=root.location.hash.slice(1);
     if(settings.includes(initialPage)||initialPage==='network') page=initialPage;
     paintPage();
@@ -334,10 +361,10 @@
       if(nextTags!==tagLayoutKey){tagLayoutKey=nextTags;scheduleTags();}
       pressed(tagAll,!p.tags.length);
       const total=lastSummary.registered;
-      text(count,model.list.length+' / '+total+' 台');
-      text(allDevices.querySelector('small'),total);
+      const filtered=M.active(p);
+      text(devicesCount,filtered?model.list.length+' / '+total:String(total));
       text(allGroups.querySelector('small'),total);
-      pressed(allDevices,!['groups','countries','statuses','youtubeRegions','quick'].some(key=>p[key].length));
+      paintDevicesActive();
       pressed(allGroups,p.groups.includes(M.ALL_GROUPS));
       youtube.checked=p.youtubeRegions.includes(M.AD_FREE);
       text(get('dashboard-youtube-count'),model.youtubeFreeCount);

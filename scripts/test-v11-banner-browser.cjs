@@ -127,9 +127,9 @@ test('navigation shows grouped and flat rows, keeps the rail aligned and uses on
  assert(await p.locator('#manage-tags').isVisible());
  assert(await p.locator('#manage-groups').isVisible());
  await p.locator('#dashboard-groups .dashboard-option').first().click();await settle(p);
- assert.equal(await p.locator('#dashboard-count').textContent(),'3 / 28 台');
+ assert.equal(await p.locator('#dashboard-devices-count').textContent(),'3 / 28');
  assert.equal(await p.locator('.banner-group-header:visible').count(),1);
- await p.locator('#dashboard-all').click();await settle(p);
+ await p.locator('#dashboard-devices > summary').click();await settle(p);
  assert.equal(await p.locator('.banner-group-header:visible').count(),0);
  await p.locator('#dashboard-network').click();await settle(p);
  assert(await p.locator('#network-placeholder').isVisible());
