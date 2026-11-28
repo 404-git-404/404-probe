@@ -123,6 +123,37 @@ test('S3 one-click only adds root collection when selected', {timeout: 90000}, a
   assert.deepEqual(panel.errors, []);
 });
 
+test('S4 Server-local Agent shows a permanent delete restriction even when offline', {timeout: 90000}, async t => {
+  const browser = await launch();
+  t.after(() => browser.close());
+  const panel = await open(browser, {n: 1, width: 1440, height: 1100});
+  t.after(() => panel.close());
+  const {page, f} = panel;
+  page.setDefaultTimeout(10000);
+  const agent = f.state.items[0];
+  Object.assign(agent, {name: 'Server 本机', server_local: true, online: false, disabled_at: null});
+  await page.evaluate(() => dashboardData.reload());
+  await openDetail(page, '管理');
+  const management = page.locator('#details-pane-management');
+  const remove = management.getByRole('button', {name: '彻底删除', exact: true});
+  const revoke = management.getByRole('button', {name: '撤销…', exact: true});
+  const message = '这是 Server 本机的 Agent，不能彻底删除';
+  for (const online of [false, true]) {
+    agent.online = online;
+    f.publish('dashboard', {agent_id: ID(0), kind: 'server-local-test-update', revoked: false});
+    await page.waitForFunction(online => agents.values().next().value.online === online, online);
+    assert.equal(await remove.isDisabled(), true);
+    assert.equal(await revoke.isEnabled(), true);
+    assert.equal(await remove.getAttribute('title'), message);
+    assert.equal(await remove.locator('..').getAttribute('title'), message);
+    if (!online) {
+      await remove.hover();
+      await capture(page, '06-Server-本机离线禁止彻底删除');
+    }
+  }
+  assert.deepEqual(panel.errors, []);
+});
+
 test('S3 DNS detail shows server results and supports per-address ignore', {timeout: 90000}, async t => {
   const browser = await launch();
   t.after(() => browser.close());
@@ -169,6 +200,12 @@ test('S3 DNS detail shows server results and supports per-address ignore', {time
   await capture(page, '05-本机-DNS-已忽略');
   await undo.click();
   await ignore.waitFor();
+  agent.system_checks.local_dns.servers[0] = {address: '127.0.0.53', result: 'no_record', checked_at: Date.now(), consecutive_failures: 0};
+  agent.system_attention = {};
+  f.publish('dashboard', {agent_id: ID(0), kind: 'dns-test-update', revoked: false});
+  await dns.getByText('正常（该名称无 A 记录）', {exact: true}).waitFor();
+  assert.equal(await dns.getByText('DNS 异常', {exact: true}).count(), 0);
+  await capture(page, '07-本机-DNS-无-A-记录状态正常');
   assert.deepEqual(requests, ['PUT', 'DELETE'].map(method => ({method, body: {kind: 'dns', item: '127.0.0.53'}})));
   assert.deepEqual(panel.errors, []);
 });

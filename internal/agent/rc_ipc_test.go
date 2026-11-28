@@ -1,14 +1,15 @@
 package agent
 
 import (
-	"404-probe/internal/updater"
-	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"net"
 	"os"
+	"slices"
 	"testing"
 	"time"
+
+	"404-probe/internal/updater"
 )
 
 func TestRCHelperNegotiationDoesNotTrustOldV2(t *testing.T) {
@@ -18,67 +19,77 @@ func TestRCHelperNegotiationDoesNotTrustOldV2(t *testing.T) {
 		calls       int
 	}{{"v1.0.3-rc.1", false, false, 2}, {"v1.0.3-rc.1", true, true, 2}, {"v1.0.2", false, true, 1}, {"v1.0.3", false, false, 2}, {"v1.0.3", true, true, 2}} {
 		t.Run(tc.version+map[bool]string{true: "-new", false: "-old"}[tc.aware], func(t *testing.T) {
-			f, e := os.CreateTemp("", "404-rc-ipc-")
-			if e != nil {
-				t.Fatal(e)
+			f, err := os.CreateTemp("", "404-rc-ipc-")
+			if err != nil {
+				t.Fatal(err)
 			}
 			socket := f.Name()
-			f.Close()
-			os.Remove(socket)
-			l, e := net.Listen("unix", socket)
-			if e != nil {
-				t.Fatal(e)
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(socket); err != nil {
+				t.Fatal(err)
+			}
+			l, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
 			}
 			defer l.Close()
-			defer os.Remove(socket)
 			done := make(chan error, 1)
+			var actions []updater.Action
+			answer := func(conn *net.UnixConn) error {
+				defer conn.Close()
+				if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
+					return err
+				}
+				// The request already has a JSON boundary. The fixture can answer
+				// as soon as it is decoded, independent of the peer's EOF timing.
+				var request updater.Request
+				if err := json.NewDecoder(conn).Decode(&request); err != nil {
+					return err
+				}
+				actions = append(actions, request.Action)
+				accepted := request.Action == updater.ActionCapabilities || tc.aware && request.Action == updater.ActionRCCapabilities
+				if err := json.NewEncoder(conn).Encode(updater.Response{Accepted: accepted, Capabilities: updater.UpdaterCapabilities{UpgradeV2: accepted}}); err != nil {
+					return err
+				}
+				return conn.CloseWrite()
+			}
 			go func() {
-				for i := 0; i < tc.calls; i++ {
-					c, e := l.Accept()
-					if e != nil {
-						done <- e
+				for {
+					conn, err := l.AcceptUnix()
+					if errors.Is(err, net.ErrClosed) {
+						done <- nil
 						return
 					}
-					b, e := io.ReadAll(c)
-					if e != nil {
-						c.Close()
-						done <- e
-						return
+					if err == nil {
+						err = answer(conn)
 					}
-					var r updater.Request
-					e = json.Unmarshal(b, &r)
-					if e != nil {
-						c.Close()
-						done <- e
-						return
-					}
-					accepted := r.Action == updater.ActionCapabilities || tc.aware && r.Action == updater.ActionRCCapabilities
-					e = json.NewEncoder(c).Encode(updater.Response{Accepted: accepted, Capabilities: updater.UpdaterCapabilities{UpgradeV2: accepted}})
-					c.Close()
-					if e != nil {
-						done <- e
+					if err != nil {
+						done <- err
 						return
 					}
 				}
-				done <- nil
 			}()
 			r := &Runner{config: Config{AgentVersion: tc.version}}
 			r.upgradeV2ServerSupported.Store(true)
-			r.runUpgradeCycle(context.Background(), upgradeHTTPClient{}, updater.Client{Socket: socket, Timeout: time.Second})
+			r.runUpgradeCycle(t.Context(), upgradeHTTPClient{}, updater.Client{Socket: socket, Timeout: time.Second})
+			if err := l.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			wantActions := []updater.Action{updater.ActionCapabilities, updater.ActionRCCapabilities}[:tc.calls]
+			if !slices.Equal(actions, wantActions) {
+				t.Fatalf("probes = %v, want %v", actions, wantActions)
+			}
 			if got := r.upgradeV2UpdaterSupported.Load(); got != tc.want {
 				t.Fatal(got, tc.want)
 			}
 			// Claim protocol 2 needs only the plain v2 answer, never the RC proof.
 			if got := r.upgradeV2ClaimSupported.Load(); !got {
 				t.Fatal("claim protocol 2 unavailable with a v2 Updater")
-			}
-			select {
-			case e := <-done:
-				if e != nil {
-					t.Fatal(e)
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("missing RC probe")
 			}
 		})
 	}

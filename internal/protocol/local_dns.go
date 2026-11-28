@@ -24,6 +24,10 @@ type LocalDNSObservation struct {
 	ConsecutiveFailures int    `json:"consecutive_failures"`
 }
 
+func IsLocalDNSFailure(result string) bool {
+	return result == DNSTimeout || result == DNSRefused || result == DNSServerError
+}
+
 func (d LocalDNSCheck) validate() error {
 	switch d.Status {
 	case DNSNotApplicable, CheckError:
@@ -45,7 +49,12 @@ func (d LocalDNSCheck) validate() error {
 				if server.ConsecutiveFailures == 0 {
 					continue
 				}
-			case DNSTimeout, DNSRefused, DNSServerError, DNSNoRecord:
+			case DNSNoRecord:
+				// Older Agents counted valid replies without an A record as failures.
+				if server.ConsecutiveFailures >= 0 && server.ConsecutiveFailures <= 2 {
+					continue
+				}
+			case DNSTimeout, DNSRefused, DNSServerError:
 				if server.ConsecutiveFailures == 1 || server.ConsecutiveFailures == 2 {
 					continue
 				}

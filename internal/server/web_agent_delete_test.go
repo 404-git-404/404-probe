@@ -12,6 +12,44 @@ import (
 	"404-probe/internal/auth"
 )
 
+func TestWebDeleteServerLocalAgentReturnsConflict(t *testing.T) {
+	app, store, _, _ := testApp(t)
+	defer store.Close()
+	defer app.Shutdown()
+	now := time.Now()
+	app.now = func() time.Time { return now }
+	id, err := auth.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RegisterServerLocalAgent(t.Context(), id, "Local", hash, now); err != nil {
+		t.Fatal(err)
+	}
+	path := webAgentPathPrefix + id + "/delete"
+	assertConflict := func() {
+		t.Helper()
+		w := organizationHTTP(t, app, http.MethodPost, path, `{"name":"Local"}`, true, true)
+		if w.Code != http.StatusConflict || jobErrorCode(t, w) != "agent_server_local" {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	assertConflict() // Registered but offline, with the correct confirmation name.
+	if response := postReport(t, app, token, reportFor(id, 1)); response.Code != http.StatusOK {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	assertConflict() // Online still yields the local-Agent error.
+	if got, err := store.ServerLocalAgent(t.Context()); err != nil || got != id {
+		t.Fatalf("local Agent = %q, err = %v", got, err)
+	}
+	if got, err := store.Authenticate(t.Context(), token); err != nil || got != id {
+		t.Fatalf("local credential authenticates %q, err = %v", got, err)
+	}
+}
+
 func TestWebDeleteOfflineAgentLifecycle(t *testing.T) {
 	app, store, id, token := testApp(t)
 	defer store.Close()

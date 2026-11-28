@@ -179,8 +179,8 @@
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
    const deleteBlocked=a.online||Boolean(a.disabled_at&&a.delete_blocked_online);
    deleteControl.hidden=Boolean(a.revoked);
-   deleteButton.disabled=deleteBlocked||Boolean(a.disabled_at&&a.delete_blocked_online===undefined)||!canDeleteAgent(a);
-   deleteControl.title=deleteButton.title=deleteBlocked?deleteOnlineMessage:'';
+   deleteButton.disabled=Boolean(a.server_local)||deleteBlocked||Boolean(a.disabled_at&&a.delete_blocked_online===undefined)||!canDeleteAgent(a);
+   deleteControl.title=deleteButton.title=a.server_local?'这是 Server 本机的 Agent，不能彻底删除':deleteBlocked?deleteOnlineMessage:'';
    const youtubeName=code=>code==='EU'?'欧盟 EU':countryName(code)+' '+code;
    set('google',root.YouTubeStatus.summary(a,youtubeRegions(),youtubeName,time));
    youtubeControls.hidden=actions.googleFeedback.hidden=a.youtube_check_enabled===false;

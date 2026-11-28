@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -120,16 +121,30 @@ func TestM10HTTPSFailureClassification(t *testing.T) {
 		}
 	})
 	t.Run("body timeout after headers", func(t *testing.T) {
+		releaseHandler := make(chan struct{})
 		c := controlledChecker(t, "ipv6", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "1")
 			w.WriteHeader(200)
 			w.(http.Flusher).Flush()
-			<-r.Context().Done()
+			<-releaseHandler
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
-		defer cancel()
+		defer close(releaseHandler)
+		// The headers fit in the flushed TLS record. Expire the next socket
+		// read only after that record arrives, while the handler holds the body.
+		var conn net.Conn
+		var gotHeaders atomic.Bool
+		ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) { conn = info.Conn },
+			GotFirstResponseByte: func() {
+				gotHeaders.Store(true)
+				if err := conn.SetReadDeadline(time.Now()); err != nil {
+					t.Error(err)
+				}
+			},
+		})
 		v := c.Check(ctx, "ipv6")
-		if v.Status != "unknown" || v.Reason != "timeout" {
-			t.Fatal(v)
+		if !gotHeaders.Load() || v.Status != "unknown" || v.Reason != "timeout" {
+			t.Fatalf("headers received: %v, observation: %+v", gotHeaders.Load(), v)
 		}
 	})
 	// The well-known NAT64 prefix is judged by the IPv4 address inside it.

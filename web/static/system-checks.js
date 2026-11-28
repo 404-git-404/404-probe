@@ -214,10 +214,11 @@
     else if (dns.status === 'not_applicable') note(dnsBox, 'resolv.conf 里没有本机 DNS 服务器');
     else if (dns.status === 'error') note(dnsBox, '无法读取本机 DNS 配置');
     else {
-      const results = {ok: '正常', timeout: '超时', connection_refused: '拒绝连接', server_error: '服务器错误', no_record: '无记录'};
+      const results = {ok: '正常', timeout: '超时', connection_refused: '拒绝连接', server_error: '服务器错误', no_record: '正常（该名称无 A 记录）'};
       for (const server of dns.servers || []) {
         const id = key('dns', server.address), failing = active.has(id);
-        const row = fact(dnsBox, server.address, results[server.result] || '未知', failing ? 'danger' : server.result === 'ok' ? 'ok' : null);
+        const working = server.result === 'ok' || server.result === 'no_record';
+        const row = fact(dnsBox, server.address, results[server.result] || '未知', failing ? 'danger' : working ? 'ok' : null);
         const checkedAt = new Date(server.checked_at);
         if (Number.isFinite(checkedAt.getTime())) {
           const checked = element(doc, 'time', 'details-note', checkedAt.toLocaleString());
