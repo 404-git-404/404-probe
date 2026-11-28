@@ -338,6 +338,46 @@ html{background:#F7F4EF}html[data-theme=dark]{background:#0E1012}
   --color-text-78:#8883;
   --color-text-79:#65b9a6;
   --color-text-80:#dfaa65;
+  --tag-blue-text:#1D56B8;
+  --tag-blue-bg:rgba(37,99,235,.12);
+  --tag-blue-border:rgba(37,99,235,.5);
+  --tag-blue-bg-active:rgba(37,99,235,.22);
+  --tag-blue-swatch:#2563EB;
+  --tag-sky-text:#035E8C;
+  --tag-sky-bg:rgba(2,132,199,.12);
+  --tag-sky-border:rgba(2,132,199,.5);
+  --tag-sky-bg-active:rgba(2,132,199,.22);
+  --tag-sky-swatch:#0284C7;
+  --tag-cyan-text:#0B6675;
+  --tag-cyan-bg:rgba(8,145,178,.12);
+  --tag-cyan-border:rgba(8,145,178,.5);
+  --tag-cyan-bg-active:rgba(8,145,178,.22);
+  --tag-cyan-swatch:#0891B2;
+  --tag-teal-text:#0F6A5F;
+  --tag-teal-bg:rgba(13,148,136,.12);
+  --tag-teal-border:rgba(13,148,136,.5);
+  --tag-teal-bg-active:rgba(13,148,136,.22);
+  --tag-teal-swatch:#0D9488;
+  --tag-indigo-text:#4338B8;
+  --tag-indigo-bg:rgba(79,70,229,.12);
+  --tag-indigo-border:rgba(79,70,229,.5);
+  --tag-indigo-bg-active:rgba(79,70,229,.22);
+  --tag-indigo-swatch:#4F46E5;
+  --tag-purple-text:#702DA8;
+  --tag-purple-bg:rgba(147,51,234,.12);
+  --tag-purple-border:rgba(147,51,234,.5);
+  --tag-purple-bg-active:rgba(147,51,234,.22);
+  --tag-purple-swatch:#9333EA;
+  --tag-pink-text:#A61C63;
+  --tag-pink-bg:rgba(219,39,119,.12);
+  --tag-pink-border:rgba(219,39,119,.5);
+  --tag-pink-bg-active:rgba(219,39,119,.22);
+  --tag-pink-swatch:#DB2777;
+  --tag-gray-text:#4B525A;
+  --tag-gray-bg:rgba(100,116,139,.13);
+  --tag-gray-border:rgba(100,116,139,.5);
+  --tag-gray-bg-active:rgba(100,116,139,.24);
+  --tag-gray-swatch:#64748B;
 color-scheme:var(--theme-color-scheme);--bg:var(--color-surface-48);--panel:var(--color-overlay-12);--line:var(--color-line-42);--text:var(--color-text-33);--muted:var(--color-status-14);--green:var(--color-status-15);--red:var(--color-status-16);--blue:var(--color-status-17);--cyan:var(--color-status-17);--panel-soft:var(--color-overlay-13);--line-soft:var(--color-line-43);--purple:var(--color-status-17);--amber:var(--color-status-18)}
 .agent-name-display .agent-name-edit{flex-shrink:0}
 #plan-country-preview{display:inline-flex;vertical-align:middle;margin-right:6px}
@@ -889,6 +929,46 @@ body #upgrade-agent-dialog.dialog-shell>.upgrade-versions{padding:0;margin:18px 
   --color-text-78:var(--color-chart-grid);
   --color-text-79:var(--color-accent);
   --color-text-80:var(--color-warning-text);
+  --tag-blue-text:#88BCFF;
+  --tag-blue-bg:rgba(96,165,250,.14);
+  --tag-blue-border:rgba(96,165,250,.5);
+  --tag-blue-bg-active:rgba(96,165,250,.26);
+  --tag-blue-swatch:#60A5FA;
+  --tag-sky-text:#6ECEFC;
+  --tag-sky-bg:rgba(56,189,248,.14);
+  --tag-sky-border:rgba(56,189,248,.5);
+  --tag-sky-bg-active:rgba(56,189,248,.26);
+  --tag-sky-swatch:#38BDF8;
+  --tag-cyan-text:#58D8EA;
+  --tag-cyan-bg:rgba(34,211,238,.14);
+  --tag-cyan-border:rgba(34,211,238,.5);
+  --tag-cyan-bg-active:rgba(34,211,238,.26);
+  --tag-cyan-swatch:#22D3EE;
+  --tag-teal-text:#54DEC9;
+  --tag-teal-bg:rgba(45,212,191,.14);
+  --tag-teal-border:rgba(45,212,191,.5);
+  --tag-teal-bg-active:rgba(45,212,191,.26);
+  --tag-teal-swatch:#2DD4BF;
+  --tag-indigo-text:#B0BEFF;
+  --tag-indigo-bg:rgba(129,140,248,.15);
+  --tag-indigo-border:rgba(129,140,248,.5);
+  --tag-indigo-bg-active:rgba(129,140,248,.26);
+  --tag-indigo-swatch:#818CF8;
+  --tag-purple-text:#D4AEFF;
+  --tag-purple-bg:rgba(192,132,252,.15);
+  --tag-purple-border:rgba(192,132,252,.5);
+  --tag-purple-bg-active:rgba(192,132,252,.26);
+  --tag-purple-swatch:#C084FC;
+  --tag-pink-text:#F894C0;
+  --tag-pink-bg:rgba(244,114,182,.14);
+  --tag-pink-border:rgba(244,114,182,.5);
+  --tag-pink-bg-active:rgba(244,114,182,.26);
+  --tag-pink-swatch:#F472B6;
+  --tag-gray-text:#B8C1CC;
+  --tag-gray-bg:rgba(148,163,184,.14);
+  --tag-gray-border:rgba(148,163,184,.5);
+  --tag-gray-bg-active:rgba(148,163,184,.26);
+  --tag-gray-swatch:#94A3B8;
 }
 :root[data-theme=dark] body{background:var(--color-page);color:var(--color-text)}
 :root[data-theme=dark] .c7-offline-note{color:var(--color-danger-text)}
@@ -911,3 +991,11 @@ body dialog .shell-head .dialog-device-name{min-width:0;margin:0;text-align:righ
 .nq-history-device button{flex:none}
 #add-agent-dialog .oneclick-root-label{display:flex;align-items:center;gap:6px;color:var(--text);font-size:14px}
 #add-agent-dialog .oneclick-root-label input{width:auto;flex:none;margin:0;accent-color:var(--color-accent)}
+[data-tag-color=blue]{--tag-c-text:var(--tag-blue-text);--tag-c-bg:var(--tag-blue-bg);--tag-c-border:var(--tag-blue-border);--tag-c-bg-active:var(--tag-blue-bg-active);--tag-c-swatch:var(--tag-blue-swatch)}
+[data-tag-color=sky]{--tag-c-text:var(--tag-sky-text);--tag-c-bg:var(--tag-sky-bg);--tag-c-border:var(--tag-sky-border);--tag-c-bg-active:var(--tag-sky-bg-active);--tag-c-swatch:var(--tag-sky-swatch)}
+[data-tag-color=cyan]{--tag-c-text:var(--tag-cyan-text);--tag-c-bg:var(--tag-cyan-bg);--tag-c-border:var(--tag-cyan-border);--tag-c-bg-active:var(--tag-cyan-bg-active);--tag-c-swatch:var(--tag-cyan-swatch)}
+[data-tag-color=teal]{--tag-c-text:var(--tag-teal-text);--tag-c-bg:var(--tag-teal-bg);--tag-c-border:var(--tag-teal-border);--tag-c-bg-active:var(--tag-teal-bg-active);--tag-c-swatch:var(--tag-teal-swatch)}
+[data-tag-color=indigo]{--tag-c-text:var(--tag-indigo-text);--tag-c-bg:var(--tag-indigo-bg);--tag-c-border:var(--tag-indigo-border);--tag-c-bg-active:var(--tag-indigo-bg-active);--tag-c-swatch:var(--tag-indigo-swatch)}
+[data-tag-color=purple]{--tag-c-text:var(--tag-purple-text);--tag-c-bg:var(--tag-purple-bg);--tag-c-border:var(--tag-purple-border);--tag-c-bg-active:var(--tag-purple-bg-active);--tag-c-swatch:var(--tag-purple-swatch)}
+[data-tag-color=pink]{--tag-c-text:var(--tag-pink-text);--tag-c-bg:var(--tag-pink-bg);--tag-c-border:var(--tag-pink-border);--tag-c-bg-active:var(--tag-pink-bg-active);--tag-c-swatch:var(--tag-pink-swatch)}
+[data-tag-color=gray]{--tag-c-text:var(--tag-gray-text);--tag-c-bg:var(--tag-gray-bg);--tag-c-border:var(--tag-gray-border);--tag-c-bg-active:var(--tag-gray-bg-active);--tag-c-swatch:var(--tag-gray-swatch)}
