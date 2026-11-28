@@ -44,8 +44,7 @@ func fixtureKit(t *testing.T) *v4Kit {
 			t.Fatal(err)
 		}
 	}
-	// The browser fixtures include an existing built-in telecom lane upgraded to schema 49.
-	// Seed its display format while the later saves supply its library reference and settings.
+	// Preserve the legacy display format of the empty telecom slot in the unreported fixture.
 	if _, err := s.db.Exec(`INSERT INTO quality_slot_settings(agent_id,slot,kind,isp,updated_revision,legacy_label)
 		VALUES(?,'telecom','custom','电信',0,1)`, fixtureAgent); err != nil {
 		t.Fatal(err)
@@ -57,6 +56,17 @@ func fixtureSlots() []protocol.QualityV4Slot {
 	telecom := protocol.QualityV4Slot{Slot: "telecom", Kind: "builtin", Region: "广东", ISP: "telecom", Host: "example.com", Port: 443, SlotEnabled: true, IPv4TCP: true, IPv4ICMP: true, IPv6TCP: true, IPv6ICMP: true}
 	unicom := protocol.QualityV4Slot{Slot: "unicom", Kind: "custom", Region: "Tokyo", ISP: "NTT", Host: "93.184.216.34", Port: 80, SlotEnabled: true, IPv4TCP: true, IPv4ICMP: true}
 	return []protocol.QualityV4Slot{telecom, unicom}
+}
+
+func saveMigratedFixtureSlots(k *v4Kit, interval int) {
+	k.t.Helper()
+	k.save(interval, fixtureSlots()...)
+	// The browser fixtures represent an existing built-in slot upgraded to
+	// schema 49. Install its migration marker after setting up the fixture
+	// reference because assigning a new library target clears that marker.
+	if _, err := k.s.db.Exec(`UPDATE quality_slot_settings SET legacy_label=1 WHERE agent_id=? AND slot='telecom'`, k.id); err != nil {
+		k.t.Fatal(err)
+	}
 }
 
 func marshalFixture(t *testing.T, v any) []byte {
@@ -147,14 +157,14 @@ func TestFrontendFixtures(t *testing.T) {
 	// An old Agent: reports without the negotiation, targets saved and switched on.
 	k = fixtureKit(t)
 	k.report(false, v4Caps(protocol.QualityIPv6Present))
-	k.save(60000, fixtureSlots()...)
+	saveMigratedFixtureSlots(k, 60000)
 	k.enable(true)
 	write("v4-old-agent.json", k.get())
 
 	// A restarted Agent whose earlier grant stands: step one done, step two (the capability) still to come.
 	k = fixtureKit(t)
 	k.negotiate(v4Caps(protocol.QualityIPv6Present))
-	k.save(60000, fixtureSlots()...)
+	saveMigratedFixtureSlots(k, 60000)
 	k.enable(true)
 	k.restart()
 	k.reconcile(k.report(true, nil))
@@ -163,7 +173,7 @@ func TestFrontendFixtures(t *testing.T) {
 	// First upgrade from an old Agent: nothing was ever granted, so the same first step reads as unsupported.
 	k = fixtureKit(t)
 	k.report(false, v4Caps(protocol.QualityIPv6Present))
-	k.save(60000, fixtureSlots()...)
+	saveMigratedFixtureSlots(k, 60000)
 	k.restart()
 	k.reconcile(k.report(true, nil))
 	write("v4-first-upgrade.json", k.get())
@@ -171,7 +181,7 @@ func TestFrontendFixtures(t *testing.T) {
 	// A current Agent, configuration saved, detection off.
 	k = fixtureKit(t)
 	k.negotiate(v4Caps(protocol.QualityIPv6Present))
-	k.save(60000, fixtureSlots()...)
+	saveMigratedFixtureSlots(k, 60000)
 	write("v4-saved-off.json", k.get())
 
 	// Detection on and running.
@@ -203,14 +213,14 @@ func TestFrontendFixtures(t *testing.T) {
 	// A host without IPv6 and without ICMP permission.
 	k = fixtureKit(t)
 	k.negotiate(v4Caps(protocol.QualityIPv6None, "ipv4/icmp", "ipv6/icmp"))
-	k.save(30000, fixtureSlots()...)
+	saveMigratedFixtureSlots(k, 30000)
 	k.enable(true)
 	write("v4-no-ipv6-no-icmp.json", k.get())
 
 	// The telecom target does not exist: three not_found events in a row.
 	k = fixtureKit(t)
 	k.negotiate(v4Caps(protocol.QualityIPv6Present))
-	k.save(30000, fixtureSlots()...)
+	saveMigratedFixtureSlots(k, 30000)
 	cfg := k.enable(true)
 	k.now = k.now.Add(10 * time.Minute)
 	for i := 1; i <= 3; i++ {

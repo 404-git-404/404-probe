@@ -29,7 +29,17 @@ type singboxCache struct {
 func collectSingboxStructure(ctx context.Context, dir, defaultPath string, now time.Time, run commandRunner) protocol.SingboxStructureReport {
 	result := protocol.SingboxStructureReport{Status: protocol.CheckError, CollectedAt: now.UnixMilli()}
 	output, _ := run(ctx, "/usr/bin/systemctl", "show", "-p", "ExecStart", "sing-box.service")
-	paths, err := singboxConfigPaths(ctx, output, defaultPath)
+	arguments := parseSingboxExecStart(output)
+	if strings.Contains(output, "argv[]=") {
+		// systemctl's text display flattens argv without quoting spaces in paths.
+		// Read the same property over D-Bus when available to recover boundaries.
+		busOutput, err := run(ctx, "/usr/bin/busctl", "--json=short", "get-property", "org.freedesktop.systemd1",
+			"/org/freedesktop/systemd1/unit/sing_2dbox_2eservice", "org.freedesktop.systemd1.Service", "ExecStart")
+		if argv := parseSingboxExecStartBus(busOutput); err == nil && len(argv) != 0 {
+			arguments = argv
+		}
+	}
+	paths, err := singboxConfigPaths(ctx, arguments, defaultPath)
 	if err != nil {
 		result.Reason = inventoryErrorReason(err)
 		return result
@@ -79,8 +89,7 @@ type configArgument struct {
 	kind, path string
 }
 
-func singboxConfigPaths(ctx context.Context, output, defaultPath string) ([]string, error) {
-	arguments := parseSingboxExecStart(output)
+func singboxConfigPaths(ctx context.Context, arguments []string, defaultPath string) ([]string, error) {
 	var inputs []configArgument
 	base := "/" // A system service without WorkingDirectory starts in /.
 	for i := 1; i < len(arguments); i++ {
@@ -151,6 +160,17 @@ func singboxConfigPaths(ctx context.Context, output, defaultPath string) ([]stri
 		return nil, os.ErrNotExist
 	}
 	return paths, nil
+}
+
+func parseSingboxExecStartBus(output string) []string {
+	var wire struct {
+		Data [][]json.RawMessage `json:"data"`
+	}
+	var argv []string
+	if json.Unmarshal([]byte(output), &wire) == nil && len(wire.Data) != 0 && len(wire.Data[0]) >= 2 {
+		_ = json.Unmarshal(wire.Data[0][1], &argv)
+	}
+	return argv
 }
 
 func parseSingboxExecStart(output string) []string {

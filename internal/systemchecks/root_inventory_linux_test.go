@@ -178,6 +178,14 @@ func TestSingboxConfigPathsAndCache(t *testing.T) {
 			}
 		})
 	}
+	if out := collectSingboxStructure(t.Context(), t.TempDir(), second, time.Now(), func(_ context.Context, name string, _ ...string) (string, error) {
+		if strings.HasSuffix(name, "systemctl") {
+			return wrap("-c " + first), nil // systemctl renders spaces without quoting them.
+		}
+		return fmt.Sprintf(`{"type":"a(sasbttttuii)","data":[["/usr/bin/sing-box",["/usr/bin/sing-box","run","-c",%q],false,0,0,0,0,0,0,0]]}`, first), nil
+	}); out.Status != "ok" || out.Structure.Outbounds[0].Tag != "first" {
+		t.Fatal(out)
+	}
 	inventoryFixtureFile(t, second, `{"outbounds":[}`)
 	if bad := collectSingboxStructure(t.Context(), t.TempDir(), second, time.Now(), unavailableInventoryCommand); bad.Reason != "parse_failed" || bad.Structure != nil {
 		t.Fatal(bad)

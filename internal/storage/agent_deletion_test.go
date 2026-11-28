@@ -30,6 +30,20 @@ func TestDeleteOfflineAgentErasesHistory(t *testing.T) {
 	}
 	report := validReport(id, 1, "session", "boot", 1, 100, 200)
 	report.CollectedAt = now.UnixMilli()
+	baseline := &protocol.SecuritySnapshot{SSHKeys: []protocol.SecuritySSHKey{}, Ports: []protocol.SecurityPort{},
+		UID0: []string{"root"}, SudoMembers: []protocol.SecuritySudoMember{}, SudoersFiles: []protocol.SecuritySudoersFile{}}
+	structure := &protocol.SingboxStructure{Outbounds: []protocol.SingboxOutbound{{Tag: "fixture", Type: "direct"}}}
+	baselineDigest, _, err := protocol.InventoryDigest(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	structureDigest, _, err := protocol.InventoryDigest(structure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.SystemChecks = &protocol.SystemChecks{Supported: true, RootStatus: protocol.CheckOK,
+		SecurityBaseline: &protocol.SecurityBaselineReport{Status: protocol.CheckOK, Snapshot: baseline, Digest: baselineDigest, CollectedAt: report.CollectedAt},
+		SingboxStructure: &protocol.SingboxStructureReport{Status: protocol.CheckOK, Structure: structure, Digest: structureDigest, CollectedAt: report.CollectedAt}}
 	if _, accepted, reason, err := s.ProcessReport(ctx, id, report, now); err != nil || !accepted {
 		t.Fatal(accepted, reason, err)
 	}
