@@ -189,10 +189,10 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
         for(const state of ['green','yellow','red','gray']){
           assert(await qualityCard.locator('.nq7-b-'+state).count());
         }
-        assert.equal(await qualityCard.locator('.nq7-alert-run').count(),1);
+        assert.equal(await qualityCard.locator('.nq7-alert-run').count(),5);
         assert.equal(await qualityCard.locator('.nq7-sem-change').count(),1);
         await qualityCard.locator('.nq7-b-red').first().hover();
-        assert.match(await page.locator('.nq7-tip:visible').textContent(),/中位 1024 ms.*红：中位延迟/);
+        assert.match(await page.locator('.nq7-tip:visible').textContent(),/延迟中位数 1024 ms · 丢包 33\.3% · 告警 3 分钟/);
         if(outDir){
           fs.mkdirSync(outDir,{recursive:true});
           const card=await qualityCard.boundingBox(),tip=await page.locator('.nq7-tip:visible').boundingBox();

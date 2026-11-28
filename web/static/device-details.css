@@ -108,9 +108,9 @@ html { scrollbar-gutter: stable; }
 .system-pill[data-tone=danger],.dashboard-card-tags>span.system-pill[data-tone=danger]{color:var(--color-danger-text);background:var(--color-surface-29);border-color:currentColor}
 .system-pill[data-tone=server],.dashboard-card-tags>span.system-pill[data-tone=server]{color:var(--color-accent-text);background:var(--color-accent-soft);border-color:var(--color-accent)}
 .system-pill[data-tone=ok]{color:var(--color-success)}
-.banner-system-badges{display:flex;gap:3px;flex-wrap:wrap;margin-top:2px}
-.banner-system-badges[hidden]{display:none}
-.banner-system-badges .system-pill{font-size:10px;padding:1px 5px}
+.banner-system-badges{display:flex;gap:4px;flex-wrap:nowrap;align-items:center;height:20px;min-height:20px;margin-top:3px}
+.banner-system-badges .status-row-side{gap:3px}
+.banner-system-badges .status-item,.banner-system-badges .status-more,.banner-system-badges .system-pill{font-size:10px;line-height:1.25;padding:1px 5px}
 .system-table-scroll{overflow-x:auto}
 .system-certificates{width:100%;border-collapse:collapse;font-size:13px}
 .system-certificates th,.system-certificates td{padding:7px 9px;text-align:start;border-bottom:1px solid var(--color-line-soft)}

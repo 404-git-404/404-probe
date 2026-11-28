@@ -77,7 +77,7 @@ test('S2 system tab ignores individual issues, refreshes and shows failures inli
   updateAttention();
   await page.evaluate(() => dashboardData.reload());
   const card = page.locator('.agent-card');
-  const serviceBadge = card.getByText('服务异常', {exact: true});
+  const serviceBadge = card.getByText('⚠ 服务异常', {exact: true});
   await serviceBadge.waitFor();
   await page.locator('[data-view=list]').click();
   await page.locator('.banner-name').click();
@@ -108,9 +108,9 @@ test('S2 system tab ignores individual issues, refreshes and shows failures inli
   await change('/etc/certs/node.crt');
   await change('时间同步');
   await pane.getByText('无告警', {exact: true}).waitFor();
-  await page.locator('.banner-row').getByText('服务异常', {exact: true}).waitFor({state: 'detached'});
+  await page.locator('.banner-row').getByText('⚠ 服务异常', {exact: true}).waitFor({state: 'detached'});
   await change(first, true);
-  await page.locator('.banner-row').getByText('服务异常', {exact: true}).waitFor();
+  await page.locator('.banner-row').getByText('⚠ 服务异常', {exact: true}).waitFor();
   assert.deepEqual(requests[0], {method: 'PUT', csrf: 'synthetic-csrf', body: {kind: 'service', item: first}});
   assert.deepEqual(requests.at(-1), {method: 'DELETE', csrf: 'synthetic-csrf', body: {kind: 'service', item: first}});
 

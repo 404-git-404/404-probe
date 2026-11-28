@@ -336,18 +336,52 @@
       m.old_tcp&&m.packet_loss_percent!=null?'含旧口径样本，丢包率只计新口径':'',
       m.relaxed_tcp?'高延迟线路，丢包判断放宽':'',cellReasons[m.reason]||''].filter(Boolean).join(' · ');
   }
+  function alertOverlapMS(blockStart, blockEnd, alertRuns, now) {
+    if(!finite(blockStart)||!finite(blockEnd)||blockEnd<=blockStart||!Array.isArray(alertRuns)||!alertRuns.length)return 0;
+    const fallbackEnd=finite(now)?now:Date.now();
+    const ranges=[];
+    for(const run of alertRuns){
+      if(!run||!finite(run.start))continue;
+      const end=finite(run.end)?run.end:fallbackEnd;
+      if(!finite(end)||end<=run.start)continue;
+      const a=Math.max(blockStart,run.start),b=Math.min(blockEnd,end);
+      if(b>a)ranges.push([a,b]);
+    }
+    if(!ranges.length)return 0;
+    ranges.sort((x,y)=>x[0]-y[0]||x[1]-y[1]);
+    let total=0,[curStart,curEnd]=ranges[0];
+    for(let i=1;i<ranges.length;i++){
+      const [a,b]=ranges[i];
+      if(a<=curEnd)curEnd=Math.max(curEnd,b);
+      else{total+=curEnd-curStart;curStart=a;curEnd=b;}
+    }
+    return total+(curEnd-curStart);
+  }
+  function blockMetricsSummary(rangeText, metrics, overlapMS=0) {
+    const p50=metrics?.p50_ms!=null?`${peak(metrics.p50_ms)} ms`:'—';
+    const loss=metrics?.old_tcp&&metrics.packet_loss_percent==null?'旧口径':percent(metrics?.packet_loss_percent);
+    const alertMin=overlapMS>0?Math.ceil(overlapMS/60000):0;
+    return `${rangeText} · 延迟中位数 ${p50} · 丢包 ${loss}${alertMin>0?` · 告警 ${alertMin} 分钟`:''}`;
+  }
   // The text of one 3-minute block, for the hover card and for assistive technology. It restates the Server's numbers only.
-  function blockView(b,{label='',threshold=500,intervalMS=30000,blockMS=180000}={}) {
-    const lines=[`${label?label+' · ':''}${clock(b.start)}–${clock(b.start+blockMS)} · ${b.metrics?{green:"绿",yellow:"黄",red:"红",gray:"灰"}[b.state]:STATE_TEXT[b.state]}`];
-    if(b.metrics)lines.push(cellDetails(b.metrics));
+  function blockView(b,{label='',threshold=500,intervalMS=30000,blockMS=180000,alertRuns=[],now}={}) {
+    const overlapMS=alertOverlapMS(b.start,b.start+blockMS,alertRuns,now);
+    const m=b.metrics;
+    const hasMetrics=!!(m&&(m.samples>0||m.p50_ms!=null||m.packet_loss_percent!=null));
+    if(hasMetrics){
+      const range=`${clock(b.start)}–${clock(b.start+blockMS)}`;
+      return {state:b.state,alert:overlapMS>0,overlapMS,text:blockMetricsSummary(range,m,overlapMS)};
+    }
+    const lines=[`${label?label+' · ':''}${clock(b.start)}–${clock(b.start+blockMS)} · ${m?{green:"绿",yellow:"黄",red:"红",gray:"灰"}[b.state]:STATE_TEXT[b.state]}`];
+    if(m)lines.push(cellDetails(m));
     else if(b.judged>0)lines.push(`本格 ${b.judged} 个样本：慢 ${b.slow} · 失败 ${b.failed}${b.max_ms!=null?` · 最高约 ${peak(b.max_ms)} ms`:''}${b.unjudged?` · 未判断 ${b.unjudged}`:''}`);
     else if(b.state==='gray')lines.push(b.unjudged?`本格没有可判断的样本（${b.unjudged} 个未判断）`:'本格没有可用样本');
-    if(!b.metrics&&b.state==='gray'&&b.judged>0)lines.push('样本不足，不判断');
+    if(!m&&b.state==='gray'&&b.judged>0)lines.push('样本不足，不判断');
     if(b.state==='gray'&&intervalMS>=240000)lines.push('检测间隔较长，部分方块没有样本');
     lines.push(`门槛 ${threshold} ms`);
     if(b.partial)lines.push('含配置变更或缺测，部分分钟未计入');
     if(b.in_progress)lines.push('数据仍在到达');
-    return {state:b.state,text:lines.join('\n')};
+    return {state:b.state,alert:overlapMS>0,overlapMS,text:lines.join('\n')};
   }
   // The number at the right of a lane: ICMP loss when ICMP runs, else the TCP failure rate. TCP never says "loss".
   function rightView(right) {
@@ -401,6 +435,6 @@
     const fitsBelow=below+height<=viewport.clientHeight-margin;
     tip.style.top=Math.max(margin,Math.min(fitsBelow?below:above,viewport.clientHeight-height-margin))+'px';
   }
-  const api={positionCardTip,slots,names,cardSlots,MAX_OBJECTS,MAX_CARD_OBJECTS,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,blockView,cellDetails,cellReasons,rightView,tcpRightView,laneView,STATE_TEXT};
+  const api={positionCardTip,slots,names,cardSlots,MAX_OBJECTS,MAX_CARD_OBJECTS,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,alertOverlapMS,blockMetricsSummary,blockView,cellDetails,cellReasons,rightView,tcpRightView,laneView,STATE_TEXT};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);

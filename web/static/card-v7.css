@@ -280,5 +280,5 @@ dialog.selector-dialog{position:fixed;inset:0;margin:auto;width:380px;max-width:
 
 .c7 .nq7-blocks{position:relative}
 .c7 .nq7-mark{position:absolute}
-.c7 .nq7-alert-run{bottom:-3px;height:2px;background:var(--c7-block-red);pointer-events:none}
+.c7 .nq7-alert-run{left:-1px;right:-1px;bottom:-4px;height:2px;background:var(--c7-block-red);pointer-events:none}
 .c7 .nq7-sem-change{top:-3px;bottom:-4px;border-left:2px dashed var(--color-accent);z-index:1}

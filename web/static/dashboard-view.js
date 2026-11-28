@@ -165,6 +165,12 @@
       if(key==='devices'){
         devicesSummary.addEventListener('click',event=>{
           event.preventDefault();
+          if(phone.matches){
+            host.open=true;
+            clear();
+            mobileShell.close();
+            return;
+          }
           if(app.classList.contains('panel-collapsed')){
             setCollapsed(false);
             host.open=true;
