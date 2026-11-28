@@ -41,8 +41,14 @@
     return list.length > 1 ? `${first} 等 ${list.length} 项` : first;
   }
 
+  function shellArg(value) {
+    const s = String(value ?? '');
+    if (s.length > 0 && /^[A-Za-z0-9_@%+=:,./-]+$/.test(s)) return s;
+    return "'" + s.replaceAll("'", "'\\''") + "'";
+  }
+
   function remediationFor(kind, itemValue) {
-    const v = String(itemValue ?? '');
+    const v = shellArg(itemValue);
     switch (kind) {
       case 'service':
         return {
@@ -687,7 +693,7 @@
     return {node, update, fit, destroy};
   }
 
-  const api = {items, create, closePopover, hideTooltip, formatHoverReason, remediationFor};
+  const api = {items, create, closePopover, hideTooltip, formatHoverReason, remediationFor, shellArg};
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.StatusRow = api;
 })(globalThis);

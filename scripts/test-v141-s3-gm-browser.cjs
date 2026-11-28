@@ -81,6 +81,32 @@ test('unit: hover reason formatting, remediation templates, unknown kind badges,
 
   assert.equal(StatusRow.remediationFor('custom_unknown', 'foo'), null);
 
+  // Shell-escaping for special characters in unit names and certificate paths.
+  assert.equal(
+    StatusRow.remediationFor('service', 'mnt-data\\x2dbackup.mount').steps[0].commands[0],
+    "systemctl status 'mnt-data\\x2dbackup.mount' --no-pager"
+  );
+  assert.equal(
+    StatusRow.remediationFor('service_restart', 'mnt-data\\x2dbackup.mount').steps[0].commands[0],
+    "journalctl -u 'mnt-data\\x2dbackup.mount' -n 100 --no-pager"
+  );
+  assert.equal(
+    StatusRow.remediationFor('certificate', '/etc/ssl/my certs/a.pem').steps[0].commands[0],
+    "openssl x509 -noout -enddate -in '/etc/ssl/my certs/a.pem'"
+  );
+  assert.equal(
+    StatusRow.remediationFor('certificate', '/etc/ssl/a;touch /tmp/pwn;.pem').steps[0].commands[0],
+    "openssl x509 -noout -enddate -in '/etc/ssl/a;touch /tmp/pwn;.pem'"
+  );
+  assert.equal(
+    StatusRow.remediationFor('certificate', '/etc/ssl/$(id).pem').steps[0].commands[0],
+    "openssl x509 -noout -enddate -in '/etc/ssl/$(id).pem'"
+  );
+  assert.equal(
+    StatusRow.remediationFor('certificate', "/etc/ssl/it's.pem").steps[0].commands[0],
+    "openssl x509 -noout -enddate -in '/etc/ssl/it'\\''s.pem'"
+  );
+
   const badges = M.systemBadges({
     online: true,
     system_attention: {
@@ -490,7 +516,8 @@ for (const theme of ['dark', 'light']) {
       // Screenshot: service fault popover.
       await capture(page, `${theme}-fault-service`);
 
-      // Copy button changes to 已复制 and reverts after 1.5s.
+      // Copy button changes to 已复制, matches rendered <code> text exactly, and reverts after 1.5s.
+      const firstCodeText = await eximCard.locator('.fault-cmd-row code').first().textContent();
       const firstCopyBtn = eximCard.locator('.fault-cmd-copy').first();
       await firstCopyBtn.click();
       await page.waitForFunction(
@@ -498,7 +525,9 @@ for (const theme of ['dark', 'light']) {
         null,
         {timeout: 3000}
       );
-      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'systemctl status exim4.service --no-pager');
+      const copiedText = await page.evaluate(() => navigator.clipboard.readText());
+      assert.equal(copiedText, firstCodeText);
+      assert.equal(copiedText, 'systemctl status exim4.service --no-pager');
       await page.waitForFunction(
         () => document.querySelector('.status-fault-popover .fault-popover-item[data-item="exim4.service"] .fault-cmd-copy')?.textContent === '复制',
         null,
@@ -539,6 +568,35 @@ for (const theme of ['dark', 'light']) {
       await capture(page, `${theme}-fault-certificate`);
       await page.keyboard.press('Escape');
       await faultPop.waitFor({state: 'detached'});
+
+      // Verify shell-escaped certificate path renders identically in <code> and clipboard.
+      const origCertAttention = structuredClone(f.state.items[1].system_attention);
+      f.state.items[1].system_attention = {
+        ...origCertAttention,
+        certificate: 'danger',
+        items: [
+          {kind: 'certificate', item: "/etc/ssl/my certs/it's.pem", level: 'danger', detail: "/etc/ssl/my certs/it's.pem 已于 2026-11-20 到期"},
+          ...(origCertAttention.items || []).filter(i => i.kind !== 'certificate'),
+        ],
+      };
+      await page.evaluate(() => dashboardData.reload());
+      await settle(page);
+      await cardOf(page, 1).locator('.status-fault[data-fault-kind="certificate"]').click();
+      await faultPop.waitFor();
+      const escapedCode = await faultPop.locator('.fault-cmd-row code').first().textContent();
+      assert.equal(escapedCode, "openssl x509 -noout -enddate -in '/etc/ssl/my certs/it'\\''s.pem'");
+      await faultPop.locator('.fault-cmd-copy').first().click();
+      await page.waitForFunction(
+        () => document.querySelector('.status-fault-popover .fault-cmd-copy')?.textContent === '已复制',
+        null,
+        {timeout: 3000}
+      );
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), escapedCode);
+      await page.keyboard.press('Escape');
+      await faultPop.waitFor({state: 'detached'});
+      f.state.items[1].system_attention = origCertAttention;
+      await page.evaluate(() => dashboardData.reload());
+      await settle(page);
 
       // 6. Time & DNS popovers check.
       await cardOf(page, 1).locator('.status-fault[data-fault-kind="time"]').click();
