@@ -45,6 +45,16 @@ check('yellow bar on yellow block','mark-yellow','block-yellow',3);check('red do
 check('selected segment text','seg-on-text','seg-on',4.5);
 check('renew (soon) text','renew-warn-text','renew-warn-bg',4.5);check('renew (overdue) text','renew-crit-text','renew-crit-bg',4.5);
 check('offline label','offline','offline-bg',4.5);
+// tag preset colors: text against card background, tinted card tag background, tinted page tag background, and selected tag filter background
+const tagOn=(fgVar,bgVar,baseVar)=>{const base=composite(rgba(resolve(baseVar)),page);const bg=composite(rgba(resolve(bgVar)),base);const fg=composite(rgba(resolve(fgVar)),bg);return ratio(fg,bg);};
+for(const key of ['blue','sky','cyan','teal','indigo','purple','pink','gray']){
+  const fg=`--tag-${key}-text`,bg=`--tag-${key}-bg`,act=`--tag-${key}-bg-active`;
+  check(`tag ${key} text on card`,fg,'--color-card',4.5);
+  for(const [label,bgVar,baseVar] of [[`tag ${key} text on tinted card`,bg,'--color-card'],[`tag ${key} text on tinted page`,bg,'--color-page'],[`tag ${key} text on active filter`,act,'--color-page']]){
+    const r=tagOn(fg,bgVar,baseVar);
+    results.push({mode,name:label,category:'text',r,min:4.5,ok:r>=4.5,fg,bg:bgVar+' over '+baseVar});
+  }
+}
 
 }
 let failed=0;

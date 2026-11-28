@@ -1148,13 +1148,27 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
 let youtubeRegionKey='',youtubeRegionGeneration=0;
-function cardRenderKey(a){return JSON.stringify([globalThis.DeviceScores?.version(),a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,a.server_local,a.system_attention,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([globalThis.DeviceScores?.version(),a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,a.server_local,a.system_attention,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>{const t=dashboardData.catalog().tags.find(x=>x.id===id);return t?[t.name,t.color||'']:null;}),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+async function ignoreSystemCheck(agentId, kind, item) {
+  let csrf = mutationCSRFToken;
+  if (!csrf) {
+    const session = await readJSON('/api/v1/web/session');
+    csrf = session.csrf_token || '';
+    mutationCSRFToken = csrf;
+  }
+  if (!csrf) throw new Error('会话已失效');
+  await Management.write(`/api/v1/web/agents/${encodeURIComponent(agentId)}/system-check-ignores`, {
+    method: 'PUT', csrf, payload: {kind, item}, unauthorized: () => location.assign('/login'),
+  });
+  await dashboardData.reload();
+  if (!suspended) renderDashboard(new Set([agentId]));
+}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
 const groupViews=new Map();
 let bannerHost=null,bannerView=null;
-function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('section');bannerHost.id='agent-list';container.after(bannerHost);bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger,tab='overview')=>{planRenewal.close();deviceDetails.open(id,tab,trigger);if(tab==='management')requestAnimationFrame(()=>document.querySelector('[data-upgrade-region]')?.scrollIntoView({block:'center'}));},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot)});}
+function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('section');bannerHost.id='agent-list';container.after(bannerHost);bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger,tab='overview')=>{planRenewal.close();deviceDetails.open(id,tab,trigger);if(tab==='management')requestAnimationFrame(()=>document.querySelector('[data-upgrade-region]')?.scrollIntoView({block:'center'}));},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot),onIgnore:ignoreSystemCheck,onNavigateNetwork:id=>dashboardUI.openNetwork(id)});}
 function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
@@ -1442,7 +1456,7 @@ function createAgentCard(initialAgent) {
     head.append(mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
-    const statusRow=StatusRow.create({document,variant:'card'});
+    const statusRow=StatusRow.create({document,variant:'card',onIgnore:ignoreSystemCheck,onNavigateNetwork:id=>dashboardUI.openNetwork(id)});
     const tags=statusRow.node;
     const diskBadge=document.createElement('span');diskBadge.className='dashboard-warning dashboard-disk-warning';
     const diskLabel=document.createElement('span'),diskAck=document.createElement('button');

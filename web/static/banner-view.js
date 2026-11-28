@@ -62,7 +62,7 @@
   const statusItems=root.StatusRow?root.StatusRow.items(a,{catalog:catalog||root.dashboardData?.catalog?.(),server,warnings:flags,now}):{tags:[],faults:[]};
   return {name,uptime,lifecycle,systemBadges:M.systemBadges(a),statusItems,country:a.country_code||'',countrySource:a.country_source||'',countryHidden:a.country_lookup_enabled===false,system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),networkWarning:flags.network,youtube:{text:youtube.code||'—',tone:youtube.regionTone,hidden:a.youtube_check_enabled===false},price:price(p),renewal:renewal(a,due),renewalLink,dueType:due.type,upgrade:flags.upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
  }
- function create({host,document:doc=root.document,selector,onOpen=()=>{},onCollapse=()=>{},onSort=()=>{},onSlot=()=>{},csrf=()=>'',blocked=()=>false,storage=()=>root.localStorage}={}){
+ function create({host,document:doc=root.document,selector,onOpen=()=>{},onCollapse=()=>{},onSort=()=>{},onSlot=()=>{},onIgnore=null,onNavigateNetwork=null,csrf=()=>'',blocked=()=>false,storage=()=>root.localStorage}={}){
   const groups=new Map(),rows=new Map();let lastLayout='',headerKey='',namesKey='';
   const columnWidths=loadColumnWidths(storage);
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;},text=(n,s)=>{if(n.textContent!==s)n.textContent=s;};
@@ -137,7 +137,7 @@
   function row(a){
    const node=el('div','banner-row banner-columns');node.dataset.agentId=a.agent_id;node.setAttribute('role','row');
    const cells=columns.map(([key])=>{const n=el('div','banner-cell');n.dataset.column=key;n.setAttribute('role','cell');node.append(n);return n;}),identity=el('div','banner-identity'),dot=el('i','banner-dot'),flag=el('span','banner-flag'),names=el('div','banner-names'),name=el('button','banner-name'),uptime=el('small');name.type='button';name.addEventListener('click',()=>onOpen(a.agent_id,name));
-   const statusRow=root.StatusRow?root.StatusRow.create({document:doc,variant:'list'}):null;
+   const statusRow=root.StatusRow?root.StatusRow.create({document:doc,variant:'list',onIgnore,onNavigateNetwork}):null;
    const badges=statusRow?statusRow.node:el('div','banner-system-badges');
    names.append(name,uptime);
    const valueRibbon=root.DeviceScores?.valueRibbon?.(doc,'list');

@@ -298,10 +298,11 @@
       if(code==='unknown') return '未知';
       try{return countryNames?.of(code)||code;}catch{return code;}
     }
+    const validTagColor = c => typeof c === 'string' && /^(blue|sky|cyan|teal|indigo|purple|pink|gray)$/.test(c) ? c : '';
     function optionRows(key,rows){
       const {list,nodes}=options[key], live=new Set(), checkbox=key==='countries'||key==='statuses';
       let next=list.firstElementChild;
-      for(const [id,label,total] of rows){
+      for(const [id,label,total,color] of rows){
         live.add(id);
         let entry=nodes.get(id);
         if(!entry){
@@ -321,6 +322,11 @@
         }
         if(entry.input) entry.input.checked=p[key].includes(id);
         else pressed(entry.node,p[key].includes(id));
+        if(key==='tags'){
+          const c=validTagColor(color);
+          if(c) entry.node.dataset.tagColor=c;
+          else delete entry.node.dataset.tagColor;
+        }
         text(entry.name,label);
         text(entry.number,total);
         if(key!=='tags'||!entry.node.parentNode){
@@ -343,6 +349,7 @@
         return update(agents,catalog,server,ready);
       }
       const nextControls=JSON.stringify([ready,p,catalog.revision,model.list.length,model.youtubeFreeCount,
+        catalog.tags.map(t=>[t.id,t.name,t.color||'']),
         [...agents.values()].map(a=>[a.agent_id,a.revoked,a.group_id,a.tag_ids,a.country_code,M.lifecycle(a)])]);
       if(nextControls===controlsKey) return model;
       controlsKey=nextControls;
@@ -358,12 +365,12 @@
         bump('statuses',M.lifecycle(a));
       }
       const groupRows=[...groupNames].map(([id,name])=>[id,name,totals.groups.get(id)||0]);
-      const tagRows=catalog.tags.map(tag=>[tag.id,tag.name,totals.tags.get(tag.id)||0]);
+      const tagRows=catalog.tags.map(tag=>[tag.id,tag.name,totals.tags.get(tag.id)||0,tag.color||'']);
       optionRows('groups',groupRows);
       optionRows('tags',tagRows);
       optionRows('countries',[...totals.countries].sort(([a],[b])=>a.localeCompare(b)).map(([id,n])=>[id,country(id),n]));
       optionRows('statuses',Object.entries(M.STATUS).map(([id,label])=>[id,label,totals.statuses.get(id)||0]));
-      const nextTags=JSON.stringify(tagRows);
+      const nextTags=JSON.stringify(tagRows.map(([id,name,total])=>[id,name,total]));
       if(nextTags!==tagLayoutKey){tagLayoutKey=nextTags;scheduleTags();}
       pressed(tagAll,!p.tags.length);
       const total=lastSummary.registered;
@@ -412,6 +419,7 @@
     return {
       preferences, page:()=>page, effectiveView:()=>p.viewMode==='list'&&phone.matches?'cards':p.viewMode,
       update,apply,clear,sortBy,updateVersion,refreshVersion,backupAvailable:()=>backupAvailable,
+      openNetwork(id){setNetworkExpanded(true);navigate(id?'network/'+encodeURIComponent(id):'network',{closeMobile:true});onchange();},
       setSlot(slot){p.latencySlot=slot;change();},
       collapse(id){p.collapsed=p.collapsed.includes(id)?p.collapsed.filter(value=>value!==id):[...p.collapsed,id];change();},
       close(){
