@@ -22,7 +22,7 @@ func migrateNetworkTargetsAndSkins49Tx(ctx context.Context, tx *sql.Tx) error {
 		ALTER TABLE quality_slot_settings ADD COLUMN library_id TEXT REFERENCES network_target_library(id);
 		ALTER TABLE quality_slot_settings ADD COLUMN legacy_label INTEGER NOT NULL DEFAULT 0 CHECK(legacy_label IN (0,1));
 		UPDATE quality_slot_settings SET kind='custom', legacy_label=1,
-			isp=CASE slot WHEN 'telecom' THEN '电信' WHEN 'unicom' THEN '联通' WHEN 'mobile' THEN '移动' ELSE isp END
+			isp=CASE isp WHEN 'telecom' THEN '电信' WHEN 'unicom' THEN '联通' WHEN 'mobile' THEN '移动' ELSE isp END
 			WHERE kind='builtin';
 		INSERT INTO network_target_library(id,region,isp,host,port,revision)
 			SELECT lower(hex(randomblob(16))),region,isp,lower(host),port,1

@@ -58,7 +58,7 @@ func TestMigration49FromV141PreservesTargetsAndTags(t *testing.T) {
 			VALUES (?1,7,9,1,0,'[]',?3,1), (?2,7,9,1,0,'[]',?3,1);
 		INSERT INTO quality_slot_settings(agent_id,slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,updated_revision,position,show_on_card)
 			VALUES (?1,'telecom','builtin','上海','telecom','Example.COM',443,1,1,1,9,0,1),
-				(?2,'telecom','builtin','上海','telecom','example.com',443,1,1,0,9,0,1),
+				(?2,'mobile','builtin','上海','telecom','example.com',443,1,1,0,9,0,1),
 				(?2,'unicom','builtin','上海','unicom','example.com',443,0,0,0,9,1,0),
 				(?1,'mobile','builtin','江苏','mobile','',NULL,0,0,0,9,1,0);
 		INSERT INTO quality_targets(id,agent_id,fingerprint,payload,created_at,identity,created_revision)
@@ -109,7 +109,7 @@ func TestMigration49FromV141PreservesTargetsAndTags(t *testing.T) {
 		t.Fatal(laneKey, laneTarget, err)
 	}
 	card, err := readDashboardNetworkSlots(ctx, s.db, now)
-	if err != nil || card[first][0].TargetName != "上海电信" {
+	if err != nil || card[first][0].TargetName != "上海电信" || card[second][0].TargetName != "上海电信" {
 		t.Fatal(card, err)
 	}
 	fleet, err := s.NetworkFleet(ctx, first, "ipv4", "tcp", now.Add(-time.Hour).UnixMilli(), now.UnixMilli(), now, time.Minute)
