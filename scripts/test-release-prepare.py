@@ -58,5 +58,25 @@ class PrepareFromPreviousRelease(unittest.TestCase):
         self.assertIn("[v1.4.0 发布说明](RELEASE_NOTES_v1.4.0.md)", agent_rule[0])
 
 
+@unittest.skipUnless(tag_exists("v1.4.0"), "tag v1.4.0 is required")
+class PrepareFromPreparedRelease(unittest.TestCase):
+    def test_second_preparation_accepts_readme_generated_by_the_previous_one(self):
+        archive = subprocess.run(["git", "archive", "v1.4.0"], cwd=ROOT, check=True,
+                                 stdout=subprocess.PIPE).stdout
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+                tar.extractall(root, filter="data")
+            (root / "scripts/r31-versions.json").write_bytes((ROOT / "scripts/r31-versions.json").read_bytes())
+            release_prepare.prepare(root, "v1.4.1", "v1.4.0", None)
+            readme = (root / "README.md").read_text(encoding="utf-8").split("\n")
+        upgrade = [line for line in readme if line.startswith("> **本版支持从 ")]
+        self.assertEqual(len(upgrade), 1)
+        self.assertIn("本版支持从 v1.4.0 升级", upgrade[0])
+        self.assertIn("数据库 schema 保持 46", upgrade[0])  # the v1.4.0 tree is still at schema 46
+        self.assertTrue(any("现有 Server 升级（支持 v1.4.0）" in line for line in readme))
+        self.assertTrue(any("the current v1.4.1 Server supports upgrades from v1.4.0" in line for line in readme))
+
+
 if __name__ == "__main__":
     unittest.main()
