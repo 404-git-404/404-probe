@@ -613,7 +613,18 @@ func (a *App) publishReportedState(state storage.State, owner trafficOwner, rece
 	if a.traffic != nil {
 		a.traffic.append(owner, state, received, a.now())
 	}
-	payload, _ := json.Marshal(newWebAgentEventView(state, a.offlineTimeout))
+	event := newWebAgentEventView(state, a.offlineTimeout)
+	if state.SystemChecks != nil && state.SystemChecks.Supported && state.LastSeen-state.SystemChecksAt <= systemCheckFreshness.Milliseconds() {
+		ctx, cancel := context.WithTimeout(a.shutdown, time.Second)
+		ignores, err := a.store.SystemCheckIgnores(ctx, state.AgentID)
+		cancel()
+		if err != nil {
+			a.logger.Warn("read system check ignores for agent event", "agent_id", state.AgentID, "error", err)
+		} else {
+			event.SystemAttention = checkAttention(state.SystemChecks, time.UnixMilli(state.LastSeen), ignores)
+		}
+	}
+	payload, _ := json.Marshal(event)
 	a.hub.publish(payload)
 	a.mu.Unlock()
 	return true

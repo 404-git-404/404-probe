@@ -29,6 +29,7 @@ func dropColumnIfPresent(t *testing.T, db *sql.DB, table, column string) {
 
 func rewindNetworkStatusFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
+	rewindSystemCheckIgnoresFixture(t, db)
 	for _, q := range []string{
 		`DROP TABLE IF EXISTS offsite_backup`,
 		`DROP TRIGGER IF EXISTS quality_fleet_hour_insert`, `DROP TRIGGER IF EXISTS quality_fleet_hour_update`, `DROP TRIGGER IF EXISTS quality_fleet_hour_delete`,
@@ -48,6 +49,15 @@ func rewindNetworkStatusFixture(t *testing.T, db *sql.DB) {
 	dropColumnIfPresent(t, db, "minute_metrics", "rate_samples")
 	dropColumnIfPresent(t, db, "agent_state", "observed_rx_rate")
 	dropColumnIfPresent(t, db, "agent_state", "observed_tx_rate")
+}
+
+func rewindSystemCheckIgnoresFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	dropColumnIfPresent(t, db, "tags", "color")
+	if _, err := db.Exec(`DROP TABLE IF EXISTS agent_system_check_ignores;
+		DELETE FROM schema_migrations WHERE version=47`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func rewindSystemChecksFixture(t *testing.T, db *sql.DB) {

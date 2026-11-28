@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 	"time"
 
@@ -17,8 +16,17 @@ import (
 
 func TestDeviceScoreSyntheticTimings(t *testing.T) {
 	if os.Getenv("S3C_SYNTHETIC") != "1" {
-		t.Skip("set S3C_SYNTHETIC=1 for the 200-device SQLite score timing fixture")
+		t.Skip("set S3C_SYNTHETIC=1 for the SQLite score timing fixture")
 	}
+	for _, devices := range []int{50, 200} {
+		t.Run(fmt.Sprintf("devices_%d", devices), func(t *testing.T) {
+			testDeviceScoreSyntheticFleet(t, devices)
+		})
+	}
+}
+
+func testDeviceScoreSyntheticFleet(t *testing.T, devices int) {
+	t.Helper()
 	ctx := t.Context()
 	now := time.Date(2026, 11, 23, 13, 45, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "scores.db")
@@ -46,6 +54,12 @@ func TestDeviceScoreSyntheticTimings(t *testing.T) {
 		sample := userTCPSample(t, config, "telecom", int64(i+1), at, 42+float64(i)/2, "success")
 		sample.DurationMS += 10
 		sample.FinishedAt += 10
+		details, err := protocol.DecodeQualityDetails(sample.Details)
+		if err != nil {
+			t.Fatal(err)
+		}
+		details.ConnectTimeoutMS = protocol.QualityTCPDefaultTimeoutMS
+		sample.Details = details.Encode()
 		samples = append(samples, sample)
 	}
 	app.now = func() time.Time { return now.Add(6 * time.Minute) }
@@ -61,44 +75,39 @@ func TestDeviceScoreSyntheticTimings(t *testing.T) {
 		}
 	}
 	app.now = func() time.Time { return now }
-	seedDeviceScoreFleet(t, path, id, now)
+	seedDeviceScoreFleet(t, path, id, now, devices)
 	if _, err := store.RefreshNetworkFleet(ctx); err != nil {
 		t.Fatal(err)
 	}
-	refreshes, reads := make([]time.Duration, 0, 3), make([]time.Duration, 0, 3)
-	size := 0
-	for range 3 {
-		start := time.Now()
-		snapshot, err := app.calculateDeviceScores(ctx, now)
-		refreshes = append(refreshes, time.Since(start))
-		if err != nil {
-			t.Fatal(err)
+	t.Logf("devices=%d score refresh started", devices)
+	start := time.Now()
+	snapshot, err := app.calculateDeviceScores(ctx, now)
+	elapsed := time.Since(start)
+	t.Logf("devices=%d score refresh=%s", devices, elapsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Items) != devices {
+		t.Fatalf("found %d devices, want %d", len(snapshot.Items), devices)
+	}
+	for device, result := range snapshot.Items {
+		if len(result.Network.Lines) != 3 || result.Network.Score == nil || result.Overall.Score == nil {
+			t.Fatalf("device %s missing synthetic score: %+v", device, result)
 		}
-		if len(snapshot.Items) != 200 {
-			t.Fatalf("found %d devices", len(snapshot.Items))
-		}
-		for device, result := range snapshot.Items {
-			if len(result.Network.Lines) != 3 || result.Network.Score == nil || result.Overall.Score == nil {
-				t.Fatalf("device %s missing synthetic score: %+v", device, result)
+		for _, line := range result.Network.Lines {
+			if line.Score == nil {
+				t.Fatalf("device %s missing score for synthetic line: %+v", device, line)
 			}
 		}
-		app.deviceScores.Store(snapshot)
-		start = time.Now()
-		response := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/scores")
-		reads = append(reads, time.Since(start))
-		if response.Code != 200 {
-			t.Fatalf("cached score response = %d", response.Code)
-		}
-		size = response.Body.Len()
 	}
-	for _, durations := range [][]time.Duration{refreshes, reads} {
-		sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+	app.deviceScores.Store(snapshot)
+	response := webAgentResponse(t, app, http.MethodGet, "/api/v1/web/scores")
+	if response.Code != 200 {
+		t.Fatalf("cached score response = %d", response.Code)
 	}
-	t.Logf("score refresh min=%s median=%s max=%s; cached HTTP min=%s median=%s max=%s body=%d B",
-		refreshes[0], refreshes[1], refreshes[2], reads[0], reads[1], reads[2], size)
 }
 
-func seedDeviceScoreFleet(t *testing.T, database, templateID string, now time.Time) {
+func seedDeviceScoreFleet(t *testing.T, database, templateID string, now time.Time, devices int) {
 	t.Helper()
 	db, err := sql.Open("sqlite", database)
 	if err != nil {
@@ -120,11 +129,12 @@ func seedDeviceScoreFleet(t *testing.T, database, templateID string, now time.Ti
 	var payload string
 	err = tx.QueryRow(`SELECT b.data,t.payload FROM quality_buckets b
 		JOIN quality_series s ON s.id=b.series_id JOIN quality_targets t ON s.target_id=t.id
-		WHERE b.resolution=3600000 AND s.agent_id=? LIMIT 1`, templateID).Scan(&wire, &payload)
+		WHERE b.resolution=3600000 AND s.agent_id=? AND s.semantics=? LIMIT 1`,
+		templateID, protocol.QualityTCPLossSemantics).Scan(&wire, &payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i < 200; i++ {
+	for i := 1; i < devices; i++ {
 		id := fmt.Sprintf("%032x", i)
 		query(`INSERT INTO agents(id,name,token_hash,created_at,updated_at) VALUES(?,?,?,?,?)`,
 			id, id, id, now.Add(-31*24*time.Hour).UnixMilli(), now.UnixMilli())
@@ -143,7 +153,7 @@ func seedDeviceScoreFleet(t *testing.T, database, templateID string, now time.Ti
 			WHERE fingerprint='score-case-'||?1 AND (agent_id<>?2 OR ?1<>'telecom')`, slot, templateID)
 	}
 	query(`INSERT OR IGNORE INTO quality_series(agent_id,target_id,semantics)
-		SELECT agent_id,id,? FROM quality_targets WHERE id IN (SELECT target_id FROM quality_intervals WHERE end_at IS NULL)`, protocol.QualityStagedSemantics)
+		SELECT agent_id,id,? FROM quality_targets WHERE id IN (SELECT target_id FROM quality_intervals WHERE end_at IS NULL)`, protocol.QualityTCPLossSemantics)
 	for _, resolution := range []time.Duration{5 * time.Minute, time.Hour} {
 		query(`WITH RECURSIVE score_buckets(at) AS (VALUES(?1) UNION ALL SELECT at+?2 FROM score_buckets WHERE at+?2<?3)
 			INSERT OR IGNORE INTO quality_buckets SELECT s.id,?2,score_buckets.at,?4

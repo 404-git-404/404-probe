@@ -42,6 +42,7 @@ type AgentGroup struct {
 type AgentTag struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
+	Color    string `json:"color"`
 	Revision int64  `json:"revision"`
 }
 type AgentOrganization struct {
@@ -67,6 +68,7 @@ type OrganizationCatalog struct {
 type OrganizationChange struct {
 	ExpectedRevision        int64
 	Kind, ID, Name, AgentID string
+	Color                   *string
 	Order                   []string
 	GroupID                 *string
 	TagIDs                  []string
@@ -210,13 +212,13 @@ func organizationCatalogTx(ctx context.Context, tx *sql.Tx) (OrganizationCatalog
 	if err != nil {
 		return c, err
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT id,name,revision FROM tags ORDER BY name_key,id`)
+	rows, err = tx.QueryContext(ctx, `SELECT id,name,color,revision FROM tags ORDER BY name_key,id`)
 	if err != nil {
 		return c, err
 	}
 	for rows.Next() {
 		var t AgentTag
-		if err = rows.Scan(&t.ID, &t.Name, &t.Revision); err != nil {
+		if err = rows.Scan(&t.ID, &t.Name, &t.Color, &t.Revision); err != nil {
 			rows.Close()
 			return c, err
 		}
@@ -307,7 +309,7 @@ func organizationNameError(err error) error {
 	}
 	return err
 }
-func createOrganizationEntity(ctx context.Context, tx *sql.Tx, group bool, name string, revision int64) (string, error) {
+func createOrganizationEntity(ctx context.Context, tx *sql.Tx, group bool, name string, color *string, revision int64) (string, error) {
 	name, key, err := normalizeOrganizationName(name, group)
 	if err != nil {
 		return "", err
@@ -330,7 +332,11 @@ func createOrganizationEntity(ctx context.Context, tx *sql.Tx, group bool, name 
 	if group {
 		_, err = tx.ExecContext(ctx, `INSERT INTO groups(id,name,name_key,sort_order,revision) VALUES(?,?,?,(SELECT COALESCE(max(sort_order),-1)+1 FROM groups),?)`, id, name, key, revision)
 	} else {
-		_, err = tx.ExecContext(ctx, `INSERT INTO tags(id,name,name_key,revision) VALUES(?,?,?,?)`, id, name, key, revision)
+		if color == nil {
+			value := defaultTagColor(key)
+			color = &value
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO tags(id,name,name_key,color,revision) VALUES(?,?,?,?,?)`, id, name, key, *color, revision)
 	}
 	return id, organizationNameError(err)
 }
@@ -359,6 +365,9 @@ func (s *Store) ChangeOrganization(ctx context.Context, c OrganizationChange, no
 	if c.ExpectedRevision < 1 {
 		return out, ErrOrganizationInvalid
 	}
+	if c.Color != nil && ((c.Kind != "create_tag" && c.Kind != "rename_tag") || !validTagColor(*c.Color)) {
+		return out, ErrOrganizationInvalid
+	}
 	switch c.Kind {
 	case "create_group", "rename_group", "delete_group", "sort_groups", "create_tag", "rename_tag", "delete_tag", "assign", "save_rates", "delete_rate":
 	default:
@@ -385,7 +394,7 @@ func (s *Store) ChangeOrganization(ctx context.Context, c OrganizationChange, no
 	out.Revision = c.ExpectedRevision + 1
 	switch c.Kind {
 	case "create_group", "create_tag":
-		out.ID, err = createOrganizationEntity(ctx, tx, c.Kind == "create_group", c.Name, out.Revision)
+		out.ID, err = createOrganizationEntity(ctx, tx, c.Kind == "create_group", c.Name, c.Color, out.Revision)
 	case "rename_group", "rename_tag", "delete_group", "delete_tag":
 		group := strings.HasSuffix(c.Kind, "group")
 		table := "tags"
@@ -405,11 +414,19 @@ func (s *Store) ChangeOrganization(ctx context.Context, c OrganizationChange, no
 			return out, err
 		}
 		if strings.HasPrefix(c.Kind, "rename_") {
-			name, key, nameErr := normalizeOrganizationName(c.Name, group)
-			if nameErr != nil {
-				return out, nameErr
+			if c.Name == "" && c.Color != nil {
+				_, err = tx.ExecContext(ctx, `UPDATE tags SET color=?,revision=? WHERE id=?`, *c.Color, out.Revision, c.ID)
+			} else {
+				name, key, nameErr := normalizeOrganizationName(c.Name, group)
+				if nameErr != nil {
+					return out, nameErr
+				}
+				if group {
+					_, err = tx.ExecContext(ctx, `UPDATE groups SET name=?,name_key=?,revision=? WHERE id=?`, name, key, out.Revision, c.ID)
+				} else {
+					_, err = tx.ExecContext(ctx, `UPDATE tags SET name=?,name_key=?,color=COALESCE(?,color),revision=? WHERE id=?`, name, key, c.Color, out.Revision, c.ID)
+				}
 			}
-			_, err = tx.ExecContext(ctx, `UPDATE `+table+` SET name=?,name_key=?,revision=? WHERE id=?`, name, key, out.Revision, c.ID)
 			err = organizationNameError(err)
 		} else {
 			for _, id := range out.ChangedAgentIDs {
@@ -459,7 +476,7 @@ func (s *Store) ChangeOrganization(ctx context.Context, c OrganizationChange, no
 			if c.GroupID != nil {
 				return out, ErrOrganizationInvalid
 			}
-			id, createErr := createOrganizationEntity(ctx, tx, true, c.NewGroup, out.Revision)
+			id, createErr := createOrganizationEntity(ctx, tx, true, c.NewGroup, nil, out.Revision)
 			if createErr != nil {
 				return out, createErr
 			}
@@ -471,7 +488,7 @@ func (s *Store) ChangeOrganization(ctx context.Context, c OrganizationChange, no
 			}
 		}
 		for _, name := range c.NewTags {
-			id, createErr := createOrganizationEntity(ctx, tx, false, name, out.Revision)
+			id, createErr := createOrganizationEntity(ctx, tx, false, name, nil, out.Revision)
 			if createErr != nil {
 				return out, createErr
 			}

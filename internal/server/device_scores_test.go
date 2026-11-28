@@ -48,6 +48,34 @@ func TestDeviceNetworkScoreUsesOneHourAndAveragesLines(t *testing.T) {
 	}
 }
 
+func TestDeviceNetworkScoreExcludesMissingEveningPerLine(t *testing.T) {
+	best := storage.DeviceScoreLine{CoveredMS: time.Hour.Milliseconds(), FailurePercent: scoreNumber(0),
+		P50: scoreNumber(50), P95: scoreNumber(60), Jitter: scoreNumber(5)}
+	without := scoreMachineNetwork([]storage.DeviceScoreLine{best}, false)
+	if without.Score == nil || *without.Score != 100 || without.Lines[0].Score == nil || *without.Lines[0].Score != 100 {
+		t.Fatal(without)
+	}
+	if part := without.Parts[networkEveningPart]; part.Score != nil || part.EffectiveWeight != 0 || part.Reason != "no_evening_data" {
+		t.Fatalf("missing evening: %+v", part)
+	}
+	bestWithSlowEvening := best
+	bestWithSlowEvening.Evening = scoreNumber(100)
+	mixed := scoreMachineNetwork([]storage.DeviceScoreLine{best, bestWithSlowEvening}, false)
+	if mixed.Score == nil || *mixed.Score != 92.5 || mixed.Lines[1].Score == nil || *mixed.Lines[1].Score != 85 {
+		t.Fatal(mixed)
+	}
+	if part := mixed.Parts[networkEveningPart]; part.Score == nil || *part.Score != 0 || part.EffectiveWeight != 7.5 || part.Reason != "" {
+		t.Fatalf("mixed evening: %+v", part)
+	}
+	var explained float64
+	for _, part := range mixed.Parts {
+		explained += part.EffectiveWeight * *part.Score / 100
+	}
+	if math.Abs(explained-*mixed.Score) > 1e-9 {
+		t.Fatal(explained, *mixed.Score)
+	}
+}
+
 func TestDeviceScoreGradeBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		value float64

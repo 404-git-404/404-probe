@@ -49,6 +49,8 @@ func TestMigration38PreservesLegacyRowsAndDoesNotReseed(t *testing.T) {
 	s, id, _ := testStore(t, filepath.Join(t.TempDir(), "legacy.db"))
 	defer s.Close()
 	assertMigration38Defaults(t, s)
+	group := organizationWrite(t, s, OrganizationChange{Kind: "create_group", Name: "Archive"})
+	organizationWrite(t, s, OrganizationChange{Kind: "assign", AgentID: id, GroupID: &group.ID, NewTags: []string{"Legacy"}})
 	rewindWebSettingsFixture(t, s.db)
 	if _, err := s.db.Exec(`INSERT INTO agent_plans(agent_id,renewal_price,renewal_date,updated_at) VALUES(?,'12.34','2027-02-03',101)`, id); err != nil {
 		t.Fatal(err)
@@ -56,9 +58,6 @@ func TestMigration38PreservesLegacyRowsAndDoesNotReseed(t *testing.T) {
 	if err := s.SetYouTubeManualRegion(ctx, id, "JP", time.Unix(100, 0)); err != nil {
 		t.Fatal(err)
 	}
-	group := organizationWrite(t, s, OrganizationChange{Kind: "create_group", Name: "Archive"})
-	organizationWrite(t, s, OrganizationChange{Kind: "assign", AgentID: id, GroupID: &group.ID, NewTags: []string{"Legacy"}})
-
 	var columns string
 	if err := s.db.QueryRow(`SELECT group_concat(name, ',') FROM pragma_table_info('agent_plans')`).Scan(&columns); err != nil {
 		t.Fatal(err)
