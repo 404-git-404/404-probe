@@ -86,7 +86,7 @@
   function metadata(value){
    if(value.kind==='youtube-ad-free-regions'){wantFull=true;schedule();return;}
    const id=value.agent_id;
-   if(value.revoked&&state.agents.has(id)){const token=state.beginDelete(id);state.finishDelete(token,true);dirty.delete(id);telemetryDirty.delete(id);telemetryReady.delete(id);summaryDue.delete(id);onchange(new Set([id]),{full:false});wantFull=true;schedule();return;}
+   if((value.revoked||value.kind==='delete')&&state.agents.has(id)){const token=state.beginDelete(id);state.finishDelete(token,true);dirty.delete(id);telemetryDirty.delete(id);telemetryReady.delete(id);summaryDue.delete(id);onchange(new Set([id]),{full:false});wantFull=true;schedule();return;}
    if(id){
     const groups={name:['name'], 'country-check':['country'], 'youtube-check':['google'], 'disk-fault-acknowledgement':['disk'], 'startup-disk-failure':['disk'],'system-check-settings':['system_settings']}[value.kind];
     state.invalidate(id,[...(groups||['lifecycle']),'summary']);notify(id);

@@ -196,6 +196,83 @@ func TestSystemAttentionBoundaries(t *testing.T) {
 	}
 }
 
+func TestLocalDNSAttentionIgnoreAndLegacyAgent(t *testing.T) {
+	app, store, id, token := testApp(t)
+	defer store.Close()
+	defer app.Shutdown()
+	now := time.Now()
+	app.now = func() time.Time { return now }
+	path := webAgentPathPrefix + id
+	report := reportFor(id, 1)
+	report.CollectedAt = now.UnixMilli()
+	checks := &protocol.SystemChecks{Supported: true, ClockMeasured: true}
+	send := func() {
+		t.Helper()
+		report.SystemChecks = checks
+		data, err := json.Marshal(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/report", bytes.NewReader(data))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set(protocol.SystemCheckHeader, "1")
+		w := httptest.NewRecorder()
+		app.Handler().ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		report.Sequence++
+	}
+	detail := func() webAgentDetailView {
+		t.Helper()
+		w := organizationHTTP(t, app, http.MethodGet, path, "", true, false)
+		var view webAgentDetailView
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &view) != nil || view.SystemChecks == nil {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		return view
+	}
+	send()
+	if got := detail(); got.SystemAttention.DNS || got.SystemChecks.LocalDNS != nil {
+		t.Fatal("old Agent produced DNS attention", got.SystemAttention)
+	}
+	check := protocol.LocalDNSCheck{Status: protocol.CheckOK, Query: "probe.example.com", Servers: []protocol.LocalDNSObservation{
+		{Address: "127.0.0.1", Result: protocol.DNSTimeout, CheckedAt: now.UnixMilli(), ConsecutiveFailures: 1},
+		{Address: "::1", Result: protocol.CheckOK, CheckedAt: now.UnixMilli()},
+	}}
+	checks.LocalDNS = &check
+	send()
+	if got := detail().SystemAttention; got.DNS || len(got.Items) != 0 {
+		t.Fatal("first failure alarmed", got)
+	}
+	check.Servers[0].ConsecutiveFailures = 2
+	send()
+	want := systemAttentionItem{protocol.SystemCheckKey{Kind: "dns", Item: "127.0.0.1"}, "danger", "127.0.0.1 解析 probe.example.com 失败：超时"}
+	if got := detail().SystemAttention; !got.DNS || !reflect.DeepEqual(got.Items, []systemAttentionItem{want}) {
+		t.Fatal("second failure did not alarm", got)
+	}
+	ignorePath := path + "/system-check-ignores"
+	body := `{"kind":"dns","item":"127.0.0.1"}`
+	if w := organizationHTTP(t, app, http.MethodPut, ignorePath, body, true, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if got := detail().SystemAttention; got.DNS || len(got.Items) != 0 || !reflect.DeepEqual(got.Ignored, []systemAttentionItem{want}) {
+		t.Fatal("ignored DNS", got)
+	}
+	if w := organizationHTTP(t, app, http.MethodDelete, ignorePath, body, true, true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if got := detail().SystemAttention; !got.DNS || len(got.Ignored) != 0 {
+		t.Fatal("unignored DNS", got)
+	}
+	check.Servers[0].Result, check.Servers[0].ConsecutiveFailures = protocol.CheckOK, 0
+	send()
+	if got := detail().SystemAttention; got.DNS || len(got.Items) != 0 {
+		t.Fatal("first success did not clear alarm", got)
+	}
+}
+
 func TestSystemRestartAttentionLevels(t *testing.T) {
 	for _, tc := range []struct {
 		count uint64

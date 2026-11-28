@@ -203,6 +203,10 @@
       <label for="add-agent-choice-name">设备名称</label><input id="add-agent-choice-name" placeholder="例如 Synthetic-LAX-2" maxlength="128" required>
       <p>安装方式</p><div class="install-choices" role="radiogroup" aria-label="安装方式"><button id="add-agent-choose-oneclick" type="button" role="radio" aria-checked="true"><strong>一键安装 <span class="install-recommended">推荐</span></strong><small>生成一条命令，在新机器上粘贴运行即可。命令 30 分钟内有效，只能用一次。</small></button><button id="add-agent-choose-manual" type="button" role="radio" aria-checked="false"><strong>手动安装</strong><small>先在机器上运行安装器，再把这里给出的注册码填进去。适合需要自己控制每一步的情况。</small></button></div>
       <p id="add-agent-oneclick-reason" class="install-note hidden" role="status"></p>
+      <div id="oneclick-root-option" hidden>
+        <label class="oneclick-root-label"><input id="oneclick-root-collector" type="checkbox" aria-describedby="oneclick-root-note"> 同时开启 root 采集</label>
+        <small id="oneclick-root-note" class="details-note">读取受限的证书目录、APT 更新和 fail2ban 状态。仅 Debian。</small>
+      </div>
       <div class="dialog-actions"><button id="add-agent-choice-cancel" type="button">取消</button><button id="add-agent-next" class="primary-action" type="button">下一步</button></div>
     </div>
     <div id="oneclick-pane" class="hidden">
@@ -257,9 +261,10 @@
   </dialog>
   <dialog id="remove-agent-dialog" class="agent-dialog" aria-labelledby="remove-agent-title">
     <h2 id="remove-agent-title">撤销 Agent</h2>
-    <p>撤销只会让面板不再接收这台机器的数据。要在机器上彻底卸载，请在那台机器上运行：<code>sudo 404-probe-install uninstall agent</code>。运行卸载命令时需确认删除机器上的托管数据。</p>
-    <div class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
-    <p class="remove-warning">撤销后不能恢复原身份。历史记录、计划和任务会保留。</p>
+    <p id="remove-agent-revoke-help">撤销只会让面板不再接收这台机器的数据。要在机器上彻底卸载，请在那台机器上运行：<code>sudo 404-probe-install uninstall agent</code>。运行卸载命令时需确认删除机器上的托管数据。</p>
+    <div id="remove-agent-identity" class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
+    <p id="remove-agent-revoke-warning" class="remove-warning">撤销后不能恢复原身份。历史记录、计划和任务会保留。</p>
+    <p id="remove-agent-delete-warning" class="remove-warning" hidden></p>
     <form id="remove-agent-form" autocomplete="off">
       <label id="remove-agent-prompt" for="remove-agent-input"></label><input id="remove-agent-input" aria-labelledby="remove-agent-prompt" required>
       <div id="remove-agent-error" class="dialog-error hidden" role="alert">移除失败，请重试。</div>

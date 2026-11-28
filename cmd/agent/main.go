@@ -84,8 +84,15 @@ func main() {
 			}
 			return
 		}
+		if len(os.Args) == 3 && os.Args[2] == "apply-install-helper" {
+			if err := updater.ApplyStagedInstallHelper(); err != nil {
+				slog.Error("management helper replacement failed", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if len(os.Args) != 2 {
-			slog.Error("updater accepts no arguments except fixed removal modes")
+			slog.Error("invalid updater mode")
 			os.Exit(2)
 		}
 		if err := updater.Serve(ctx); err != nil {

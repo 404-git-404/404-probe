@@ -89,6 +89,7 @@
   if(attention.service_restart==='danger')badges.push(['服务反复重启','danger']);
   if(attention.service_restart==='warning')badges.push(['服务偶发重启','warning']);
   if(attention.time)badges.push(['时间未同步','warning']);
+  if(attention.dns)badges.push(['DNS 异常','danger']);
   return badges;
  }
  function flags(a,server,now=Date.now()){

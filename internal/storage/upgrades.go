@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -181,7 +182,10 @@ func (s *Store) UpdateUpgradeStatus(ctx context.Context, agentID, operationID st
 		finished = stamp
 	}
 	if status != UpgradeFailed && status != UpgradeRolledBack {
-		failureCode, failureMessage = "", ""
+		failureCode = ""
+		if status != UpgradeSucceeded || !strings.HasPrefix(failureMessage, protocol.UpgradeHelperWarningPrefix) {
+			failureMessage = ""
+		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE agent_upgrade_operations SET status=?,failure_code=?,failure_message=?,finished_at=COALESCE(?,finished_at),updated_at=? WHERE operation_id=?`,
 		status, nullableText(failureCode), nullableText(failureMessage), finished, stamp, operationID)

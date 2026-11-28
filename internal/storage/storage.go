@@ -21,7 +21,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 47
+const currentSchemaVersion = 48
 
 // 每个版本发布前按升级支持策略更新。v1.2.1 uses schema 37; v1.3.0 and v1.3.1 use schema 38.
 const minimumUpgradeSchemaVersion = 38
@@ -1029,6 +1029,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 47: %w", err)
 		}
 	}
+	if version < 48 && !migration34Skip {
+		if err := migrateAgentDeletionAndDNS48Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 48: %w", err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1318,7 +1323,7 @@ func (s *Store) EnableAgent(ctx context.Context, id string, now time.Time) (bool
 	if revoked != 0 {
 		return false, ErrAgentRevoked
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE agents SET disabled_at=NULL,updated_at=? WHERE id=? AND revoked=0 AND disabled_at IS NOT NULL`, now.UnixMilli(), id)
+	result, err := s.db.ExecContext(ctx, `UPDATE agents SET disabled_at=NULL,paused_contact_at=0,updated_at=? WHERE id=? AND revoked=0 AND disabled_at IS NOT NULL`, now.UnixMilli(), id)
 	if err != nil {
 		return false, err
 	}
@@ -1331,9 +1336,13 @@ func (s *Store) Authenticate(ctx context.Context, token string) (string, error) 
 	var id string
 	var revoked int
 	var disabledAt sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT id,revoked,disabled_at FROM agents WHERE token_hash=?`, want).Scan(&id, &revoked, &disabledAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,revoked,disabled_at FROM agents WHERE token_hash=?
+		UNION ALL SELECT '',2,NULL FROM deleted_agent_credentials WHERE token_hash=? LIMIT 1`, want, want).Scan(&id, &revoked, &disabledAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrUnauthorized
+	}
+	if err == nil && revoked == 2 {
+		return "", ErrAgentDeleted
 	}
 	if err == nil && revoked != 0 {
 		return "", ErrAgentRevoked

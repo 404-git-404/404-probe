@@ -43,7 +43,7 @@ func TestMigration47BackfillsColorsAndPreservesTagMembership(t *testing.T) {
 	if len(catalog.Tags) != len(want) || len(catalog.Assignments[id].TagIDs) != len(want) {
 		t.Fatal(catalog)
 	}
-	if version, err := s.SchemaVersion(ctx); err != nil || version != 47 {
+	if version, err := s.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
 		t.Fatal(version, err)
 	}
 	for _, color := range []any{nil, "", "red", "amber", "#fff"} {

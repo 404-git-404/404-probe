@@ -14,7 +14,7 @@
   if(Object.hasOwn(upgradeFailureReasons,code))return upgradeFailureReasons[code];
   return `升级失败（原因代码：${Array.from(code).slice(0,64).join('')}）`;
  }
- function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>'',serverNow=()=>null,setDetailCheck=()=>'',canEditAgentControl=()=>false,acknowledgeDiskFault=()=>{},diskAckError=()=>''}){
+ function create({document:doc=root.document,actions,egress,country,edit,renew,saveCountry,canWrite,organization=()=>{},organizationText=()=>'',youtubeRegions=()=>[],saveYouTubeRegion=()=>'',canSaveYouTubeRegion=()=>false,youtubeError=()=>'',serverNow=()=>null,setDetailCheck=()=>'',canEditAgentControl=()=>false,acknowledgeDiskFault=()=>{},diskAckError=()=>'',deleteAgent=()=>{},canDeleteAgent=()=>false,deleteOnlineMessage=''}){
   const el=(t,c='',text)=>{const n=doc.createElement(t);n.className=c;if(text!=null)n.textContent=text;return n;};
   const overview=el('div','details-overview'),management=el('div','details-management'),metrics=el('div','details-metrics'),grid=el('div','details-grid'),groups=el('div','details-grid');
   overview.append(metrics,grid);management.append(groups);
@@ -80,7 +80,11 @@
   youtubeControls.append(youtubeSelect,actions.google,youtubeFeedback);
   const updateYouTubeSwitch=checkSwitch(row(checks,'YouTube 检测','google',youtubeControls),'YouTube 检测','youtube','youtube_check_enabled','google');
   checks.n.append(actions.googleFeedback);
-  row(danger,'暂停监控','pause',actions.pause);row(danger,'撤销 Agent','revoke',actions.remove);
+  const revokeButtons=el('div','details-revoke-buttons'),deleteControl=el('span');
+  const deleteButton=button('彻底删除',()=>deleteAgent(current),'detail-delete-agent');
+  deleteButton.className='delete-agent';
+  deleteControl.append(deleteButton);revokeButtons.append(actions.remove,deleteControl);
+  row(danger,'暂停监控','pause',actions.pause);row(danger,'撤销 Agent','revoke',revokeButtons);
   const more=el('details','details-more'),summary=el('summary','','更多');more.append(summary,actions.history);management.append(more);
   const time=(v,dateOnly=false)=>{if(!v)return '未知';const d=new Date(v),pad=n=>String(n).padStart(2,'0');return (d.getFullYear()!==new Date().getFullYear()?d.getFullYear()+'-':'')+pad(d.getMonth()+1)+'-'+pad(d.getDate())+(dateOnly?'':' '+pad(d.getHours())+':'+pad(d.getMinutes()));};
   const bytes=(v,binary=false)=>v==null?'—':root.CardMetrics?.size?.(v,binary)||format(v,binary);
@@ -158,6 +162,9 @@
    set('upgrade',upgradeText);
    if(noteCode){const note=el('span','details-note');note.style.display='block';root.AgentState.appendUpgradeReason(note,{reason_code:noteCode},serverBuild,a);values.upgrade.append(note);}
    const failure=a.upgrade;
+   if(failure?.status==='succeeded'&&typeof failure.failure_message==='string'&&failure.failure_message.startsWith('管理脚本未更新：')){
+    values.upgrade.append(el('span','details-note details-upgrade-failure',failure.failure_message));
+   }
    if(failure?.status==='failed'||failure?.status==='rolled_back'){
     const prefix=failure.status==='rolled_back'?'上次升级失败，已自动恢复到原版本：':'上次升级失败：';
     const note=el('span','details-note details-upgrade-failure',prefix+upgradeFailureReason(failure.failure_code));
@@ -170,6 +177,10 @@
    }
    set('seen',a.last_seen?time(a.last_seen)+':'+String(new Date(a.last_seen).getSeconds()).padStart(2,'0'):'未知');values.config.title=values.config.textContent;values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
+   const deleteBlocked=a.online||Boolean(a.disabled_at&&a.delete_blocked_online);
+   deleteControl.hidden=Boolean(a.revoked);
+   deleteButton.disabled=deleteBlocked||Boolean(a.disabled_at&&a.delete_blocked_online===undefined)||!canDeleteAgent(a);
+   deleteControl.title=deleteButton.title=deleteBlocked?deleteOnlineMessage:'';
    const youtubeName=code=>code==='EU'?'欧盟 EU':countryName(code)+' '+code;
    set('google',root.YouTubeStatus.summary(a,youtubeRegions(),youtubeName,time));
    youtubeControls.hidden=actions.googleFeedback.hidden=a.youtube_check_enabled===false;

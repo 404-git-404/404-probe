@@ -115,7 +115,7 @@
     const alarmRestarts = restarts.filter(s => !ignored.has(key('service_restart', s.unit)));
     const serviceDanger = stopped > 0 || failed > 0 || alarmRestarts.some(s => s.count >= 3);
     const warnings = Number(expiring > 0) + Number(timeWarning) + Number(alarmRestarts.length > 0 && !serviceDanger);
-    const dangers = Number(expired > 0) + Number(serviceDanger);
+    const dangers = Number(expired > 0) + Number(serviceDanger) + Number(!!attention.dns);
     if (!supportNote) {
       if (warnings) header.append(pill(doc, warnings + ' 项提醒', 'warning'));
       if (dangers) header.append(pill(doc, dangers + ' 项异常', 'danger'));
@@ -206,6 +206,26 @@
       const offset = fact(clock, '与 Server 相差', (Math.abs(checks.time_offset_ms) / 1000).toFixed(1) + ' 秒');
       action(clock, offset, 'time', 'time');
       note(clock, '未同步，或与 Server 相差超过 5 秒为黄。');
+    }
+
+    const dns = checks?.local_dns;
+    const dnsBox = section('本机 DNS', true, attention.dns ? pill(doc, 'DNS 异常', 'danger') : null);
+    if (!dns) note(dnsBox, agent?.online ? 'Agent 版本不支持' : pending);
+    else if (dns.status === 'not_applicable') note(dnsBox, 'resolv.conf 里没有本机 DNS 服务器');
+    else if (dns.status === 'error') note(dnsBox, '无法读取本机 DNS 配置');
+    else {
+      const results = {ok: '正常', timeout: '超时', connection_refused: '拒绝连接', server_error: '服务器错误', no_record: '无记录'};
+      for (const server of dns.servers || []) {
+        const id = key('dns', server.address), failing = active.has(id);
+        const row = fact(dnsBox, server.address, results[server.result] || '未知', failing ? 'danger' : server.result === 'ok' ? 'ok' : null);
+        const checkedAt = new Date(server.checked_at);
+        if (Number.isFinite(checkedAt.getTime())) {
+          const checked = element(doc, 'time', 'details-note', checkedAt.toLocaleString());
+          checked.dateTime = checkedAt.toISOString();
+          row.append(checked);
+        }
+        action(row, row, 'dns', server.address);
+      }
     }
 
     const packages = section('系统更新', false, pill(doc, '仅显示'));

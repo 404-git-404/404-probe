@@ -147,6 +147,14 @@ html { scrollbar-gutter: stable; }
 .details-box .disk-os-failed,.details-identity .disk-os-failed{margin-inline-start:6px}
 .details-upgrade-failure{display:block;overflow-wrap:anywhere}
 .details-fact[hidden]{display:none}
+.details-action-row:has(.details-revoke-buttons){grid-template-columns:minmax(0,1fr) auto}
+.details-revoke-buttons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:168px}
+.details-revoke-buttons button{height:34px;padding:0 8px;white-space:nowrap}
+#device-details .details-danger .delete-agent{background:var(--color-danger);color:var(--color-text-01);border-color:var(--color-danger)}
+#device-details .details-danger .delete-agent:disabled{background:var(--color-surface-hover);color:var(--muted);border-color:var(--line);cursor:not-allowed}
+.system-grid .details-fact:has(time){grid-template-columns:minmax(90px,1fr) minmax(70px,1fr) minmax(140px,2fr) 100px}
+.system-grid .details-fact:has(time) .system-ignore-actions{grid-column:4}
+@media(max-width:620px){.system-grid .details-fact:has(time){grid-template-columns:minmax(90px,1fr) minmax(80px,2fr)}.system-grid .details-fact:has(time) :is(time,.system-ignore-actions){grid-column:2}}
 .details-renewal-url{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .device-details .details-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}

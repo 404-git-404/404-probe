@@ -203,6 +203,7 @@ func (a *App) webRoutes(mux *http.ServeMux, static *staticAssets) {
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/public-egress/check", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebPublicEgressCheck)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/public-egress/check", a.requireWebSession(http.HandlerFunc(a.handleWebPublicEgressMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/revoke", a.requireWebMutation(http.HandlerFunc(a.handleRevokeWebAgent)))
+	mux.Handle("POST /api/v1/web/agents/{agent_id}/delete", a.requireWebMutation(http.HandlerFunc(a.handleDeleteWebAgent)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/revoke", a.requireWebSession(http.HandlerFunc(a.handleWebAgentRevokeMethodNotAllowed), true))
 	mux.Handle("POST /api/v1/web/agents/{agent_id}/remove", a.requireWebMutation(http.HandlerFunc(a.handleCreateWebAgentRemoval)))
 	mux.Handle("/api/v1/web/agents/{agent_id}/remove", a.requireWebSession(http.HandlerFunc(a.handleWebAgentRemovalMethodNotAllowed), true))

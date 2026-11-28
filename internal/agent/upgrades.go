@@ -212,7 +212,14 @@ func syncUpgradeStatus(ctx context.Context, client upgradeHTTPClient, operation 
 		return nil
 	}
 	for index := from + 1; index <= to; index++ {
-		if err := client.update(ctx, operation.OperationID, sequence[index], "", ""); err != nil {
+		var message string
+		if sequence[index] == "succeeded" && updater.SupportsInstallHelperUpdate(operation.TargetVersion) {
+			if !local.HelperUpdateComplete {
+				return nil // Wait for the new updater to finish an upgrade committed by an older one.
+			}
+			message = local.FailureMessage
+		}
+		if err := client.update(ctx, operation.OperationID, sequence[index], "", message); err != nil {
 			return fmt.Errorf("publish %s: %w", sequence[index], err)
 		}
 	}

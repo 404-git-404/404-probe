@@ -226,7 +226,7 @@ func TestOneClickCommandQuotesTheAgentName(t *testing.T) {
 		`back\slash`:      `PROBE_404_AGENT_NAME='back\slash' bash`,
 		"line*glob?[x]~!": "PROBE_404_AGENT_NAME='line*glob?[x]~!' bash",
 	} {
-		command := webOneClickInstallCommand("https://probe.example.com", name, token, info)
+		command := webOneClickInstallCommand("https://probe.example.com", name, token, info, false)
 		if strings.Contains(command, "sudo") || strings.Contains(command, " env ") || !strings.Contains(command, "install.sh | PROBE_404_ROLE=agent ") {
 			t.Fatalf("variables must be bash's own environment, got %s", command)
 		}
@@ -250,6 +250,25 @@ func TestOneClickIsAvailableForCleanReleaseBuildsIncludingRC(t *testing.T) {
 	}
 }
 
+func TestWebOneClickRootCollectorOption(t *testing.T) {
+	app, _ := oneClickApp(t)
+	path := "/api/v1/web/agent-enrollments"
+	for _, tc := range []struct {
+		body string
+		want string
+	}{
+		{`{"name":"web node"}`, "PROBE_404_AGENT_NAME='web node' bash"},
+		{`{"name":"web node","root_collector":false}`, "PROBE_404_AGENT_NAME='web node' bash"},
+		{`{"name":"web node","root_collector":true}`, "PROBE_404_AGENT_NAME='web node' PROBE_404_SETUP_ROOT_COLLECTOR=1 bash"},
+	} {
+		w := postEnrollmentAPI(t, app, path, tc.body, nil)
+		var view webAgentEnrollmentTokenView
+		if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &view) != nil || !strings.HasSuffix(view.Command, tc.want) {
+			t.Fatalf("unexpected command for %s: status=%d", tc.body, w.Code)
+		}
+	}
+}
+
 // The generated assignments really reach the process as environment values, byte for byte.
 func TestOneClickCommandAssignmentsSurviveRealShellParsing(t *testing.T) {
 	bash, err := exec.LookPath("bash")
@@ -259,7 +278,7 @@ func TestOneClickCommandAssignmentsSurviveRealShellParsing(t *testing.T) {
 	info := buildinfo.Info{Version: "v1.0.4", Commit: strings.Repeat("a", 40)}
 	token := strings.Repeat("T", 43)
 	for _, name := range []string{"plain", "with space", "it's", `say "hi"`, "$HOME `id` $(id)", "a;b&c|d>e", "东京 节点 #1", `back\slash`, "glob*?[x]~!"} {
-		command := webOneClickInstallCommand("https://probe.example.com", name, token, info)
+		command := webOneClickInstallCommand("https://probe.example.com", name, token, info, false)
 		right := command[strings.Index(command, "| ")+2:]
 		// Replace the final "bash" with a command that prints the variables, keeping the assignments as written.
 		script := strings.TrimSuffix(right, " bash") + ` bash -c 'printf "%s\n%s\n%s\n%s" "$PROBE_404_ROLE" "$PROBE_404_SERVER" "$PROBE_404_ENROLL_TOKEN" "$PROBE_404_AGENT_NAME"'`

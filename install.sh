@@ -3335,6 +3335,13 @@ install_agent_oneclick() {
   ! agent_residue_exists \
     || die "a 404-probe Agent (or its leftovers) is already installed on this machine; refusing the one-click install. Upgrade it from the panel, or run the uninstall command first. The registration token was not used"
   install_agent ""
+  if [[ "${PROBE_404_SETUP_ROOT_COLLECTOR:-}" == 1 ]]; then
+    if [[ "${INSTALL_INIT}" == systemd ]]; then
+      setup_root_collector
+    else
+      note "已跳过 root 采集：仅 Debian 支持。"
+    fi
+  fi
 }
 
 install_agent_command() {
@@ -4191,7 +4198,14 @@ install_or_upgrade() {
 }
 
 main() {
-  case "${1:-}" in -h|--help|help) usage; return ;; esac
+  case "${1:-}" in
+    -h|--help|help) usage; return ;;
+    render-local-helper)
+      [[ $# -eq 1 ]] || die "usage: install.sh render-local-helper"
+      render_local_helper
+      return
+      ;;
+  esac
   if [[ -z "${1:-}" ]] && oneclick_variables_present; then oneclick_require_root; fi
   reject_deferred_command_on_host "${1:-}"
   require_root_linux_systemd

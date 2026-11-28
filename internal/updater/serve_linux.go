@@ -51,6 +51,7 @@ func platformServe(ctx context.Context) error {
 	removalLauncher := newFixedAgentRemovalLauncher()
 	engine, err := NewEngine(EngineConfig{CurrentVersion: currentVersion, StateDirectory: updaterStateDirectory,
 		LiveBinary: liveAgentBinary, StagedBinary: stagedAgentBinary, PreviousBinary: previousAgentBinary,
+		InstallHelper: installHelperPath, ApplyInstallHelper: applyInstallHelperWithSystemd,
 		Inspect: inspectCandidateBuild, ServiceCommand: controlAgentService, HealthTimeout: 2 * time.Minute,
 		AgentRemoval: removalLauncher,
 		OnCommitted: func() {

@@ -37,6 +37,7 @@ type webAgentSummaryView struct {
 }
 
 type webAgentDetailView struct {
+	DeleteBlockedOnline bool                         `json:"delete_blocked_online"`
 	SystemChecks        *protocol.SystemChecks       `json:"system_checks"`
 	SystemCheckSettings protocol.SystemCheckSettings `json:"system_check_settings"`
 	DebianStableMajor   int                          `json:"debian_stable_major,omitempty"`
@@ -281,7 +282,7 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		return webAgentDetailView{}, err
 	}
 	record = a.withUpdaterHealth(record)
-	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
+	view := webAgentDetailView{DeleteBlockedOnline: record.RecentContact, webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
 	localID, err := a.store.ServerLocalAgent(ctx)
 	if err != nil {
 		return webAgentDetailView{}, err
