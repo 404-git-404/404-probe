@@ -1,7 +1,6 @@
 package server
 
 import (
-	"404-probe/internal/protocol"
 	"context"
 	"errors"
 	"net"
@@ -10,6 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"404-probe/internal/protocol"
+	"404-probe/internal/storage"
 )
 
 const (
@@ -43,9 +45,19 @@ func writeQualityFieldErrors(w http.ResponseWriter, errs []protocol.QualityField
 		Message string                       `json:"message"`
 		Details []protocol.QualityFieldError `json:"details"`
 	}
+	code := "invalid_request"
+	if errs[0].Code == "library_required" || errs[0].Code == "library_not_found" {
+		code = errs[0].Code
+		for _, detail := range errs[1:] {
+			if detail.Code != code {
+				code = "invalid_request"
+				break
+			}
+		}
+	}
 	writeJSON(w, http.StatusBadRequest, struct {
 		Error body `json:"error"`
-	}{Error: body{Code: "invalid_request", Message: "invalid network quality settings", Details: errs}})
+	}{Error: body{Code: code, Message: "invalid network quality settings", Details: errs}})
 }
 
 func (a *App) handleQualityV4Config(w http.ResponseWriter, r *http.Request) {
@@ -97,65 +109,18 @@ func (a *App) handleQualityV4Config(w http.ResponseWriter, r *http.Request) {
 	if !request.ValidSlotCount() {
 		errs = append(errs, protocol.QualityFieldError{Field: "slots", Code: protocol.QualityErrInvalidRequest})
 	}
-	seen := map[string]bool{}
-	literal := map[string]bool{}
-	shown := 0
-	for i, slot := range request.Slots {
-		normalized, slotErrs := protocol.NormalizeQualitySlot(slot)
-		errs = append(errs, slotErrs...)
-		if seen[slot.Slot] || (!request.Objects && !protocol.QualitySlot(slot.Slot)) {
-			errs = append(errs, protocol.QualityFieldError{Slot: slot.Slot, Field: "slot", Code: protocol.QualityErrInvalidRequest})
-		}
-		seen[slot.Slot] = true
-		if slot.ShowOnCard {
-			shown++
-		}
-		if len(slotErrs) == 0 {
-			_, lit, _ := protocol.NormalizeQualityHost(slot.Host)
-			literal[normalized.Host] = lit != ""
-			request.Slots[i] = normalized
-		}
-	}
-	if request.Objects && shown > protocol.QualityMaxCardObjects {
-		errs = append(errs, protocol.QualityFieldError{Field: "show_on_card", Code: protocol.QualityErrInvalidRequest})
-	}
-	if len(errs) != 0 {
-		writeQualityFieldErrors(w, errs)
-		return
-	}
-	stored, err := a.store.QualityV4SlotHosts(r.Context(), id)
-	if err != nil {
-		qualityHTTPError(w, err)
-		return
-	}
-	var names []string
-	byName := map[string][]string{}
-	for _, slot := range request.Slots {
-		if slot.Host == "" || literal[slot.Host] || stored[slot.Slot] == slot.Host {
-			continue
-		}
-		if len(byName[slot.Host]) == 0 {
-			names = append(names, slot.Host)
-		}
-		byName[slot.Host] = append(byName[slot.Host], slot.Slot)
-	}
-	unsafe, err := a.checkQualityNames(r.Context(), names)
-	if err != nil {
-		writeJobError(w, 503, "retryable", "address check is busy, try again")
-		return
-	}
-	for _, name := range unsafe {
-		for _, slot := range byName[name] {
-			errs = append(errs, protocol.QualityFieldError{Slot: slot, Field: "host", Code: protocol.QualityErrUnsafeAddress})
-		}
-	}
 	if len(errs) != 0 {
 		writeQualityFieldErrors(w, errs)
 		return
 	}
 	config, err := a.store.SaveQualityConfigV4(r.Context(), id, request, a.now())
 	if err != nil {
-		qualityHTTPError(w, err)
+		var fields *storage.QualityLibraryFieldErrors
+		if errors.As(err, &fields) {
+			writeQualityFieldErrors(w, fields.Details)
+		} else {
+			qualityHTTPError(w, err)
+		}
 		return
 	}
 	a.publishDashboardChange(r.PathValue("agent_id"), "quality", false)

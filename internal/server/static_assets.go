@@ -31,10 +31,10 @@ var fingerprintAssetNames = []string{
 
 var staticPageNames = []string{"index.html", "history.html", "jobs.html", "schedules.html", "settings.html"}
 var staticPageReferences = map[string][]string{
-	"index.html":     {"theme.js", "style.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "network-status.css", "card-layout.css", "card-v7.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "dashboard.css", "settings.css", "dashboard-dialogs.css", "banner.css", "device-scores.css", "agent-state.js", "dashboard-data.js", "dashboard-model.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "range-slider.js", "network-quality-core.js", "network-quality.js", "network-status-charts.js", "network-status.js", "traffic-chart.js", "latency-mini.js", "card-metrics.js", "card.js", "resource-history.js", "system-checks.js", "device-details.js", "device-scores.js", "plan-editor.js", "plan-renewal.js", "overview.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "plan-units.js", "youtube-status.js", "public-egress-check.js", "agent-enrollment.js", "status-row.js", "banner-view.js", "app.js", "theme-toggle.js", "session.js", "backup-settings.js", "settings.js"},
-	"history.html":   {"theme.js", "style.css", "agent-state.js", "management.js", "selector.js", "youtube-status.js", "public-egress-check.js", "history.js", "theme-toggle.js", "session.js"},
-	"jobs.html":      {"theme.js", "style.css", "jobs.js", "theme-toggle.js", "session.js"},
-	"schedules.html": {"theme.js", "style.css", "schedules.js", "theme-toggle.js", "session.js"},
+	"index.html":     {"theme.js", "style.css", "skin.css", "vendor/uplot/uPlot.min.css", "network-quality.css", "network-status.css", "card-layout.css", "card-v7.css", "device-details.css", "plan-editor.css", "plan-renewal.css", "overview.css", "dashboard.css", "settings.css", "dashboard-dialogs.css", "banner.css", "device-scores.css", "agent-state.js", "dashboard-data.js", "dashboard-model.js", "management.js", "selector.js", "vendor/uplot/uPlot.iife.min.js", "range-slider.js", "network-quality-core.js", "network-quality.js", "network-status-charts.js", "network-status.js", "traffic-chart.js", "latency-mini.js", "card-metrics.js", "card.js", "resource-history.js", "system-checks.js", "device-details.js", "device-scores.js", "plan-editor.js", "plan-renewal.js", "overview.js", "dashboard-view.js", "organization-name.js", "organization-api.js", "organization-dialogs.js", "expense-dialog.js", "plan-units.js", "youtube-status.js", "public-egress-check.js", "agent-enrollment.js", "status-row.js", "banner-view.js", "app.js", "theme-toggle.js", "session.js", "backup-settings.js", "settings.js"},
+	"history.html":   {"theme.js", "style.css", "skin.css", "agent-state.js", "management.js", "selector.js", "youtube-status.js", "public-egress-check.js", "history.js", "theme-toggle.js", "session.js"},
+	"jobs.html":      {"theme.js", "style.css", "skin.css", "jobs.js", "theme-toggle.js", "session.js"},
+	"schedules.html": {"theme.js", "style.css", "skin.css", "schedules.js", "theme-toggle.js", "session.js"},
 	"settings.html":  {"theme.js", "settings-redirect.js"},
 }
 var staticReference = regexp.MustCompile(`(?:src|href)="(/[^"\s]+\.(?:js|css))"`)
@@ -129,7 +129,7 @@ func newStaticAssets(source fs.FS) (*staticAssets, error) {
 		var refErr error
 		rewritten := staticReference.ReplaceAllStringFunc(string(page.data), func(match string) string {
 			path := staticReference.FindStringSubmatch(match)[1]
-			if path == "/style.css" {
+			if path == "/style.css" || path == "/skin.css" {
 				return match
 			}
 			target, ok := a.fingerprints[path[1:]]

@@ -21,6 +21,19 @@ type DashboardNetworkSlot struct {
 	State      string   `json:"state"`
 }
 
+func legacyQualityCarrier(isp string) string {
+	switch isp {
+	case "telecom":
+		return "电信"
+	case "unicom":
+		return "联通"
+	case "mobile":
+		return "移动"
+	default:
+		return isp
+	}
+}
+
 type dashboardSlotQueryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
@@ -31,7 +44,7 @@ type dashboardSlotQueryer interface {
 const dashboardSlotsSQL = `WITH slots(slot,number) AS (VALUES('telecom',1),('unicom',2),('mobile',3)),
  selected AS (SELECT agent_id,slot,ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY position,slot) number
  FROM quality_slot_settings WHERE show_on_card=1)
- SELECT a.id,slots.number,COALESCE(s.kind,''),COALESCE(s.region,''),COALESCE(s.isp,''),COALESCE(s.host,''),
+ SELECT a.id,slots.number,CASE WHEN s.legacy_label=1 THEN 'builtin' ELSE COALESCE(s.kind,'') END,COALESCE(s.region,''),COALESCE(s.isp,''),COALESCE(s.host,''),
  COALESCE(c.enabled,0),COALESCE(s.slot_enabled,0),COALESCE(s.ipv4_tcp,0),
  COALESCE(cap.supported,0),COALESCE(cap.excluded_reason,''),COALESCE(cap.v2_details,''),COALESCE(q.target_id,'')
  FROM agents a CROSS JOIN slots
@@ -81,11 +94,7 @@ func readDashboardNetworkSlots(ctx context.Context, q dashboardSlotQueryer, now 
 			return nil, err
 		}
 		if kind == "builtin" {
-			carrier := map[string]string{"telecom": "电信", "unicom": "联通", "mobile": "移动"}[isp]
-			if carrier == "" {
-				carrier = isp
-			}
-			slot.TargetName = region + carrier
+			slot.TargetName = region + legacyQualityCarrier(isp)
 		} else {
 			slot.TargetName = strings.TrimSpace(region + " " + isp)
 		}

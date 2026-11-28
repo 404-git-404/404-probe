@@ -3337,7 +3337,19 @@ install_agent_oneclick() {
   install_agent ""
   if [[ "${PROBE_404_SETUP_ROOT_COLLECTOR:-}" == 1 ]]; then
     if [[ "${INSTALL_INIT}" == systemd ]]; then
-      setup_root_collector
+      # A tested conditional would suppress errexit inside setup_root_collector.
+      (
+        trap - ERR
+        set +e
+        local collector_output collector_status
+        collector_output="$( (set -e; setup_root_collector) 2>&1 )"
+        collector_status=$?
+        if (( collector_status != 0 )); then
+          note "root 采集启用失败（${collector_output:-退出码 ${collector_status}}），Agent 已安装。以后可运行 404-probe-install setup-root-collector 重试。" >&2
+        elif [[ -n "${collector_output}" ]]; then
+          printf '%s\n' "${collector_output}"
+        fi
+      )
     else
       note "已跳过 root 采集：仅 Debian 支持。"
     fi

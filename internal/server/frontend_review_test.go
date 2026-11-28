@@ -236,7 +236,7 @@ func TestFrontendReviewQualityWritesInvalidateAndPublish(t *testing.T) {
 	ch, _ := a.hub.subscribe()
 	defer a.hub.unsubscribe(ch)
 	for _, row := range []struct{ path, body string }{
-		{v4Path(id, "config"), v4Body("0", 30000, "8.8.8.8")},
+		{v4Path(id, "config"), v4ReferencedBody("0", 30000, "8.8.8.8", testNetworkTarget(t, s, "R", "I", "8.8.8.8", 443))},
 		{v4Path(id, "enabled"), `{"expected_revision":"1","enabled":true}`},
 	} {
 		a.dashboardNetwork = map[string]dashboardNetworkEntry{id: {Expires: time.Now().Add(time.Hour)}}

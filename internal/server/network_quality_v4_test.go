@@ -22,12 +22,21 @@ func v4Path(id, suffix string) string {
 
 // v4Body builds a save request. hosts are in slot order; an empty host leaves the slot unset.
 func v4Body(expected string, interval int, hosts ...string) string {
+	return v4BodyWithReference(expected, interval, "", hosts...)
+}
+
+func v4ReferencedBody(expected string, interval int, host, libraryID string) string {
+	return v4BodyWithReference(expected, interval, libraryID, host)
+}
+
+func v4BodyWithReference(expected string, interval int, libraryID string, hosts ...string) string {
 	type slot struct {
 		Slot        string `json:"slot"`
 		Kind        string `json:"kind"`
 		Region      string `json:"region"`
 		ISP         string `json:"isp"`
 		Host        string `json:"host"`
+		LibraryID   string `json:"library_id,omitempty"`
 		Port        int    `json:"port"`
 		SlotEnabled bool   `json:"slot_enabled"`
 		IPv4TCP     bool   `json:"ipv4_tcp"`
@@ -44,6 +53,9 @@ func v4Body(expected string, interval int, hosts ...string) string {
 		s := slot{Slot: name, Kind: "custom", Region: "R", ISP: "I"}
 		if i < len(hosts) && hosts[i] != "" {
 			s.Host, s.Port, s.SlotEnabled, s.IPv4TCP = hosts[i], 443, true, true
+		}
+		if i == 0 {
+			s.LibraryID = libraryID
 		}
 		request.Slots = append(request.Slots, s)
 	}
@@ -125,7 +137,8 @@ func TestR07V4ConfigSaveReadAndSwitch(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || cfg.SettingsRevision != "0" || cfg.Enabled || len(cfg.Slots) != 3 || len(cfg.Lanes) != 12 {
 		t.Fatal(err, w.Body.String())
 	}
-	w = qualityWebRequest(t, a, http.MethodPut, v4Path(id, "config"), v4Body("0", 60000, "Example.COM."))
+	target := createWebTestTarget(t, a, "Example.COM.")
+	w = qualityWebRequest(t, a, http.MethodPut, v4Path(id, "config"), v4ReferencedBody("0", 60000, "Example.COM.", target.ID))
 	if w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
@@ -148,7 +161,7 @@ func TestR07V4ConfigSaveReadAndSwitch(t *testing.T) {
 	if w = qualityWebRequest(t, a, http.MethodPut, v4Path(id, "enabled"), `{"expected_revision":"1","enabled":false}`); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w = qualityWebRequest(t, a, http.MethodPut, v4Path(id, "config"), v4Body("1", 60000, "example.com")); w.Code != 409 {
+	if w = qualityWebRequest(t, a, http.MethodPut, v4Path(id, "config"), v4ReferencedBody("1", 60000, "example.com", target.ID)); w.Code != 409 {
 		t.Fatal("stale save", w.Code)
 	}
 }
@@ -233,17 +246,13 @@ func TestR07V4FieldErrorsAreReportedPerInput(t *testing.T) {
 		{"slot":"unicom","kind":"custom","region":"","isp":"I","host":"example.com","port":0,"slot_enabled":true,"ipv4_tcp":true},
 		{"slot":"mobile","kind":"custom","region":"R","isp":"I","host":"1.1.1.1","port":53,"slot_enabled":true,"ipv6_tcp":true}]}`
 	w := qualityWebRequest(t, a, http.MethodPut, v4Path(id, "config"), body)
-	got := map[string]string{}
-	for _, d := range v4Decode(t, w).Error.Details {
-		got[d.Slot+"/"+d.Field] = d.Code
-	}
-	want := map[string]string{"telecom/host": "unsafe_address", "unicom/port": "invalid_port", "unicom/region": "label_required", "mobile/ipv6_tcp": "family_mismatch"}
-	if w.Code != 400 || len(got) != len(want) {
-		t.Fatalf("%d %v", w.Code, got)
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Fatalf("%s: got %q want %q (%v)", k, got[k], v, got)
+	if details := v4Decode(t, w).Error.Details; w.Code != 400 || len(details) != 3 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	} else {
+		for _, detail := range details {
+			if detail.Field != "library_id" || detail.Code != "library_required" {
+				t.Fatal(detail)
+			}
 		}
 	}
 	// Invalid UTF-8 and lone surrogates are rejected before decoding.
@@ -254,94 +263,6 @@ func TestR07V4FieldErrorsAreReportedPerInput(t *testing.T) {
 	lone := strings.Replace(v4Body("0", 30000, "example.com"), `"R"`, `"\ud800"`, 1)
 	if w = qualityWebRequest(t, a, http.MethodPut, v4Path(id, "config"), lone); w.Code != 400 || v4Decode(t, w).Error.Details[0].Code != "invalid_encoding" {
 		t.Fatal(w.Code, w.Body.String())
-	}
-}
-
-// The Server-side check refuses a name that resolves to a non-public address on either side, allows
-// one that does not resolve at all, asks only about changed names, and never echoes an answer.
-func TestR07V4ServerSideNameCheck(t *testing.T) {
-	a, id, resolver, done := v4App(t)
-	defer done()
-	path := v4Path(id, "config")
-	resolver.answers["ip4/private.example.com"] = addr("10.0.0.5")
-	resolver.answers["ip4/mixed.example.com"] = append(addr("93.184.216.34"), netip.MustParseAddr("192.168.1.1"))
-	resolver.answers["ip4/v6only.example.com"] = nil
-	resolver.answers["ip6/v6only.example.com"] = addr("fd00::1")
-	resolver.failed["ip4/v6only.example.com"] = true
-	resolver.answers["ip4/good.example.com"] = addr("93.184.216.34")
-	resolver.answers["ip6/mapped.example.com"] = addr("::ffff:10.0.0.1")
-	for _, name := range []string{"private.example.com", "mixed.example.com", "v6only.example.com", "mapped.example.com"} {
-		w := qualityWebRequest(t, a, http.MethodPut, path, v4Body("0", 30000, name))
-		details := v4Decode(t, w).Error.Details
-		if w.Code != 400 || len(details) != 1 || details[0].Slot != "telecom" || details[0].Field != "host" || details[0].Code != "unsafe_address" {
-			t.Fatalf("%s: %d %s", name, w.Code, w.Body.String())
-		}
-		if containsAny(w.Body.String(), "10.0.0", "192.168", "fd00", "::ffff") {
-			t.Fatalf("an answer leaked: %s", w.Body.String())
-		}
-	}
-	// Both sides fail: saved (the Agent checks again before every connection).
-	if w := qualityWebRequest(t, a, http.MethodPut, path, v4Body("0", 30000, "nxdomain.example.com")); w.Code != 200 {
-		t.Fatal("unresolvable name refused", w.Code, w.Body.String())
-	}
-	// A resolvable public name on one side while the other side fails is fine.
-	if w := qualityWebRequest(t, a, http.MethodPut, path, v4Body("1", 30000, "good.example.com")); w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	// Unchanged names and literals are not resolved again.
-	before := len(resolver.questions())
-	if w := qualityWebRequest(t, a, http.MethodPut, path, v4Body("2", 60000, "good.example.com")); w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	if w := qualityWebRequest(t, a, http.MethodPut, path, v4Body("3", 60000, "good.example.com", "8.8.8.8")); w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	if after := len(resolver.questions()); after != before {
-		t.Fatalf("resolved %d more times for unchanged names and literals: %v", after-before, resolver.questions()[before:])
-	}
-	// The same changed name in two slots is asked once per family, and refused in both.
-	w := qualityWebRequest(t, a, http.MethodPut, path, v4Body("4", 60000, "good.example.com", "private.example.com", "private.example.com"))
-	if details := v4Decode(t, w).Error.Details; w.Code != 400 || len(details) != 2 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	count := 0
-	for _, q := range resolver.questions()[before:] {
-		if strings.HasSuffix(q, "/private.example.com") {
-			count++
-		}
-	}
-	if count != 2 {
-		t.Fatalf("private name asked %d times, want 2 (one per family)", count)
-	}
-}
-
-func TestR07V4NameCheckBudgetAndConcurrency(t *testing.T) {
-	a, id, resolver, done := v4App(t)
-	defer done()
-	path := v4Path(id, "config")
-	// One shared 2-second budget for the whole request; a slow resolver does not hold the save.
-	resolver.block = make(chan struct{})
-	defer close(resolver.block)
-	started := time.Now()
-	w := qualityWebRequest(t, a, http.MethodPut, path, v4Body("0", 30000, "a.example.com", "b.example.com", "c.example.com"))
-	elapsed := time.Since(started)
-	if w.Code != 200 || elapsed < 1800*time.Millisecond || elapsed > 3*time.Second {
-		t.Fatalf("slow resolver: %d after %v", w.Code, elapsed)
-	}
-	// Four checks at a time on the whole Server; the fifth is told to retry.
-	for i := 0; i < qualityDNSCheckSlots; i++ {
-		a.qualityDNSSlots <- struct{}{}
-	}
-	w = qualityWebRequest(t, a, http.MethodPut, path, v4Body("1", 30000, "d.example.com"))
-	if w.Code != 503 || v4Decode(t, w).Error.Code != "retryable" {
-		t.Fatal("busy", w.Code, w.Body.String())
-	}
-	// A save that changes no name does not need a slot.
-	if w = qualityWebRequest(t, a, http.MethodPut, path, v4Body("1", 60000, "a.example.com", "b.example.com", "c.example.com")); w.Code != 200 {
-		t.Fatal("no names to check", w.Code, w.Body.String())
-	}
-	for i := 0; i < qualityDNSCheckSlots; i++ {
-		<-a.qualityDNSSlots
 	}
 }
 
@@ -385,9 +306,10 @@ func TestV107SlowThresholdSaveOverHTTP(t *testing.T) {
 	defer done()
 	resolver.answers["ip4/example.com"] = addr("93.184.216.34")
 	resolver.answers["ip6/example.com"] = addr("2606:2800:220:1:248:1893:25c8:1946")
+	target := createWebTestTarget(t, a, "example.com")
 	path := v4Path(id, "config")
 	withThreshold := func(expected string, raw string) string {
-		body := v4Body(expected, 30000, "example.com")
+		body := v4ReferencedBody(expected, 30000, "example.com", target.ID)
 		if raw == "" {
 			return body
 		}

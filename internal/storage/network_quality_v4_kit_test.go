@@ -122,7 +122,7 @@ func v4Slots(slots ...protocol.QualityV4Slot) []protocol.QualityV4Slot {
 		if s, ok := byName[name]; ok {
 			out = append(out, s)
 		} else {
-			out = append(out, protocol.QualityV4Slot{Slot: name, Kind: "builtin", ISP: name})
+			out = append(out, protocol.QualityV4Slot{Slot: name, Kind: "custom", ISP: legacyQualityCarrier(name)})
 		}
 	}
 	return out
@@ -148,7 +148,48 @@ func (k *v4Kit) save(interval int, slots ...protocol.QualityV4Slot) protocol.Qua
 
 func (k *v4Kit) trySave(interval int, slots ...protocol.QualityV4Slot) (protocol.QualityV4Config, error) {
 	current := k.get()
-	return k.s.SaveQualityConfigV4(k.ctx, k.id, protocol.QualityV4SaveRequest{ExpectedRevision: current.SettingsRevision, IntervalMS: interval, Slots: v4Slots(slots...)}, k.tick())
+	return k.s.SaveQualityConfigV4(k.ctx, k.id, protocol.QualityV4SaveRequest{ExpectedRevision: current.SettingsRevision, IntervalMS: interval, Slots: k.librarySlots(v4Slots(slots...))}, k.tick())
+}
+
+func (k *v4Kit) librarySlots(slots []protocol.QualityV4Slot) []protocol.QualityV4Slot {
+	k.t.Helper()
+	targets, err := k.s.ListNetworkTargets(k.ctx)
+	if err != nil {
+		k.t.Fatal(err)
+	}
+	out := append([]protocol.QualityV4Slot{}, slots...)
+	for i := range out {
+		slot := &out[i]
+		if slot.Host == "" {
+			slot.LibraryID = ""
+			continue
+		}
+		normalized, errs := protocol.NormalizeQualitySlot(*slot)
+		if len(errs) != 0 {
+			slot.LibraryID = ""
+			continue
+		}
+		fields := NetworkTargetFields{Region: normalized.Region, ISP: normalized.ISP, Host: normalized.Host, Port: normalized.Port}
+		if normalized.Kind == "builtin" {
+			fields.ISP = legacyQualityCarrier(fields.ISP)
+		}
+		slot.LibraryID = ""
+		for _, target := range targets {
+			if target.NetworkTargetFields == fields {
+				slot.LibraryID = target.ID
+				break
+			}
+		}
+		if slot.LibraryID == "" {
+			target, err := k.s.CreateNetworkTarget(k.ctx, fields)
+			if err != nil {
+				k.t.Fatal(err)
+			}
+			slot.LibraryID = target.ID
+			targets = append(targets, target)
+		}
+	}
+	return out
 }
 
 func (k *v4Kit) enable(on bool) protocol.QualityV4Config {

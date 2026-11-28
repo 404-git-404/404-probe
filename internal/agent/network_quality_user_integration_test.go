@@ -49,6 +49,17 @@ func saveUserTargets(t *testing.T, s *storage.Store, id string, slots ...protoco
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i := range slots {
+		row := &slots[i]
+		if row.Host == "" {
+			continue
+		}
+		target, err := s.CreateNetworkTarget(ctx, storage.NetworkTargetFields{Region: row.Region, ISP: row.ISP, Host: row.Host, Port: row.Port})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row.LibraryID = target.ID
+	}
 	saved, err := s.SaveQualityConfigV4(ctx, id, protocol.QualityV4SaveRequest{ExpectedRevision: current.SettingsRevision, IntervalMS: 30000, Slots: slots}, now)
 	if err != nil {
 		t.Fatal(err)

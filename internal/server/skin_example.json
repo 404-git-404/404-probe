@@ -1,0 +1,31 @@
+{
+  "format": "404-probe-skin",
+  "version": 1,
+  "name": "示例 · 冷灰蓝",
+  "author": "404-probe",
+  "description": "用冷灰蓝展示浅色和深色的核心变量。",
+  "light": {
+    "--color-page": "#edf2f7",
+    "--color-card": "#f9fbfd",
+    "--color-surface-hover": "#e1eaf3",
+    "--color-line": "#c9d7e5",
+    "--color-text": "#233246",
+    "--color-text-muted": "#586c81",
+    "--color-accent": "#376b97",
+    "--color-accent-text": "#315f86",
+    "--color-success": "#287b69",
+    "--color-danger": "#aa424b"
+  },
+  "dark": {
+    "--color-page": "#101821",
+    "--color-card": "#192531",
+    "--color-surface-hover": "#223447",
+    "--color-line": "#364d62",
+    "--color-text": "#e1ebf5",
+    "--color-text-muted": "#a0b4c8",
+    "--color-accent": "#83b9e5",
+    "--color-accent-text": "#a0c9ed",
+    "--color-success": "#67c2aa",
+    "--color-danger": "#f08188"
+  }
+}

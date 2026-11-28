@@ -60,7 +60,11 @@ func configureUserTargets(t *testing.T, s *storage.Store, id string, now time.Ti
 	}
 	var slots []protocol.QualityV4Slot
 	for i, slot := range protocol.QualitySlotOrder() {
-		slots = append(slots, userSlot(slot, hosts[i], port))
+		row := userSlot(slot, hosts[i], port)
+		if row.Host != "" {
+			row.LibraryID = testNetworkTarget(t, s, row.Region, row.ISP, row.Host, row.Port)
+		}
+		slots = append(slots, row)
 	}
 	saved, err := s.SaveQualityConfigV4(ctx, id, protocol.QualityV4SaveRequest{ExpectedRevision: current.SettingsRevision, IntervalMS: 30000, Slots: slots}, now)
 	if err != nil {
@@ -75,6 +79,26 @@ func configureUserTargets(t *testing.T, s *storage.Store, id string, now time.Ti
 }
 
 var defaultUserHosts = [3]string{"example.com", "example.org", "example.net"}
+
+func testNetworkTarget(t *testing.T, store *storage.Store, region, isp, host string, port int) string {
+	t.Helper()
+	ctx := t.Context()
+	fields := storage.NetworkTargetFields{Region: region, ISP: isp, Host: host, Port: port}
+	targets, err := store.ListNetworkTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range targets {
+		if target.NetworkTargetFields == fields {
+			return target.ID
+		}
+	}
+	target, err := store.CreateNetworkTarget(ctx, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target.ID
+}
 
 func userLane(t *testing.T, cfg protocol.QualityV4Config, slot, family, proto string) protocol.QualityV4Lane {
 	t.Helper()

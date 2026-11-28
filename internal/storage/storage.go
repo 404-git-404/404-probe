@@ -21,7 +21,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 48
+const currentSchemaVersion = 49
 
 // 每个版本发布前按升级支持策略更新。v1.2.1 uses schema 37; v1.3.0 and v1.3.1 use schema 38.
 const minimumUpgradeSchemaVersion = 46
@@ -1032,6 +1032,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	if version < 48 && !migration34Skip {
 		if err := migrateAgentDeletionAndDNS48Tx(ctx, tx); err != nil {
 			return fmt.Errorf("migration 48: %w", err)
+		}
+	}
+	if version < 49 && !migration34Skip {
+		if err := migrateNetworkTargetsAndSkins49Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 49: %w", err)
 		}
 	}
 	return tx.Commit()

@@ -56,7 +56,7 @@ func TestOrganizationSortHardLimitsAndSQLFailureRollback(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		tag := fmt.Sprintf("%032x", i+1)
 		ids = append(ids, tag)
-		if _, err := s.db.Exec(`INSERT INTO tags(id,name,name_key,revision) VALUES(?,?,?,1)`, tag, fmt.Sprintf("tag-%03d", i), fmt.Sprintf("tag-%03d", i)); err != nil {
+		if _, err := s.db.Exec(`INSERT INTO tags(id,name,name_key,revision,color) VALUES(?,?,?,1,'blue')`, tag, fmt.Sprintf("tag-%03d", i), fmt.Sprintf("tag-%03d", i)); err != nil {
 			t.Fatal(err)
 		}
 	}

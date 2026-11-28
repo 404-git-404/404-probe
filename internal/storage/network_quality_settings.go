@@ -55,10 +55,21 @@ type qualityConfigRow struct {
 type qualitySlotRow struct {
 	protocol.QualityV4Slot
 	UpdatedRevision int64
+	LegacyLabel     bool
+}
+
+// displaySlot retains the label formatting understood by existing Web clients.
+// The stored kind and all writes use custom; the legacy flag belongs to the slot key.
+func (r qualitySlotRow) displaySlot() protocol.QualityV4Slot {
+	slot := r.QualityV4Slot
+	if r.LegacyLabel {
+		slot.Kind = "builtin"
+	}
+	return slot
 }
 
 func qualityDefaultSlot(slot string) protocol.QualityV4Slot {
-	return protocol.QualityV4Slot{Slot: slot, ShowOnCard: true, Kind: "builtin", ISP: protocol.QualityISPForSlot(slot)}
+	return protocol.QualityV4Slot{Slot: slot, ShowOnCard: true, Kind: "custom", ISP: legacyQualityCarrier(slot)}
 }
 
 func qualityLoadConfigTx(ctx context.Context, tx *sql.Tx, id string) (qualityConfigRow, error) {
@@ -84,7 +95,7 @@ func qualityLoadConfigTx(ctx context.Context, tx *sql.Tx, id string) (qualityCon
 
 func qualityLoadSlotsTx(ctx context.Context, tx *sql.Tx, id string, cfg qualityConfigRow) ([]qualitySlotRow, error) {
 	out := []qualitySlotRow{}
-	rows, err := tx.QueryContext(ctx, `SELECT slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,show_on_card FROM quality_slot_settings WHERE agent_id=?
+	rows, err := tx.QueryContext(ctx, `SELECT slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,show_on_card,COALESCE(library_id,''),legacy_label FROM quality_slot_settings WHERE agent_id=?
 		ORDER BY CASE WHEN position>=0 THEN position WHEN slot='telecom' THEN 0 WHEN slot='unicom' THEN 1 ELSE 2 END,slot`, id)
 	if err != nil {
 		return nil, err
@@ -93,7 +104,7 @@ func qualityLoadSlotsTx(ctx context.Context, tx *sql.Tx, id string, cfg qualityC
 	for rows.Next() {
 		var r qualitySlotRow
 		var port sql.NullInt64
-		if err := rows.Scan(&r.Slot, &r.Kind, &r.Region, &r.ISP, &r.Host, &port, &r.SlotEnabled, &r.IPv4TCP, &r.IPv4ICMP, &r.IPv6TCP, &r.IPv6ICMP, &r.UpdatedRevision, &r.ShowOnCard); err != nil {
+		if err := rows.Scan(&r.Slot, &r.Kind, &r.Region, &r.ISP, &r.Host, &port, &r.SlotEnabled, &r.IPv4TCP, &r.IPv4ICMP, &r.IPv6TCP, &r.IPv6ICMP, &r.UpdatedRevision, &r.ShowOnCard, &r.LibraryID, &r.LegacyLabel); err != nil {
 			return nil, err
 		}
 		r.Port = int(port.Int64)
@@ -211,7 +222,7 @@ func qualityMeasurementSame(a, b protocol.QualityV4Slot) bool {
 }
 
 func qualityLabelSame(a, b protocol.QualityV4Slot) bool {
-	return a.Kind == b.Kind && a.Region == b.Region && a.ISP == b.ISP
+	return a.Kind == b.Kind && a.Region == b.Region && a.ISP == b.ISP && a.LibraryID == b.LibraryID
 }
 
 type qualityApplyResult struct {
@@ -461,9 +472,10 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 			if slot.Host != "" {
 				port = slot.Port
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO quality_slot_settings(agent_id,slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,position,show_on_card) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-				ON CONFLICT(agent_id,slot) DO UPDATE SET kind=excluded.kind,region=excluded.region,isp=excluded.isp,host=excluded.host,port=excluded.port,slot_enabled=excluded.slot_enabled,ipv4_tcp=excluded.ipv4_tcp,ipv4_icmp=excluded.ipv4_icmp,ipv6_tcp=excluded.ipv6_tcp,ipv6_icmp=excluded.ipv6_icmp,updated_revision=excluded.updated_revision,position=excluded.position,show_on_card=excluded.show_on_card`,
-				id, slot.Slot, slot.Kind, slot.Region, slot.ISP, slot.Host, port, slot.SlotEnabled, slot.IPv4TCP, slot.IPv4ICMP, slot.IPv6TCP, slot.IPv6ICMP, updated, i, slot.ShowOnCard); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO quality_slot_settings(agent_id,slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,position,show_on_card,library_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''))
+				ON CONFLICT(agent_id,slot) DO UPDATE SET kind=excluded.kind,region=excluded.region,isp=excluded.isp,host=excluded.host,port=excluded.port,slot_enabled=excluded.slot_enabled,ipv4_tcp=excluded.ipv4_tcp,ipv4_icmp=excluded.ipv4_icmp,ipv6_tcp=excluded.ipv6_tcp,ipv6_icmp=excluded.ipv6_icmp,updated_revision=excluded.updated_revision,position=excluded.position,show_on_card=excluded.show_on_card,library_id=excluded.library_id,
+				legacy_label=CASE WHEN quality_slot_settings.isp=excluded.isp THEN quality_slot_settings.legacy_label ELSE 0 END`,
+				id, slot.Slot, slot.Kind, slot.Region, slot.ISP, slot.Host, port, slot.SlotEnabled, slot.IPv4TCP, slot.IPv4ICMP, slot.IPv6TCP, slot.IPv6ICMP, updated, i, slot.ShowOnCard, slot.LibraryID); err != nil {
 				return result, err
 			}
 		}

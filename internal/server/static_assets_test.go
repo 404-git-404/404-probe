@@ -101,11 +101,17 @@ func TestStaticAssetsIdentityUpgradeAndRollback(t *testing.T) {
 			}
 			for i, ref := range original {
 				want := ref[1]
-				if want != "/style.css" {
+				if want != "/style.css" && want != "/skin.css" {
 					want = target.fingerprints[want[1:]]
 				}
 				if served[i][1] != want {
 					t.Fatalf("reference/order: %s #%d", name, i)
+				}
+				if want == "/skin.css" {
+					if target.fingerprints["skin.css"] != "" {
+						t.Fatal("dynamic skin stylesheet was fingerprinted")
+					}
+					continue // The App serves this URL. See TestSkinHTTPImportActivationAndCaching.
 				}
 				if w := staticResponse(target, "GET", want, nil); w.Code != 200 {
 					t.Fatalf("unreachable reference %s", want)

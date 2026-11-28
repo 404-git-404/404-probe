@@ -15,9 +15,10 @@
     {
       "show_on_card": true,
       "slot": "telecom",
+      "library_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "kind": "builtin",
       "region": "广东",
-      "isp": "telecom",
+      "isp": "电信",
       "host": "example.com",
       "port": 443,
       "slot_enabled": true,
@@ -29,6 +30,7 @@
     {
       "show_on_card": true,
       "slot": "unicom",
+      "library_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "kind": "custom",
       "region": "Tokyo",
       "isp": "NTT",
@@ -43,9 +45,10 @@
     {
       "show_on_card": true,
       "slot": "mobile",
-      "kind": "builtin",
+      "library_id": "",
+      "kind": "custom",
       "region": "",
-      "isp": "mobile",
+      "isp": "移动",
       "host": "",
       "port": 0,
       "slot_enabled": false,

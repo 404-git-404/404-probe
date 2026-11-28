@@ -53,6 +53,7 @@ type App struct {
 	offsiteBackup                 *backup.Manager
 	handler                       http.Handler
 	staticAssets                  *staticAssets
+	skinPalette                   skinPalette
 	qualityLookup                 qualityLookupFunc
 	qualityDNSSlots               chan struct{}
 	dashboardMu                   sync.Mutex
@@ -117,6 +118,11 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("initialize static assets: %w", err)
+	}
+	a.skinPalette, err = parseSkinPalette(a.staticAssets.legacy["/style.css"].data)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("initialize skin palette: %w", err)
 	}
 	a.initializeUpdateCheck()
 	a.handler = a.routes()
