@@ -22,13 +22,13 @@ Server、Agent 和发布元数据分别在 `cmd/server`、`cmd/agent`、`cmd/rel
 
 ## 发布
 
-1. Claude Code 从已验收的 `dev/v1.4.0` 准备候选。打开独立 Claude Code 会话做最终评审。v1.4.0 只在最后走一次完整发布。
+1. Claude Code 从已验收的 `dev/v1.4.1` 准备候选。打开独立 Claude Code 会话做最终评审。v1.4.1 只在最后走一次完整发布。
 2. 执行一条准备和验收命令，路径替换成实际仓库外的 ASCII 正斜杠路径。发布说明先准备好 UTF-8 LF 文件。
    ```powershell
-   python -B scripts/release.py all --version v1.4.0 --from-version v1.3.1 --out D:/release-v140 --notes D:/release-notes-v140.md
+   python -B scripts/release.py all --version v1.4.1 --from-version v1.4.0 --out D:/release-v141 --notes D:/release-notes-v141.md
    ```
    命令在独立克隆产生候选提交、七件产物和 `results.md`。报告失败时按其提示单步重跑。正式发布以 Linux 全仓、相关 `-race` 和动态安装器测试的结果为准。Windows 可本地构建和验收通用步骤，Linux 夹具在 Linux 运行器上完成。详细选项见 `scripts/release.py --help`。
-3. 真机只验一次 v1.3.1 → v1.4.0 升级和一次全新安装。用同一批产物，核对测试 Server 的迁移和数据、测试 Agent 的版本和状态，Agent 面板升级按 R05 做前后快照。数据库审计脚本先显式关闭 SQLite 连接。升级窗口由安装器保证，发布说明写明支持起点和手动替换二进制的限制。R31 登记表在下版补入正式 tag 提交、schema 和表增删。
+3. 真机只验一次 v1.4.0 → v1.4.1 升级和一次全新安装。用同一批产物，核对测试 Server 的迁移和数据、测试 Agent 的版本和状态，Agent 面板升级按 R05 做前后快照。数据库审计脚本先显式关闭 SQLite 连接。升级窗口由安装器保证，发布说明写明支持起点和手动替换二进制的限制。R31 登记表在下版补入正式 tag 提交、schema 和表增删。
 4. 将验收通过的候选提交推到 `release/vX.Y.Z`，注释 tag 指向该提交。创建 release 时先用 `--latest=false`，附七件资产和 `SHA256SUMS` 自身摘要。下载回核对全部资产以及正文摘要。确认测试 Agent 面板升级，再标 latest；失败恢复为草稿。最后更新发布文档、快进 `main` 并整理 ROADMAP。推送传输中断先用 `git ls-remote` 核对状态，状态明确且未变时可原样重试。
 
 Web 升级按精确 tag 解析目标版本。目标 release 必须是已发布的正式版本，草稿和预发布均不可用。测试 Server 必须运行该 release 对应的提交。
