@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY="404-git-404/404-probe"
-readonly DEFAULT_VERSION="v1.4.0"
+readonly DEFAULT_VERSION="v1.4.1"
 readonly INSTALL_HELPER="/usr/local/sbin/404-probe-install"
 readonly SERVER_BINARY="/usr/local/bin/404-probe-server"
 readonly AGENT_BINARY="/usr/local/bin/404-probe-agent"
@@ -328,7 +328,9 @@ Usage:
   404-probe-install oneclick-token <name> [--output <absolute-path>]
                                     test machines: one-click registration token into a root-only file
   404-probe-install database verify
-  404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME) [--extract-to NEW_DIRECTORY]
+  404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME [--r2-config PATH]) [--extract-to NEW_DIRECTORY]
+    --r2-config PATH reads R2 connection settings from a private JSON file for --from-r2 only.
+    If omitted, restore reads the saved R2 settings from /var/lib/404-probe/404-probe.db.
   404-probe-install uninstall <server|agent|local-agent> [--confirm-delete-data]
 
 Uninstall permanently removes the selected role's services, binaries,
@@ -1346,6 +1348,8 @@ usage() {
   printf 'Usage: 404-probe-install enroll <name> | oneclick-token <name> [--output /absolute/path] | domains [list|add|remove|disable] | web-password reset | selector-order <sing-box-config.json> | setup-security | setup-local-agent | setup-root-collector | uninstall <server|agent|local-agent> [--confirm-delete-data] | recover-agent-removal\n'
   printf '       404-probe-install database verify [--timeout DURATION]\n'
   printf '       404-probe-install database restore-backup --key PATH (--file PATH | --from-r2 NAME [--r2-config PATH]) [--extract-to NEW_DIRECTORY]\n'
+  printf '         --r2-config PATH reads R2 connection settings from a private JSON file for --from-r2 only.\n'
+  printf '         If omitted, restore reads the saved R2 settings from /var/lib/404-probe/404-probe.db.\n'
 }
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run this helper as root"
@@ -3331,6 +3335,13 @@ install_agent_oneclick() {
   ! agent_residue_exists \
     || die "a 404-probe Agent (or its leftovers) is already installed on this machine; refusing the one-click install. Upgrade it from the panel, or run the uninstall command first. The registration token was not used"
   install_agent ""
+  if [[ "${PROBE_404_SETUP_ROOT_COLLECTOR:-}" == 1 ]]; then
+    if [[ "${INSTALL_INIT}" == systemd ]]; then
+      setup_root_collector
+    else
+      note "已跳过 root 采集：仅 Debian 支持。"
+    fi
+  fi
 }
 
 install_agent_command() {
@@ -3621,20 +3632,20 @@ identify_installed_server_version() {
   if version_json="$("${SERVER_BINARY}" version --json 2>/dev/null)"; then
     version="$(json_string_field "${version_json}" version)"
     release_version "${version}" && [[ "${version_json}" == *'"dirty":false'* ]] \
-      || die "server_version_unrecognized: installed Server returned an untrusted build identity; this release cannot be installed directly; first upgrade with install.sh from release v1.3.1 (PROBE_404_VERSION=v1.3.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+      || die "server_version_unrecognized: installed Server returned an untrusted build identity; this release cannot be installed directly; first upgrade with install.sh from release v1.4.0 (PROBE_404_VERSION=v1.4.0); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
     printf '%s\n' "${version}"
     return
   fi
-  die "server_version_unrecognized: installed Server build cannot be identified safely; this release cannot be installed directly; first upgrade with install.sh from release v1.3.1 (PROBE_404_VERSION=v1.3.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+  die "server_version_unrecognized: installed Server build cannot be identified safely; this release cannot be installed directly; first upgrade with install.sh from release v1.4.0 (PROBE_404_VERSION=v1.4.0); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
 }
 
 # Update before each release according to the supported upgrade window.
 require_supported_server_version() {
   local comparison
-  comparison="$(compare_versions "$1" v1.3.1)" \
-    || die "server_version_unrecognized: installed Server version is invalid; this release cannot be installed directly; first upgrade with install.sh from release v1.3.1 (PROBE_404_VERSION=v1.3.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+  comparison="$(compare_versions "$1" v1.4.0)" \
+    || die "server_version_unrecognized: installed Server version is invalid; this release cannot be installed directly; first upgrade with install.sh from release v1.4.0 (PROBE_404_VERSION=v1.4.0); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
   [[ "${comparison}" != -1 ]] \
-    || die "server_version_too_old: installed Server $1 is older than the supported window; this release cannot be installed directly; first upgrade with install.sh from release v1.3.1 (PROBE_404_VERSION=v1.3.1); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
+    || die "server_version_too_old: installed Server $1 is older than the supported window; this release cannot be installed directly; first upgrade with install.sh from release v1.4.0 (PROBE_404_VERSION=v1.4.0); if that installer also reports that your version is too old, follow its instructions to upgrade step by step; no files were changed"
 }
 
 write_server_upgrade_state() {
@@ -4187,7 +4198,14 @@ install_or_upgrade() {
 }
 
 main() {
-  case "${1:-}" in -h|--help|help) usage; return ;; esac
+  case "${1:-}" in
+    -h|--help|help) usage; return ;;
+    render-local-helper)
+      [[ $# -eq 1 ]] || die "usage: install.sh render-local-helper"
+      render_local_helper
+      return
+      ;;
+  esac
   if [[ -z "${1:-}" ]] && oneclick_variables_present; then oneclick_require_root; fi
   reject_deferred_command_on_host "${1:-}"
   require_root_linux_systemd

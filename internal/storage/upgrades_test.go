@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"404-probe/internal/protocol"
 )
 
 func TestUpgradeOperationLifecycleAndSingleActiveInvariant(t *testing.T) {
@@ -29,14 +31,15 @@ func TestUpgradeOperationLifecycleAndSingleActiveInvariant(t *testing.T) {
 	if _, err := store.UpdateUpgradeStatus(ctx, agentID, operation.OperationID, UpgradeInstalling, "", "", at.Add(2*time.Second)); !errors.Is(err, ErrUpgradeTransition) {
 		t.Fatalf("skipped stage error=%v", err)
 	}
+	warning := protocol.UpgradeHelperWarningPrefix + "下载 install.sh 失败"
 	for index, status := range []UpgradeStatus{UpgradeDownloading, UpgradeVerifying, UpgradeStaging, UpgradeInstalling, UpgradeRestarting, UpgradeHealthCheck, UpgradeSucceeded} {
-		updated, err := store.UpdateUpgradeStatus(ctx, agentID, operation.OperationID, status, "", "", at.Add(time.Duration(index+2)*time.Second))
-		if err != nil || updated.Status != status {
+		updated, err := store.UpdateUpgradeStatus(ctx, agentID, operation.OperationID, status, "", warning, at.Add(time.Duration(index+2)*time.Second))
+		if err != nil || updated.Status != status || (updated.FailureMessage == warning) != (status == UpgradeSucceeded) {
 			t.Fatalf("status=%s operation=%+v err=%v", status, updated, err)
 		}
 	}
 	finished, err := store.GetUpgrade(ctx, operation.OperationID)
-	if err != nil || finished.FinishedAt == nil || finished.Status != UpgradeSucceeded {
+	if err != nil || finished.FinishedAt == nil || finished.Status != UpgradeSucceeded || finished.FailureMessage != warning {
 		t.Fatalf("finished=%+v err=%v", finished, err)
 	}
 	if _, err := store.CreateUpgrade(ctx, conflict); err != nil {

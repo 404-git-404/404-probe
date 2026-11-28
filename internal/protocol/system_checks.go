@@ -132,15 +132,33 @@ type SystemChecks struct {
 	RootCollectedAt int64            `json:"root_collected_at,omitempty"`
 	Packages        PackageCheck     `json:"packages"`
 	Fail2ban        Fail2banCheck    `json:"fail2ban"`
+	LocalDNS        *LocalDNSCheck   `json:"local_dns,omitempty"`
+
+	RebootPackages          []string `json:"reboot_packages,omitempty"`
+	RebootPackagesTruncated bool     `json:"reboot_packages_truncated,omitempty"`
 }
 
+const MaxRebootPackages = 20
+const MaxRebootPackageBytes = 128
+
 func (s SystemChecks) Validate() error {
+	if s.LocalDNS != nil {
+		if err := s.LocalDNS.validate(); err != nil {
+			return err
+		}
+	}
 	if len(s.Certificates) > MaxCertificates || len(s.Unreadable) > MaxUnreadableDirectories ||
 		s.UnreadableCount < len(s.Unreadable) || len(s.Services) > MaxWatchedServices ||
 		len(s.FailedUnits) > MaxFailedUnits || len(s.ServiceRestarts) > MaxServiceRestarts || len(s.Virtualization) > 80 ||
+		len(s.RebootPackages) > MaxRebootPackages ||
 		len(s.Fail2ban.Jails) > MaxFail2banJails || s.Fail2ban.JailCount < len(s.Fail2ban.Jails) ||
 		s.Packages.Security < 0 || s.Packages.Upgradable < s.Packages.Security {
 		return errors.New("invalid system check limits")
+	}
+	for _, name := range s.RebootPackages {
+		if name == "" || len(name) > MaxRebootPackageBytes {
+			return errors.New("invalid reboot package observation")
+		}
 	}
 	for _, cert := range s.Certificates {
 		if len(cert.Fingerprint) != 64 || len(cert.Domains) > 510 || len(cert.Path) > 512 || cert.ExpiresAt <= 0 {

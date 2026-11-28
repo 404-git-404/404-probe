@@ -33,6 +33,28 @@
       "added_tables": [],
       "removed_tables": [],
       "generation_chain": ["v1.2.1", "v1.3.0", "v1.3.1"]
+    },
+    "v1.4.0": {
+      "commit": "08e1fb1d17d7732b9af38bd9be7cfc408abbacf0",
+      "schema": 46,
+      "previous_version": "v1.3.1",
+      "added_tables": [
+        "agent_presence",
+        "agent_presence_anchor",
+        "agent_presence_events",
+        "agent_startup_disk_failures",
+        "agent_system_check_settings",
+        "offsite_backup",
+        "quality_alert_cursor",
+        "quality_alert_history",
+        "quality_clock_estimates",
+        "quality_fleet_dirty",
+        "quality_fleet_rollups",
+        "quality_target_history",
+        "server_local_agent"
+      ],
+      "removed_tables": [],
+      "generation_chain": ["v1.2.1", "v1.3.0", "v1.3.1", "v1.4.0"]
     }
   }
 }

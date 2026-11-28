@@ -29,6 +29,31 @@ func TestAgentStateModuleIsEmbeddedBeforePageConsumers(t *testing.T) {
 	}
 }
 
+func TestStatusRowModuleIsEmbeddedBeforePageConsumers(t *testing.T) {
+	static, err := fs.Sub(Files, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.ReadFile(static, "status-row.js"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := fs.ReadFile(static, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(content)
+	statusIndex := strings.Index(html, `<script src="/status-row.js" defer>`)
+	if statusIndex < 0 {
+		t.Fatal("index.html must load status-row.js")
+	}
+	for _, consumer := range []string{"banner-view.js", "app.js"} {
+		consumerIndex := strings.Index(html, `<script src="/`+consumer+`" defer>`)
+		if consumerIndex < statusIndex {
+			t.Fatalf("index.html must load status-row.js before %s", consumer)
+		}
+	}
+}
+
 func TestThemeResolvesSynchronouslyBeforeEveryPageStylesheet(t *testing.T) {
 	if _, err := fs.ReadFile(Files, "static/theme.js"); err != nil {
 		t.Fatal(err)

@@ -78,6 +78,7 @@ test('new devices append to the frozen order; grouping reprojects the sorted bas
  assert.equal(await row(p,999).count(),1);
 }));
 test('row key contains display fields; dirty coalescing and untouched rows stay untouched',()=>ui(async({page:p,f})=>{
+ await p.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(r)))));
  await p.evaluate(()=>{window.__changes=[];const original=BannerView.projection;window.__untouched=document.querySelector('.banner-row[data-agent-id="00000000000000000000000000000002"]');window.__w=new MutationObserver(m=>__changes.push(...m.map(x=>x.target.nodeName)));__w.observe(__untouched,{attributes:true,childList:true,subtree:true,characterData:true});});
  f.publish('agent',{agent_id:ID(0),state:{...f.state.items[0].state,tx_rate:9999}});await p.waitForFunction(()=>document.querySelector('.banner-row[data-agent-id="00000000000000000000000000000001"] [data-column=rate]').textContent.includes('10.0 KB/s'));assert.deepEqual(await p.evaluate(()=>__changes),[]);
  await p.evaluate(id=>{agents.get(id).security={irrelevant:true};render(new Set([id]));},ID(1));await settle(p);assert.deepEqual(await p.evaluate(()=>__changes),[]);
@@ -127,9 +128,9 @@ test('navigation shows grouped and flat rows, keeps the rail aligned and uses on
  assert(await p.locator('#manage-tags').isVisible());
  assert(await p.locator('#manage-groups').isVisible());
  await p.locator('#dashboard-groups .dashboard-option').first().click();await settle(p);
- assert.equal(await p.locator('#dashboard-count').textContent(),'3 / 28 台');
+ assert.equal(await p.locator('#dashboard-devices-count').textContent(),'3 / 28');
  assert.equal(await p.locator('.banner-group-header:visible').count(),1);
- await p.locator('#dashboard-all').click();await settle(p);
+ await p.locator('#dashboard-devices > summary').click();await settle(p);
  assert.equal(await p.locator('.banner-group-header:visible').count(),0);
  await p.locator('#dashboard-network').click();await settle(p);
  assert(await p.locator('#network-placeholder').isVisible());

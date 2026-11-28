@@ -19,6 +19,9 @@ const removeAgentInput = document.querySelector('#remove-agent-input');
 const removeAgentPrompt = document.querySelector('#remove-agent-prompt');
 const removeAgentConfirm = document.querySelector('#remove-agent-confirm');
 const removeAgentError = document.querySelector('#remove-agent-error');
+const removeAgentDeleteWarning = document.querySelector('#remove-agent-delete-warning');
+const deleteAgentOnlineMessage = '设备在线时不能删除。先在机器上卸载 Agent 或等它离线';
+let permanentAgentRemoval = false;
 const serverVersion = document.querySelector('#server-version');
 const upgradeAgentDialog = document.querySelector('#upgrade-agent-dialog');
 const upgradeAgentForm = document.querySelector('#upgrade-agent-form');
@@ -244,6 +247,7 @@ const enrollmentDialog = AgentEnrollment.createController({
     choiceName: document.querySelector('#add-agent-choice-name'), next: document.querySelector('#add-agent-next'),
     chooseOneClick: document.querySelector('#add-agent-choose-oneclick'), chooseManual: document.querySelector('#add-agent-choose-manual'),
     reason: document.querySelector('#add-agent-oneclick-reason'), form: document.querySelector('#oneclick-form'),
+    rootOption: document.querySelector('#oneclick-root-option'), rootCollector: document.querySelector('#oneclick-root-collector'),
     name: document.querySelector('#oneclick-name'), error: document.querySelector('#oneclick-error'), submit: document.querySelector('#oneclick-submit'),
     oneclickBack: document.querySelector('#oneclick-back'), command: document.querySelector('#oneclick-command'),
     copy: document.querySelector('#oneclick-copy'), countdown: document.querySelector('#oneclick-countdown'),
@@ -256,7 +260,7 @@ const enrollmentDialog = AgentEnrollment.createController({
 });
 
 let manualEnrollmentGeneration=0,manualCredential='',manualEnrollmentPending=false;
-addShell.setGuard({read:()=>[document.querySelector('#add-agent-choice-name').value,document.querySelector('#add-agent-choose-oneclick').getAttribute('aria-checked')],busy:()=>manualEnrollmentPending||enrollmentDialog.busy});
+addShell.setGuard({read:()=>[document.querySelector('#add-agent-choice-name').value,document.querySelector('#add-agent-choose-oneclick').getAttribute('aria-checked'),document.querySelector('#oneclick-root-collector').checked],busy:()=>manualEnrollmentPending||enrollmentDialog.busy});
 upgradeShell.setGuard({busy:()=>!!pendingUpgradeAgentID&&agentState.busy(pendingUpgradeAgentID,'upgrade')});
 removeShell.setGuard({busy:()=>removeAgentInput.disabled});
 for(const node of document.querySelectorAll('[data-agent-server]'))node.textContent=location.origin;
@@ -327,27 +331,40 @@ addAgentForm.addEventListener('submit', async event => {
 
 function clearRemoveAgentDialog() {
   pendingRemoveAgentID = '';
+  permanentAgentRemoval = false;
   removeAgentName.textContent = '';
   removeAgentError.classList.add('hidden');
   removeAgentInput.value='';removeAgentInput.disabled=false;removeAgentConfirm.disabled = true;
 }
 
-function openRemoveAgentDialog(agent) {
-  removeShell.heading('撤销 Agent',agent.name);
+function openRemoveAgentDialog(agent, permanent = false) {
   clearRemoveAgentDialog();
+  permanentAgentRemoval = permanent;
+  removeShell.heading(permanent ? '彻底删除设备' : '撤销 Agent', permanent ? '' : agent.name);
+  for (const id of ['remove-agent-revoke-help', 'remove-agent-revoke-warning', 'remove-agent-identity']) {
+    document.getElementById(id).hidden = permanent;
+  }
+  removeAgentDeleteWarning.hidden = !permanent;
+  removeAgentConfirm.textContent = permanent ? '彻底删除' : '确认撤销';
   pendingRemoveAgentID = agent.agent_id;
   removeAgentName.textContent = agent.name || '未命名 Agent';removeAgentPrompt.textContent='输入设备名 '+removeAgentName.textContent+' 以确认';
+  removeAgentDeleteWarning.textContent = permanent ? `将永久删除「${agent.name}」及其全部历史数据（资源、流量、网络、事件、评分、套餐、备注、标签和分组分配、忽略设置），删除后无法恢复。` : '';
   removeAgentDialog.showModal();
 }
 
-removeAgentInput.addEventListener('input',()=>{removeAgentConfirm.disabled=removeAgentInput.disabled||!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);});
+function matchesRemovalName() {
+  return permanentAgentRemoval ? removeAgentInput.value === removeAgentName.textContent : Management.matchesDeviceName(removeAgentInput.value, removeAgentName.textContent);
+}
+
+removeAgentInput.addEventListener('input',()=>{removeAgentConfirm.disabled=removeAgentInput.disabled||!matchesRemovalName();});
 document.querySelector('#remove-agent-cancel').addEventListener('click', () => removeAgentDialog.close());
 removeAgentDialog.addEventListener('close',()=>{if(!removeAgentDialog.open)clearRemoveAgentDialog();});
 
 removeAgentForm.addEventListener('submit', async event => {
   event.preventDefault();
   const agentID = pendingRemoveAgentID;
-  if (!mutationCSRFToken || !agentID || removeAgentInput.disabled || !Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent)) return;
+  const permanent = permanentAgentRemoval;
+  if (!mutationCSRFToken || !agentID || removeAgentInput.disabled || !matchesRemovalName()) return;
   const barrier = agentState.beginDelete(agentID);
   if (!barrier) return;
   reconciliation.cancel(agentID);
@@ -361,19 +378,24 @@ removeAgentForm.addEventListener('submit', async event => {
   removeAgentConfirm.disabled = true;removeAgentInput.disabled=true;
   removeAgentError.classList.add('hidden');
   try {
-    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agentID)}/revoke`, {
+    const request = {
       method: 'POST',
       cache: 'no-store',
       headers: {'Content-Type': 'application/json', 'X-CSRF-Token': mutationCSRFToken},
       body: '{}',
-    });
+    };
+    if (permanent) request.body = JSON.stringify({name: removeAgentInput.value});
+    const action = permanent ? '/delete' : '/revoke';
+    const response = await fetch(`/api/v1/web/agents/${encodeURIComponent(agentID)}${action}`, request);
     if (response.status === 401) {
       location.assign('/login');
       return;
     }
-    if (!response.ok) throw new Error(response.statusText);
-    const revoked = await response.json();
-    if (!revoked.agent || !revoked.agent.revoked) throw new Error('Agent was not revoked');
+    if (!response.ok) {
+      const code = permanent ? (await response.json().catch(() => null))?.error?.code : '';
+      throw new Error(code);
+    }
+    if (permanent ? response.status !== 204 : !(await response.json()).agent?.revoked) throw new Error('unexpected removal response');
     removed = true;
     agentState.finishDelete(barrier, true);
     editingAgentNames.delete(agentID); agentNameDrafts.delete(agentID);
@@ -383,7 +405,12 @@ removeAgentForm.addEventListener('submit', async event => {
     render();
     await refresh();
   } catch (error) {
-    if(pendingRemoveAgentID===agentID){removeAgentError.classList.remove('hidden');removeAgentInput.disabled=false;removeAgentConfirm.disabled=!Management.matchesDeviceName(removeAgentInput.value,removeAgentName.textContent);}
+    if (pendingRemoveAgentID === agentID) {
+      removeAgentError.textContent = error.message === 'agent_online' ? deleteAgentOnlineMessage : error.message === 'agent_name_mismatch' ? '设备名称已经更改，请刷新后重新确认。' : '移除失败，请重试。';
+      removeAgentError.classList.remove('hidden');
+      removeAgentInput.disabled = false;
+      removeAgentConfirm.disabled = !matchesRemovalName();
+    }
   } finally {
     if (!removed) {
       agentState.finishDelete(barrier, false);
@@ -1121,13 +1148,27 @@ function setCardText(node, value) {
 const renderedCardKeys=new Map();
 const dormantCards=new Map();
 let youtubeRegionKey='',youtubeRegionGeneration=0;
-function cardRenderKey(a){return JSON.stringify([globalThis.DeviceScores?.version(),a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,a.server_local,a.system_attention,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>dashboardData.catalog().tags.find(t=>t.id===id)?.name),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+function cardRenderKey(a){return JSON.stringify([globalThis.DeviceScores?.version(),a.name,editingAgentNames.has(a.agent_id),a.online,a.revoked,a.disabled_at,a.country_code,a.country_source,a.country_lookup_enabled,a.youtube_check_enabled,a.state,a.version,a.plan,a.renewal,a.resources,a.network,a.dashboard_traffic,a.traffic,a.google_status,youtubeRegionGeneration,a.outbounds,a.upgrade,a.updater_health,a.masked_egress,a.detail_public_egress,a.public_egress_check?.enabled,a.disk_fault_acknowledged_at,a.startup_disk_failure,a.server_local,a.system_attention,agentState.busy(a.agent_id,'disk'),diskAckError(a),a.tag_ids,(a.tag_ids||[]).map(id=>{const t=dashboardData.catalog().tags.find(x=>x.id===id);return t?[t.name,t.color||'']:null;}),mutationCSRFToken,serverBuild.version,serverBuild.upgrade_eligible]);}
+async function ignoreSystemCheck(agentId, kind, item) {
+  let csrf = mutationCSRFToken;
+  if (!csrf) {
+    const session = await readJSON('/api/v1/web/session');
+    csrf = session.csrf_token || '';
+    mutationCSRFToken = csrf;
+  }
+  if (!csrf) throw new Error('会话已失效');
+  await Management.write(`/api/v1/web/agents/${encodeURIComponent(agentId)}/system-check-ignores`, {
+    method: 'PUT', csrf, payload: {kind, item}, unauthorized: () => location.assign('/login'),
+  });
+  await dashboardData.reload();
+  if (!suspended) renderDashboard(new Set([agentId]));
+}
 let renderFrame=0,lastLayout='';
 let renderAll=false;
 const renderDirty=new Set();
 const groupViews=new Map();
 let bannerHost=null,bannerView=null;
-function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('section');bannerHost.id='agent-list';container.after(bannerHost);bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger,tab='overview')=>{planRenewal.close();deviceDetails.open(id,tab,trigger);if(tab==='management')requestAnimationFrame(()=>document.querySelector('[data-upgrade-region]')?.scrollIntoView({block:'center'}));},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot)});}
+function ensureBanner(){if(bannerView)return;bannerHost=document.createElement('section');bannerHost.id='agent-list';container.after(bannerHost);bannerView=BannerView.create({host:bannerHost,selector:selectorView,csrf:()=>mutationCSRFToken,blocked:id=>agentState.blocked(id),onOpen:(id,trigger,tab='overview')=>{planRenewal.close();deviceDetails.open(id,tab,trigger);if(tab==='management')requestAnimationFrame(()=>document.querySelector('[data-upgrade-region]')?.scrollIntoView({block:'center'}));},onCollapse:id=>dashboardUI.collapse(id),onSort:key=>dashboardUI.sortBy(key),onSlot:slot=>dashboardUI.setSlot(slot),onIgnore:ignoreSystemCheck,onNavigateNetwork:id=>dashboardUI.openNetwork(id)});}
 function render(ids){if(!ids)renderAll=true;else for(const id of ids)renderDirty.add(id);if(renderFrame)return;renderFrame=requestAnimationFrame(()=>{renderFrame=0;const dirty=renderAll?null:new Set(renderDirty);renderAll=false;renderDirty.clear();renderDashboard(dirty);});}
 function renderDashboard(dirty=null) {
   const deadline=performance.now()+8,deferred=new Set();let updated=0;
@@ -1142,7 +1183,7 @@ function renderDashboard(dirty=null) {
   const allIds=[...agents.keys()],mounted=new Set();
   if(cards)for(const group of model.sections)if(!prefs.collapsed.includes(group.id))for(const a of group.items)mounted.add(a.agent_id);
   for(const [id,view]of agentCards)if(!mounted.has(id)){view.card.remove();agentCards.delete(id);dormantCards.set(id,view);}
-  for(const [id,view] of dormantCards)if(!agents.has(id)){globalThis.DeviceScores?.unobserve(view.card);dormantCards.delete(id);renderedCardKeys.delete(id);}
+  for(const [id,view] of dormantCards)if(!agents.has(id)){view.destroy?.();globalThis.DeviceScores?.unobserve(view.card);dormantCards.delete(id);renderedCardKeys.delete(id);}
   networkQuality.sync(allIds,mounted,agents);latencyCharts.sync(allIds);trafficCharts.sync(allIds);
   for(const id of allIds)if(!mounted.has(id)){latencyCharts.setVisible(id,false);trafficCharts.setVisible(id,false);}
   cardObservations.sync(allIds);selectorView.sync(allIds);cardFaces.sync(allIds);
@@ -1150,7 +1191,7 @@ function renderDashboard(dirty=null) {
   selectorView.refreshActive();
   empty.classList.toggle('hidden',model.list.length>0);empty.textContent=agents.size?'没有符合筛选的设备':'尚无活动 Agent';
   if(!devices)empty.classList.add('hidden');
-  if(list)for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,youtubeRegions:youtubeRegions(),deadline}))deferred.add(id);
+  if(list)for(const id of bannerView.render(model,prefs,{dirty,server:serverBuild,catalog,youtubeRegions:youtubeRegions(),deadline}))deferred.add(id);
   const liveGroups=new Set(model.sections.map(g=>g.id)),layout=JSON.stringify([dashboardUI.page(),prefs.viewMode,model.segmented,model.sections.map(g=>[g.id,prefs.collapsed.includes(g.id),g.items.map(a=>a.agent_id)])]);
   for(const [id,view]of groupViews)if(!liveGroups.has(id)){view.node.remove();groupViews.delete(id);}
   let groupPosition=container.firstElementChild;
@@ -1415,22 +1456,16 @@ function createAgentCard(initialAgent) {
     head.append(mark, identity);
     card.classList.add(`state-${stateName}`);
     card.append(head);
-    const tags=document.createElement('div');tags.className='dashboard-card-tags';
+    const statusRow=StatusRow.create({document,variant:'card',onIgnore:ignoreSystemCheck,onNavigateNetwork:id=>dashboardUI.openNetwork(id)});
+    const tags=statusRow.node;
     const diskBadge=document.createElement('span');diskBadge.className='dashboard-warning dashboard-disk-warning';
     const diskLabel=document.createElement('span'),diskAck=document.createElement('button');
     diskAck.type='button';diskAck.className='disk-fault-ack';diskAck.textContent='知道了';
     diskAck.addEventListener('click',event=>{event.stopPropagation();acknowledgeDiskFault(agent);});
     diskBadge.append(diskLabel,diskAck);
+    let warnings=DashboardModel.flags(agent,serverBuild);
     const updateTags=()=>{
-      const catalog=dashboardData.catalog(),key=(agent.tag_ids||[]).map(id=>{const t=catalog.tags.find(t=>t.id===id);return t?[id,t.name]:null;}).filter(Boolean);
-      const badges=DashboardModel.systemBadges(agent);
-      const signature=JSON.stringify([key,badges]);
-      if(tags.dataset.signature!==signature){
-        tags.dataset.signature=signature;
-        tags.replaceChildren();
-        for(const [,name] of key){const n=document.createElement('span');n.textContent=name;n.title=name;tags.append(n);}
-        tags.append(...SystemChecks.badges(document,agent));
-      }
+      statusRow.update(StatusRow.items(agent,{catalog:dashboardData.catalog(),server:serverBuild,warnings}));
       const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
       const reason=tone==='crit'?DashboardModel.diskFaults(health?.disk,{short:true})[0]:'';
       const label=agent.startup_disk_failure?DashboardModel.STARTUP_DISK_FAILURE_LABEL:
@@ -1439,11 +1474,9 @@ function createAgentCard(initialAgent) {
       setCardText(diskLabel,label+(tone==='warn'&&error?' · '+error:''));diskBadge.dataset.tone=tone;diskBadge.hidden=!tone;
       diskBadge.classList.toggle('startup-disk-failure',!!agent.startup_disk_failure);
       diskAck.hidden=tone!=='warn';diskAck.disabled=!canEditAgentControl(agent,'disk');
-      tags.hidden=!key.length&&!badges.length;
       systemFailure.hidden=!health?.os_read_failed;
         return tone==='crit';
     };
-    let warnings=DashboardModel.flags(agent,serverBuild);
     const diskFault=updateTags();card.append(tags);
 
     // ---- machine ----
@@ -1469,12 +1502,7 @@ function createAgentCard(initialAgent) {
     const latencyNode = latencyCharts.mount(agent);
     const networkModule = Card.createModule({document, key: 'network', label: '网络', host: qualityNode, a: networkQuality.faceNode(agent.agent_id), b: latencyNode,
       onFace: face => { networkQuality.setFace(agent.agent_id, face); latencyCharts.setActive(agent.agent_id, face === 'B'); }});
-    const networkWarning = document.createElement('span');
-    networkWarning.className='dashboard-warning dashboard-network-warning';
-    networkWarning.textContent='⚠ 网络异常';
-    qualityNode.append(networkWarning);
     function updateWarnings(){
-      networkWarning.hidden=!warnings.network;
       version.className=warnings.upgrade?'dashboard-version-upgrade':'';
       version.hidden=!warnings.upgrade;
       setCardText(version,warnings.upgrade?(agent.version+' · 待升级'):'');
@@ -1519,15 +1547,18 @@ function createAgentCard(initialAgent) {
       planRenewal.close();
       deviceDetails.open(agent.agent_id,'overview',trigger);
     });
+    const valueRibbon = DeviceScores.valueRibbon(document,'card');
     const detailToggle = scoreStamp.button;
     detailToggle.classList.add('detail-toggle','score-detail');
     detailToggle.dataset.focusKey = 'manage';
     const updateScore = () => {
       const score = DeviceScores.forAgent(agent);
       scoreStamp.update(score);
+      valueRibbon.update(score);
       DeviceScores.setOverflow(card,score);
     };
     updateScore();
+    head.prepend(valueRibbon.node);
     head.append(scoreStamp.slot);
 
     const deadline = planDeadline(agent);
@@ -1571,7 +1602,7 @@ function createAgentCard(initialAgent) {
     showOffline();
     card.append(offline);
 
-    return {card, modules, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
+    return {card, modules, destroy(){statusRow.destroy();}, setFaces(value){const faces=Card.parseFaces(value);modules.forEach((module,index)=>module.set(faces[index]));remember();describeFlip();}, update(next) {
       agent = next;
       updateScore();
       const state = agent.state || {}, hasState = Boolean(agent.state);
@@ -1579,6 +1610,7 @@ function createAgentCard(initialAgent) {
       const observed = cardObservations.observe(agent), oldMetrics = metricsStale || observed.stale;
       const stateName = cardLifecycle(agent);
       card.className = `card agent-card c7 state-${stateName}`;
+      warnings=DashboardModel.flags(agent,serverBuild);
       const diskFault=updateTags();
       card.setAttribute('aria-label', `Agent ${agent.name || '未命名'}，${lifecycleLabels[stateName]}`);
       status.className = `status ${stateName}`; status.dataset.agentState = stateName;
@@ -1603,7 +1635,6 @@ function createAgentCard(initialAgent) {
         nameControl.querySelector('button').disabled = !mutationCSRFToken || agent.revoked || agentState.blocked(agent.agent_id);
       }
       setReadableText(runtime, cardRuntimeShort(agent, oldMetrics), cardRuntimeText(agent, oldMetrics)); runtime.title = cardRuntimeText(agent, oldMetrics);
-      warnings=DashboardModel.flags(agent,serverBuild);
       machine.update(Card.machineView(agent, observed, oldMetrics, diskFault, warnings.resources));
       updateWarnings();
       updateTraffic();
@@ -1694,6 +1725,7 @@ function createAgentDetails(initial){
 
     const splitEgress=egressPanel.split();
     const summary=DetailSummary.create({actions:{upgrade,pause:stateAction,remove,reset:resetTraffic,resetFeedback,google:recheck,googleFeedback:checkFeedback,history:historyLink},egress:splitEgress,country:countryControls,
+      deleteAgent:a=>openRemoveAgentDialog(a,true),canDeleteAgent:a=>Boolean(mutationCSRFToken&&!agentState.blocked(a.agent_id)),deleteOnlineMessage:deleteAgentOnlineMessage,
       youtubeRegions,saveYouTubeRegion,canSaveYouTubeRegion,youtubeError:a=>agentActionErrors.get(`${a.agent_id}/youtube-region`)||'',serverNow:dashboardData.serverNow,
       setDetailCheck,canEditAgentControl,acknowledgeDiskFault,diskAckError,
       edit:(a,n,mode)=>openPlanDialog(a,n,mode),renew:(a,n)=>openPlanRenewal(a,n),saveCountry:saveDetailCountry,canWrite:a=>!planActionBlocked(a),organization:(a,n)=>organizationDialogs.openAssignment(a.agent_id,n),organizationText:a=>{const c=dashboardData.catalog();return [c.groups.find(g=>g.id===a.group_id)?.name||'未分组',...(a.tag_ids||[]).map(id=>c.tags.find(t=>t.id===id)?.name).filter(Boolean)].join(' · ');}});
@@ -1869,7 +1901,7 @@ async function pollActiveDetail(){
  if(suspended)return;
  const generation=detailPollGeneration;
  const active=deviceDetails.snapshot(),agent=active.open&&!document.hidden&&agents.get(active.id);
- const pending=agent&&(['requested','delivered'].includes(agent.country_code_lookup_operation?.status)||agent.google_status?.pending);
+ const pending=agent&&(['requested','delivered'].includes(agent.country_code_lookup_operation?.status)||agent.google_status?.pending||(active.tab==='management'&&agent.disabled_at));
  const results=pending?await hydrateActiveDetail(active.id):null;
  if(generation!==detailPollGeneration)return;
  detailPollDelay=results?.some(result=>result.status==='rejected')
@@ -1922,5 +1954,5 @@ events.addEventListener('agent', event => {
  const detail=deviceDetails.snapshot();
  if(detail.open&&detail.id===id&&(agentState.fullEvent(update)||(['system','security'].includes(detail.tab)&&update.system_checked_at!==previous?.system_checked_at)))hydrateActiveDetail(id);
 });
-events.addEventListener('dashboard',event=>{try{const value=JSON.parse(event.data);dashboardData.metadata(value);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===value.agent_id&&!value.revoked)hydrateActiveDetail(value.agent_id);}catch{}});
+events.addEventListener('dashboard',event=>{try{const value=JSON.parse(event.data);dashboardData.metadata(value);if(deviceDetails.snapshot().open&&deviceDetails.snapshot().id===value.agent_id&&!value.revoked&&value.kind!=='delete')hydrateActiveDetail(value.agent_id);}catch{}});
 events.addEventListener('organization',event=>{try{const value=JSON.parse(event.data);dashboardData.organization(value);}catch{}});

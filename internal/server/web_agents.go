@@ -37,6 +37,7 @@ type webAgentSummaryView struct {
 }
 
 type webAgentDetailView struct {
+	DeleteBlockedOnline bool                         `json:"delete_blocked_online"`
 	SystemChecks        *protocol.SystemChecks       `json:"system_checks"`
 	SystemCheckSettings protocol.SystemCheckSettings `json:"system_check_settings"`
 	DebianStableMajor   int                          `json:"debian_stable_major,omitempty"`
@@ -212,8 +213,9 @@ func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
 		writeControlCollectionError(w, err)
 		return
 	}
+	now := a.now()
 	records, next, err := a.store.QueryAgents(r.Context(), storage.AgentQuery{
-		Status: queryStatus, After: after, Limit: limit, Now: a.now(), OfflineTimeout: a.offlineTimeout,
+		Status: queryStatus, After: after, Limit: limit, Now: now, OfflineTimeout: a.offlineTimeout,
 	})
 	if err != nil {
 		a.logger.Error("query Web agents", "error", err)
@@ -221,9 +223,25 @@ func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := make([]webAgentSummaryView, 0, len(records))
+	checks := make(map[string]*protocol.SystemChecks)
+	var checkedIDs []string
 	for _, record := range records {
 		record = a.withUpdaterHealth(record)
 		items = append(items, newWebAgentSummaryView(record))
+		if check := a.currentSystemChecks(record, now); check != nil {
+			id := record.Agent.ID
+			checks[id] = check
+			checkedIDs = append(checkedIDs, id)
+		}
+	}
+	ignores, err := a.store.SystemCheckIgnoresForAgents(r.Context(), checkedIDs)
+	if err != nil {
+		a.logger.Error("query Web agent system check ignores", "error", err)
+		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not query agents")
+		return
+	}
+	for i, item := range items {
+		items[i].SystemAttention = checkAttention(checks[item.AgentID], now, ignores[item.AgentID])
 	}
 	nextCursor, err := encodeControlCursor(webAgentCursorResource, filters, next)
 	if err != nil {
@@ -258,12 +276,13 @@ func (a *App) handleGetWebAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetailView, error) {
-	record, err := a.store.GetAgentSnapshot(ctx, agentID, a.now(), a.offlineTimeout)
+	now := a.now()
+	record, err := a.store.GetAgentSnapshot(ctx, agentID, now, a.offlineTimeout)
 	if err != nil {
 		return webAgentDetailView{}, err
 	}
 	record = a.withUpdaterHealth(record)
-	view := webAgentDetailView{webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
+	view := webAgentDetailView{DeleteBlockedOnline: record.RecentContact, webAgentSummaryView: newWebAgentSummaryView(record), Outbounds: webOutboundsView{Selectors: []protocol.OutboundSelector{}}}
 	localID, err := a.store.ServerLocalAgent(ctx)
 	if err != nil {
 		return webAgentDetailView{}, err
@@ -273,8 +292,14 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 	if err != nil {
 		return webAgentDetailView{}, err
 	}
-	view.SystemChecks = a.currentSystemChecks(record, a.now())
-	view.SystemAttention = checkAttention(view.SystemChecks, a.now())
+	view.SystemChecks = a.currentSystemChecks(record, now)
+	if view.SystemChecks != nil {
+		ignores, err := a.store.SystemCheckIgnores(ctx, agentID)
+		if err != nil {
+			return webAgentDetailView{}, err
+		}
+		view.SystemAttention = checkAttention(view.SystemChecks, now, ignores)
+	}
 	view.DebianStableMajor = a.debianStable.current()
 	view.AgentControls, err = a.store.ReadAgentControls(ctx, agentID)
 	if err != nil {
@@ -591,12 +616,7 @@ func newWebAgentEventView(state storage.State, timeout time.Duration) webAgentEv
 	if reportStateStale(state, time.UnixMilli(state.LastSeen), timeout) {
 		view.HostHealth = newWebHostHealth(state.HostHealth, true, state.LastSeen)
 	}
-	var attention systemAttention
-	if state.LastSeen-state.SystemChecksAt <= systemCheckFreshness.Milliseconds() {
-		attention = checkAttention(state.SystemChecks, time.UnixMilli(state.LastSeen))
-	}
 	return webAgentEventView{
-		SystemAttention: attention,
 		SystemCheckedAt: state.SystemChecksAt,
 		SummaryVersion:  dashboardVersion(storage.Agent{ID: state.AgentID, Name: state.Name}, &state),
 		UpdaterHealth:   state.AgentUpdaterHealth, UpgradeCapable: state.AgentUpgradeCapable && state.AgentUpdaterHealth.ReasonCode() == "", UpgradeV2: state.AgentUpgradeV2, Version: state.AgentVersion,

@@ -421,6 +421,12 @@ class RegisteredReleaseTests(unittest.TestCase):
         self.assertEqual(releases.registered('v1.3.1'), dict(
             commit='cdd4fa3e0aed72aeb68d6d1cf3e0bf18d0fe800a', schema=38, previous_version='v1.3.0',
             added_tables=[], removed_tables=[], generation_chain=['v1.2.1', 'v1.3.0', 'v1.3.1']))
+        v140 = releases.registered('v1.4.0')
+        self.assertEqual((v140['commit'], v140['schema'], v140['previous_version']),
+                         ('08e1fb1d17d7732b9af38bd9be7cfc408abbacf0', 46, 'v1.3.1'))
+        self.assertEqual(len(v140['added_tables']), 13)
+        self.assertEqual(v140['removed_tables'], [])
+        self.assertEqual(v140['generation_chain'], ['v1.2.1', 'v1.3.0', 'v1.3.1', 'v1.4.0'])
         base = releases.registered('v1.2.0')
         self.assertEqual(base, dict(commit='36aa47afdc0c27c81632ab9b7fff4124d62e2cf3',
             schema=37, previous_version=None, added_tables=[], removed_tables=[], generation_chain=[]))

@@ -82,6 +82,53 @@ func TestOrganizationAPIAuthenticationCSRFAndStrictInputs(t *testing.T) {
 	}
 }
 
+func TestOrganizationTagColorAPI(t *testing.T) {
+	a, s, id, _ := testApp(t)
+	defer s.Close()
+	defer a.Shutdown()
+	const tags = "/api/v1/web/tags"
+	const catalog = "/api/v1/web/organization/catalog"
+	created := organizationHTTPChange(t, a, "POST", tags, map[string]any{"expected_revision": 1, "name": " EDGE "})
+	path := tags + "/" + created.ID
+	check := func(route, name, color string) {
+		t.Helper()
+		w := organizationHTTP(t, a, "GET", route, "", true, false)
+		var wire struct{ Tags, Items []storage.AgentTag }
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &wire) != nil {
+			t.Fatal(w.Code, w.Body.String())
+		}
+		items := wire.Tags
+		if route == tags {
+			items = wire.Items
+		}
+		for _, tag := range items {
+			if tag.Name == name && tag.Color == color {
+				return
+			}
+		}
+		t.Fatalf("%s missing %s (%s): %s", route, name, color, w.Body.String())
+	}
+	check(tags, "EDGE", "indigo")
+	check(catalog, "EDGE", "indigo")
+	for _, color := range []string{`"red"`, `"amber"`, `"BLUE"`, `""`, `null`, `123`} {
+		for _, req := range []struct{ method, route string }{{"POST", tags}, {"PATCH", path}} {
+			body := fmt.Sprintf(`{"expected_revision":2,"name":"Target","color":%s}`, color)
+			if w := organizationHTTP(t, a, req.method, req.route, body, true, true); w.Code != 400 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		}
+	}
+	updated := organizationHTTPChange(t, a, "PATCH", path, map[string]any{"expected_revision": 2, "color": "gray"})
+	check(tags, "EDGE", "gray")
+	renamed := organizationHTTPChange(t, a, "PATCH", path, map[string]any{"expected_revision": updated.Revision, "name": "Renamed"})
+	check(catalog, "Renamed", "gray")
+	explicit := organizationHTTPChange(t, a, "POST", tags, map[string]any{"expected_revision": renamed.Revision, "name": "Explicit", "color": "pink"})
+	check(tags, "Explicit", "pink")
+	organizationHTTPChange(t, a, "PUT", "/api/v1/web/agents/"+id+"/organization",
+		map[string]any{"expected_revision": explicit.Revision, "new_tags": []string{"Café"}, "tag_ids": []string{}})
+	check(catalog, "Café", "sky")
+}
+
 func TestOrganizationAPIManageMembershipRatesAndEvents(t *testing.T) {
 	a, s, id, _ := testApp(t)
 	defer s.Close()

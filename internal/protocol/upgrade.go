@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	UpgradeProtocolVersion = 1
-	MaxUpgradeBodyBytes    = 8 << 10
+	UpgradeProtocolVersion     = 1
+	MaxUpgradeBodyBytes        = 8 << 10
+	UpgradeHelperWarningPrefix = "管理脚本未更新："
 )
 
 type UpgradeClaimRequest struct {

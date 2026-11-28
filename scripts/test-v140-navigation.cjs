@@ -23,38 +23,28 @@ async function withPanel(options,run){
   try{await run(panel);assert.deepEqual(panel.errors,[]);}finally{await panel.close();}
 }
 
-test('total count digit growth refits +N without a resize or catalog change',async()=>{
+test('toolbar actions width growth refits +N without a viewport resize or catalog change',async()=>{
   await withPanel({n:9,width:1500},async({page,f})=>{
     const more=page.locator('#dashboard-tags-more');
-    const measurement=await page.evaluate(()=>{
-      const list=document.querySelector('#dashboard-tags .dashboard-options');
-      const gap=parseFloat(getComputedStyle(list).gap);
-      return {width:list.clientWidth, tags:[...list.children].reduce((sum,tag)=>sum+tag.getBoundingClientRect().width+gap,-gap)};
-    });
-    const width=1500+Math.ceil(measurement.tags-measurement.width)+3;
-    // Long labels leave the test inside the desktop layout at the threshold.
-    if(width<1310){
-      for(const tag of f.state.tags) tag.name+=' 测试标签内容';
-      f.state.revision++;
-      await page.evaluate(()=>dashboardData.reload());
-      await page.waitForFunction(()=>document.querySelector('#dashboard-tags .dashboard-option')?.textContent.includes('测试标签内容'));
-    }
+    for(const tag of f.state.tags) tag.name+=' 测试标签内容';
+    f.state.revision++;
+    await page.evaluate(()=>dashboardData.reload());
+    await page.waitForFunction(()=>document.querySelector('#dashboard-tags .dashboard-option')?.textContent.includes('测试标签内容'));
     let fitted=false;
-    for(let w=1300;w<=1500;w+=2){
+    for(let w=900;w<=1500;w+=2){
       await page.setViewportSize({width:w,height:1000});
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
       if(await more.isHidden()){fitted=true;break;}
     }
     assert(fitted);
-    const added=structuredClone(f.state.items[0]);
-    Object.assign(added,{agent_id:ID(999),tag_ids:[],name:'Synthetic-010'});
-    f.state.items.push(added);
-    await page.evaluate(()=>dashboardData.reload());
-    await page.waitForFunction(()=>document.querySelector('#dashboard-count').textContent==='10 / 10 台');
+    await page.evaluate(()=>{
+      document.querySelector('#dashboard-sort').style.paddingRight='36px';
+    });
     await more.waitFor();
     assert.match(await more.locator('summary').textContent(),/^\+[1-9]\d*$/);
-    f.state.items.pop();
-    await page.evaluate(()=>dashboardData.reload());
+    await page.evaluate(()=>{
+      document.querySelector('#dashboard-sort').style.paddingRight='';
+    });
     await more.waitFor({state:'hidden'});
   });
 });
@@ -126,8 +116,12 @@ for(const theme of ['dark','light']){
       second.renewal={type:'due_soon',days:0,field:'renewal_date',date:'2026-11-22',timezone:'UTC'};
       third.country_code='DE';
       third.renewal={type:'overdue',days:-2,field:'expiry_date',date:'2026-11-20',timezone:'UTC'};
+      const resetDevices=async()=>{
+        await page.locator('#dashboard-devices > summary').click();
+        if(!await page.locator('#dashboard-devices').evaluate(n=>n.open)) await page.locator('#dashboard-devices > summary').click();
+      };
       await page.evaluate(()=>dashboardData.reload());
-      await page.locator('#dashboard-all').click();
+      await resetDevices();
       await settle(page);
       assert.equal(await page.locator('.agent-card h2').first().getAttribute('aria-label'),'Synthetic-001');
       assert(await card(page,0).locator('.dashboard-disk-warning').isVisible());
@@ -147,7 +141,7 @@ for(const theme of ['dark','light']){
       await settle(page);
       assert.equal(await page.locator('.dashboard-group-header:visible').count(),1);
       await shot(page,theme+'-cards-single-group');
-      await page.locator('#dashboard-all').click();
+      await resetDevices();
       await page.locator('[data-view=list]').click();
       await settle(page);
       assert.equal(await row(page,0).locator('[data-column=disk] .banner-metric').getAttribute('data-tone'),'warn');
@@ -161,7 +155,7 @@ for(const theme of ['dark','light']){
       await group.click();
       await settle(page);
       await shot(page,theme+'-list-single-group');
-      await page.locator('#dashboard-all').click();
+      await resetDevices();
       await page.locator('#dashboard-youtube-free').check();
       const country=page.locator('#dashboard-countries .dashboard-option').filter({hasText:'德国'}).locator('input');
       await country.check();
@@ -173,7 +167,7 @@ for(const theme of ['dark','light']){
       assert(await row(page,0).isVisible());
       assert.equal(await row(page,2).count(),0);
       await shot(page,theme+'-list-combined');
-      await page.locator('#dashboard-all').click();
+      await resetDevices();
       await page.setViewportSize({width:390,height:844});
       await page.locator('#panel-mobile-open').click();
       await shot(page,theme+'-phone-navigation');

@@ -108,9 +108,9 @@ html { scrollbar-gutter: stable; }
 .system-pill[data-tone=danger],.dashboard-card-tags>span.system-pill[data-tone=danger]{color:var(--color-danger-text);background:var(--color-surface-29);border-color:currentColor}
 .system-pill[data-tone=server],.dashboard-card-tags>span.system-pill[data-tone=server]{color:var(--color-accent-text);background:var(--color-accent-soft);border-color:var(--color-accent)}
 .system-pill[data-tone=ok]{color:var(--color-success)}
-.banner-system-badges{display:flex;gap:3px;flex-wrap:wrap;margin-top:2px}
-.banner-system-badges[hidden]{display:none}
-.banner-system-badges .system-pill{font-size:10px;padding:1px 5px}
+.banner-system-badges{display:flex;gap:4px;flex-wrap:nowrap;align-items:center;height:20px;min-height:20px;margin-top:3px}
+.banner-system-badges .status-row-side{gap:3px}
+.banner-system-badges .status-item,.banner-system-badges .status-more,.banner-system-badges .system-pill{font-size:10px;line-height:1.25;padding:1px 5px}
 .system-table-scroll{overflow-x:auto}
 .system-certificates{width:100%;border-collapse:collapse;font-size:13px}
 .system-certificates th,.system-certificates td{padding:7px 9px;text-align:start;border-bottom:1px solid var(--color-line-soft)}
@@ -118,6 +118,15 @@ html { scrollbar-gutter: stable; }
 .system-certificates td:nth-child(2),.system-certificates td:nth-child(3){white-space:nowrap}
 .system-certificates td,.system-access-note,.system-jail-ips{overflow-wrap:anywhere}
 .system-access-note{margin:0;padding:8px 10px;border-radius:8px;color:var(--color-warning-text);background:var(--color-surface-11)}
+.system-ignore-actions{display:flex;flex-wrap:wrap;align-items:center;gap:5px 8px}
+.details-fact .system-ignore-actions{grid-column:2}
+.system-certificates .system-ignore-actions{margin-top:4px}
+.device-details .system-ignore-button{font-size:11px;padding:2px 6px;line-height:1.3}
+.system-ignore-muted,.system-ignore-muted .system-pill,.system-ignore-label{color:var(--color-text-muted)}
+.system-ignore-muted .system-pill{background:var(--color-surface-module);border-color:var(--color-line-soft)}
+.system-ignore-label,.system-ignore-error{font-size:12px}
+.system-ignore-error{color:var(--color-danger-text)}
+.system-ignore-error:empty{display:none}
 .system-fail2ban{margin-bottom:14px}
 .system-jail summary{cursor:pointer}
 .system-jail-ips{margin:6px 0;font-family:monospace}
@@ -138,6 +147,14 @@ html { scrollbar-gutter: stable; }
 .details-box .disk-os-failed,.details-identity .disk-os-failed{margin-inline-start:6px}
 .details-upgrade-failure{display:block;overflow-wrap:anywhere}
 .details-fact[hidden]{display:none}
+.details-action-row:has(.details-revoke-buttons){grid-template-columns:minmax(0,1fr) auto}
+.details-revoke-buttons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:168px}
+.details-revoke-buttons button{height:34px;padding:0 8px;white-space:nowrap}
+#device-details .details-danger .delete-agent{background:var(--color-danger);color:var(--color-text-01);border-color:var(--color-danger)}
+#device-details .details-danger .delete-agent:disabled{background:var(--color-surface-hover);color:var(--muted);border-color:var(--line);cursor:not-allowed}
+.system-grid .details-fact:has(time){grid-template-columns:minmax(90px,1fr) minmax(70px,1fr) minmax(140px,2fr) 100px}
+.system-grid .details-fact:has(time) .system-ignore-actions{grid-column:4}
+@media(max-width:620px){.system-grid .details-fact:has(time){grid-template-columns:minmax(90px,1fr) minmax(80px,2fr)}.system-grid .details-fact:has(time) :is(time,.system-ignore-actions){grid-column:2}}
 .details-renewal-url{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .device-details .details-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}

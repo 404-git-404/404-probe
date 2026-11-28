@@ -97,6 +97,8 @@
       if(els.choiceName)els.choiceName.value='';
       const ok=Boolean(available());
       els.chooseOneClick.disabled=!ok;
+      if(els.rootCollector)els.rootCollector.checked=false;
+      if(els.rootOption)els.rootOption.hidden=!ok;
       if(els.next){method=ok?'oneclick':'manual';els.chooseOneClick.setAttribute('aria-checked',String(ok));els.chooseManual.setAttribute('aria-checked',String(!ok));}
       els.reason.textContent=ok?'':(unavailableReason()||'当前 Server 构建无法使用一键安装');
       els.reason.classList.toggle('hidden',ok);
@@ -119,12 +121,13 @@
         return false;
       }
       const name=els.name.value,serial=generation;
+      const request=els.rootCollector?.checked?{name,root_collector:true}:{name};
       submitting=true;els.submit.disabled=true;els.error.classList.add('hidden');
       try{
         const response=await fetcher('/api/v1/web/agent-enrollments',{
           method:'POST',cache:'no-store',
           headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},
-          body:JSON.stringify({name}),
+          body:JSON.stringify(request),
         });
         if(response.status===401){unauthorized();return false;}
         if(!response.ok){
@@ -194,7 +197,7 @@
     function close(){reset();}
 
     if(els.next){
-      const select=value=>{method=value;els.chooseOneClick.setAttribute('aria-checked',String(value==='oneclick'));els.chooseManual.setAttribute('aria-checked',String(value==='manual'));};
+      const select=value=>{method=value;els.chooseOneClick.setAttribute('aria-checked',String(value==='oneclick'));els.chooseManual.setAttribute('aria-checked',String(value==='manual'));if(els.rootOption)els.rootOption.hidden=value!=='oneclick';};
       els.chooseOneClick.addEventListener('click',()=>select('oneclick'));els.chooseManual.addEventListener('click',()=>select('manual'));
       els.next.addEventListener('click',()=>{if(!els.choiceName.reportValidity())return;if(method==='oneclick'&&!els.chooseOneClick.disabled){chooseOneClick();return submit();}else chooseManual();});
     }else{els.chooseOneClick.addEventListener('click',chooseOneClick);els.chooseManual.addEventListener('click',chooseManual);}

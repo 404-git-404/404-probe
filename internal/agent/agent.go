@@ -63,7 +63,7 @@ var (
 )
 
 const (
-	DefaultDisabledInterval = time.Minute
+	DefaultDisabledInterval = protocol.AgentPausedReportInterval
 	DefaultClashAPIURL      = "http://127.0.0.1:9090"
 )
 
@@ -532,7 +532,8 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		if r.config.LocalServerAgent {
 			rootDir = systemchecks.LocalRootState
 		}
-		systemSample = r.systemCollector.Snapshot(ctx, *r.systemSettings, filepath.Dir(r.config.StatePath), rootDir)
+		serverURL, _ := url.Parse(r.config.ServerURL) // Validated when the Runner is constructed.
+		systemSample = r.systemCollector.Snapshot(ctx, *r.systemSettings, filepath.Dir(r.config.StatePath), rootDir, serverURL.Hostname())
 		if systemSample != r.lastSystemSample {
 			if systemSample != nil {
 				copy := *systemSample

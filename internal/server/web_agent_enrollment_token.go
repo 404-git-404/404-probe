@@ -46,8 +46,11 @@ func (a *App) handleCreateWebAgentEnrollment(w http.ResponseWriter, r *http.Requ
 		writeBodyError(w, err)
 		return
 	}
-	request, err := decodeWebAgentCreateRequest(body)
-	if err != nil || !validWebAgentName(request.Name) {
+	var request struct {
+		Name          string `json:"name"`
+		RootCollector bool   `json:"root_collector,omitempty"`
+	}
+	if err := decodeStrictJSON(body, &request); err != nil || !validWebAgentName(request.Name) {
 		writeJobError(w, http.StatusBadRequest, "invalid_request", "invalid Agent name")
 		return
 	}
@@ -81,7 +84,7 @@ func (a *App) handleCreateWebAgentEnrollment(w http.ResponseWriter, r *http.Requ
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not create enrollment")
 		return
 	}
-	command := webOneClickInstallCommand(target.origin.String(), request.Name, token, a.buildInfo)
+	command := webOneClickInstallCommand(target.origin.String(), request.Name, token, a.buildInfo, request.RootCollector)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, webAgentEnrollmentTokenView{
 		EnrollmentID: id, Name: request.Name, Command: command, CreatedAt: now.UnixMilli(), ExpiresAt: expiresAt.UnixMilli(),
@@ -210,9 +213,13 @@ func webOneClickAvailable(info buildinfo.Info) bool {
 // installer is fetched by exact version; every value that is not plainly safe is single-quoted. The
 // variables are bash's own environment (assignments before the command on the right of the pipe), so
 // they appear in no process's argument list and in no sudo log; the user runs it as root.
-func webOneClickInstallCommand(origin, name, token string, info buildinfo.Info) string {
-	return fmt.Sprintf("curl -fsSL %s/%s/install.sh | PROBE_404_ROLE=agent PROBE_404_SERVER=%s PROBE_404_ENROLL_TOKEN=%s PROBE_404_AGENT_NAME=%s bash",
+func webOneClickInstallCommand(origin, name, token string, info buildinfo.Info, rootCollector bool) string {
+	command := fmt.Sprintf("curl -fsSL %s/%s/install.sh | PROBE_404_ROLE=agent PROBE_404_SERVER=%s PROBE_404_ENROLL_TOKEN=%s PROBE_404_AGENT_NAME=%s",
 		webOneClickReleaseBaseURL, info.Version, shellWord(origin), shellWord(token), shellWord(name))
+	if rootCollector {
+		command += " PROBE_404_SETUP_ROOT_COLLECTOR=1"
+	}
+	return command + " bash"
 }
 
 var shellSafeWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)

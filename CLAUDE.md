@@ -4,13 +4,13 @@ Server、Agent 和发布元数据分别在 `cmd/server`、`cmd/agent`、`cmd/rel
 
 ## 分工与节奏
 
-- v1.4.0 从 `main` 的 `1bb3ce72` 开出 `dev/v1.4.0`（v1.3.1 tag 为 `cdd4fa3e`，schema 38）。按 ROADMAP 的 v1.4.0 清单完成后一起发布。期间只为安全问题、数据丢失或正式环境不可用发小版本。正式环境出问题时尽快发布修复版。
-- Codex（gpt-6.2-sol，施工 high）只施工明确授权的任务。S0 试用，如不顺手可回退到 gpt-6.1-sol。每项使用 `codex/v140-<主题>` 和独立工作目录。
-- Claude Code（Sonnet 5.5）负责评审、合并、测试机安装 / 升级 / 真机验证和发布，维护者已授权其执行，尽量自动化。评审通过后合到 `dev/v1.4.0`。中途可从开发分支构建候选给维护者试用。
-- 同时最多两个会话，通常一个 Codex 施工和一个 Claude Code 评审或测试。Claude Code 可评审上一批，Codex 可施工下一批。
+- v1.4.1 从 tag `v1.4.0`（`08e1fb1d1`）开出 `dev/v1.4.1`，起点 schema 46，只支持从 v1.4.0 升级。按 `release-records/v1.4.1/v141-候选.md` 完成后一起发布。期间只为安全问题、数据丢失或正式环境不可用发小版本。正式环境出问题时尽快发布修复版。
+- 施工方两个。Codex（gpt-6.2-sol，high）使用 `codex/v141-<主题>` 和目录 `404-probe-codex`，负责本版全部数据库迁移。Gemini（Antigravity，Gemini 4 Neon，high）使用 `gemini/v141-<主题>` 和目录 `404-probe-gemini`，主要做前端。都只施工明确授权的任务。
+- Claude Code（Sonnet 5.5）负责评审、合并、测试机安装 / 升级 / 真机验证和发布，维护者已授权其执行，尽量自动化。评审通过后合到 `dev/v1.4.1`。中途可从开发分支构建候选给维护者试用。
+- 同时最多两个会话，通常一个施工和一个 Claude Code 评审或测试。Claude Code 可评审上一批，施工方可施工下一批。
 - 任务书写目标、范围和验收标准。自己的脚本或环境故障自行修复重跑。需要改变产品方向、触及正式环境或可能丢失数据时停下来问。
 - 评审只查实际问题。阻塞项附复现步骤或失败测试，最多一轮复审，剩余记录为遗留。补充说明、反向验证及变异测试仅在安全相关改动确有需要时做。
-- 报告写结论、改动、测试和遗留，记录本轮联网操作及临时环境变量名称和用途。会话和报告命名示例为 `v140-CX-S0`，报告存于 `D:/Claude-Github/release-records/v1.4.0/`。对维护者的回复最多五行，包含结论、需要其处理的事项及报告路径。
+- 报告写结论、改动、测试和遗留，记录本轮联网操作及临时环境变量名称和用途。会话和报告命名示例为 `v141-CX-S1`、`v141-GM-S1`，报告存于 `D:/Claude-Github/release-records/v1.4.1/`。对维护者的回复最多五行，包含结论、需要其处理的事项及报告路径。
 
 ## 日常验证
 
@@ -22,13 +22,13 @@ Server、Agent 和发布元数据分别在 `cmd/server`、`cmd/agent`、`cmd/rel
 
 ## 发布
 
-1. Claude Code 从已验收的 `dev/v1.4.0` 准备候选。打开独立 Claude Code 会话做最终评审。v1.4.0 只在最后走一次完整发布。
+1. Claude Code 从已验收的 `dev/v1.4.1` 准备候选。打开独立 Claude Code 会话做最终评审。v1.4.1 只在最后走一次完整发布。
 2. 执行一条准备和验收命令，路径替换成实际仓库外的 ASCII 正斜杠路径。发布说明先准备好 UTF-8 LF 文件。
    ```powershell
-   python -B scripts/release.py all --version v1.4.0 --from-version v1.3.1 --out D:/release-v140 --notes D:/release-notes-v140.md
+   python -B scripts/release.py all --version v1.4.1 --from-version v1.4.0 --out D:/release-v141 --notes D:/release-notes-v141.md
    ```
    命令在独立克隆产生候选提交、七件产物和 `results.md`。报告失败时按其提示单步重跑。正式发布以 Linux 全仓、相关 `-race` 和动态安装器测试的结果为准。Windows 可本地构建和验收通用步骤，Linux 夹具在 Linux 运行器上完成。详细选项见 `scripts/release.py --help`。
-3. 真机只验一次 v1.3.1 → v1.4.0 升级和一次全新安装。用同一批产物，核对测试 Server 的迁移和数据、测试 Agent 的版本和状态，Agent 面板升级按 R05 做前后快照。数据库审计脚本先显式关闭 SQLite 连接。升级窗口由安装器保证，发布说明写明支持起点和手动替换二进制的限制。R31 登记表在下版补入正式 tag 提交、schema 和表增删。
+3. 真机只验一次 v1.4.0 → v1.4.1 升级和一次全新安装。用同一批产物，核对测试 Server 的迁移和数据、测试 Agent 的版本和状态，Agent 面板升级按 R05 做前后快照。数据库审计脚本先显式关闭 SQLite 连接。升级窗口由安装器保证，发布说明写明支持起点和手动替换二进制的限制。R31 登记表在下版补入正式 tag 提交、schema 和表增删。
 4. 将验收通过的候选提交推到 `release/vX.Y.Z`，注释 tag 指向该提交。创建 release 时先用 `--latest=false`，附七件资产和 `SHA256SUMS` 自身摘要。下载回核对全部资产以及正文摘要。确认测试 Agent 面板升级，再标 latest；失败恢复为草稿。最后更新发布文档、快进 `main` 并整理 ROADMAP。推送传输中断先用 `git ls-remote` 核对状态，状态明确且未变时可原样重试。
 
 Web 升级按精确 tag 解析目标版本。目标 release 必须是已发布的正式版本，草稿和预发布均不可用。测试 Server 必须运行该 release 对应的提交。

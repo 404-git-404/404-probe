@@ -22,7 +22,7 @@ func TestPanelEmbeddedStableControls(t *testing.T) {
 			t.Fatalf("missing local %s", asset)
 		}
 	}
-	for _, id := range []string{"dashboard-panel", "panel-collapse", "dashboard-devices", "dashboard-settings", "dashboard-network", "dashboard-groups", "dashboard-all-groups", "dashboard-countries", "dashboard-statuses", "dashboard-youtube-free", "overview-online", "overview-health", "overview-renewal", "overview-money", "dashboard-search", "dashboard-settings-content", "manage-tags", "dashboard-toolbar"} {
+	for _, id := range []string{"dashboard-panel", "panel-collapse", "panel-view-toggle", "dashboard-devices", "dashboard-devices-count", "dashboard-settings", "dashboard-network", "dashboard-groups", "dashboard-all-groups", "dashboard-countries", "dashboard-statuses", "dashboard-youtube-free", "overview-online", "overview-health", "overview-renewal", "overview-money", "dashboard-search", "dashboard-settings-content", "manage-tags", "dashboard-toolbar"} {
 		if strings.Count(html, `id="`+id+`"`) != 1 {
 			t.Fatalf("missing or duplicate %s", id)
 		}
@@ -33,7 +33,7 @@ func TestPanelEmbeddedStableControls(t *testing.T) {
 	if strings.Index(html, `id="dashboard-panel"`) > strings.Index(html, `id="agents"`) || strings.Index(html, `<script src="/overview.js" defer>`) > strings.Index(html, `<script src="/app.js" defer>`) {
 		t.Fatal("stable overview must precede grid / actual app")
 	}
-	for _, dead := range []string{"dashboard-sticky", "dashboard-anchor", "dashboard-expand", "dashboard-chips", "dashboard-quick", "panel-mobile-close", "/jobs.html", "/schedules.html", `href="/history.html"`, "overview-overdue"} {
+	for _, dead := range []string{"dashboard-sticky", "dashboard-anchor", "dashboard-expand", "dashboard-chips", "dashboard-quick", `dashboard-all"`, `dashboard-count"`, "panel-mobile-close", "/jobs.html", "/schedules.html", `href="/history.html"`, "overview-overdue"} {
 		if strings.Contains(html, dead) {
 			t.Fatalf("obsolete dashboard component %s", dead)
 		}

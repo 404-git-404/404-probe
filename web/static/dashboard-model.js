@@ -78,17 +78,30 @@
   return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
  }
  function renewal(agent){return agent.renewal||{};}
+ const KNOWN_SYSTEM_KINDS=new Set(['certificate','service','service_restart','time','dns']);
  function systemBadges(a, includeServer=true){
   const badges=[];
   if(includeServer&&a.server_local)badges.push(['Server','server']);
   if(!a.online||a.disabled_at)return badges;
   const attention=a.system_attention||{};
-  if(attention.certificate==='danger')badges.push(['证书已过期','danger']);
-  if(attention.certificate==='warning')badges.push(['证书将到期','warning']);
-  if(attention.service)badges.push(['服务停止','danger']);
-  if(attention.service_restart==='danger')badges.push(['服务反复重启','danger']);
-  if(attention.service_restart==='warning')badges.push(['服务偶发重启','warning']);
-  if(attention.time)badges.push(['时间未同步','warning']);
+  const items=Array.isArray(attention.items)?attention.items:[];
+  const hasKind=k=>items.some(i=>i&&i.kind===k);
+  const kindLevel=k=>items.some(i=>i&&i.kind===k&&i.level==='danger')?'danger':hasKind(k)?'warning':'';
+  const certLevel=attention.certificate||kindLevel('certificate');
+  if(certLevel==='danger')badges.push(['证书已过期','danger']);
+  if(certLevel==='warning')badges.push(['证书将到期','warning']);
+  if(attention.service||hasKind('service'))badges.push(['服务异常','danger']);
+  const restartLevel=attention.service_restart||kindLevel('service_restart');
+  if(restartLevel==='danger')badges.push(['服务反复重启','danger']);
+  if(restartLevel==='warning')badges.push(['服务偶发重启','warning']);
+  if(attention.time||hasKind('time'))badges.push(['时间未同步','warning']);
+  if(attention.dns||hasKind('dns'))badges.push(['DNS 异常','danger']);
+  const unknown=new Map();
+  for(const item of items){
+   if(!item?.kind||KNOWN_SYSTEM_KINDS.has(item.kind))continue;
+   if(unknown.get(item.kind)!=='danger')unknown.set(item.kind,item.level==='danger'?'danger':'warning');
+  }
+  for(const [kind,tone] of unknown)badges.push([kind+' 异常',tone]);
   return badges;
  }
  function flags(a,server,now=Date.now()){

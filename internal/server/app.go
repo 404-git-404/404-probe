@@ -34,7 +34,9 @@ type App struct {
 	shutdown                      context.Context
 	cancel                        context.CancelFunc
 	mu                            sync.RWMutex
+	reportLifecycleMu             sync.RWMutex
 	states                        map[string]storage.State
+	readEventSystemCheckIgnores   func(context.Context, string) (storage.SystemCheckIgnores, error)
 	hub                           *hub
 	traffic                       *trafficCache
 	deviceScores                  atomic.Pointer[deviceScoreSnapshot]
@@ -93,6 +95,7 @@ func NewApp(store *storage.Store, offlineTimeout time.Duration, logger *slog.Log
 	}
 	a := &App{store: store, offlineTimeout: offlineTimeout, logger: logger, now: time.Now, shutdown: shutdown, cancel: cancel, states: make(map[string]storage.State), hub: newHub(maxSSESubscribers), controlWaiters: make(map[string]map[chan struct{}]struct{}), controlPollDuration: controlLongPollDuration, removalReceiptCleanupInterval: 5 * time.Minute, walHealthInterval: sqliteWALHealthInterval, buildInfo: buildinfo.Current(), qualityLookup: systemQualityLookup, qualityDNSSlots: make(chan struct{}, qualityDNSCheckSlots)}
 	a.traffic = traffic
+	a.readEventSystemCheckIgnores = store.SystemCheckIgnores
 	a.dashboardWarmupDone = make(chan struct{})
 	for _, option := range options {
 		if option == nil {
@@ -233,11 +236,15 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	authenticatedID, err := a.store.Authenticate(r.Context(), token)
 	if err != nil {
+		if errors.Is(err, storage.ErrAgentDeleted) {
+			a.logger.Warn("rejected credential for permanently deleted Agent")
+		}
 		if errors.Is(err, storage.ErrAgentRevoked) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
 			return
 		}
 		if errors.Is(err, storage.ErrAgentDisabled) {
+			a.recordPausedAgentContact(r.Context(), token)
 			writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
 			return
 		}
@@ -274,6 +281,8 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if report.NetworkQualityV2 != nil {
 		report.NetworkQualityV2.Objects = r.Header.Get(protocol.QualityObjectsHeader) == "1"
 	}
+	a.reportLifecycleMu.RLock()
+	defer a.reportLifecycleMu.RUnlock()
 	received := a.now()
 	owner := a.traffic.capture(authenticatedID, received)
 	// Retired slots can be evicted; pending removal is authoritative even then.
@@ -288,6 +297,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, storage.ErrAgentDisabled) {
+			a.recordPausedAgentContact(r.Context(), token)
 			writeJobError(w, http.StatusLocked, "agent_disabled", "agent has been disabled")
 			return
 		}
@@ -498,6 +508,9 @@ func (a *App) authenticateJobRequest(w http.ResponseWriter, r *http.Request, ope
 	}
 	agentID, err := a.store.Authenticate(r.Context(), token)
 	if err != nil {
+		if errors.Is(err, storage.ErrAgentDeleted) {
+			a.logger.Warn("rejected credential for permanently deleted Agent")
+		}
 		if errors.Is(err, storage.ErrAgentRevoked) {
 			writeJobError(w, http.StatusUnauthorized, "agent_revoked", "agent credential has been revoked")
 			return "", false
@@ -613,7 +626,26 @@ func (a *App) publishReportedState(state storage.State, owner trafficOwner, rece
 	if a.traffic != nil {
 		a.traffic.append(owner, state, received, a.now())
 	}
-	payload, _ := json.Marshal(newWebAgentEventView(state, a.offlineTimeout))
+	event := newWebAgentEventView(state, a.offlineTimeout)
+	if state.SystemChecks != nil && state.SystemChecks.Supported && state.LastSeen-state.SystemChecksAt <= systemCheckFreshness.Milliseconds() {
+		// Keep the checks available to later reports while this event reads SQLite.
+		a.mu.Unlock()
+		ctx, cancel := context.WithTimeout(a.shutdown, time.Second)
+		ignores, err := a.readEventSystemCheckIgnores(ctx, state.AgentID)
+		cancel()
+		if err != nil {
+			a.logger.Warn("read system check ignores for agent event", "agent_id", state.AgentID, "error", err)
+		} else {
+			event.SystemAttention = checkAttention(state.SystemChecks, time.UnixMilli(state.LastSeen), ignores)
+		}
+
+		a.mu.Lock()
+		if latest, exists := a.states[state.AgentID]; !exists || stateAfter(latest, state) {
+			a.mu.Unlock()
+			return true // This report advanced the state, but its event is stale.
+		}
+	}
+	payload, _ := json.Marshal(event)
 	a.hub.publish(payload)
 	a.mu.Unlock()
 	return true

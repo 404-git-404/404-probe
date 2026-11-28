@@ -7,6 +7,57 @@ import (
 	"404-probe/internal/protocol"
 )
 
+func TestDeviceScorePresenceForContinuouslyOnlineAgent(t *testing.T) {
+	now := time.Date(2027, 1, 18, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		since time.Duration
+		prune bool
+		want  time.Duration
+	}{
+		{"first report at scoring time", 0, false, 0},
+		{"first report within the window", 2 * 24 * time.Hour, false, 2 * 24 * time.Hour},
+		{"first report before the window", 8 * 24 * time.Hour, false, 7 * 24 * time.Hour},
+		{"anchor only", 31 * 24 * time.Hour, true, 7 * 24 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, id, _ := testStore(t, ":memory:")
+			defer s.Close()
+			ctx := t.Context()
+			// A pre-migration agent has no synthetic registration event.
+			if _, err := s.db.ExecContext(ctx, "DELETE FROM agent_presence_events WHERE agent_id=?", id); err != nil {
+				t.Fatal(err)
+			}
+			report := validReport(id, 1, "session", "boot", 1, 1, 1)
+			if _, accepted, reason, err := s.ProcessReportWithOfflineTimeout(ctx, id, report, now.Add(-tc.since), tc.since+time.Minute); err != nil || !accepted {
+				t.Fatalf("report accepted=%t, reason=%s: %v", accepted, reason, err)
+			}
+			if tc.prune {
+				if err := s.SweepPresence(ctx, now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			inputs, err := s.ReadDeviceScoreInputs(ctx, id, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.since == 0 && inputs.Resources == nil {
+				t.Error("the current minute's resource sample is missing")
+			}
+			got := inputs.Presence
+			if got.OnlinePercent == nil || *got.OnlinePercent != 100 {
+				t.Errorf("presence = %+v, want 100%% online", got)
+			}
+			if got.Start != now.Add(-tc.want).UnixMilli() || got.OnlineMS != tc.want.Milliseconds() || got.OfflineMS != 0 {
+				t.Errorf("presence = %+v, want window since %v ago with no downtime", got, tc.want)
+			}
+			if tc.prune && (got.InitialState != "online" || len(got.Events) != 0) {
+				t.Errorf("presence = %+v, want online anchor and no events", got)
+			}
+		})
+	}
+}
+
 func TestDeviceScoreLinePriorityAndAlertWindow(t *testing.T) {
 	lines := []NetworkLine{{"test", "ipv4", "tcp"}, {"test", "ipv6", "tcp"}, {"test", "ipv4", "icmp"}, {"test", "ipv6", "icmp"}}
 	targets := make(map[NetworkLine]*protocol.QualityTarget)
@@ -38,7 +89,7 @@ func TestDeviceScoreLinePriorityAndAlertWindow(t *testing.T) {
 func TestDeviceScoreInputsReadStoredNetworkWithDNS(t *testing.T) {
 	c := newCardKit(t)
 	now := time.Date(2027, 1, 18, 12, 0, 0, 0, time.UTC)
-	start := now.Add(-deviceScoreNetworkWindow)
+	start := now.Add(-DeviceScoreWindow)
 	series := c.series("telecom", "ipv4", "tcp")
 	bucket := c.tcp(89, 0, 1, 600)
 	bucket.Stats.Count += 10
@@ -67,7 +118,7 @@ func TestDeviceScoreInputsReadStoredNetworkWithDNS(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, resolution := range []int64{deviceScoreCoverageBucket, qualityHourMS} {
-		end := start.Add(deviceScoreNetworkWindow / 2).UnixMilli()
+		end := start.Add(time.Hour).UnixMilli()
 		_, err := c.s.db.Exec(`WITH RECURSIVE buckets(at) AS (
 			VALUES(?1) UNION ALL SELECT at+?2 FROM buckets WHERE at+?2<?3
 		) INSERT INTO quality_buckets SELECT ?4,?2,at,?5 FROM buckets`,
@@ -84,7 +135,7 @@ func TestDeviceScoreInputsReadStoredNetworkWithDNS(t *testing.T) {
 		t.Fatalf("got %+v", out.Lines)
 	}
 	got := out.Lines[0]
-	if got.CoveredMS != deviceScoreNetworkWindow.Milliseconds()/2 || got.FailurePercent == nil || *got.FailurePercent != 10+100.0/90 || got.P50 == nil || *got.P50 != 50 || got.Evening == nil || got.AlertMS != time.Minute.Milliseconds() {
+	if got.CoveredMS != time.Hour.Milliseconds() || got.FailurePercent == nil || *got.FailurePercent != 10+100.0/90 || got.P50 == nil || *got.P50 != 50 || got.Evening == nil || got.AlertMS != time.Minute.Milliseconds() {
 		t.Fatalf("stored line %+v", got)
 	}
 }

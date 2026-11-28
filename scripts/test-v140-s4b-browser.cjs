@@ -227,7 +227,7 @@ test('R45 private key, backup operations, report continuity and failure notice i
     await alert.waitFor();
     assert.match(await page.locator('#backup-last-failure').textContent(), /credentials or permissions/);
     await shot('failure-settings');
-    await page.locator('#dashboard-all').click();
+    await page.locator('#dashboard-devices > summary').click();
     await shot('failure-footer');
     await alert.click();
     await page.locator('#backup').waitFor();

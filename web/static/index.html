@@ -29,11 +29,14 @@
       <button id="panel-search-open" type="button" aria-label="搜索设备" title="搜索设备 (Ctrl K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
       <label class="sr-only" for="dashboard-search">搜索设备</label><input id="dashboard-search" type="search" placeholder="搜索名称、主机名、地址…" autocomplete="off" aria-keyshortcuts="Control+K"><kbd>Ctrl K</kbd>
     </div>
+    <div class="panel-view-switch">
+      <div class="dashboard-views" role="group" aria-label="设备视图"><button id="panel-view" data-view="cards" type="button" aria-pressed="true">卡片</button><button data-view="list" type="button" aria-pressed="false">列表</button></div>
+      <button id="panel-view-toggle" class="panel-collapsed-action" type="button" data-current-view="cards" aria-label="当前：卡片，点击切换到列表" title="当前：卡片，点击切换到列表"><svg class="view-icon-cards" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg><svg class="view-icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg></button>
+    </div>
     <nav class="panel-scroll" aria-label="控制面板导航">
       <details id="dashboard-devices" class="panel-drawer" open>
-        <summary class="panel-row" aria-label="设备"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="8" height="11" rx="2"/><rect x="14" y="3" width="7" height="6" rx="2"/><rect x="3" y="17" width="8" height="4" rx="1"/><rect x="14" y="12" width="7" height="9" rx="2"/></svg><span>设备</span></summary>
+        <summary class="panel-row" aria-label="设备" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="8" height="11" rx="2"/><rect x="14" y="3" width="7" height="6" rx="2"/><rect x="3" y="17" width="8" height="4" rx="1"/><rect x="14" y="12" width="7" height="9" rx="2"/></svg><span>设备</span><small id="dashboard-devices-count"></small></summary>
         <div class="panel-items">
-          <button id="dashboard-all" class="panel-item" type="button" aria-pressed="true">全部设备 <small></small></button>
           <details id="dashboard-groups">
             <summary class="panel-item">自定义分组 <span class="panel-summary"></span></summary>
             <div class="panel-items">
@@ -84,6 +87,7 @@
         <button id="overview-renewal" class="overview-row panel-item" type="button" disabled><span class="overview-stat" id="overview-renewal-stat"><strong>—</strong> 台 7 天内续费</span></button>
         <div class="overview-expense">支出 <strong id="overview-money">—</strong><div id="overview-period" class="overview-period" role="group" aria-label="支出周期"><button type="button" data-period="monthly" aria-pressed="true">月</button><button type="button" data-period="yearly" aria-pressed="false">年</button></div><button id="overview-expense" class="overview-link" type="button">明细</button></div>
       </section>
+      <button id="add-agent" class="panel-add-agent" type="button" disabled aria-label="添加 Agent" title="添加 Agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg><span>添加 Agent</span></button>
       <div class="panel-status"><a id="panel-update" hidden target="_blank" rel="noopener noreferrer"><span></span></a><span id="stream" class="stream" role="status">正在连接</span><a id="panel-backup-failure" href="#backup" hidden>备份失败</a></div>
     </div>
   </aside>
@@ -97,10 +101,7 @@
         <details id="dashboard-tags-more" hidden><summary aria-label="更多标签">+0</summary><div class="dashboard-tag-overflow"></div></details>
       </div>
       <div class="dashboard-toolbar-actions">
-        <span id="dashboard-count"></span>
         <label class="sr-only" for="dashboard-sort">排序</label><select id="dashboard-sort"><option value="name">排序：名称</option></select><button id="dashboard-direction" type="button"></button>
-        <div class="dashboard-views" role="group" aria-label="设备视图"><button id="panel-view" data-view="cards" type="button" aria-pressed="true">卡片</button><button data-view="list" type="button" aria-pressed="false">列表</button></div>
-        <button id="add-agent" class="primary-action" type="button" disabled aria-label="添加 Agent">＋ 添加 Agent</button>
       </div>
     </div>
     </div>
@@ -202,6 +203,10 @@
       <label for="add-agent-choice-name">设备名称</label><input id="add-agent-choice-name" placeholder="例如 Synthetic-LAX-2" maxlength="128" required>
       <p>安装方式</p><div class="install-choices" role="radiogroup" aria-label="安装方式"><button id="add-agent-choose-oneclick" type="button" role="radio" aria-checked="true"><strong>一键安装 <span class="install-recommended">推荐</span></strong><small>生成一条命令，在新机器上粘贴运行即可。命令 30 分钟内有效，只能用一次。</small></button><button id="add-agent-choose-manual" type="button" role="radio" aria-checked="false"><strong>手动安装</strong><small>先在机器上运行安装器，再把这里给出的注册码填进去。适合需要自己控制每一步的情况。</small></button></div>
       <p id="add-agent-oneclick-reason" class="install-note hidden" role="status"></p>
+      <div id="oneclick-root-option" hidden>
+        <label class="oneclick-root-label"><input id="oneclick-root-collector" type="checkbox" aria-describedby="oneclick-root-note"> 同时开启 root 采集</label>
+        <small id="oneclick-root-note" class="details-note">读取受限的证书目录、APT 更新和 fail2ban 状态。仅 Debian。</small>
+      </div>
       <div class="dialog-actions"><button id="add-agent-choice-cancel" type="button">取消</button><button id="add-agent-next" class="primary-action" type="button">下一步</button></div>
     </div>
     <div id="oneclick-pane" class="hidden">
@@ -256,9 +261,10 @@
   </dialog>
   <dialog id="remove-agent-dialog" class="agent-dialog" aria-labelledby="remove-agent-title">
     <h2 id="remove-agent-title">撤销 Agent</h2>
-    <p>撤销只会让面板不再接收这台机器的数据。要在机器上彻底卸载，请在那台机器上运行：<code>sudo 404-probe-install uninstall agent</code>。运行卸载命令时需确认删除机器上的托管数据。</p>
-    <div class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
-    <p class="remove-warning">撤销后不能恢复原身份。历史记录、计划和任务会保留。</p>
+    <p id="remove-agent-revoke-help">撤销只会让面板不再接收这台机器的数据。要在机器上彻底卸载，请在那台机器上运行：<code>sudo 404-probe-install uninstall agent</code>。运行卸载命令时需确认删除机器上的托管数据。</p>
+    <div id="remove-agent-identity" class="remove-agent-identity"><strong id="remove-agent-name"></strong></div>
+    <p id="remove-agent-revoke-warning" class="remove-warning">撤销后不能恢复原身份。历史记录、计划和任务会保留。</p>
+    <p id="remove-agent-delete-warning" class="remove-warning" hidden></p>
     <form id="remove-agent-form" autocomplete="off">
       <label id="remove-agent-prompt" for="remove-agent-input"></label><input id="remove-agent-input" aria-labelledby="remove-agent-prompt" required>
       <div id="remove-agent-error" class="dialog-error hidden" role="alert">移除失败，请重试。</div>
@@ -348,6 +354,7 @@
   <script src="/youtube-status.js" defer></script>
   <script src="/public-egress-check.js" defer></script>
   <script src="/agent-enrollment.js" defer></script>
+  <script src="/status-row.js" defer></script>
   <script src="/banner-view.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/theme-toggle.js" defer></script>

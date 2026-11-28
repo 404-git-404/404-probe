@@ -10,6 +10,7 @@ import (
 const MaxReportBytes = 64 << 10
 const MaxSystemReportBytes = 256 << 10
 const SystemCheckHeader = "X-404-Probe-System-Checks"
+const AgentPausedReportInterval = time.Minute
 
 type Report struct {
 	PublicEgress     *PublicEgress        `json:"public_egress,omitempty"`

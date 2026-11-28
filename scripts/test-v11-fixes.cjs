@@ -57,10 +57,10 @@ test('table semantics, unique named details buttons, keyboard access, page-stick
 test('toolbar tags collapse +N, preserve OR/AND filtering and clear; list and cards share controls',()=>ui(async({page:p,f})=>{
  f.state.tags.push(...Array.from({length:16},(_,i)=>({id:ID(500+i),name:'长标签 '+i})));f.state.revision++;await p.evaluate(()=>dashboardData.reload());await settle(p);await p.waitForFunction(()=>!document.querySelector('#dashboard-tags-more').hidden);
  assert.equal(await p.locator('#dashboard-panel #dashboard-tags').count(),0);assert.equal(await p.locator('#dashboard-toolbar #dashboard-tags').count(),1);
- await p.locator('#dashboard-tags .dashboard-options .dashboard-option').filter({hasText:'GIA'}).click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'7 / 28 台');
- await p.locator('#dashboard-tags-more summary').click();const extra=p.locator('.dashboard-tag-overflow .dashboard-option').last();await extra.click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'7 / 28 台');
- await p.locator('#dashboard-tags-more summary').click();await p.locator('#dashboard-groups .dashboard-option').filter({hasText:'常用'}).click();await settle(p);assert.equal(await p.locator('#dashboard-count').textContent(),'3 / 28 台');
- await p.locator('#dashboard-tags-clear').click();await settle(p);assert.deepEqual(await p.evaluate(()=>dashboardUI.preferences.value.tags),[]);assert.equal(await p.locator('#dashboard-count').textContent(),'3 / 28 台');
+ await p.locator('#dashboard-tags .dashboard-options .dashboard-option').filter({hasText:'GIA'}).click();await settle(p);assert.equal(await p.locator('#dashboard-devices-count').textContent(),'7 / 28');
+ await p.locator('#dashboard-tags-more summary').click();const extra=p.locator('.dashboard-tag-overflow .dashboard-option').last();await extra.click();await settle(p);assert.equal(await p.locator('#dashboard-devices-count').textContent(),'7 / 28');
+ await p.locator('#dashboard-tags-more summary').click();await p.locator('#dashboard-groups .dashboard-option').filter({hasText:'常用'}).click();await settle(p);assert.equal(await p.locator('#dashboard-devices-count').textContent(),'3 / 28');
+ await p.locator('#dashboard-tags-clear').click();await settle(p);assert.deepEqual(await p.evaluate(()=>dashboardUI.preferences.value.tags),[]);assert.equal(await p.locator('#dashboard-devices-count').textContent(),'3 / 28');
  await p.locator('[data-view=cards]').click();assert(await p.locator('#dashboard-tags').isVisible());
 },{width:1440}));
 test('phone list preference renders cards then restores list on tablet; temporary panel expansion leaves saved collapse intact',()=>ui(async({page:p})=>{

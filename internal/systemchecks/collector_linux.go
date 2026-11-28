@@ -1,11 +1,13 @@
 package systemchecks
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,6 +138,9 @@ func (c *Collector) collect(ctx context.Context, settings protocol.SystemCheckSe
 	result.ServiceStatus, result.Services, result.FailedUnits, result.ServiceRestarts = c.restarts.collect(ctx, now, settings.WatchedServices, systemdErr == nil, runShort)
 	result.NTPStatus, result.NTPSynchronized = collectNTP(ctx)
 	result.RebootStatus, result.RebootRequired = rebootRequired()
+	if result.RebootRequired {
+		result.RebootPackages, result.RebootPackagesTruncated = readRebootPackages("/run/reboot-required.pkgs", "/var/run/reboot-required.pkgs")
+	}
 	if value, _ := runShort(ctx, "/usr/bin/systemd-detect-virt"); value != "" && len(value) <= 80 {
 		result.Virtualization = value
 	}
@@ -187,6 +192,41 @@ func rebootRequired() (string, bool) {
 		}
 	}
 	return protocol.CheckOK, false
+}
+
+func readRebootPackages(paths ...string) ([]string, bool) {
+	for _, path := range paths {
+		f, _, err := openRegular(path, math.MaxInt64)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, false
+		}
+		defer f.Close()
+		reader := bufio.NewReader(f)
+		var names []string
+		seen := make(map[string]bool, protocol.MaxRebootPackages)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil && !errors.Is(err, io.EOF) {
+				return nil, false
+			}
+			name := strings.TrimSpace(line)
+			name = strings.ToValidUTF8(name[:min(len(name), protocol.MaxRebootPackageBytes)], "")
+			if name != "" && !seen[name] {
+				if len(names) == protocol.MaxRebootPackages {
+					return names, true
+				}
+				seen[name] = true
+				names = append(names, name)
+			}
+			if errors.Is(err, io.EOF) {
+				return names, false
+			}
+		}
+	}
+	return nil, false
 }
 
 func readJSON(path string, limit int64, value any) error {
