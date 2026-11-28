@@ -81,7 +81,7 @@ func TestMigration49FromV141PreservesTargetsAndTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if version, err := s.SchemaVersion(ctx); err != nil || version != 49 {
+	if version, err := s.SchemaVersion(ctx); err != nil || version != currentSchemaVersion {
 		t.Fatal(version, err)
 	}
 	targets, err := s.ListNetworkTargets(ctx)

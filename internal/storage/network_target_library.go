@@ -40,9 +40,20 @@ type NetworkTarget struct {
 }
 
 type NetworkTargetUpdate struct {
-	Target         NetworkTarget        `json:"target"`
-	UpdatedAgents  int                  `json:"updated_agents"`
-	FamilyAdjusted []NetworkTargetAgent `json:"family_adjusted"`
+	Target         NetworkTarget               `json:"target"`
+	UpdatedAgents  int                         `json:"updated_agents"`
+	FamilyAdjusted []NetworkTargetAgent        `json:"family_adjusted"`
+	Skipped        []NetworkTargetSkippedAgent `json:"skipped"`
+}
+
+type NetworkTargetSkippedAgent struct {
+	NetworkTargetAgent
+	Reason string `json:"reason"`
+}
+
+type NetworkTargetDelete struct {
+	Removed []NetworkTargetAgent        `json:"-"`
+	Skipped []NetworkTargetSkippedAgent `json:"skipped"`
 }
 
 type NetworkTargetSkip struct {
@@ -62,6 +73,7 @@ func (s *Store) ListNetworkTargets(ctx context.Context) ([]NetworkTarget, error)
 		LEFT JOIN (SELECT DISTINCT library_id,agent_id FROM quality_slot_settings WHERE library_id IS NOT NULL) u
 			ON u.library_id=l.id
 		LEFT JOIN agents a ON a.id=u.agent_id
+		WHERE l.retired=0
 		ORDER BY l.region,l.isp,l.host,l.port,l.id,a.name,a.id`)
 	if err != nil {
 		return nil, err
@@ -88,7 +100,7 @@ func (s *Store) ListNetworkTargets(ctx context.Context) ([]NetworkTarget, error)
 
 func readNetworkTargetTx(ctx context.Context, tx *sql.Tx, id string) (NetworkTarget, error) {
 	target := NetworkTarget{ID: id, UsedBy: []NetworkTargetAgent{}}
-	err := tx.QueryRowContext(ctx, `SELECT region,isp,host,port,revision FROM network_target_library WHERE id=?`, id).
+	err := tx.QueryRowContext(ctx, `SELECT region,isp,host,port,revision FROM network_target_library WHERE id=? AND retired=0`, id).
 		Scan(&target.Region, &target.ISP, &target.Host, &target.Port, &target.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNetworkTargetNotFound
@@ -118,7 +130,7 @@ func networkTargetUsersTx(ctx context.Context, tx *sql.Tx, id string) ([]Network
 func checkNetworkTargetDuplicateTx(ctx context.Context, tx *sql.Tx, id string, fields NetworkTargetFields) error {
 	var exists bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM network_target_library
-		WHERE region=? AND isp=? AND host=? AND port=? AND id<>?)`,
+		WHERE retired=0 AND region=? AND isp=? AND host=? AND port=? AND id<>?)`,
 		fields.Region, fields.ISP, fields.Host, fields.Port, id).Scan(&exists)
 	if err == nil && exists {
 		return ErrNetworkTargetDuplicate
@@ -136,7 +148,11 @@ func (s *Store) CreateNetworkTarget(ctx context.Context, fields NetworkTargetFie
 		return NetworkTarget{}, err
 	}
 	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM network_target_library`).Scan(&count); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM network_target_library WHERE retired=1 AND NOT EXISTS
+		(SELECT 1 FROM quality_slot_settings WHERE library_id=network_target_library.id)`); err != nil {
+		return NetworkTarget{}, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM network_target_library WHERE retired=0`).Scan(&count); err != nil {
 		return NetworkTarget{}, err
 	}
 	if count >= networkTargetLimit {
@@ -168,6 +184,30 @@ func networkTargetQualityProposal(ctx context.Context, tx *sql.Tx, agentID strin
 		proposal.Slots = append(proposal.Slots, row.QualityV4Slot)
 	}
 	return proposal, nil
+}
+
+func networkTargetAgentSkip(ctx context.Context, tx *sql.Tx, id string) (string, error) {
+	if err := requireActiveAgentTx(ctx, tx, id); err != nil {
+		switch {
+		case errors.Is(err, ErrAgentRevoked), errors.Is(err, ErrAgentDisabled):
+			return "revoked", nil
+		case errors.Is(err, ErrUnauthorized):
+			return "not_found", nil
+		default:
+			return "", err
+		}
+	}
+	if err := requireNoAgentRemovalTx(ctx, tx, id); err != nil {
+		if errors.Is(err, ErrAgentRemovalPending) {
+			return "removing", nil
+		}
+		return "", err
+	}
+	excluded, err := qualityPlatformExcludedTx(ctx, tx, id)
+	if excluded && err == nil {
+		return "unsupported", nil
+	}
+	return "", err
 }
 
 func setNetworkTargetFields(slot *protocol.QualityV4Slot, target NetworkTarget) {
@@ -209,7 +249,7 @@ func (s *Store) UpdateNetworkTarget(ctx context.Context, id string, expected int
 	if err != nil {
 		return out, err
 	}
-	out = NetworkTargetUpdate{Target: target, FamilyAdjusted: []NetworkTargetAgent{}}
+	out = NetworkTargetUpdate{Target: target, FamilyAdjusted: []NetworkTargetAgent{}, Skipped: []NetworkTargetSkippedAgent{}}
 	if target.NetworkTargetFields == fields {
 		return out, nil
 	}
@@ -223,6 +263,14 @@ func (s *Store) UpdateNetworkTarget(ctx context.Context, id string, expected int
 		return out, err
 	}
 	for _, agent := range target.UsedBy {
+		reason, err := networkTargetAgentSkip(ctx, tx, agent.ID)
+		if err != nil {
+			return out, err
+		}
+		if reason != "" {
+			out.Skipped = append(out.Skipped, NetworkTargetSkippedAgent{agent, reason})
+			continue
+		}
 		proposal, err := networkTargetQualityProposal(ctx, tx, agent.ID)
 		if err != nil {
 			return out, err
@@ -245,48 +293,63 @@ func (s *Store) UpdateNetworkTarget(ctx context.Context, id string, expected int
 			out.FamilyAdjusted = append(out.FamilyAdjusted, agent)
 		}
 	}
-	out.Target, out.UpdatedAgents = target, len(target.UsedBy)
+	out.Target, out.UpdatedAgents = target, len(target.UsedBy)-len(out.Skipped)
 	return out, tx.Commit()
 }
 
-func (s *Store) DeleteNetworkTarget(ctx context.Context, id string, expected int64, now time.Time) ([]NetworkTargetAgent, error) {
+func (s *Store) DeleteNetworkTarget(ctx context.Context, id string, expected int64, now time.Time) (NetworkTargetDelete, error) {
+	out := NetworkTargetDelete{Skipped: []NetworkTargetSkippedAgent{}}
 	pressure := s.qualityPressure(ctx)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	defer tx.Rollback()
 	target, err := readNetworkTargetTx(ctx, tx, id)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	if target.Revision != expected {
-		return nil, ErrNetworkTargetConflict
+		return out, ErrNetworkTargetConflict
 	}
 	users, err := networkTargetUsersTx(ctx, tx, id)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	for _, agent := range users {
+		reason, err := networkTargetAgentSkip(ctx, tx, agent.ID)
+		if err != nil {
+			return out, err
+		}
+		if reason != "" {
+			out.Skipped = append(out.Skipped, NetworkTargetSkippedAgent{agent, reason})
+			continue
+		}
 		proposal, err := networkTargetQualityProposal(ctx, tx, agent.ID)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		keep := proposal.Slots[:0]
 		for _, slot := range proposal.Slots {
-			if slot.LibraryID != id {
+			if slot.LibraryID != id && (proposal.ObjectsConfigured || slot.Host != "") {
 				keep = append(keep, slot)
 			}
 		}
 		proposal.Slots = keep
+		proposal.ObjectsConfigured = true
 		if _, err := qualityApplyTx(ctx, tx, agent.ID, &proposal, true, now, pressure); err != nil {
-			return nil, err
+			return out, err
 		}
+		out.Removed = append(out.Removed, agent)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM network_target_library WHERE id=?`, id); err != nil {
-		return nil, err
+	query := `DELETE FROM network_target_library WHERE id=?`
+	if len(out.Skipped) != 0 {
+		query = `UPDATE network_target_library SET retired=1 WHERE id=?`
 	}
-	return users, tx.Commit()
+	if _, err := tx.ExecContext(ctx, query, id); err != nil {
+		return out, err
+	}
+	return out, tx.Commit()
 }
 
 func (s *Store) ApplyNetworkTarget(ctx context.Context, id string, agents []string, now time.Time) (NetworkTargetApply, error) {
@@ -321,12 +384,8 @@ func (s *Store) ApplyNetworkTarget(ctx context.Context, id string, agents []stri
 }
 
 func applyNetworkTargetTx(ctx context.Context, tx *sql.Tx, target NetworkTarget, agent string, now time.Time, pressure bool) (string, error) {
-	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id=?)`, agent).Scan(&exists); err != nil {
-		return "", err
-	}
-	if !exists {
-		return "not_found", nil
+	if reason, err := networkTargetAgentSkip(ctx, tx, agent); reason != "" || err != nil {
+		return reason, err
 	}
 	proposal, err := networkTargetQualityProposal(ctx, tx, agent)
 	if err != nil {

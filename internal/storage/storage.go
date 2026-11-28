@@ -21,7 +21,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 49
+const currentSchemaVersion = 50
 
 // 每个版本发布前按升级支持策略更新。v1.2.1 uses schema 37; v1.3.0 and v1.3.1 use schema 38.
 const minimumUpgradeSchemaVersion = 46
@@ -1039,6 +1039,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration 49: %w", err)
 		}
 	}
+	if version < 50 && !migration34Skip {
+		if err := migrateRootInventories50Tx(ctx, tx); err != nil {
+			return fmt.Errorf("migration 50: %w", err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -1455,6 +1460,9 @@ func (s *Store) ProcessReportWithOfflineTimeout(ctx context.Context, authenticat
 		return State{}, false, "", err
 	}
 	if err := saveQualityCapabilityTx(ctx, tx, r); err != nil {
+		return State{}, false, "", err
+	}
+	if err := saveRootInventoriesTx(ctx, tx, r, received); err != nil {
 		return State{}, false, "", err
 	}
 	if err := accountPlanTrafficTx(ctx, tx, previous, state, exists, state.ContinuityPartial, received); err != nil {

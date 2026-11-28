@@ -20,6 +20,7 @@ type clashClient struct {
 	endpoint  string
 	client    *http.Client
 	orderPath string
+	structure func() *protocol.SingboxStructure
 }
 
 type clashProxy struct {
@@ -94,7 +95,11 @@ func (c clashClient) discoverOrdered(ctx context.Context) ([]protocol.OutboundSe
 		}
 		selectors = append(selectors, selector)
 	}
-	orderSource := orderSelectors(selectors, c.orderPath)
+	var structure *protocol.SingboxStructure
+	if c.structure != nil {
+		structure = c.structure()
+	}
+	orderSource := orderSelectorsWithStructure(selectors, structure, c.orderPath)
 	if err := (protocol.OutboundSnapshot{Available: true, Selectors: selectors}).Validate(); err != nil {
 		return nil, "", err
 	}

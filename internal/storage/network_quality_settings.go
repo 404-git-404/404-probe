@@ -474,7 +474,9 @@ func qualityApplyTx(ctx context.Context, tx *sql.Tx, id string, proposal *qualit
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO quality_slot_settings(agent_id,slot,kind,region,isp,host,port,slot_enabled,ipv4_tcp,ipv4_icmp,ipv6_tcp,ipv6_icmp,updated_revision,position,show_on_card,library_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''))
 				ON CONFLICT(agent_id,slot) DO UPDATE SET kind=excluded.kind,region=excluded.region,isp=excluded.isp,host=excluded.host,port=excluded.port,slot_enabled=excluded.slot_enabled,ipv4_tcp=excluded.ipv4_tcp,ipv4_icmp=excluded.ipv4_icmp,ipv6_tcp=excluded.ipv6_tcp,ipv6_icmp=excluded.ipv6_icmp,updated_revision=excluded.updated_revision,position=excluded.position,show_on_card=excluded.show_on_card,library_id=excluded.library_id,
-				legacy_label=CASE WHEN quality_slot_settings.isp=excluded.isp THEN quality_slot_settings.legacy_label ELSE 0 END`,
+				legacy_label=CASE WHEN quality_slot_settings.library_id IS excluded.library_id AND quality_slot_settings.region=excluded.region
+					AND quality_slot_settings.isp=excluded.isp AND quality_slot_settings.host=excluded.host AND quality_slot_settings.port IS excluded.port
+					THEN quality_slot_settings.legacy_label ELSE 0 END`,
 				id, slot.Slot, slot.Kind, slot.Region, slot.ISP, slot.Host, port, slot.SlotEnabled, slot.IPv4TCP, slot.IPv4ICMP, slot.IPv6TCP, slot.IPv6ICMP, updated, i, slot.ShowOnCard, slot.LibraryID); err != nil {
 				return result, err
 			}

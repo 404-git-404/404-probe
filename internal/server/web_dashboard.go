@@ -295,6 +295,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		v.AgentControls = raw.AgentControls
 		v.ServerLocal = localID == id
 		v.SystemAttention = checkAttention(a.currentSystemChecks(record, now), now, raw.SystemCheckIgnores)
+		v.SecurityBaseline = summarizeSecurityBaseline(raw.SecurityBaseline, now, false)
 		v.StartupDiskFailure = raw.StartupDiskFailure
 		switch {
 		case record.Agent.Revoked:

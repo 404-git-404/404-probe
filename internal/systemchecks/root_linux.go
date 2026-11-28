@@ -22,6 +22,25 @@ func RunRoot(ctx context.Context, local bool) error {
 		state, root = LocalAgentState, LocalRootState
 	}
 	now := time.Now()
+	baseline, singbox := make(chan error, 1), make(chan error, 1)
+	go func() {
+		report := collectSecurityBaseline(ctx, "/etc", "/proc", now, runShort)
+		baseline <- writeJSON(filepath.Join(root, securityBaselineFile), report, 0640)
+	}()
+	go func() {
+		report, err := boundedRootInventory(ctx, 12*time.Second, func(ctx context.Context) (protocol.SingboxStructureReport, error) {
+			return collectSingboxStructure(ctx, root, "/etc/sing-box/config.json", now, runShort), nil
+		})
+		if err != nil {
+			report = protocol.SingboxStructureReport{Status: protocol.CheckError, Reason: inventoryErrorReason(err), CollectedAt: now.UnixMilli()}
+		}
+		singbox <- writeJSON(filepath.Join(root, singboxStructureFile), report, 0640)
+	}()
+	checksErr := runExistingRootChecks(ctx, state, root, now)
+	return errors.Join(checksErr, <-baseline, <-singbox)
+}
+
+func runExistingRootChecks(ctx context.Context, state, root string, now time.Time) error {
 	var request rootRequest
 	if err := readJSON(filepath.Join(state, rootRequestFile), 32<<10, &request); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

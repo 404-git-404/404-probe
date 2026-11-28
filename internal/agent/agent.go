@@ -138,6 +138,7 @@ type Runner struct {
 	systemCollector              systemchecks.Collector
 	systemSettings               *protocol.SystemCheckSettings
 	lastSystemSample             *protocol.SystemChecks
+	inventoryReports             inventoryReports
 	systemClockOffset            *int64
 	versionReportAccepted        atomic.Bool
 	upgradeAPISupported          atomic.Bool
@@ -537,6 +538,7 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 		if systemSample != r.lastSystemSample {
 			if systemSample != nil {
 				copy := *systemSample
+				r.inventoryReports.prepare(&copy, time.Now())
 				if r.systemClockOffset != nil {
 					copy.ClockMeasured = true
 					copy.TimeOffsetMS = *r.systemClockOffset
@@ -626,10 +628,12 @@ func (r *Runner) sendReport(ctx context.Context, sequence *uint64) (bool, error)
 	r.reportNetworkCounters = response.Capabilities.NetworkCountersReport
 	r.reportHostHealth = response.Capabilities.HostHealthReport
 	r.systemSettings = response.SystemCheckSettings
-	if r.systemSettings == nil {
+	if r.systemSettings == nil || r.inventoryReports.supported != response.Capabilities.RootInventory {
 		r.lastSystemSample = nil
+		r.inventoryReports = inventoryReports{supported: response.Capabilities.RootInventory}
 	} else if measurement.SystemChecks != nil {
 		r.lastSystemSample = systemSample
+		r.inventoryReports.accepted(measurement.SystemChecks, time.Now())
 	}
 	r.managementAPISupported.Store(response.Capabilities.ManagementReport)
 	if !r.platformUnsupported() && response.Capabilities.AgentUpgrade {
@@ -698,6 +702,9 @@ func (r *Runner) post(ctx context.Context, report protocol.Report) (protocol.Rep
 	req.Header.Set("Authorization", "Bearer "+r.config.Token)
 	req.Header.Set(protocol.QualityTCPLossHeader, protocol.QualityTCPLossSemantics)
 	req.Header.Set(protocol.SystemCheckHeader, "1")
+	if report.SystemChecks != nil && (report.SystemChecks.SecurityBaseline != nil || report.SystemChecks.SingboxStructure != nil) {
+		req.Header.Set(protocol.RootInventoryHeader, "1")
+	}
 	req.Header.Set(protocol.QualityVersionHeader, "2")
 	req.Header.Set(protocol.QualitySemanticsHeader, protocol.QualityStagedSemantics)
 	req.Header.Set(protocol.QualityTargetsHeader, protocol.QualityTargetsUserV1)

@@ -28,6 +28,19 @@ type Collector struct {
 	dnsFailures map[string]int
 }
 
+func (c *Collector) SingboxStructure() *protocol.SingboxStructure {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.current == nil || c.current.SingboxStructure == nil || c.current.SingboxStructure.Status != protocol.CheckOK {
+		return nil
+	}
+	report := c.current.SingboxStructure
+	if time.Since(time.UnixMilli(report.CollectedAt)) > 15*time.Minute {
+		return nil
+	}
+	return report.Structure
+}
+
 // Snapshot keeps filesystem walks and system commands off the report loop.
 func (c *Collector) Snapshot(ctx context.Context, settings protocol.SystemCheckSettings, stateDir, rootDir, serverHost string) *protocol.SystemChecks {
 	key := settingsKey(settings)

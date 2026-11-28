@@ -122,9 +122,12 @@ func TestNetworkTargetLibraryLifecycle(t *testing.T) {
 	if webErr.Error.Code != "revision_conflict" {
 		t.Fatal(webErr)
 	}
-	var removed map[string]int
+	var removed struct {
+		RemovedFrom int                                 `json:"removed_from"`
+		Skipped     []storage.NetworkTargetSkippedAgent `json:"skipped"`
+	}
 	checkS1WebJSON(t, a, "DELETE", path, `{"expected_revision":2}`, 200, &removed)
-	if removed["removed_from"] != 2 {
+	if removed.RemovedFrom != 2 || len(removed.Skipped) != 0 {
 		t.Fatal(removed)
 	}
 	for _, id := range []string{first, second} {

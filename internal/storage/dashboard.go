@@ -11,6 +11,7 @@ import (
 type DashboardRecord struct {
 	AgentControls
 	SystemCheckIgnores             SystemCheckIgnores
+	SecurityBaseline               SecurityBaseline
 	StartupDiskFailure             bool
 	NetworkSlots                   [3]DashboardNetworkSlot
 	Snapshot                       AgentSnapshot
@@ -165,12 +166,17 @@ func (s *Store) ReadDashboardData(ctx context.Context, now time.Time, offlineTim
 	if err != nil {
 		return out, err
 	}
+	baselines, err := readSecurityBaselines(ctx, tx, nil)
+	if err != nil {
+		return out, err
+	}
 	for _, agent := range agents {
 		if agent.Revoked && !includeRevoked {
 			continue
 		}
 		record := cards[agent.ID]
 		record.SystemCheckIgnores = ignores[agent.ID]
+		record.SecurityBaseline = baselines[agent.ID]
 		record.NetworkSlots = networkSlots[agent.ID]
 		record.Snapshot = AgentSnapshot{Agent: agent, StateStale: true}
 		record.CountrySource = "unknown"

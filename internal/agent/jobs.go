@@ -460,7 +460,7 @@ func (r *Runner) executeSelectorSwitch(ctx context.Context, job protocol.Job) (E
 	}
 	r.outboundMu.Lock()
 	defer r.outboundMu.Unlock()
-	client := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath}
+	client := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath, structure: r.systemCollector.SingboxStructure}
 	result, err := client.switchSelector(ctx, job.Config.SelectorSwitch.Selector, job.Config.SelectorSwitch.Choice)
 	if err != nil {
 		category := "clash_api_unavailable"

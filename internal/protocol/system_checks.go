@@ -116,23 +116,25 @@ type PackageCheck struct {
 type SystemChecks struct {
 	Supported bool `json:"supported"`
 	CertificateScan
-	ServiceStatus   string           `json:"service_status,omitempty"`
-	Services        []WatchedService `json:"services,omitempty"`
-	FailedUnits     []string         `json:"failed_units,omitempty"`
-	ServiceRestarts []ServiceRestart `json:"service_restarts,omitempty"`
-	NTPStatus       string           `json:"ntp_status,omitempty"`
-	NTPSynchronized bool             `json:"ntp_synchronized"`
-	ClockMeasured   bool             `json:"clock_measured,omitempty"`
-	TimeOffsetMS    int64            `json:"time_offset_ms"`
-	RebootStatus    string           `json:"reboot_status,omitempty"`
-	RebootRequired  bool             `json:"reboot_required"`
-	Virtualization  string           `json:"virtualization,omitempty"`
-	DebianMajor     int              `json:"debian_major,omitempty"`
-	RootStatus      string           `json:"root_status,omitempty"`
-	RootCollectedAt int64            `json:"root_collected_at,omitempty"`
-	Packages        PackageCheck     `json:"packages"`
-	Fail2ban        Fail2banCheck    `json:"fail2ban"`
-	LocalDNS        *LocalDNSCheck   `json:"local_dns,omitempty"`
+	ServiceStatus    string                  `json:"service_status,omitempty"`
+	Services         []WatchedService        `json:"services,omitempty"`
+	FailedUnits      []string                `json:"failed_units,omitempty"`
+	ServiceRestarts  []ServiceRestart        `json:"service_restarts,omitempty"`
+	NTPStatus        string                  `json:"ntp_status,omitempty"`
+	NTPSynchronized  bool                    `json:"ntp_synchronized"`
+	ClockMeasured    bool                    `json:"clock_measured,omitempty"`
+	TimeOffsetMS     int64                   `json:"time_offset_ms"`
+	RebootStatus     string                  `json:"reboot_status,omitempty"`
+	RebootRequired   bool                    `json:"reboot_required"`
+	Virtualization   string                  `json:"virtualization,omitempty"`
+	DebianMajor      int                     `json:"debian_major,omitempty"`
+	RootStatus       string                  `json:"root_status,omitempty"`
+	RootCollectedAt  int64                   `json:"root_collected_at,omitempty"`
+	Packages         PackageCheck            `json:"packages"`
+	Fail2ban         Fail2banCheck           `json:"fail2ban"`
+	LocalDNS         *LocalDNSCheck          `json:"local_dns,omitempty"`
+	SecurityBaseline *SecurityBaselineReport `json:"security_baseline,omitempty"`
+	SingboxStructure *SingboxStructureReport `json:"singbox_structure,omitempty"`
 
 	RebootPackages          []string `json:"reboot_packages,omitempty"`
 	RebootPackagesTruncated bool     `json:"reboot_packages_truncated,omitempty"`
@@ -142,6 +144,16 @@ const MaxRebootPackages = 20
 const MaxRebootPackageBytes = 128
 
 func (s SystemChecks) Validate() error {
+	if s.SecurityBaseline != nil {
+		if err := s.SecurityBaseline.Validate(); err != nil {
+			return err
+		}
+	}
+	if s.SingboxStructure != nil {
+		if err := s.SingboxStructure.Validate(); err != nil {
+			return err
+		}
+	}
 	if s.LocalDNS != nil {
 		if err := s.LocalDNS.validate(); err != nil {
 			return err

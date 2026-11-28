@@ -13,6 +13,47 @@ import (
 
 const maxSelectorOrderBytes = 64 << 10
 
+func orderSelectorsWithStructure(selectors []protocol.OutboundSelector, structure *protocol.SingboxStructure, path string) string {
+	if structure == nil {
+		return orderSelectors(selectors, path)
+	}
+	positions := make(map[string]int)
+	members := make(map[string][]string)
+	for _, outbound := range structure.Outbounds {
+		if outbound.Type == "selector" {
+			positions[outbound.Tag] = len(positions) + 1
+			members[outbound.Tag] = outbound.Outbounds
+		}
+	}
+	matched := false
+	for i := range selectors {
+		if configured, ok := members[selectors[i].Name]; ok {
+			matched = true
+			choices := selectors[i].Choices
+			rank := make(map[string]int, len(configured))
+			for j, choice := range configured {
+				rank[choice] = j + 1
+			}
+			sort.SliceStable(choices, func(a, b int) bool {
+				x, y := rank[choices[a]], rank[choices[b]]
+				return x != 0 && (y == 0 || x < y)
+			})
+		}
+	}
+	if !matched {
+		return orderSelectors(selectors, path)
+	}
+	sort.Slice(selectors, func(i, j int) bool {
+		a, b := selectors[i].Name, selectors[j].Name
+		x, y := positions[a], positions[b]
+		if x == y {
+			return a < b
+		}
+		return x != 0 && (y == 0 || x < y)
+	})
+	return "config"
+}
+
 type selectorOrderDocument struct {
 	Selectors []string `json:"selectors"`
 }

@@ -264,6 +264,9 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	systemSupported := r.Header.Get(protocol.SystemCheckHeader) == "1"
 	if systemSupported {
 		reportLimit = protocol.MaxSystemReportBytes
+		if r.Header.Get(protocol.RootInventoryHeader) == "1" {
+			reportLimit = protocol.MaxInventoryReportBytes
+		}
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, reportLimit)
 	decoder := json.NewDecoder(r.Body)
@@ -281,6 +284,9 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	if err := report.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if !systemSupported {
+		report.SystemChecks = nil
 	}
 	// The header only tells a current Agent from an old one (design 4.2); it is not part of the body.
 	report.QualityTargetsHeader = r.Header.Get(protocol.QualityTargetsHeader) == protocol.QualityTargetsUserV1
@@ -317,7 +323,9 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if accepted {
 		if systemSupported && report.SystemChecks != nil {
-			state.SystemChecks = report.SystemChecks
+			checks := *report.SystemChecks
+			checks.SecurityBaseline, checks.SingboxStructure = nil, nil
+			state.SystemChecks = &checks
 			state.SystemChecksAt = received.UnixMilli()
 			if !state.SystemChecks.ClockMeasured {
 				state.SystemChecks.TimeOffsetMS = received.Sub(time.UnixMilli(report.CollectedAt)).Milliseconds()
@@ -352,6 +360,7 @@ func (a *App) handleReport(w http.ResponseWriter, r *http.Request) {
 	response.Capabilities.AgentUpgradeV2 = true
 	response.Capabilities.UpdaterHealthReport = true
 	if systemSupported {
+		response.Capabilities.RootInventory = true
 		if settings, err := a.store.SystemCheckSettings(r.Context(), authenticatedID); err == nil {
 			response.SystemCheckSettings = &settings
 			response.SystemServerTime = received.UnixMilli()
@@ -619,6 +628,7 @@ func (a *App) publishState(state storage.State) bool {
 }
 
 func (a *App) publishReportedState(state storage.State, owner trafficOwner, received time.Time) bool {
+	newSystemChecks := state.SystemChecks != nil
 	a.mu.Lock()
 	current, exists := a.states[state.AgentID]
 	if exists && !stateAfter(state, current) {
@@ -633,17 +643,29 @@ func (a *App) publishReportedState(state storage.State, owner trafficOwner, rece
 		a.traffic.append(owner, state, received, a.now())
 	}
 	event := newWebAgentEventView(state, a.offlineTimeout)
-	if state.SystemChecks != nil && state.SystemChecks.Supported && state.LastSeen-state.SystemChecksAt <= systemCheckFreshness.Milliseconds() {
+	freshChecks := state.SystemChecks != nil && state.SystemChecks.Supported && state.LastSeen-state.SystemChecksAt <= systemCheckFreshness.Milliseconds()
+	if freshChecks || newSystemChecks {
 		// Keep the checks available to later reports while this event reads SQLite.
 		a.mu.Unlock()
 		ctx, cancel := context.WithTimeout(a.shutdown, time.Second)
-		ignores, err := a.readEventSystemCheckIgnores(ctx, state.AgentID)
-		cancel()
-		if err != nil {
-			a.logger.Warn("read system check ignores for agent event", "agent_id", state.AgentID, "error", err)
-		} else {
-			event.SystemAttention = checkAttention(state.SystemChecks, time.UnixMilli(state.LastSeen), ignores)
+		if freshChecks {
+			ignores, err := a.readEventSystemCheckIgnores(ctx, state.AgentID)
+			if err != nil {
+				a.logger.Warn("read system check ignores for agent event", "agent_id", state.AgentID, "error", err)
+			} else {
+				event.SystemAttention = checkAttention(state.SystemChecks, time.UnixMilli(state.LastSeen), ignores)
+			}
 		}
+		if newSystemChecks {
+			baseline, err := a.store.SecurityBaseline(ctx, state.AgentID)
+			if err != nil {
+				a.logger.Warn("read security baseline for agent event", "agent_id", state.AgentID, "error", err)
+			} else {
+				view := summarizeSecurityBaseline(baseline, time.UnixMilli(state.LastSeen), false)
+				event.SecurityBaseline = &view
+			}
+		}
+		cancel()
 
 		a.mu.Lock()
 		if latest, exists := a.states[state.AgentID]; !exists || stateAfter(latest, state) {

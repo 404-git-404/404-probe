@@ -20,20 +20,21 @@ const (
 )
 
 type webAgentSummaryView struct {
-	ServerLocal     bool                    `json:"server_local"`
-	SystemAttention systemAttention         `json:"system_attention"`
-	SummaryVersion  string                  `json:"summary_version"`
-	UpdaterHealth   *protocol.UpdaterHealth `json:"updater_health"`
-	AgentID         string                  `json:"agent_id"`
-	Name            string                  `json:"name"`
-	Revoked         bool                    `json:"revoked"`
-	DisabledAt      *int64                  `json:"disabled_at"`
-	CreatedAt       int64                   `json:"created_at"`
-	Online          bool                    `json:"online"`
-	LastSeen        *int64                  `json:"last_seen"`
-	Version         string                  `json:"version"`
-	UpgradeCapable  bool                    `json:"upgrade_capable"`
-	UpgradeV2       bool                    `json:"upgrade_v2"`
+	ServerLocal      bool                    `json:"server_local"`
+	SystemAttention  systemAttention         `json:"system_attention"`
+	SecurityBaseline securityBaselineView    `json:"security_baseline"`
+	SummaryVersion   string                  `json:"summary_version"`
+	UpdaterHealth    *protocol.UpdaterHealth `json:"updater_health"`
+	AgentID          string                  `json:"agent_id"`
+	Name             string                  `json:"name"`
+	Revoked          bool                    `json:"revoked"`
+	DisabledAt       *int64                  `json:"disabled_at"`
+	CreatedAt        int64                   `json:"created_at"`
+	Online           bool                    `json:"online"`
+	LastSeen         *int64                  `json:"last_seen"`
+	Version          string                  `json:"version"`
+	UpgradeCapable   bool                    `json:"upgrade_capable"`
+	UpgradeV2        bool                    `json:"upgrade_v2"`
 }
 
 type webAgentDetailView struct {
@@ -176,18 +177,19 @@ type webAgentHistoryPointView struct {
 }
 
 type webAgentEventView struct {
-	SystemCheckedAt int64                   `json:"system_checked_at"`
-	SystemAttention systemAttention         `json:"system_attention"`
-	SummaryVersion  string                  `json:"summary_version"`
-	UpdaterHealth   *protocol.UpdaterHealth `json:"updater_health"`
-	UpgradeCapable  bool                    `json:"upgrade_capable"`
-	UpgradeV2       bool                    `json:"upgrade_v2"`
-	Version         string                  `json:"version"`
-	AgentID         string                  `json:"agent_id"`
-	Name            string                  `json:"name"`
-	Online          bool                    `json:"online"`
-	LastSeen        int64                   `json:"last_seen"`
-	State           *webAgentStateView      `json:"state"`
+	SystemCheckedAt  int64                   `json:"system_checked_at"`
+	SystemAttention  systemAttention         `json:"system_attention"`
+	SecurityBaseline *securityBaselineView   `json:"security_baseline,omitempty"`
+	SummaryVersion   string                  `json:"summary_version"`
+	UpdaterHealth    *protocol.UpdaterHealth `json:"updater_health"`
+	UpgradeCapable   bool                    `json:"upgrade_capable"`
+	UpgradeV2        bool                    `json:"upgrade_v2"`
+	Version          string                  `json:"version"`
+	AgentID          string                  `json:"agent_id"`
+	Name             string                  `json:"name"`
+	Online           bool                    `json:"online"`
+	LastSeen         int64                   `json:"last_seen"`
+	State            *webAgentStateView      `json:"state"`
 }
 
 func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
@@ -224,10 +226,11 @@ func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]webAgentSummaryView, 0, len(records))
 	checks := make(map[string]*protocol.SystemChecks)
-	var checkedIDs []string
+	var checkedIDs, ids []string
 	for _, record := range records {
 		record = a.withUpdaterHealth(record)
 		items = append(items, newWebAgentSummaryView(record))
+		ids = append(ids, record.Agent.ID)
 		if check := a.currentSystemChecks(record, now); check != nil {
 			id := record.Agent.ID
 			checks[id] = check
@@ -240,8 +243,14 @@ func (a *App) handleGetWebAgents(w http.ResponseWriter, r *http.Request) {
 		writeJobError(w, http.StatusInternalServerError, "internal_error", "could not query agents")
 		return
 	}
+	baselines, err := a.store.SecurityBaselinesForAgents(r.Context(), ids)
+	if err != nil {
+		a.rootInventoryHTTPError(w, "", err)
+		return
+	}
 	for i, item := range items {
 		items[i].SystemAttention = checkAttention(checks[item.AgentID], now, ignores[item.AgentID])
+		items[i].SecurityBaseline = summarizeSecurityBaseline(baselines[item.AgentID], now, false)
 	}
 	nextCursor, err := encodeControlCursor(webAgentCursorResource, filters, next)
 	if err != nil {
@@ -293,6 +302,11 @@ func (a *App) webAgentDetail(ctx context.Context, agentID string) (webAgentDetai
 		return webAgentDetailView{}, err
 	}
 	view.SystemChecks = a.currentSystemChecks(record, now)
+	baseline, err := a.store.SecurityBaseline(ctx, agentID)
+	if err != nil {
+		return webAgentDetailView{}, err
+	}
+	view.SecurityBaseline = summarizeSecurityBaseline(baseline, now, false)
 	if view.SystemChecks != nil {
 		ignores, err := a.store.SystemCheckIgnores(ctx, agentID)
 		if err != nil {

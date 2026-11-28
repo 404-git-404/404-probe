@@ -18,7 +18,7 @@ import (
 const outboundHeartbeatInterval = 5 * time.Minute
 
 func (r *Runner) runOutboundDiscovery(ctx context.Context) {
-	local := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath}
+	local := clashClient{endpoint: r.config.ClashAPIURL, client: r.client, orderPath: r.config.SelectorOrderPath, structure: r.systemCollector.SingboxStructure}
 	var lastStatus protocol.OutboundStatus
 	var lastPublished *protocol.OutboundSnapshot
 	var lastPublishedAt time.Time

@@ -140,8 +140,14 @@ func (a *App) handleNetworkTargets(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if out.UpdatedAgents > 0 {
+			skipped := make(map[string]bool, len(out.Skipped))
+			for _, agent := range out.Skipped {
+				skipped[agent.ID] = true
+			}
 			for _, agent := range out.Target.UsedBy {
-				a.publishDashboardChange(agent.ID, "quality", false)
+				if !skipped[agent.ID] {
+					a.publishDashboardChange(agent.ID, "quality", false)
+				}
 			}
 		}
 		writeJSON(w, 200, out)
@@ -152,17 +158,18 @@ func (a *App) handleNetworkTargets(w http.ResponseWriter, r *http.Request) {
 		if !readNetworkTargetRequest(w, r, &input) || !validNetworkTargetRevision(w, input.ExpectedRevision) {
 			return
 		}
-		agents, err := a.store.DeleteNetworkTarget(r.Context(), id, input.ExpectedRevision, a.now())
+		out, err := a.store.DeleteNetworkTarget(r.Context(), id, input.ExpectedRevision, a.now())
 		if err != nil {
 			networkTargetHTTPError(w, err)
 			return
 		}
-		for _, agent := range agents {
+		for _, agent := range out.Removed {
 			a.publishDashboardChange(agent.ID, "quality", false)
 		}
 		writeJSON(w, 200, struct {
-			RemovedFrom int `json:"removed_from"`
-		}{len(agents)})
+			RemovedFrom int                                 `json:"removed_from"`
+			Skipped     []storage.NetworkTargetSkippedAgent `json:"skipped"`
+		}{len(out.Removed), out.Skipped})
 	}
 }
 

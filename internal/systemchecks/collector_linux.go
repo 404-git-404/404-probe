@@ -92,6 +92,8 @@ func (c *Collector) collect(ctx context.Context, settings protocol.SystemCheckSe
 	if !result.Supported {
 		result.RootStatus = protocol.CheckUnsupported
 		result.Fail2ban.Status = protocol.CheckUnsupported
+		result.SecurityBaseline = &protocol.SecurityBaselineReport{Status: protocol.InventoryUnavailable, Reason: "unsupported"}
+		result.SingboxStructure = &protocol.SingboxStructureReport{Status: protocol.InventoryUnavailable, Reason: "unsupported"}
 		return result
 	}
 	now := time.Now()
@@ -108,7 +110,10 @@ func (c *Collector) collect(ctx context.Context, settings protocol.SystemCheckSe
 	result.RootStatus = protocol.CheckDisabled
 	result.Packages.Status = protocol.CheckDisabled
 	result.Fail2ban.Status = protocol.CheckDisabled
+	result.SecurityBaseline = &protocol.SecurityBaselineReport{Status: protocol.InventoryUnavailable, Reason: "root_collection_disabled"}
+	result.SingboxStructure = &protocol.SingboxStructureReport{Status: protocol.InventoryUnavailable, Reason: "root_collection_disabled"}
 	if _, err := os.Stat(rootDir); err == nil {
+		readRootInventories(rootDir, &result)
 		if requestErr != nil {
 			result.RootStatus = protocol.CheckError
 		}
@@ -145,6 +150,29 @@ func (c *Collector) collect(ctx context.Context, settings protocol.SystemCheckSe
 		result.Virtualization = value
 	}
 	return result
+}
+
+func readRootInventories(dir string, result *protocol.SystemChecks) {
+	var baseline protocol.SecurityBaselineReport
+	err := readJSON(filepath.Join(dir, securityBaselineFile), protocol.MaxSecuritySnapshotBytes+inventoryEnvelopeBytes, &baseline)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		result.SecurityBaseline = nil // Root collection is enabled, but no inventory has been exported yet.
+	case err == nil && baseline.Validate() == nil && (baseline.Status != protocol.CheckOK || baseline.Snapshot != nil):
+		result.SecurityBaseline = &baseline
+	default:
+		result.SecurityBaseline = &protocol.SecurityBaselineReport{Status: protocol.CheckError, Reason: "invalid_export"}
+	}
+	var structure protocol.SingboxStructureReport
+	err = readJSON(filepath.Join(dir, singboxStructureFile), protocol.MaxSingboxStructureBytes+inventoryEnvelopeBytes, &structure)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		result.SingboxStructure = &protocol.SingboxStructureReport{Status: protocol.InventoryUnavailable, Reason: "not_collected"}
+	case err == nil && structure.Validate() == nil && (structure.Status != protocol.CheckOK || structure.Structure != nil):
+		result.SingboxStructure = &structure
+	default:
+		result.SingboxStructure = &protocol.SingboxStructureReport{Status: protocol.CheckError, Reason: "invalid_export"}
+	}
 }
 
 func mergeCertificates(agent, root protocol.CertificateScan) protocol.CertificateScan {

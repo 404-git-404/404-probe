@@ -9,7 +9,9 @@ import (
 
 const MaxReportBytes = 64 << 10
 const MaxSystemReportBytes = 256 << 10
+const MaxInventoryReportBytes = MaxSystemReportBytes + MaxSecuritySnapshotBytes + MaxSingboxStructureBytes + 4096
 const SystemCheckHeader = "X-404-Probe-System-Checks"
+const RootInventoryHeader = "X-404-Probe-Root-Inventory"
 const AgentPausedReportInterval = time.Minute
 
 type Report struct {
@@ -212,6 +214,7 @@ type ReportResponse struct {
 }
 
 type ReportCapabilities struct {
+	RootInventory         bool `json:"root_inventory,omitempty"`
 	UpdaterHealthReport   bool `json:"updater_health_report,omitempty"`
 	PublicEgressReport    bool `json:"public_egress_report,omitempty"`
 	NetworkQualityStaged  bool `json:"network_quality_staged,omitempty"`
