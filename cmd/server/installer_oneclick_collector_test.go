@@ -24,7 +24,7 @@ func TestOneClickInstallKeepsAgentOnRootCollectorFailure(t *testing.T) {
 		name, agent, collector, want string
 		fails                        bool
 	}{
-		{"collector fails", "true", "echo 'systemctl failed' >&2; false; echo unreachable", "以后", false},
+		{"collector fails", "true", "echo 'systemctl failed' >&2; false; echo unreachable", "", false},
 		{"agent fails", "false", "echo unreachable", "", true},
 		{"collector succeeds", "true", "echo collector-enabled", "collector-enabled", false},
 	} {
@@ -39,7 +39,7 @@ agent_residue_exists() { return 1; }
 note() { printf '%s\n' "$*"; }
 ` + "\ninstall_agent() { " + tc.agent + "; }\nsetup_root_collector() { " + tc.collector + "; }\n" +
 				signature + body + "\n}\ninstall_agent_oneclick\n"
-			path := filepath.Join(t.TempDir(), "oneclick-fixture.sh")
+			path := filepath.Join(t.TempDir(), "fixture-test.sh")
 			if err := os.WriteFile(path, []byte(harness), 0600); err != nil {
 				t.Fatal(err)
 			}

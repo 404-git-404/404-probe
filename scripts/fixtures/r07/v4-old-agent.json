@@ -16,7 +16,7 @@
       "show_on_card": true,
       "slot": "telecom",
       "library_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "kind": "custom",
+      "kind": "builtin",
       "region": "广东",
       "isp": "电信",
       "host": "example.com",
