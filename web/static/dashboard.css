@@ -32,7 +32,7 @@ body{background:var(--color-page);color:var(--color-text)}
 .dashboard-panel summary,.dashboard-panel label.dashboard-option{cursor:pointer;list-style:none}
 .dashboard-panel summary::-webkit-details-marker,.dashboard-tagbar summary::-webkit-details-marker{display:none}
 .panel-row svg{width:1.2rem;height:1.2rem;flex:none;color:var(--color-text-muted)}
-.dashboard-panel :is(.panel-row,.panel-item):is(:hover,:focus-visible,[aria-current],[aria-pressed=true],:has(>input:checked)):not(:disabled,.panel-appearance){background:var(--color-surface-hover)}
+.dashboard-panel :is(.panel-row,.panel-item):is(:hover,:focus-visible,[aria-current],[aria-pressed=true],:has(>input:checked)):not(:disabled){background:var(--color-surface-hover)}
 .dashboard-panel :is(.panel-row,.panel-item)[aria-pressed=true]{font-weight:650}
 .panel-items{padding:.05rem 0 .3rem .9rem}
 .panel-drawer>.panel-items{padding-left:1.8rem}
@@ -52,9 +52,6 @@ details[open]>summary .panel-summary{visibility:hidden}
 .dashboard-panel .dashboard-manage{font-size:.8rem;color:var(--color-accent-text)}
 .dashboard-option input{flex:none;accent-color:var(--color-accent);margin:0}
 .panel-youtube-dot{width:.42rem;height:.42rem;flex:none;border-radius:50%;background:var(--color-danger)}
-.panel-theme{display:flex;white-space:nowrap;margin-left:auto;border:1px solid var(--color-line);border-radius:999px}
-.panel-theme button{border:0;padding:.13rem .44rem;font-size:.75rem}
-.panel-theme button:is(:hover,:focus-visible,[aria-pressed=true]){background:var(--color-surface-hover)}
 .dashboard-panel #logout{color:var(--color-danger-text)}
 .panel-bottom{flex:none;border-top:1px solid var(--color-line);padding:.5rem .6rem .65rem;font-size:.75rem}
 .panel-overview>small,.overview-device span{color:var(--color-text-muted)}
@@ -138,6 +135,9 @@ body #dashboard-main{position:relative;width:100%;max-width:none;margin:0;min-wi
 .dashboard-card-tags{margin:2px 0 6px;z-index:3}
 .status-row-side{display:flex;align-items:center;gap:4px;flex-wrap:nowrap;min-width:0}
 .status-row-tags{flex:1 1 0;justify-content:flex-start;overflow:hidden}
+.value-medal{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;cursor:help;user-select:none}
+.value-medal[hidden]{display:none!important}
+.value-medal svg{display:block;width:14px;height:14px}
 .status-row-faults{flex:0 0 auto;justify-content:flex-end}
 .status-item{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;max-width:none;font:11px/1.3 system-ui;white-space:nowrap}
 .status-item[hidden],.status-more[hidden]{display:none!important}

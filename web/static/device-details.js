@@ -147,33 +147,40 @@
    if(select!==doc.activeElement)select.value=p.country_code_override||'';select.disabled=region.hidden||!canWrite(a);
    updateCountrySwitch(a);
    set('hostname',s.hostname||'—');set('config',`${s.cpu_cores?s.cpu_cores+' 核':'核心数未知'} · ${s.ram_total?format(s.ram_total,true):'—'} 内存 · ${s.disk_total?format(s.disk_total,true):'—'} 磁盘 · ${s.swap_total==null?'—':format(s.swap_total,true)} Swap`);
-   actions.upgrade.disabled=actions.upgrade.disabled||!target?.supported;
-   const healthCode=root.AgentState?.updaterHealthReason(a.updater_health);
-   const targetReason=root.AgentState?.upgradeReasonDisplay(target,a)||target?.reason||'暂时不能升级，请刷新后查看原因';
-   const noteCode=healthCode||(targetReason.includes('升级服务排查文档')?target?.reason_code:'');
-   const upgrade=target?.supported?`可升级到 ${target.version}`:'';values.version.replaceChildren(el('span','',a.version||'—'));if(upgrade)values.version.append(el('span','details-upgrade-badge',upgrade));
-   let upgradeText=healthCode==='updater_unsupported'?'':(a.version||'—')+(target?' → '+target.version+(target.supported?'（与面板相同）':target.reason_code===noteCode?'':' · '+targetReason):' · '+(a.online?'正在读取可升级版本，请稍候':'机器离线，请先恢复连接再升级'));
-   if(a.upgrade?.status==='downloading'){
-    upgradeText+=(upgradeText?' · ':'')+'正在下载新版本';
-    // The Server updates this timestamp only on an accepted state transition.
-    const now=serverNow();
-    if(now!==null&&a.upgrade.updated_at>0&&now-a.upgrade.updated_at>=120000)upgradeText+='。网络较慢，最长等待 30 分钟';
-   }
-   set('upgrade',upgradeText);
-   if(noteCode){const note=el('span','details-note');note.style.display='block';root.AgentState.appendUpgradeReason(note,{reason_code:noteCode},serverBuild,a);values.upgrade.append(note);}
-   const failure=a.upgrade;
-   if(failure?.status==='succeeded'&&typeof failure.failure_message==='string'&&failure.failure_message.startsWith('管理脚本未更新：')){
-    values.upgrade.append(el('span','details-note details-upgrade-failure',failure.failure_message));
-   }
-   if(failure?.status==='failed'||failure?.status==='rolled_back'){
-    const prefix=failure.status==='rolled_back'?'上次升级失败，已自动恢复到原版本：':'上次升级失败：';
-    const note=el('span','details-note details-upgrade-failure',prefix+upgradeFailureReason(failure.failure_code));
-    if(failure.failure_code==='rollback_failed'){
-     const link=el('a','','升级服务排查文档');
-     link.href=root.AgentState.updaterTroubleshootingURL(serverBuild);link.target='_blank';link.rel='noopener noreferrer';
-     note.append(el('span','',' · '),link);
+   if(a.server_local){
+    actions.upgrade.disabled=true;
+    actions.upgrade.title='随 Server 一起升级';
+    values.version.replaceChildren(el('span','',a.version||'—'));
+    set('upgrade',(a.version||'—')+' · 随 Server 一起升级');
+   }else{
+    actions.upgrade.disabled=actions.upgrade.disabled||!target?.supported;
+    const healthCode=root.AgentState?.updaterHealthReason(a.updater_health);
+    const targetReason=root.AgentState?.upgradeReasonDisplay(target,a)||target?.reason||'暂时不能升级，请刷新后查看原因';
+    const noteCode=healthCode||(targetReason.includes('升级服务排查文档')?target?.reason_code:'');
+    const upgrade=target?.supported?`可升级到 ${target.version}`:'';values.version.replaceChildren(el('span','',a.version||'—'));if(upgrade)values.version.append(el('span','details-upgrade-badge',upgrade));
+    let upgradeText=healthCode==='updater_unsupported'?'':(a.version||'—')+(target?' → '+target.version+(target.supported?'（与面板相同）':target.reason_code===noteCode?'':' · '+targetReason):' · '+(a.online?'正在读取可升级版本，请稍候':'机器离线，请先恢复连接再升级'));
+    if(a.upgrade?.status==='downloading'){
+     upgradeText+=(upgradeText?' · ':'')+'正在下载新版本';
+     // The Server updates this timestamp only on an accepted state transition.
+     const now=serverNow();
+     if(now!==null&&a.upgrade.updated_at>0&&now-a.upgrade.updated_at>=120000)upgradeText+='。网络较慢，最长等待 30 分钟';
     }
-    values.upgrade.append(note);
+    set('upgrade',upgradeText);
+    if(noteCode){const note=el('span','details-note');note.style.display='block';root.AgentState.appendUpgradeReason(note,{reason_code:noteCode},serverBuild,a);values.upgrade.append(note);}
+    const failure=a.upgrade;
+    if(failure?.status==='succeeded'&&typeof failure.failure_message==='string'&&failure.failure_message.startsWith('管理脚本未更新：')){
+     values.upgrade.append(el('span','details-note details-upgrade-failure',failure.failure_message));
+    }
+    if(failure?.status==='failed'||failure?.status==='rolled_back'){
+     const prefix=failure.status==='rolled_back'?'上次升级失败，已自动恢复到原版本：':'上次升级失败：';
+     const note=el('span','details-note details-upgrade-failure',prefix+upgradeFailureReason(failure.failure_code));
+     if(failure.failure_code==='rollback_failed'){
+      const link=el('a','','升级服务排查文档');
+      link.href=root.AgentState.updaterTroubleshootingURL(serverBuild);link.target='_blank';link.rel='noopener noreferrer';
+      note.append(el('span','',' · '),link);
+     }
+     values.upgrade.append(note);
+    }
    }
    set('seen',a.last_seen?time(a.last_seen)+':'+String(new Date(a.last_seen).getSeconds()).padStart(2,'0'):'未知');values.config.title=values.config.textContent;values.sample.title=s.collected_at?new Date(s.collected_at).toLocaleString():'';values.since.title=a.traffic?.started_at?new Date(a.traffic.started_at).toLocaleString():'';values.since.title+='；只改变累计显示，不改历史或套餐周期用量';values.seen.title=a.last_seen?new Date(a.last_seen).toLocaleString():'';set('sample','随上报自动更新 · 最近采样 '+time(s.collected_at));set('egress',a.public_egress_check?.next_check_at?'下次 '+time(a.public_egress_check.next_check_at):'按服务端计划检测');
    set('since',a.traffic?.started_at?'从 '+time(a.traffic.started_at,true)+' 起 · 重新开始不影响套餐用量':'重新开始不影响套餐用量');set('pause',a.disabled_at?'已暂停，可以恢复监控':'不再接收数据，可随时恢复');set('revoke','撤销只会让面板不再接收这台机器的数据，保留历史记录。要在机器上彻底卸载，请在那台机器上运行：sudo 404-probe-install uninstall agent');values.revoke.title='运行卸载命令时需确认删除机器上的托管数据';
@@ -327,6 +334,7 @@
     // Native close events are queued: an older event must not close a reopened modal.
     const themeChanged=()=>{if(active('resources'))renderPlot();};
     root.addEventListener?.('404-probe:themechange',themeChanged);
+    root.addEventListener?.('404-probe:skinchange',themeChanged);
     const cancel=e=>{e.preventDefault();close();},closed=()=>{if(!dialog.open)close();};
     let backdropPress=false;
     const outside=e=>{const r=dialog.getBoundingClientRect();return e.target===dialog&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);};
@@ -337,7 +345,7 @@
     if(!shell)dialog.addEventListener('cancel',cancel);dialog.addEventListener('close',closed);doc.addEventListener('visibilitychange',visibility);
     return {open,close,update,active,
       sync(){if(current&&!agents.has(current)){close({restoreFocus:false});current=null;data=null;}},
-      shutdown(){close({restoreFocus:false});dead=true;release();root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);dialog.removeEventListener('pointerdown',pointerDown);dialog.removeEventListener('pointercancel',pointerCancel);dialog.removeEventListener('click',backdropClick);current=null;data=null;},
+      shutdown(){close({restoreFocus:false});dead=true;release();root.removeEventListener?.('404-probe:themechange',themeChanged);root.removeEventListener?.('404-probe:skinchange',themeChanged);doc.removeEventListener('visibilitychange',visibility);dialog.removeEventListener('cancel',cancel);dialog.removeEventListener('close',closed);dialog.removeEventListener('pointerdown',pointerDown);dialog.removeEventListener('pointercancel',pointerCancel);dialog.removeEventListener('click',backdropClick);current=null;data=null;},
       snapshot:()=>({id:current,tab,open:dialog.open,loading,points:data?.points.length||0,plot:!!plot,query:{...query},draft:{from:from.value,to:to.value}})};
   }
   const api={create};if(typeof module==='object'&&module.exports)module.exports=api;else root.DeviceDetails=api;

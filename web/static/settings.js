@@ -9,10 +9,15 @@
 
   async function request(path, method = 'GET', data, timeout = 10000) {
     const options = {method, cache: 'no-store', signal: AbortSignal.timeout(timeout)};
-    if (data !== undefined) {
-      options.headers = {'Content-Type': 'application/json', 'X-CSRF-Token': csrf};
-      options.body = JSON.stringify(data);
+    const headers = {};
+    if (method !== 'GET' && method !== 'HEAD') {
+      headers['X-CSRF-Token'] = csrf;
     }
+    if (data !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      options.body = typeof data === 'string' ? data : JSON.stringify(data);
+    }
+    if (Object.keys(headers).length) options.headers = headers;
     const response = await fetch(path, options);
     if (response.status === 204) return null;
     const result = await response.json().catch(() => ({}));
@@ -125,6 +130,7 @@
         updatePasswordPreviews();
         check.disabled = true;
         updateRegions();
+        updateSkinControls();
         passwordStatus('当前密码连续输错 5 次，已退出登录。3 秒后转到登录页…');
         setTimeout(() => location.assign('/login'), 3000);
         break;
@@ -150,6 +156,7 @@
       locked = true;
       check.disabled = true;
       updateRegions();
+      updateSkinControls();
       passwordStatus('密码已修改。所有浏览器都已退出，3 秒后跳到登录页。', true);
       setTimeout(() => location.assign('/login'), 3000);
     } catch (error) {
@@ -236,11 +243,362 @@
     }
   });
 
+  const appearanceModeButtons = [...document.querySelectorAll('[data-appearance-mode]')];
+  const skinImportButton = get('skin-import');
+  const skinFileInput = get('skin-file-input');
+  const skinStatus = get('skin-status');
+  const skinErrors = get('skin-errors');
+  const skinList = get('skin-list');
+  const skinsPath = '/api/v1/web/skins';
+  const skinModeLabels = {light: '浅色', dark: '深色', file: '文件'};
+  const skinReasonLabels = {
+    invalid_value: '颜色值不合法',
+    too_long: '内容过长',
+    invalid_format: '格式标识必须是 404-probe-skin',
+    invalid_version: '版本必须是 1',
+    invalid_name: '名称需为 1–40 个字符',
+    invalid_author: '作者不能超过 40 个字符',
+    invalid_description: '说明不能超过 200 个字符',
+    empty_variables: '至少需要 1 个有效颜色变量',
+    invalid_json: '不是有效的 JSON 文件',
+  };
+  let skinState = {active_id: 'default', skins: []};
+  let skinBusy = false;
+  let skinLoadSerial = 0;
+  let lastSkinVersion = 0;
+
+  function paintAppearanceMode() {
+    if (!window.ProbeTheme) return;
+    const pref = typeof window.ProbeTheme.preference === 'function' ? window.ProbeTheme.preference() : window.ProbeTheme.get();
+    for (const button of appearanceModeButtons) {
+      button.setAttribute('aria-pressed', String(button.dataset.appearanceMode === pref));
+    }
+  }
+  for (const button of appearanceModeButtons) {
+    button.addEventListener('click', () => {
+      window.ProbeTheme?.set(button.dataset.appearanceMode);
+    });
+  }
+  window.addEventListener('404-probe:themechange', paintAppearanceMode);
+  paintAppearanceMode();
+
+  function setSkinMessage(message, good = false) {
+    skinStatus.textContent = message;
+    skinStatus.hidden = !message;
+    skinStatus.classList.toggle('settings-good', good);
+    skinStatus.classList.toggle('settings-error', !good && Boolean(message));
+  }
+
+  function clearSkinErrors() {
+    skinErrors.replaceChildren();
+    skinErrors.hidden = true;
+  }
+
+  function showSkinError(heading, items = [], extraCount = 0) {
+    skinErrors.replaceChildren();
+    const p = document.createElement('p');
+    p.textContent = heading;
+    skinErrors.append(p);
+    if (items.length) {
+      const ul = document.createElement('ul');
+      for (const text of items) {
+        const li = document.createElement('li');
+        li.textContent = text;
+        ul.append(li);
+      }
+      skinErrors.append(ul);
+    }
+    if (extraCount > 0) {
+      const note = document.createElement('p');
+      note.className = 'settings-note';
+      note.textContent = `另有 ${extraCount} 条错误未显示。`;
+      skinErrors.append(note);
+    }
+    skinErrors.hidden = false;
+  }
+
+  function formatSkinDetail(item) {
+    const mode = skinModeLabels[item?.mode] || item?.mode || '文件';
+    const variable = item?.variable ? ' ' + item.variable : '';
+    const reason = skinReasonLabels[item?.reason] || item?.reason || '格式无效';
+    return `${mode}${variable}：${reason}`;
+  }
+
+  function reloadSkinStylesheet(skinId) {
+    return new Promise(resolve => {
+      const version = Math.max(Date.now(), lastSkinVersion + 1);
+      lastSkinVersion = version;
+      const nextHref = '/skin.css?v=' + version;
+      let link = [...document.querySelectorAll('link[rel="stylesheet"]')].find(node => {
+        const raw = node.getAttribute('href') || '';
+        return raw === '/skin.css' || raw.startsWith('/skin.css?');
+      });
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'stylesheet';
+        const styleLink = [...document.querySelectorAll('link[rel="stylesheet"]')].find(node => {
+          const raw = node.getAttribute('href') || '';
+          return raw === '/style.css' || raw.endsWith('/style.css');
+        });
+        if (styleLink) styleLink.after(link);
+        else document.head.append(link);
+      }
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        window.dispatchEvent(new CustomEvent('404-probe:skinchange', {detail: {id: skinId, href: nextHref}}));
+        resolve();
+      };
+      const timer = setTimeout(done, 5000);
+      link.addEventListener('load', done, {once: true});
+      link.addEventListener('error', done, {once: true});
+      link.setAttribute('href', nextHref);
+    });
+  }
+
+  function updateSkinControls() {
+    const disabled = locked || skinBusy || !csrf;
+    if (skinImportButton) skinImportButton.disabled = disabled;
+    if (!skinList) return;
+    for (const card of skinList.querySelectorAll('.skin-card')) {
+      const active = card.dataset.active === 'true';
+      const useBtn = card.querySelector('[data-skin-action="activate"]');
+      const delBtn = card.querySelector('[data-skin-action="delete"]');
+      if (useBtn) useBtn.disabled = disabled || active;
+      if (delBtn) delBtn.disabled = disabled;
+    }
+  }
+
+  function renderSkins() {
+    if (!skinList) return;
+    const skins = Array.isArray(skinState.skins) ? skinState.skins : [];
+    const activeId = skinState.active_id || 'default';
+    if (!skins.length) {
+      const empty = document.createElement('p');
+      empty.className = 'settings-note';
+      empty.textContent = '暂无可用皮肤。';
+      skinList.replaceChildren(empty);
+      updateSkinControls();
+      return;
+    }
+    const cards = skins.map(skin => {
+      const isBuiltin = skin.builtin === true || skin.id === 'default';
+      const isActive = skin.id === activeId;
+      const card = document.createElement('article');
+      card.className = 'skin-card';
+      card.dataset.skinId = skin.id;
+      card.dataset.active = String(isActive);
+      card.dataset.builtin = String(isBuiltin);
+
+      const meta = document.createElement('div');
+      meta.className = 'skin-meta';
+
+      const head = document.createElement('div');
+      head.className = 'skin-head';
+      const nameEl = document.createElement('strong');
+      nameEl.className = 'skin-name';
+      nameEl.textContent = skin.name || skin.id;
+      head.append(nameEl);
+      if (isActive) {
+        const badge = document.createElement('span');
+        badge.className = 'skin-active-badge';
+        badge.textContent = '当前';
+        head.append(badge);
+      }
+      if (skin.author) {
+        const author = document.createElement('span');
+        author.className = 'skin-author';
+        author.textContent = skin.author;
+        head.append(author);
+      }
+      meta.append(head);
+
+      if (skin.description) {
+        const desc = document.createElement('p');
+        desc.className = 'skin-desc';
+        desc.textContent = skin.description;
+        meta.append(desc);
+      }
+
+      const swatches = document.createElement('div');
+      swatches.className = 'skin-swatches';
+      for (const [modeKey, modeLabel] of [['light', '浅色'], ['dark', '深色']]) {
+        const colors = Array.isArray(skin.swatches?.[modeKey]) ? skin.swatches[modeKey] : [];
+        if (!colors.length) continue;
+        const row = document.createElement('div');
+        row.className = 'skin-swatch-row';
+        row.dataset.mode = modeKey;
+        const label = document.createElement('span');
+        label.className = 'skin-swatch-label';
+        label.textContent = modeLabel;
+        row.append(label);
+        for (const color of colors) {
+          const chip = document.createElement('span');
+          chip.className = 'skin-swatch';
+          chip.style.backgroundColor = color;
+          chip.title = color;
+          chip.setAttribute('aria-hidden', 'true');
+          row.append(chip);
+        }
+        swatches.append(row);
+      }
+      if (swatches.childElementCount) meta.append(swatches);
+
+      const actions = document.createElement('div');
+      actions.className = 'skin-actions';
+
+      const useBtn = document.createElement('button');
+      useBtn.type = 'button';
+      useBtn.dataset.skinAction = 'activate';
+      useBtn.textContent = '使用';
+      useBtn.addEventListener('click', () => activateSkin(skin));
+      actions.append(useBtn);
+
+      if (!isBuiltin) {
+        const downloadLink = document.createElement('a');
+        downloadLink.className = 'settings-link-btn';
+        downloadLink.dataset.skinAction = 'download';
+        downloadLink.href = `${skinsPath}/${encodeURIComponent(skin.id)}/download`;
+        downloadLink.download = '';
+        downloadLink.textContent = '下载';
+        actions.append(downloadLink);
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'skin-delete-btn';
+        delBtn.dataset.skinAction = 'delete';
+        delBtn.textContent = '删除';
+        delBtn.addEventListener('click', () => deleteSkin(skin, delBtn));
+        actions.append(delBtn);
+      }
+
+      card.append(meta, actions);
+      return card;
+    });
+    skinList.replaceChildren(...cards);
+    updateSkinControls();
+  }
+
+  async function loadSkins() {
+    if (!skinList) return;
+    const serial = ++skinLoadSerial;
+    try {
+      const view = await request(skinsPath);
+      if (serial !== skinLoadSerial) return;
+      skinState = {
+        active_id: view?.active_id || 'default',
+        skins: Array.isArray(view?.skins) ? view.skins : [],
+      };
+      renderSkins();
+    } catch {
+      if (serial !== skinLoadSerial) return;
+      setSkinMessage('读取皮肤列表失败，请稍后重试。');
+    }
+  }
+
+  async function activateSkin(skin) {
+    if (skinBusy || !csrf || locked) return;
+    skinBusy = true;
+    clearSkinErrors();
+    setSkinMessage('');
+    updateSkinControls();
+    try {
+      await request(skinsPath + '/active', 'PUT', {id: skin.id});
+      await reloadSkinStylesheet(skin.id);
+      await loadSkins();
+      setSkinMessage(`已使用皮肤「${skin.name}」`, true);
+    } catch (error) {
+      setSkinMessage(error.status === 403 ? forbiddenSave : '切换皮肤失败，请重试。');
+    } finally {
+      skinBusy = false;
+      updateSkinControls();
+    }
+  }
+
+  async function deleteSkin(skin, trigger) {
+    if (skinBusy || !csrf || locked) return;
+    const confirmed = await DialogShell.confirm({
+      title: '删除皮肤',
+      message: `删除皮肤「${skin.name}」？正在使用时会回到默认。`,
+      confirmText: '删除',
+      danger: true,
+      trigger,
+    });
+    if (!confirmed) return;
+    const wasActive = skin.id === skinState.active_id;
+    skinBusy = true;
+    clearSkinErrors();
+    setSkinMessage('');
+    updateSkinControls();
+    try {
+      await request(`${skinsPath}/${encodeURIComponent(skin.id)}`, 'DELETE');
+      if (wasActive) await reloadSkinStylesheet('default');
+      await loadSkins();
+      setSkinMessage(`已删除皮肤「${skin.name}」`, true);
+    } catch (error) {
+      setSkinMessage(error.status === 403 ? forbiddenSave : '删除皮肤失败，请重试。');
+    } finally {
+      skinBusy = false;
+      updateSkinControls();
+    }
+  }
+
+  skinImportButton?.addEventListener('click', () => {
+    if (skinBusy || !csrf || locked) return;
+    skinFileInput.value = '';
+    skinFileInput.click();
+  });
+
+  skinFileInput?.addEventListener('change', async () => {
+    const file = skinFileInput.files?.[0];
+    skinFileInput.value = '';
+    if (!file || skinBusy || !csrf || locked) return;
+    clearSkinErrors();
+    setSkinMessage('');
+    if (file.size > 65536) {
+      showSkinError('导入失败：皮肤文件不能超过 64 KB。');
+      return;
+    }
+    skinBusy = true;
+    updateSkinControls();
+    try {
+      const raw = await file.text();
+      const result = await request(skinsPath, 'POST', raw);
+      const name = result?.skin?.name || '未命名皮肤';
+      const ignored = Array.isArray(result?.ignored) ? result.ignored : [];
+      await loadSkins();
+      const msg = ignored.length
+        ? `已导入「${name}」，忽略了 ${ignored.length} 个不认识的变量`
+        : `已导入「${name}」`;
+      setSkinMessage(msg, true);
+      skinStatus.title = ignored.length ? `已忽略：${ignored.join('、')}` : '';
+    } catch (error) {
+      const details = error.details || {};
+      if (error.status === 409 || details.code === 'skin_limit') {
+        showSkinError('导入失败：最多只能保存 20 个皮肤，请先删除不用的皮肤。');
+      } else if (Array.isArray(details.details) && details.details.length) {
+        const shown = details.details.slice(0, 10).map(formatSkinDetail);
+        const extra = Math.max(0, details.details.length - 10);
+        showSkinError('导入失败，发现不合法的皮肤配置：', shown, extra);
+      } else if (error.status === 403) {
+        showSkinError(forbiddenSave);
+      } else {
+        showSkinError(details.message || '导入失败，请检查皮肤 JSON 文件格式。');
+      }
+    } finally {
+      skinBusy = false;
+      updateSkinControls();
+    }
+  });
+
   let sessionReady, versionReady, regionsReady;
   function initialize(section) {
     if (!sessionReady) sessionReady = readSession().then(() => {
       passwordButton.disabled = !csrf;
       updateRegions();
+      updateSkinControls();
       if (versionReady) check.disabled = !csrf;
     }, () => passwordStatus('读取会话失败，请刷新后重试。'));
 
@@ -258,6 +616,10 @@
         selected = new Set(savedRegions);
         showCountryList();
       }, () => { regionStatus.textContent = '读取地区失败，请刷新后重试。'; });
+    }
+    if (section === 'appearance') {
+      paintAppearanceMode();
+      void loadSkins();
     }
   }
 

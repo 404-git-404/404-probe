@@ -253,7 +253,7 @@ for (const theme of ['dark', 'light']) {
       scenario.seedItems(f.f);
       await page.evaluate(() => dashboardData.reload());
       await page.waitForFunction(() => document.querySelectorAll('.agent-card').length === 6 && !renderFrame);
-      await page.locator('.agent-card .value-ribbon-card:not([hidden])').first().waitFor();
+      await page.locator('.agent-card .value-medal:not([hidden])').first().waitFor();
       await cardOf(page, 0).locator('.nq7-alert-run').first().waitFor();
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
 
@@ -304,31 +304,27 @@ for (const theme of ['dark', 'light']) {
       });
       assert.equal(noClip, true, 'overflowing status row must not clip visible items or +N buttons');
 
-      // ---- 5. High-value ribbon on cards ----
+      // ---- 5. High-value golden medal on cards (replaces diagonal ribbon) ----
+      assert.equal(await page.locator('.value-ribbon,.value-ribbon-card,.value-ribbon-list').count(), 0);
       for (const [i, wantTip] of [[0, '高性价比 · 第 1 / 6 名'], [1, '高性价比 · 第 2 / 6 名']]) {
-        const ribbon = cardOf(page, i).locator('.value-ribbon-card');
-        assert.equal(await ribbon.isVisible(), true);
-        assert.equal(await ribbon.locator('.value-ribbon-text').textContent(), '高性价比');
-        assert.equal(await ribbon.getAttribute('title'), wantTip);
-        assert.equal(await cardOf(page, i).getAttribute('data-score-overflow'), 'true');
+        const medal = cardOf(page, i).locator('.status-row-tags > .value-medal');
+        assert.equal(await medal.isVisible(), true);
+        assert.equal(await medal.locator('svg').count(), 1);
+        assert.equal(await medal.getAttribute('title'), wantTip);
         const geom = await cardOf(page, i).evaluate(card => {
-          const flag = card.querySelector('.country-mark').getBoundingClientRect();
-          const name = card.querySelector('.agent-name-display h2').getBoundingClientRect();
-          const ribbon = card.querySelector('.value-ribbon-card').getBoundingClientRect();
-          const flagCenterHit = document.elementFromPoint(flag.left + flag.width * 0.65, flag.top + flag.height * 0.65);
-          const nameCenterHit = document.elementFromPoint(name.left + Math.min(20, name.width / 2), name.top + name.height / 2);
+          const leftSide = card.querySelector('.status-row-tags');
+          const medalNode = leftSide.querySelector('.value-medal');
+          const firstTag = leftSide.querySelector('.status-item');
           return {
-            flagVisible: card.querySelector('.country-mark').contains(flagCenterHit),
-            nameClickable: card.querySelector('.agent-name-display').contains(nameCenterHit),
-            ribbonLeft: ribbon.left,
-            cardLeft: card.getBoundingClientRect().left,
+            isFirstChild: leftSide.firstElementChild === medalNode,
+            beforeTag: !firstTag || medalNode.getBoundingClientRect().right <= firstTag.getBoundingClientRect().left + 1,
           };
         });
-        assert.equal(geom.flagVisible, true, 'flag body must remain visible & interactive');
-        assert.equal(geom.nameClickable, true, 'agent name must not be blocked by ribbon');
+        assert.equal(geom.isFirstChild, true, 'medal must be leftmost in status row');
+        assert.equal(geom.beforeTag, true, 'medal must appear before Server/tags');
       }
       for (const i of [2, 3, 4, 5]) {
-        assert.equal(await cardOf(page, i).locator('.value-ribbon-card').isVisible(), false, `card ${i} should not show ribbon`);
+        assert.equal(await cardOf(page, i).locator('.value-medal').isVisible(), false, `card ${i} should not show medal`);
       }
 
       // Screenshot 1: cards (4 status row cases + high-value ribbons)
@@ -456,12 +452,12 @@ for (const theme of ['dark', 'light']) {
       } else {
         assert.equal(await rowOf(page, 2).locator('[data-column=name] .banner-network-warning').isVisible(), true);
       }
-      assert.equal(await rowOf(page, 0).locator('.value-ribbon-list').isVisible(), true);
-      assert.equal(await rowOf(page, 0).locator('.value-ribbon-list').getAttribute('title'), '高性价比 · 第 1 / 6 名');
-      assert.equal(await rowOf(page, 1).locator('.value-ribbon-list').isVisible(), true);
-      assert.equal(await rowOf(page, 2).locator('.value-ribbon-list').isVisible(), false);
-      assert.equal(await rowOf(page, 4).locator('.value-ribbon-list').isVisible(), false);
-      assert.equal(await rowOf(page, 5).locator('.value-ribbon-list').isVisible(), false);
+      assert.equal(await rowOf(page, 0).locator('.banner-system-badges .value-medal').isVisible(), true);
+      assert.equal(await rowOf(page, 0).locator('.banner-system-badges .value-medal').getAttribute('title'), '高性价比 · 第 1 / 6 名');
+      assert.equal(await rowOf(page, 1).locator('.banner-system-badges .value-medal').isVisible(), true);
+      assert.equal(await rowOf(page, 2).locator('.banner-system-badges .value-medal').isVisible(), false);
+      assert.equal(await rowOf(page, 4).locator('.banner-system-badges .value-medal').isVisible(), false);
+      assert.equal(await rowOf(page, 5).locator('.banner-system-badges .value-medal').isVisible(), false);
 
       // ---- 4. Banner column resize: cursor, drag, sync, min widths, reload persistence, dblclick reset, corrupt storage ----
       assert.equal(await page.locator('.banner-header [data-column=upgrade] .banner-col-resizer').count(), 0);
@@ -525,7 +521,7 @@ for (const theme of ['dark', 'light']) {
       await settle(page);
       await page.setViewportSize({width: 390, height: 844});
       await settle(page);
-      await page.locator('.agent-card .value-ribbon-card:not([hidden])').first().waitFor();
+      await page.locator('.agent-card .value-medal:not([hidden])').first().waitFor();
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       await capture(page, `${theme}-phone-cards`);

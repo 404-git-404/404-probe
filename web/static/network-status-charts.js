@@ -7,7 +7,9 @@
     return span<=DAY?iso.slice(11,16):span<=7*DAY?iso.slice(5,16).replace('T',' '):iso.slice(5,10);
   };
   const resolutionLabel=ms=>({60000:'1 分钟',300000:'5 分钟',3600000:'1 小时'})[ms]||'—';
-  const colors=['#57a6fb','#25a989','#f09848','#a986f2','#e173a5','#64b23f','#9990ef','#4cbbc4'];
+  const seriesTokens=['net-series-1','net-series-2','net-series-3','net-series-4','net-series-5','net-series-6','net-series-7','net-series-8'];
+  const colorToken=name=>globalThis.getComputedStyle?.(globalThis.document?.documentElement)?.getPropertyValue('--color-'+name).trim()||'';
+  const seriesColor=index=>{const token=seriesTokens[index%seriesTokens.length];return colorToken(token)||`var(--color-${token})`;};
   const coordinates=(points,getValue,x,y,smooth)=>{
     let path='', previous=null;
     for(const point of points){
@@ -163,5 +165,5 @@
     boxes.forEach(box=>observer.observe(box));
     return ()=>{observer.disconnect();events.abort();};
   }
-  root.NetworkStatusCharts={attach,beijing,resolutionLabel,spark,colors};
+  root.NetworkStatusCharts={attach,beijing,resolutionLabel,spark,color:seriesColor,get colors(){return seriesTokens.map((_,i)=>seriesColor(i));}};
 })(globalThis);

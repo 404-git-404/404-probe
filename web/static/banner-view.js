@@ -59,7 +59,7 @@
   const youtube=root.YouTubeStatus.display(a,youtubeRegions,now);
   const due=M.renewal(a),soon=due.type==='due_soon'||due.type==='overdue';
   const renewalLink=soon&&p?.renewal_date&&due.field!=='expiry_date'&&p.renewal_url?root.Management.parseRenewalURL(p.renewal_url).url?.href:'';
-  const statusItems=root.StatusRow?root.StatusRow.items(a,{catalog:catalog||root.dashboardData?.catalog?.(),server,warnings:flags,now}):{tags:[],faults:[]};
+  const statusItems=root.StatusRow?root.StatusRow.items(a,{catalog:catalog||root.dashboardData?.catalog?.(),server,warnings:flags,now,score:root.DeviceScores?.forAgent?.(a)}):{medal:null,tags:[],faults:[]};
   return {name,uptime,lifecycle,systemBadges:M.systemBadges(a),statusItems,country:a.country_code||'',countrySource:a.country_source||'',countryHidden:a.country_lookup_enabled===false,system,os,metrics,tx:'↑ '+(old?'—':C.sig3(a.state?.tx_rate,true)),rx:'↓ '+(old?'—':C.sig3(a.state?.rx_rate,true)),traffic,latency:latency(a,slot),networkWarning:flags.network,youtube:{text:youtube.code||'—',tone:youtube.regionTone,hidden:a.youtube_check_enabled===false},price:price(p),renewal:renewal(a,due),renewalLink,dueType:due.type,upgrade:flags.upgrade,outbounds:(a.outbounds?.selectors||[]).map(s=>[s.name,s.current]),disabled:root.Selector.reason(a,csrf)||blocked};
  }
  function create({host,document:doc=root.document,selector,onOpen=()=>{},onCollapse=()=>{},onSort=()=>{},onSlot=()=>{},onIgnore=null,onNavigateNetwork=null,csrf=()=>'',blocked=()=>false,storage=()=>root.localStorage}={}){
@@ -140,9 +140,7 @@
    const statusRow=root.StatusRow?root.StatusRow.create({document:doc,variant:'list',onIgnore,onNavigateNetwork}):null;
    const badges=statusRow?statusRow.node:el('div','banner-system-badges');
    names.append(name,uptime);
-   const valueRibbon=root.DeviceScores?.valueRibbon?.(doc,'list');
-   if(valueRibbon)identity.append(dot,flag,valueRibbon.node,names);
-   else identity.append(dot,flag,names);
+   identity.append(dot,flag,names);
    cells[0].append(identity,badges);
    const system=el('span','banner-os');cells[1].append(system);const metrics=[bar(),bar(),bar(true)];metrics.forEach((m,i)=>cells[2+i].append(m.box));const tx=el('span'),rx=el('small');cells[5].append(tx,rx);const traffic=bar();cells[6].append(traffic.box);const delay=el('span');cells[7].append(delay);const youtube=el('span','banner-youtube');cells[9].append(youtube);
    const score=root.DeviceScores?.stamp(doc,'list',trigger=>onOpen(a.agent_id,trigger));
@@ -152,10 +150,9 @@
    let renewalDate,go;
    node.addEventListener('click',e=>{if(e.target.closest('button,a,input,select')||root.getSelection?.()?.toString())return;onOpen(a.agent_id,name);});
    function update(v,agent){
-    if(score||valueRibbon){
+    if(score){
      const model=root.DeviceScores.forAgent(agent);
-     score?.update(model);
-     valueRibbon?.update(model);
+     score.update(model);
      root.DeviceScores.setOverflow(node,model);
     }
     node.dataset.lifecycle=v.lifecycle;node.setAttribute('aria-label',v.name);text(name,v.name);name.title=v.name;name.setAttribute('aria-label','查看 '+v.name+' 详情');text(uptime,v.uptime);

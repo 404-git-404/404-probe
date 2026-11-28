@@ -86,8 +86,8 @@ test('settings page persists the version checkbox immediately with session/CSRF,
  assert.deepEqual(state.writes[0].body,{enabled:true});assert.equal(state.writes[0].headers['x-csrf-token'],'synthetic-csrf');assert.equal(state.writes[0].headers['sec-fetch-site'],'same-origin');assert.equal(state.writes[0].headers.origin,new URL(p.url()).origin);
  state.failSettings=false;await p.locator('#update-check-enabled').check();await p.locator('#update-saved').waitFor();assert.equal(state.update.enabled,true);
 }));
-test('theme control switches in place after opening settings from the icon rail',()=>ui(async({page:p})=>{
- await p.locator('#panel-collapse').click();await p.locator('#dashboard-settings > summary').click();await p.locator('[data-panel-theme=dark]').click();assert.equal(await p.locator('html').getAttribute('data-theme'),'dark');assert.equal(await p.locator('[data-panel-theme=dark]').getAttribute('aria-pressed'),'true');await p.locator('[data-panel-theme=light]').click();assert.equal(await p.evaluate(()=>ProbeTheme.get()),'light');
+test('theme control switches on appearance settings after opening settings from the icon rail',()=>ui(async({page:p})=>{
+ await p.locator('#panel-collapse').click();await p.locator('#dashboard-settings > summary').click();await p.locator('[data-settings=appearance]').click();await p.locator('[data-appearance-mode=dark]').click();assert.equal(await p.locator('html').getAttribute('data-theme'),'dark');assert.equal(await p.locator('[data-appearance-mode=dark]').getAttribute('aria-pressed'),'true');await p.locator('[data-appearance-mode=light]').click();assert.equal(await p.evaluate(()=>ProbeTheme.get()),'light');assert.equal(await p.evaluate(()=>ProbeTheme.preference()),'light');
 }));
 async function command(p){await p.locator('#add-agent').click();await p.locator('#add-agent-choice-name').fill('单次名称 · 测试');await p.locator('#add-agent-next').click();await p.waitForSelector('#oneclick-result:not(.hidden)');}
 test('one-click has one name input, visible address, masked multiline command and exact clipboard, then revoke',()=>ui(async({page:p,state})=>{
