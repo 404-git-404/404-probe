@@ -89,7 +89,7 @@ func (c *Collector) checkDNS(ctx context.Context, query dnsmessage.Name, servers
 	for i, server := range servers {
 		wg.Go(func() {
 			result := queryLocalDNS(ctx, server, query, timeout)
-			if result != protocol.CheckOK && ctx.Err() == nil {
+			if protocol.IsLocalDNSFailure(result) && ctx.Err() == nil {
 				result = queryLocalDNS(ctx, server, query, timeout)
 			}
 			check.Servers[i] = protocol.LocalDNSObservation{Address: server.Addr().String(), Result: result, CheckedAt: time.Now().UnixMilli()}
@@ -99,7 +99,7 @@ func (c *Collector) checkDNS(ctx context.Context, query dnsmessage.Name, servers
 	failures := make(map[string]int)
 	for i := range check.Servers {
 		server := &check.Servers[i]
-		if server.Result != protocol.CheckOK {
+		if protocol.IsLocalDNSFailure(server.Result) {
 			server.ConsecutiveFailures = min(c.dnsFailures[server.Address]+1, 2)
 			failures[server.Address] = server.ConsecutiveFailures
 		}

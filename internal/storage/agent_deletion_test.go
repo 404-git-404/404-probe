@@ -25,6 +25,9 @@ func TestDeleteOfflineAgentErasesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	organizationAgent(t, s, other)
+	if _, err := s.db.Exec(`INSERT INTO server_local_agent VALUES(1,?)`, other); err != nil {
+		t.Fatal(err)
+	}
 	report := validReport(id, 1, "session", "boot", 1, 100, 200)
 	report.CollectedAt = now.UnixMilli()
 	if _, accepted, reason, err := s.ProcessReport(ctx, id, report, now); err != nil || !accepted {
@@ -81,7 +84,6 @@ func TestDeleteOfflineAgentErasesHistory(t *testing.T) {
 		`INSERT INTO quality_fleet_rollups VALUES(602,86400000,0,zeroblob(32),NULL,0,zeroblob(32))`,
 		`INSERT INTO quality_slot_settings(agent_id,slot,kind,updated_revision) VALUES(?1,'slot','custom',1)`,
 		`INSERT INTO quality_slots VALUES(?1,'slot','ipv4','tcp',1,?1,1)`,
-		`INSERT INTO server_local_agent VALUES(1,?1)`,
 	}
 	for _, fixture := range fixtures {
 		args := []any{id}
@@ -94,7 +96,8 @@ func TestDeleteOfflineAgentErasesHistory(t *testing.T) {
 			t.Fatalf("seed %s: %v", fixture, err)
 		}
 	}
-	direct := deletionTableNames(t, s, `SELECT m.name FROM sqlite_schema m JOIN pragma_table_info(m.name) p ON p.name='agent_id' WHERE m.type='table'`)
+	direct := deletionTableNames(t, s, `SELECT m.name FROM sqlite_schema m JOIN pragma_table_info(m.name) p ON p.name='agent_id'
+		WHERE m.type='table' AND m.name<>'server_local_agent'`)
 	indirect := []string{"probe_results", "quality_buckets", "quality_facts", "quality_fleet_dirty", "quality_fleet_rollups", "quality_receipts", "quality_retired"}
 	checkRows := func(want bool) {
 		for _, table := range direct {
@@ -130,6 +133,9 @@ func TestDeleteOfflineAgentErasesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkRows(false)
+	if got, err := s.ServerLocalAgent(ctx); err != nil || got != other {
+		t.Fatalf("unrelated local Agent = %q, err = %v", got, err)
+	}
 	queries := deletionTableNames(t, s, `SELECT 'SELECT count(*) FROM '||printf('"%w"',m.name)||' WHERE '||printf('"%w"',p.name)||'=?' FROM sqlite_schema m JOIN pragma_table_info(m.name) p WHERE m.type='table'`)
 	for _, query := range queries {
 		var found int

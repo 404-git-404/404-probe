@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrAgentOnline       = errors.New("agent is online")
+	ErrAgentServerLocal  = errors.New("agent is local to the server")
 	ErrAgentNameMismatch = errors.New("agent name does not match")
 	ErrAgentDeleted      = fmt.Errorf("agent deleted: %w", ErrAgentRevoked)
 )
@@ -69,16 +70,19 @@ func (s *Store) DeleteOfflineAgent(ctx context.Context, id, confirmedName string
 	defer tx.Rollback()
 	var name string
 	var tokenHash []byte
-	var revoked bool
+	var revoked, serverLocal bool
 	var pausedAt sql.NullInt64
 	var lastSeen, lastPaused int64
-	err = tx.QueryRowContext(ctx, `SELECT a.name,a.token_hash,a.revoked,a.disabled_at,a.paused_contact_at,COALESCE(s.last_seen,0)
-		FROM agents a LEFT JOIN agent_state s ON s.agent_id=a.id WHERE a.id=?`, id).Scan(&name, &tokenHash, &revoked, &pausedAt, &lastPaused, &lastSeen)
+	err = tx.QueryRowContext(ctx, `SELECT a.name,a.token_hash,a.revoked,a.disabled_at,a.paused_contact_at,COALESCE(s.last_seen,0),
+		EXISTS(SELECT 1 FROM server_local_agent WHERE singleton=1 AND agent_id=a.id)
+		FROM agents a LEFT JOIN agent_state s ON s.agent_id=a.id WHERE a.id=?`, id).Scan(&name, &tokenHash, &revoked, &pausedAt, &lastPaused, &lastSeen, &serverLocal)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return ErrAgentNotFound
 	case err != nil:
 		return err
+	case serverLocal:
+		return ErrAgentServerLocal
 	case revoked:
 		return ErrAgentRevoked
 	case agentContactRecent(lastSeen, lastPaused, pausedAt, nowMS, offlineMS):

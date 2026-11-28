@@ -53,7 +53,8 @@ func TestLocalDNSResultsAndConsecutiveChecks(t *testing.T) {
 	const (
 		respondOK int32 = iota
 		respondSERVFAIL
-		respondNoRecord
+		respondNXDOMAIN
+		respondNoA
 		dropQuery
 	)
 	var mode, requests atomic.Int32
@@ -82,8 +83,13 @@ func TestLocalDNSResultsAndConsecutiveChecks(t *testing.T) {
 				continue
 			case respondSERVFAIL:
 				message.RCode = dnsmessage.RCodeServerFailure
-			case respondNoRecord:
+			case respondNXDOMAIN:
 				message.RCode = dnsmessage.RCodeNameError
+			case respondNoA:
+				message.Answers = []dnsmessage.Resource{{
+					Header: dnsmessage.ResourceHeader{Name: question.Name, Class: dnsmessage.ClassINET},
+					Body:   &dnsmessage.AAAAResource{AAAA: netip.MustParseAddr("2001:db8::20").As16()},
+				}}
 			case respondOK:
 				message.Answers = []dnsmessage.Resource{{
 					Header: dnsmessage.ResourceHeader{Name: question.Name, Class: dnsmessage.ClassINET},
@@ -109,10 +115,13 @@ func TestLocalDNSResultsAndConsecutiveChecks(t *testing.T) {
 	}{
 		{respondOK, protocol.CheckOK, 0, 1},
 		{respondSERVFAIL, protocol.DNSServerError, 1, 2},
+		{respondSERVFAIL, protocol.DNSServerError, 2, 2},
+		{respondNXDOMAIN, protocol.DNSNoRecord, 0, 1},
+		{dropQuery, protocol.DNSTimeout, 1, 2},
 		{dropQuery, protocol.DNSTimeout, 2, 2},
-		{respondNoRecord, protocol.DNSNoRecord, 2, 2},
-		{respondOK, protocol.CheckOK, 0, 1},
+		{respondNoA, protocol.DNSNoRecord, 0, 1},
 		{respondSERVFAIL, protocol.DNSServerError, 1, 2},
+		{respondNoA, protocol.DNSNoRecord, 0, 1},
 	} {
 		mode.Store(tc.mode)
 		before := requests.Load()
@@ -127,8 +136,10 @@ func TestLocalDNSResultsAndConsecutiveChecks(t *testing.T) {
 	if err := socket.Close(); err != nil {
 		t.Fatal(err)
 	}
-	refused := collector.checkDNS(t.Context(), name, []netip.AddrPort{server}, time.Second)
-	if got := refused.Servers[0]; got.Result != protocol.DNSRefused || got.ConsecutiveFailures != 2 {
-		t.Fatalf("closed listener did not refuse: %+v", got)
+	for streak := 1; streak <= 2; streak++ {
+		refused := collector.checkDNS(t.Context(), name, []netip.AddrPort{server}, time.Second)
+		if got := refused.Servers[0]; got.Result != protocol.DNSRefused || got.ConsecutiveFailures != streak {
+			t.Fatalf("closed listener, want refusal streak %d: %+v", streak, got)
+		}
 	}
 }

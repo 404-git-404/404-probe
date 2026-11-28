@@ -94,7 +94,7 @@ func checkAttention(checks *protocol.SystemChecks, now time.Time, ignores storag
 	}
 	if dns := checks.LocalDNS; dns != nil {
 		for _, server := range dns.Servers {
-			if server.ConsecutiveFailures < 2 {
+			if server.ConsecutiveFailures < 2 || !protocol.IsLocalDNSFailure(server.Result) {
 				continue
 			}
 			reason := "服务器错误"
@@ -103,8 +103,6 @@ func checkAttention(checks *protocol.SystemChecks, now time.Time, ignores storag
 				reason = "超时"
 			case protocol.DNSRefused:
 				reason = "拒绝连接"
-			case protocol.DNSNoRecord:
-				reason = "无记录"
 			}
 			add(protocol.SystemCheckDNS, server.Address, "danger", fmt.Sprintf("%s 解析 %s 失败：%s", server.Address, dns.Query, reason))
 		}

@@ -40,6 +40,8 @@ func (a *App) handleDeleteWebAgent(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, storage.ErrAgentNotFound):
 		writeJobError(w, http.StatusNotFound, "agent_not_found", "agent not found")
+	case errors.Is(err, storage.ErrAgentServerLocal):
+		writeJobError(w, http.StatusConflict, "agent_server_local", "server-local agent cannot be permanently deleted")
 	case errors.Is(err, storage.ErrAgentOnline):
 		writeJobError(w, http.StatusConflict, "agent_online", "agent is online")
 	case errors.Is(err, storage.ErrAgentRevoked):

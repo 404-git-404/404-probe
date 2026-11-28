@@ -2,12 +2,15 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +18,86 @@ import (
 	"404-probe/internal/protocol"
 	"404-probe/internal/storage"
 )
+
+func TestReportDoesNotHoldGlobalStateLockWhileReadingIgnores(t *testing.T) {
+	app, store, firstID, firstToken := testApp(t)
+	defer store.Close()
+	defer app.Shutdown()
+	secondID, err := auth.NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondToken, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddAgent(t.Context(), secondID, "second", hash, app.now()); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var blocked atomic.Bool
+	app.readEventSystemCheckIgnores = func(ctx context.Context, id string) (storage.SystemCheckIgnores, error) {
+		if id == firstID && blocked.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+		return store.SystemCheckIgnores(ctx, id)
+	}
+	var reports sync.WaitGroup
+	defer reports.Wait()
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	send := func(id, token string, seq uint64, checks *protocol.SystemChecks) <-chan *httptest.ResponseRecorder {
+		t.Helper()
+		report := reportFor(id, seq)
+		report.SystemChecks = checks
+		raw, err := json.Marshal(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/report", bytes.NewReader(raw))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set(protocol.SystemCheckHeader, "1")
+		result := make(chan *httptest.ResponseRecorder, 1)
+		reports.Go(func() {
+			w := httptest.NewRecorder()
+			app.Handler().ServeHTTP(w, r)
+			result <- w
+		})
+		return result
+	}
+	checks := &protocol.SystemChecks{Supported: true, ClockMeasured: true, FailedUnits: []string{"fixture.service"}}
+	first := send(firstID, firstToken, 1, checks)
+	select {
+	case <-entered:
+	case w := <-first:
+		t.Fatalf("first report finished before the ignore read: %d %s", w.Code, w.Body)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first report did not enter the ignore read")
+	}
+	waitForReport := func(result <-chan *httptest.ResponseRecorder) {
+		t.Helper()
+		select {
+		case w := <-result:
+			if w.Code != http.StatusOK || !decodeReportResponse(t, w).Accepted {
+				t.Fatalf("report: %d %s", w.Code, w.Body)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("another report could not finish while the first ignore read was blocked")
+		}
+	}
+	waitForReport(send(secondID, secondToken, 1, checks))
+	waitForReport(send(firstID, firstToken, 2, nil))
+	app.mu.RLock()
+	latest := app.states[firstID]
+	app.mu.RUnlock()
+	if latest.Sequence != 2 || !reflect.DeepEqual(latest.SystemChecks, checks) {
+		t.Fatalf("the newer report did not inherit the blocked report's checks: %+v", latest)
+	}
+	unblock()
+	waitForReport(first)
+}
 
 func TestSystemChecksReportSettingsAndDashboard(t *testing.T) {
 	app, store, _, _ := testApp(t)
@@ -266,10 +349,22 @@ func TestLocalDNSAttentionIgnoreAndLegacyAgent(t *testing.T) {
 	if got := detail().SystemAttention; !got.DNS || len(got.Ignored) != 0 {
 		t.Fatal("unignored DNS", got)
 	}
-	check.Servers[0].Result, check.Servers[0].ConsecutiveFailures = protocol.CheckOK, 0
-	send()
-	if got := detail().SystemAttention; got.DNS || len(got.Items) != 0 {
-		t.Fatal("first success did not clear alarm", got)
+	for _, result := range []string{protocol.DNSRefused, protocol.DNSServerError} {
+		for streak := 1; streak <= 2; streak++ {
+			check.Servers[0].Result, check.Servers[0].ConsecutiveFailures = result, streak
+			send()
+			if got := detail().SystemAttention; got.DNS != (streak == 2) || len(got.Items) != streak-1 {
+				t.Fatalf("%s, streak %d: %+v", result, streak, got)
+			}
+		}
+	}
+	for _, streak := range []int{0, 1, 2} {
+		check.Servers[0].Result, check.Servers[0].ConsecutiveFailures = protocol.DNSNoRecord, streak
+		send()
+		got := detail()
+		if got.SystemChecks.LocalDNS.Servers[0].Result != protocol.DNSNoRecord || got.SystemAttention.DNS || len(got.SystemAttention.Items) != 0 {
+			t.Fatalf("no_record with streak %d: %+v", streak, got)
+		}
 	}
 }
 
