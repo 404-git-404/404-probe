@@ -116,7 +116,7 @@
     if(!finite(v4.interval_ms)||!finite(v4.effective_interval_ms)||typeof v4.enabled!=='boolean'||typeof v4.state!=='string'||typeof v4.agent_support!=='string')bad('字段类型');
     const bySlot=new Map();
     v4.slots.forEach((s,i)=>{
-      if(!s||!objectID(s.slot)||bySlot.has(s.slot)||(objects?typeof s.show_on_card!=='boolean':s.slot!==slots[i])||!['builtin','custom'].includes(s.kind)||typeof s.region!=='string'||typeof s.isp!=='string'||typeof s.host!=='string'||!Number.isInteger(s.port)||typeof s.slot_enabled!=='boolean'||subItems.some(([k])=>typeof s[k]!=='boolean'))bad('卡槽 '+(i+1));
+      if(!s||!objectID(s.slot)||bySlot.has(s.slot)||(objects?typeof s.show_on_card!=='boolean':s.slot!==slots[i])||!['builtin','custom'].includes(s.kind)||typeof s.region!=='string'||typeof s.isp!=='string'||typeof s.host!=='string'||!Number.isInteger(s.port)||typeof s.slot_enabled!=='boolean'||(s.library_id!==undefined&&typeof s.library_id!=='string')||subItems.some(([k])=>typeof s[k]!=='boolean'))bad('卡槽 '+(i+1));
       bySlot.set(s.slot,s);
     });
     // What the Agent of this session can do with ICMP, per family, as the Server says it. Missing or unrecognised means unknown, never unsupported.
@@ -134,7 +134,7 @@
     // The Server always sends the threshold (schema 35); an answer without it is read as the default.
     const threshold=Number.isInteger(v4.slow_threshold_ms)&&v4.slow_threshold_ms>=THRESHOLD_MIN&&v4.slow_threshold_ms<=THRESHOLD_MAX?v4.slow_threshold_ms:THRESHOLD_DEFAULT;
     return {version:4,revision:v4.config_revision,settings_revision:v4.settings_revision,enabled:v4.enabled,interval_ms:v4.interval_ms,effective_interval_ms:v4.effective_interval_ms,slow_threshold_ms:threshold,
-      objects,state:v4.state,agent_support:v4.agent_support,icmpSupport,supported:v4.agent_support==='user_targets',slots:v4.slots.map(s=>({...s})),lanes,targets};
+      objects,state:v4.state,agent_support:v4.agent_support,icmpSupport,supported:v4.agent_support==='user_targets',slots:v4.slots.map(s=>({...s,library_id:typeof s.library_id==='string'?s.library_id:''})),lanes,targets};
   }
   const slotNumber=(slot,config)=>((config?.slots?.findIndex(s=>s.slot===slot)??slots.indexOf(slot))+1)||1;
   const ispText=s=>s?.kind==='builtin'?(names[s.isp]||s.isp):s?.isp;
@@ -192,14 +192,34 @@
     }
   }
   // ---- the settings dialog ----
-  const slotDraft=s=>({slot:s.slot,kind:s.kind,region:s.region,isp:s.isp,host:s.host,port:s.port?String(s.port):'',slot_enabled:s.slot_enabled,...(typeof s.show_on_card==='boolean'?{show_on_card:s.show_on_card}:{}),...Object.fromEntries(subItems.map(([k])=>[k,s[k]]))});
-  const draftOf=config=>({objects:!!config.objects,interval_ms:config.interval_ms,slow_threshold_ms:String(config.slow_threshold_ms??THRESHOLD_DEFAULT),slots:config.slots.map(slotDraft)});
+  const slotDraft=s=>({slot:s.slot,library_id:typeof s.library_id==='string'?s.library_id:'',kind:s.kind||'custom',region:s.region||'',isp:s.isp||'',host:s.host||'',port:s.port?String(s.port):'',slot_enabled:!!s.slot_enabled,show_on_card:typeof s.show_on_card==='boolean'?s.show_on_card:true,...Object.fromEntries(subItems.map(([k])=>[k,!!s[k]]))});
+  const draftOf=config=>({objects:true,interval_ms:config.interval_ms,slow_threshold_ms:String(config.slow_threshold_ms??THRESHOLD_DEFAULT),slots:config.slots.filter(s=>Boolean(s.host||s.library_id)).map(slotDraft)});
   const clone=v=>JSON.parse(JSON.stringify(v));
-  const trimmed=d=>({objects:!!d.objects,interval_ms:d.interval_ms,slow_threshold_ms:String(d.slow_threshold_ms??THRESHOLD_DEFAULT).trim(),slots:d.slots.map(s=>({...s,host:s.host.trim(),port:s.port.trim()}))});
+  const trimmed=d=>({objects:true,interval_ms:d.interval_ms,slow_threshold_ms:String(d.slow_threshold_ms??THRESHOLD_DEFAULT).trim(),slots:d.slots.map(s=>({...s,library_id:typeof s.library_id==='string'?s.library_id:'',host:s.host.trim(),port:String(s.port??'').trim()}))});
   const sameContent=(a,b)=>JSON.stringify(trimmed(a))===JSON.stringify(trimmed(b));
   const isDirty=(d,base)=>JSON.stringify(trimmed(d))!==JSON.stringify(trimmed(base));
   // Switching between built-in and custom keeps address, port and ticks and only clears the labels, so no free text is carried into an enumeration.
   function switchKind(s,kind) {return s.kind===kind?s:{...s,kind,region:'',isp:''};}
+  // Defaults match Plan Section 3 apply: enabled, all four probes on (minus opposite literal family), shown on card if < 3.
+  function targetSlotDefaults(existingSlots, target, slotKey) {
+    const shown=(existingSlots||[]).filter(r=>r.show_on_card).length;
+    const lit=literalFamily(target?.host||'');
+    return {
+      slot:slotKey,
+      library_id:target?.id||'',
+      kind:'custom',
+      region:target?.region||'',
+      isp:target?.isp||'',
+      host:target?.host||'',
+      port:String(target?.port??443),
+      slot_enabled:true,
+      show_on_card:shown<MAX_CARD_OBJECTS,
+      ipv4_tcp:lit!=='ipv6',
+      ipv4_icmp:lit!=='ipv6',
+      ipv6_tcp:lit!=='ipv4',
+      ipv6_icmp:lit!=='ipv4',
+    };
+  }
   // The Server unmaps ::ffff:a.b.c.d before it decides the family, so the page does the same.
   function mappedIPv4(h) {
     const tail=h.toLowerCase().match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/),head=tail?tail[1]+'0:0':h.toLowerCase();
@@ -235,14 +255,14 @@
   }
   const disabledSubs=host=>{const lit=literalFamily(host);return {ipv4_tcp:lit==='ipv6',ipv4_icmp:lit==='ipv6',ipv6_tcp:lit==='ipv4',ipv6_icmp:lit==='ipv4'};};
   const errorText={invalid_host:'地址不合法',reserved_name:'这是保留名称，不能检测',unsafe_address:'地址不是公网地址',family_mismatch:'字面地址与勾选的地址族不符',invalid_port:'端口须为 1–65535',
-    invalid_label:'标注不合法（1–32 个字符，不含控制字符和首尾空格）',label_required:'已填地址时必须填写',invalid_interval:'检测频率须为 30–300 秒，每档 30 秒',invalid_threshold:'慢连接门槛须为 50–3000 的整数（毫秒）',invalid_encoding:'含有非法字符',invalid_request:'请求不合法'};
+    invalid_label:'标注不合法（1–32 个字符，不含控制字符和首尾空格）',label_required:'已填地址时必须填写',invalid_interval:'检测频率须为 30–300 秒，每档 30 秒',invalid_threshold:'慢连接门槛须为 50–3000 的整数（毫秒）',invalid_encoding:'含有非法字符',invalid_request:'请求不合法',library_required:'必须从目标库选择目标',library_not_found:'目标库中找不到该目标，请刷新后重试'};
   function savePayload(d,settingsRevision) {
     if(!isDecimal(settingsRevision))throw Error('配置版本缺失，不能保存');
     if(!intervals.includes(d.interval_ms))throw Error('检测频率须为 30–300 秒，每档 30 秒');
     if(thresholdHint(d))throw Error(errorText.invalid_threshold);
-    return {expected_revision:settingsRevision,...(d.objects?{objects:true}:{}),interval_ms:d.interval_ms,slow_threshold_ms:Number(String(d.slow_threshold_ms).trim()),slots:d.slots.map(s=>{
+    return {expected_revision:settingsRevision,objects:true,interval_ms:d.interval_ms,slow_threshold_ms:Number(String(d.slow_threshold_ms).trim()),slots:d.slots.map(s=>{
       const host=s.host.trim();
-      return {slot:s.slot,...(d.objects?{show_on_card:!!s.show_on_card}:{}),kind:s.kind,region:s.region,isp:s.isp,host,port:host?Number(s.port.trim()):0,slot_enabled:!!s.slot_enabled,ipv4_tcp:!!s.ipv4_tcp,ipv4_icmp:!!s.ipv4_icmp,ipv6_tcp:!!s.ipv6_tcp,ipv6_icmp:!!s.ipv6_icmp};
+      return {slot:s.slot,show_on_card:!!s.show_on_card,library_id:s.library_id||'',kind:s.kind||'custom',region:s.region,isp:s.isp,host,port:host?Number(String(s.port).trim()):0,slot_enabled:!!s.slot_enabled,ipv4_tcp:!!s.ipv4_tcp,ipv4_icmp:!!s.ipv4_icmp,ipv6_tcp:!!s.ipv6_tcp,ipv6_icmp:!!s.ipv6_icmp};
     })};
   }
   function enabledPayload(settingsRevision,enabled) {
@@ -435,6 +455,6 @@
     const fitsBelow=below+height<=viewport.clientHeight-margin;
     tip.style.top=Math.max(margin,Math.min(fitsBelow?below:above,viewport.clientHeight-height-margin))+'px';
   }
-  const api={positionCardTip,slots,names,cardSlots,MAX_OBJECTS,MAX_CARD_OBJECTS,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,alertOverlapMS,blockMetricsSummary,blockView,cellDetails,cellReasons,rightView,tcpRightView,laneView,STATE_TEXT};
+  const api={positionCardTip,slots,names,cardSlots,MAX_OBJECTS,MAX_CARD_OBJECTS,finite,ms,time,percent,coordinator,transportLease,plotAxes,provinces,isps,intervals,subItems,adapt,slotLabel,slotShort,laneNotice,cardNotice,draftOf,slotDraft,targetSlotDefaults,clone,isDirty,sameContent,switchKind,hints,disabledSubs,errorText,literalFamily,savePayload,enabledPayload,historyKey,ratio,current,blockText,columns,cardGroup,statusNotice,THRESHOLD_MIN,THRESHOLD_MAX,THRESHOLD_DEFAULT,thresholdHint,cardLabel,normalizeCard,alertOverlapMS,blockMetricsSummary,blockView,cellDetails,cellReasons,rightView,tcpRightView,laneView,STATE_TEXT};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.NetworkQualityCore=api;
 })(globalThis);

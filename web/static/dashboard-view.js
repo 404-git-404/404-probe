@@ -1,7 +1,7 @@
 (function(root){
   'use strict';
   const M = root.DashboardModel;
-  const settings = ['update', 'password', 'regions', 'backup', 'appearance', 'about'];
+  const settings = ['update', 'password', 'targets', 'regions', 'backup', 'appearance', 'about'];
 
   function create({document:doc=root.document,onchange=()=>{},onManage=()=>{},read=url=>root.fetch(url).then(r=>r.json())}={}){
     const preferences = M.preferences(), p = preferences.value, get = id => doc.getElementById(id);
@@ -425,6 +425,7 @@
       preferences, page:()=>page, effectiveView:()=>p.viewMode==='list'&&phone.matches?'cards':p.viewMode,
       update,apply,clear,sortBy,updateVersion,refreshVersion,backupAvailable:()=>backupAvailable,
       openNetwork(id){setNetworkExpanded(true);navigate(id?'network/'+encodeURIComponent(id):'network',{closeMobile:true});onchange();},
+      openSettings(section){if(!settings.includes(section))return;drawer('settings').open=true;navigate(section,{closeMobile:true});onchange();},
       setSlot(slot){p.latencySlot=slot;change();},
       collapse(id){p.collapsed=p.collapsed.includes(id)?p.collapsed.filter(value=>value!==id):[...p.collapsed,id];change();},
       close(){

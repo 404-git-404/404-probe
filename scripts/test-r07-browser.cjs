@@ -59,7 +59,7 @@ test('M1 (Chromium): a clean dialog shows no question; each question appears alo
   const {page, errors} = await open(load('v4-saved-off'));
   try {
     assert.deepEqual(await visibleGuards(page), []);
-    await page.fill('[data-nq-field="telecom-port"]', '444');
+    await page.fill('[data-nq-field="threshold"]', '555');
     await page.click('[data-nq-field="enabled"]');assert.deepEqual(await visibleGuards(page),[]);await page.click('[data-nq-field="save-bottom"]');
     assert.deepEqual(await visibleGuards(page),['开启后会开始检测这些目标。请仅检测你有权检测的目标。']);
     await page.click('[data-nq-field="guard-cancel"]');
@@ -89,19 +89,23 @@ test('M2 (Chromium): with the master switch disabled the focus still starts insi
   } finally { await page.close(); }
 });
 
-test('M3 (Chromium): a ticked box of the other family can be unticked after typing a literal address, then saving is possible', {skip: !available && 'Playwright/Chromium not available'}, async () => {
-  const {page, errors} = await open(load('v4-running'));
+test('M3 (Chromium): a ticked box of the other family can be unticked on a literal address, then saving is possible', {skip: !available && 'Playwright/Chromium not available'}, async () => {
+  const raw = load('v4-running'); raw.slots[0].host = '93.184.216.34';
+  const {page, errors} = await open(raw);
   try {
-    await page.fill('[data-nq-field="telecom-host"]', '93.184.216.34');
     const state = () => page.evaluate(() => ['ipv6_tcp', 'ipv6_icmp'].map(k => { const b = document.querySelector(`[data-nq-field="telecom-${k}"]`); return {checked: b.checked, disabled: b.disabled}; }));
     assert.deepEqual(await state(), [{checked: true, disabled: false}, {checked: true, disabled: false}]);
     await page.uncheck('[data-nq-field="telecom-ipv6_tcp"]');
     await page.uncheck('[data-nq-field="telecom-ipv6_icmp"]');
     assert.deepEqual(await state(), [{checked: false, disabled: true}, {checked: false, disabled: true}]);
-    await page.fill('[data-nq-field="telecom-host"]', '::ffff:93.184.216.34');
-    assert.equal(await page.evaluate(() => document.querySelector('[data-nq-field="telecom-ipv4_tcp"]').disabled), false, 'mapped IPv4 is IPv4');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
+  const mapped = load('v4-running'); mapped.slots[0].host = '::ffff:93.184.216.34';
+  const m = await open(mapped);
+  try {
+    assert.equal(await m.page.evaluate(() => document.querySelector('[data-nq-field="telecom-ipv4_tcp"]').disabled), false, 'mapped IPv4 is IPv4');
+    assert.deepEqual(m.errors, []);
+  } finally { await m.page.close(); }
 });
 
 test('M5 (Chromium): the three cases of the review - switch off, nothing ticked, IPv6 hidden by "no IPv6" - all close the unticked ICMP boxes the Server says are unsupported (ticked ones stay clearable, see R1)', {skip: !available && 'Playwright/Chromium not available'}, async () => {
@@ -121,10 +125,10 @@ test('M5 (Chromium): the three cases of the review - switch off, nothing ticked,
 
 test('R1 (Chromium): ICMP unsupported + a literal address of the other family: every ticked box can be unticked and the save goes out with the right payload', {skip: !available && 'Playwright/Chromium not available'}, async () => {
   for (const [literal, clear, keep] of [['93.184.216.34', ['ipv6_tcp', 'ipv6_icmp'], ['ipv4_tcp', 'ipv4_icmp']], ['2606:4700::1111', ['ipv4_tcp', 'ipv4_icmp'], ['ipv6_tcp', 'ipv6_icmp']]]) {
-    const {page, errors} = await open(load('v4-no-ipv6-no-icmp')); // both ICMP families unsupported, telecom = a name with all four ticked
+    const raw = load('v4-no-ipv6-no-icmp'); raw.slots[0].host = literal;
+    const {page, errors} = await open(raw); // both ICMP families unsupported, telecom = literal with all four ticked
     try {
       const box = k => page.evaluate(k => { const b = document.querySelector(`[data-nq-field="telecom-${k}"]`); return {checked: b.checked, disabled: b.disabled}; }, k);
-      await page.fill('[data-nq-field="telecom-host"]', literal);
       for (const k of clear) assert.equal((await box(k)).disabled, false, `${literal}: ${k} must stay clearable`);
       for (const k of clear) await page.uncheck(`[data-nq-field="telecom-${k}"]`);
       for (const k of clear) assert.deepEqual(await box(k), {checked: false, disabled: true}, `${literal}: ${k} cannot be ticked again`);
@@ -174,7 +178,7 @@ test('R3 (Chromium): a read the user asked for (opening the dialog) is adopted e
       await page.evaluate(() => { document.getElementById('host').style.marginTop = '4000px'; window.__ui.tick(); });
       await page.evaluate(() => { for (const r of window.__release) r('done'); });
       await page.waitForTimeout(300);
-      assert.equal(await page.inputValue('[data-nq-field="telecom-host"]'), 'changed.example.net', 'round ' + round + ': the dialog shows what the user\'s own read returned');
+      assert.match(await page.locator('[data-nq-slot="telecom"] .nq-target-endpoint').textContent(), /^changed\.example\.net:/, 'round ' + round + ': the dialog shows what the user\'s own read returned');
       assert.equal((await page.evaluate(() => window.__ui.snapshot().panel)).base, String(BigInt(load('v4-running').settings_revision) + 1n));
       assert.equal(await page.evaluate(() => window.__gets), before + 1, 'only the user\'s read ran; the automatic one was dropped (R2 stays fixed)');
       assert.equal(await page.evaluate(() => window.__writes.length), 0);

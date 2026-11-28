@@ -11,7 +11,13 @@ const inc = v => String(BigInt(v) + 1n);
 const saved = (body, ctx) => {
   const raw = clone(ctx.raw);
   raw.settings_revision = inc(raw.settings_revision); raw.interval_ms = body.interval_ms; raw.effective_interval_ms = body.interval_ms;
-  raw.slots = body.slots.map(s => ({...s})); ctx.raw = raw;
+  if (body.slow_threshold_ms !== undefined) raw.slow_threshold_ms = body.slow_threshold_ms;
+  raw.slots = body.slots.map((s, i) => ({...s, slot: s.slot.startsWith('new-') ? 'obj-' + String(i).padStart(16, '0') : s.slot}));
+  raw.lanes = raw.slots.flatMap(s => ['ipv4', 'ipv6'].flatMap(family => ['tcp', 'icmp'].map(protocol => {
+    const prev = ctx.raw.lanes.find(l => l.slot === s.slot && l.family === family && l.protocol === protocol);
+    return prev ? {...prev} : {slot: s.slot, family, protocol, target_id: null, slot_revision: '1', status: s.slot_enabled && s[family + '_' + protocol] ? 'active' : 'inactive', condition: ''};
+  })));
+  ctx.raw = raw;
   return ctx.reply(200, raw);
 };
 const toggled = (body, ctx) => {
@@ -52,14 +58,17 @@ test('the model: 31 provinces, three ISPs, ten frequencies from 30 to 300 second
 
 test('save payload carries exactly the Server fields; ports and hosts are normalised for sending only', () => {
   const config = C.adapt(load('v4-saved-off')), draft = C.draftOf(config);
-  draft.slots[2].host = '  Example.NET '; draft.slots[2].port = ' 8443 '; draft.slots[2].kind = 'custom'; draft.slots[2].region = 'a'; draft.slots[2].isp = 'b';
+  assert.equal(draft.objects, true);
+  assert.equal(draft.slots.length, 2, 'empty placeholder slots are omitted from draft');
+  draft.slots.push(C.targetSlotDefaults(draft.slots, {id: 'a'.repeat(32), region: 'a', isp: 'b', host: '  Example.NET ', port: ' 8443 '}, 'new-0'));
   const out = C.savePayload(draft, config.settings_revision);
   assert.deepEqual(Object.keys(out), ['expected_revision', 'objects', 'interval_ms', 'slow_threshold_ms', 'slots']);
+  assert.equal(out.objects, true);
   assert.equal(out.expected_revision, '1'); assert.equal(out.slow_threshold_ms, 500);
   for (const bad of ['', '49', '3001', '12.5', 'abc', '1e3']) { draft.slow_threshold_ms = bad; assert.equal(C.thresholdHint(draft), 'invalid_threshold', bad); assert.throws(() => C.savePayload(draft, '1'), /门槛/); }
   draft.slow_threshold_ms = ' 800 '; assert.equal(C.savePayload(draft, '1').slow_threshold_ms, 800); draft.slow_threshold_ms = '500';
-  assert.deepEqual(Object.keys(out.slots[0]), ['slot', 'show_on_card', 'kind', 'region', 'isp', 'host', 'port', 'slot_enabled', 'ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']);
-  assert.equal(out.slots[2].host, 'Example.NET'); assert.equal(out.slots[2].port, 8443);
+  assert.deepEqual(Object.keys(out.slots[0]), ['slot', 'show_on_card', 'library_id', 'kind', 'region', 'isp', 'host', 'port', 'slot_enabled', 'ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']);
+  assert.equal(out.slots[2].host, 'Example.NET'); assert.equal(out.slots[2].port, 8443); assert.equal(out.slots[2].library_id, 'a'.repeat(32));
   assert.equal(out.slots[1].port, 80); assert.equal(typeof out.slots[1].port, 'number');
   assert.throws(() => C.savePayload(draft, 1), /版本/);
   draft.interval_ms = 45000;
@@ -68,68 +77,85 @@ test('save payload carries exactly the Server fields; ports and hosts are normal
   assert.throws(() => C.enabledPayload(7, true));
 });
 
-test('the dialog retains fixed slots, direct labels, one save and a truthful unsupported master',async()=>{
+test('the dialog renders only configured targets, opens library picker on add, one save and a truthful unsupported master',async()=>{
  const f=setup({raw:load('v4-empty-unreported')});const panel=await f.open();assert.equal(panel.tagName,'DIALOG');assert.equal(panel.querySelectorAll('.nq-save').length,1);assert.equal(f.field('interval').children.length,10);
- for(const slot of C.slots){for(const key of ['region-text','isp-text','host','port','ipv4_tcp','ipv4_icmp','ipv6_tcp','ipv6_icmp'])assert.ok(f.field(slot+'-'+key));assert.equal(panel.querySelectorAll('.nq-slot')[C.slots.indexOf(slot)].hidden,true);for(const [key]of C.subItems)assert.equal(f.field(slot+'-'+key).checked,false);}
- assert.equal(f.field('enabled').disabled,true);assert.equal(f.field('save-bottom').disabled,false);assert.match(panel.textContent,/只检测你有权检测的目标/);assert.match(panel.textContent,/地区和运营商是你自己的标注/);assert.doesNotMatch(panel.textContent,/立即生效/);
- f.field('add').click();assert.equal(f.ui.snapshot().panel.draft.slots[0].slot,'telecom');for(const [key]of C.subItems)assert.equal(f.field('telecom-'+key).checked,true);assert.equal(f.writes.length,0);
+ assert.equal(panel.querySelectorAll('.nq-slot').length,0,'empty placeholder rows are not shown');
+ assert.equal(f.field('enabled').disabled,true);assert.equal(f.field('save-bottom').disabled,false);assert.match(panel.textContent,/只检测你有权检测的目标/);assert.match(panel.textContent,/目标库/);assert.doesNotMatch(panel.textContent,/立即生效/);
+ f.field('add').click();await flush();
+ const picker=f.doc.body.children.find(n=>n.id==='nq-target-picker');assert.ok(picker,'picker dialog opened');
+ picker.querySelector('.nq-picker-item').click();
+ assert.equal(f.ui.snapshot().panel.draft.slots.length,1);assert.equal(f.ui.snapshot().panel.draft.slots[0].slot,'new-0');assert.equal(f.ui.snapshot().panel.draft.slots[0].library_id,'1'.repeat(32));
+ for(const [key]of C.subItems)assert.equal(f.field('new-0-'+key).checked,true);assert.equal(f.writes.length,0);
 });
 
 test('save only saves: no enable request, the switch stays as the Server has it', async () => {
   const f = setup({raw: load('v4-saved-off'), save: saved});
   const panel = await f.open();
   assert.equal(f.field('enabled').checked, false);
-  f.type('mobile-host', 'example.net'); f.type('mobile-port', '443'); f.type('mobile-region-text', '广东'); f.type('mobile-isp-text', 'mobile');
-  f.field('mobile-resume').click(); f.check('mobile-ipv4_tcp');
+  f.field('add').click(); await flush();
+  const picker = f.doc.body.children.find(n => n.id === 'nq-target-picker');
+  picker.querySelector('.nq-picker-item').click();
   f.field('save-bottom').click(); await flush();
   assert.deepEqual(f.writes.map(w => w.kind), ['save']);
   const body = f.writes[0].body;
   assert.equal(body.expected_revision, '1');
+  assert.equal(body.objects, true);
+  assert.equal(body.slots[2].library_id, '1'.repeat(32));
   assert.equal(body.slots[2].host, 'example.net'); assert.equal(body.slots[2].port, 443); assert.equal(body.slots[2].ipv4_tcp, true);
   assert.equal(f.field('enabled').checked, false);
   assert.match(statusOf(panel), /已保存（未开启检测）/);
   assert.equal(f.ui.snapshot().panel.dirty, false);
   // The second save uses the new revision.
-  f.type('mobile-port', '444'); f.field('save-bottom').click(); await flush();
+  f.type('threshold', '600'); f.field('save-bottom').click(); await flush();
   assert.equal(f.writes[1].body.expected_revision, '2');
 });
 
 test('master changes remain drafts; only explicit save and enable confirmation write',async()=>{
- for(const answer of ['保存并开启','取消']){const f=setup({raw:load('v4-saved-off'),save:saved,enable:toggled}),panel=await f.open();f.type('telecom-port','444');f.check('enabled',true);assert.equal(f.writes.length,0);assert.equal(f.ui.snapshot().panel.guard,null);assert.equal(f.field('enabled').checked,true);f.field('save-bottom').click();assert.equal(f.ui.snapshot().panel.guard,'enable');assert.equal(f.writes.length,0);const guard=panel.all().find(n=>n.className==='nq-status nq-guard'&&!n.hidden);assert.deepEqual(guard.querySelectorAll('button').map(n=>n.textContent),['保存并开启','取消']);f.byText(guard,answer).click();await flush();if(answer==='保存并开启'){assert.deepEqual(f.writes.map(w=>w.kind),['save','enable']);assert.equal(f.writes[1].body.expected_revision,'2');assert.equal(f.ui.snapshot().panel.dirty,false);}else{assert.equal(f.writes.length,0);assert.equal(f.ui.snapshot().panel.dirty,true);}}
+ for(const answer of ['保存并开启','取消']){const f=setup({raw:load('v4-saved-off'),save:saved,enable:toggled}),panel=await f.open();f.type('threshold','550');f.check('enabled',true);assert.equal(f.writes.length,0);assert.equal(f.ui.snapshot().panel.guard,null);assert.equal(f.field('enabled').checked,true);f.field('save-bottom').click();assert.equal(f.ui.snapshot().panel.guard,'enable');assert.equal(f.writes.length,0);const guard=panel.all().find(n=>n.className==='nq-status nq-guard'&&!n.hidden);assert.deepEqual(guard.querySelectorAll('button').map(n=>n.textContent),['保存并开启','取消']);f.byText(guard,answer).click();await flush();if(answer==='保存并开启'){assert.deepEqual(f.writes.map(w=>w.kind),['save','enable']);assert.equal(f.writes[1].body.expected_revision,'2');assert.equal(f.ui.snapshot().panel.dirty,false);}else{assert.equal(f.writes.length,0);assert.equal(f.ui.snapshot().panel.dirty,true);}}
 });
 
 test('switching on after a failed save does not switch on', async () => {
-  const f = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(400, {error: {code: 'invalid_request', message: 'bad', details: [{slot: 'mobile', field: 'host', code: 'unsafe_address'}]}}), enable: toggled});
+  const f = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(400, {error: {code: 'invalid_request', message: 'bad', details: [{slot: 'telecom', field: 'library_id', code: 'library_not_found'}]}}), enable: toggled});
   const panel = await f.open();
-  f.type('mobile-host', '10.0.0.1'); f.type('mobile-port', '443'); f.type('mobile-region-text', '广东'); f.type('mobile-isp-text', 'mobile');
   f.check('enabled', true);
   f.field('save-bottom').click();f.byText(panel, '保存并开启').click(); await flush();
   assert.deepEqual(f.writes.map(w => w.kind), ['save'], 'no enable request after a refused save');
   assert.equal(f.field('enabled').checked,true,'desired draft remains on');assert.equal(f.raw().enabled,false,'failed config never enables');
-  assert.match(panel.querySelector('.nq-slot').parent.all().map(n => n.textContent).join('|'), /地址不是公网地址/, 'the refusal is shown at the input');
+  assert.match(panel.querySelector('.nq-slot').parent.all().map(n => n.textContent).join('|'), /目标库中找不到该目标/, 'the refusal is shown at the row');
 });
 
 test('switching off is a draft until the single save serializes config and enabled',async()=>{
- const f=setup({raw:load('v4-running'),save:saved,enable:toggled});await f.open();f.type('unicom-port','81');f.check('enabled',false);await flush();assert.equal(f.writes.length,0);assert.equal(f.ui.snapshot().panel.dirty,true);f.field('save-bottom').click();await flush();assert.deepEqual(f.writes.map(w=>w.kind),['save','enable']);assert.deepEqual(f.writes[1].body,{expected_revision:'3',enabled:false});assert.equal(f.raw().slots[1].port,81);assert.equal(f.ui.snapshot().panel.dirty,false);
+ const f=setup({raw:load('v4-running'),save:saved,enable:toggled});await f.open();f.type('threshold','520');f.check('enabled',false);await flush();assert.equal(f.writes.length,0);assert.equal(f.ui.snapshot().panel.dirty,true);f.field('save-bottom').click();await flush();assert.deepEqual(f.writes.map(w=>w.kind),['save','enable']);assert.deepEqual(f.writes[1].body,{expected_revision:'3',enabled:false});assert.equal(f.raw().slow_threshold_ms,520);assert.equal(f.ui.snapshot().panel.dirty,false);
 });
 
 test('closing: explicit cancel discards clean or edited inputs without a write; shared Esc/backdrop guard is covered in Chromium',async()=>{
  const f=setup({raw:load('v4-saved-off')});
- for(const edit of [false,true]){await f.open();const original=f.field('mobile-host').value;if(edit)f.type('mobile-host','example.net');f.field('cancel').click();assert.equal(f.panel(),undefined);assert.equal(f.ui.snapshot().panel,null);assert.equal(f.writes.length,0);await f.open();assert.equal(f.field('mobile-host').value,original);f.field('cancel').click();}
+ for(const edit of [false,true]){await f.open();const original=f.field('threshold').value;if(edit)f.type('threshold','650');f.field('cancel').click();assert.equal(f.panel(),undefined);assert.equal(f.ui.snapshot().panel,null);assert.equal(f.writes.length,0);await f.open();assert.equal(f.field('threshold').value,original);f.field('cancel').click();}
 });
 
-test('literal families stay constrained; free labels change kind without losing address, port or ticks', async () => {
-  const f = setup({raw: load('v4-running')});
+test('literal families stay constrained when adding library targets of IPv4, IPv6, or domain', async () => {
+  const f = setup({
+    raw: load('v4-empty-unreported'),
+    library: [
+      {id: 'a'.repeat(32), region: '上海', isp: '电信', host: '93.184.216.34', port: 443, revision: 1, used_by: []},
+      {id: 'b'.repeat(32), region: '东京', isp: 'NTT', host: '2606:4700::1111', port: 443, revision: 1, used_by: []},
+      {id: 'c'.repeat(32), region: '自定义地区', isp: '自定义运营商', host: 'example.net', port: 443, revision: 1, used_by: []},
+    ],
+  });
   await f.open();
-  f.type('mobile-host', '93.184.216.34'); f.type('mobile-port', '443');
-  for (const key of ['ipv6_tcp', 'ipv6_icmp']) assert.equal(f.field(`mobile-${key}`).disabled, true, key);
-  for (const key of ['ipv4_tcp', 'ipv4_icmp']) assert.equal(f.field(`mobile-${key}`).disabled, false, key);
-  f.type('mobile-host', '2606:4700::1111');
-  for (const key of ['ipv4_tcp', 'ipv4_icmp']) assert.equal(f.field(`mobile-${key}`).disabled, true, key);
-  f.type('mobile-host', 'example.net');
-  for (const key of ['ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']) assert.equal(f.field(`mobile-${key}`).disabled, false, key);
-  f.check('mobile-ipv4_tcp'); f.type('mobile-region-text', '广东'); f.type('mobile-isp-text', 'telecom');
-  f.type('mobile-region-text','自定义地区');f.type('mobile-isp-text','自定义运营商');
+  const pickIndex = async idx => {
+    f.field('add').click(); await flush();
+    const picker = f.doc.body.children.find(n => n.id === 'nq-target-picker');
+    picker.querySelectorAll('.nq-picker-item')[idx].click();
+  };
+  await pickIndex(0);
+  for (const key of ['ipv6_tcp', 'ipv6_icmp']) { assert.equal(f.field(`new-0-${key}`).checked, false, key); assert.equal(f.field(`new-0-${key}`).disabled, true, key); }
+  for (const key of ['ipv4_tcp', 'ipv4_icmp']) { assert.equal(f.field(`new-0-${key}`).checked, true, key); assert.equal(f.field(`new-0-${key}`).disabled, false, key); }
+  await pickIndex(0);
+  for (const key of ['ipv4_tcp', 'ipv4_icmp']) { assert.equal(f.field(`new-1-${key}`).checked, false, key); assert.equal(f.field(`new-1-${key}`).disabled, true, key); }
+  for (const key of ['ipv6_tcp', 'ipv6_icmp']) { assert.equal(f.field(`new-1-${key}`).checked, true, key); assert.equal(f.field(`new-1-${key}`).disabled, false, key); }
+  await pickIndex(0);
+  for (const key of ['ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']) assert.equal(f.field(`new-2-${key}`).disabled, false, key);
   const draft=f.ui.snapshot().panel.draft.slots[2];assert.equal(draft.kind,'custom');assert.equal(draft.host,'example.net');assert.equal(draft.port,'443');assert.equal(draft.ipv4_tcp,true);assert.equal(draft.region,'自定义地区');assert.equal(draft.isp,'自定义运营商');
 });
 
@@ -144,7 +170,7 @@ test('ICMP: the Server\'s capability answer disables the ICMP boxes of that fami
   await f.open();
   // (unicom's address is an IPv4 literal, which locks its IPv6 boxes on its own account; telecom is a name.)
   assert.deepEqual(icmpBoxes(f, 'telecom'), {ipv4: true, ipv6: true, tcp4: false, tcp6: false});
-  assert.equal(f.field('unicom-ipv4_icmp').disabled, true); assert.equal(f.field('mobile-ipv6_icmp').disabled, true);
+  assert.equal(f.field('unicom-ipv4_icmp').disabled, true);
   assert.match(f.panel().all().map(n => n.textContent).join('|'), /这台机器不支持 .* ICMP/);
   // A saved tick is kept, shown, and can be taken back - it only cannot be put there.
   const g = setup({raw: load('v4-no-ipv6-no-icmp')});
@@ -164,8 +190,10 @@ test('ICMP matrix (review M5): the same unsupported answer disables the boxes wi
   const expect = {'switch off, configured': [true, true], 'switch on, nothing ticked': [true, true], 'nothing configured': [true, true], 'IPv6 only': [false, true], 'IPv4 only': [true, false]};
   for (const [what, raw] of Object.entries(cases)) {
     const f = setup({raw}); await f.open();
-    const got = icmpBoxes(f); assert.deepEqual([got.ipv4, got.ipv6], expect[what], what);
-    assert.equal(got.tcp4 || got.tcp6, false, 'TCP is never affected');
+    if (f.field('telecom-ipv4_icmp')) {
+      const got = icmpBoxes(f); assert.deepEqual([got.ipv4, got.ipv6], expect[what], what);
+      assert.equal(got.tcp4 || got.tcp6, false, 'TCP is never affected');
+    }
     const note=f.panel().all().filter(n=>n.className==='nq-capability-note');assert.equal(note.length,1);const families=expect[what].flatMap((off,i)=>off?[(i?'v6':'v4')+' ICMP']:[]).join(' / ');assert.ok(note[0].textContent.includes('这台机器不支持 '+families+'，'),what);
   }
 });
@@ -176,7 +204,7 @@ test('ICMP matrix: "unknown", a missing field or a value we do not know never di
     'field missing': withIcmp('v4-saved-off'), 'garbage': (() => { const r = clone(load('v4-saved-off')); r.icmp_support = {ipv4: 'no', ipv6: 7}; return r; })(), 'null': (() => { const r = clone(load('v4-saved-off')); r.icmp_support = null; return r; })(),
   })) {
     const f = setup({raw}); await f.open();
-    assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false}, what);
+    if (f.field('telecom-ipv4_icmp')) assert.deepEqual(icmpBoxes(f), {ipv4: false, ipv6: false, tcp4: false, tcp6: false}, what);
     assert.doesNotMatch(f.panel().all().map(n => n.textContent).join('|'), /这台机器不支持 .* ICMP/, what);
   }
   assert.deepEqual(C.adapt(load('v4-negotiating')).icmpSupport, {ipv4: 'unknown', ipv6: 'unknown'});
@@ -199,7 +227,7 @@ test('server field errors appear next to their inputs; the rest of the dialog is
   const f = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(400, {error: {code: 'invalid_request', message: 'x', details: [
     {slot: 'telecom', field: 'host', code: 'reserved_name'}, {slot: 'unicom', field: 'port', code: 'invalid_port'}, {slot: 'unicom', field: 'region', code: 'label_required'}]}})});
   const panel = await f.open();
-  f.type('telecom-port', '444');
+  f.type('threshold', '550');
   f.field('save-bottom').click(); await flush();
   const slots = panel.querySelectorAll('.nq-slot'), at = i => slots[i].all().filter(n => n.className === 'nq-field-error').map(n => n.textContent).filter(Boolean);
   assert.deepEqual(at(0), ['这是保留名称，不能检测']);
@@ -207,12 +235,12 @@ test('server field errors appear next to their inputs; the rest of the dialog is
   assert.match(statusOf(panel), /请检查标出的输入/);
   assert.equal(f.ui.snapshot().panel.dirty, true);
   // Editing clears them.
-  f.type('telecom-port', '445');
+  f.check('telecom-ipv4_icmp', false);
   assert.deepEqual(at(0), []);
 });
 
 test('serial enabled answer adopts the actual returned content and revision',async()=>{
- const changed=clone(load('v4-saved-off'));changed.settings_revision='9';changed.enabled=true;changed.slots[0].port=8443;const f=setup({raw:load('v4-saved-off'),save:saved,enable:(_b,ctx)=>(ctx.raw=changed,ctx.reply(200,changed))});await f.open();f.check('enabled',true);assert.equal(f.writes.length,0);f.field('save-bottom').click();f.field('guard-save-enable').click();await flush();assert.equal(f.field('telecom-port').value,'8443');assert.equal(f.ui.snapshot().panel.base,'9');assert.equal(f.ui.snapshot().panel.dirty,false);assert.deepEqual(f.writes.map(w=>w.kind),['save','enable']);
+ const changed=clone(load('v4-saved-off'));changed.settings_revision='9';changed.enabled=true;changed.slots[0].port=8443;const f=setup({raw:load('v4-saved-off'),save:saved,enable:(_b,ctx)=>(ctx.raw=changed,ctx.reply(200,changed))});await f.open();f.check('enabled',true);assert.equal(f.writes.length,0);f.field('save-bottom').click();f.field('guard-save-enable').click();await flush();assert.match(f.panel().querySelector('.nq-target-endpoint').textContent,/:8443$/);assert.equal(f.ui.snapshot().panel.base,'9');assert.equal(f.ui.snapshot().panel.dirty,false);assert.deepEqual(f.writes.map(w=>w.kind),['save','enable']);
 });
 
 test('an old page gets 410: the card and the dialog say the page is out of date and nothing can be saved', async () => {
@@ -221,7 +249,7 @@ test('an old page gets 410: the card and the dialog say the page is out of date 
   assert.match(f.node.querySelector('.nq7-head').title, /页面已过期，请刷新/);
   const g = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(410, {error: {code: 'client_outdated', message: '页面版本已过期，请刷新页面后重试'}})});
   const panel = await g.open();
-  g.type('telecom-port', '444'); g.field('save-bottom').click(); await flush();
+  g.type('threshold', '550'); g.field('save-bottom').click(); await flush();
   assert.match(statusOf(panel), /页面已过期，请刷新/);
   assert.equal(g.field('save-bottom').disabled, true); assert.equal(g.field('save-bottom').disabled, true);
 });
@@ -316,7 +344,8 @@ test('hostile labels and addresses are text everywhere: card, tooltips, dialog f
     assert.equal(f.node.querySelectorAll('.nq7-row')[0].querySelector('.nq7-label').title, shown);
     for (const n of f.node.all()) assert.ok(allowedTags.has(n.tagName), `${n.tagName} appeared`);
     const panel = await f.open();
-    assert.equal(f.field('telecom-region-text').value, evil); assert.equal(f.field('telecom-host').value, evil);
+    assert.equal(panel.querySelector('.nq-target-name').textContent, `${evil} ${evil}`);
+    assert.equal(panel.querySelector('.nq-target-endpoint').textContent, `${evil}:${raw.slots[0].port}`);
     for (const n of panel.all()) assert.ok(allowedTags.has(n.tagName), `${n.tagName} appeared in the dialog`);
     f.field('cancel').click();
     const list = f.ui.historyTargets(AGENT).filter(t => t.slot === 'telecom');
@@ -398,7 +427,7 @@ test('the card header: 设置 replaces the region button, the IPv4/IPv6 switch s
 test('an unconfirmed save (network error / 5xx) is not retried by the page; the dialog reads the Server back and says so', async () => {
   const f = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(500, {error: {code: 'internal', message: '内部错误'}})});
   const panel = await f.open();
-  f.type('telecom-port', '444');
+  f.type('threshold', '555');
   f.field('save-bottom').click(); await flush();
   assert.match(statusOf(panel), /保存结果未确认/);
   const saves = () => f.writes.filter(w => w.kind === 'save').length;
@@ -406,9 +435,9 @@ test('an unconfirmed save (network error / 5xx) is not retried by the page; the 
   f.ui.tick(); await flush();
   assert.equal(saves(), 1, 'no automatic second save');
   assert.ok(f.requests.filter(r => r.url.endsWith('/v4/config') && r.method === 'GET').length >= 2, 'the Server was read back');
-  assert.equal(f.field('telecom-port').value, '444', 'the draft is kept');
+  assert.equal(f.field('threshold').value, '555', 'the draft is kept');
   const busy = setup({raw: load('v4-saved-off'), save: (_b, ctx) => ctx.reply(503, {error: {code: 'retryable', message: 'x'}})});
-  const p2 = await busy.open(); busy.type('telecom-port', '444'); busy.field('save-bottom').click(); await flush();
+  const p2 = await busy.open(); busy.type('threshold', '555'); busy.field('save-bottom').click(); await flush();
   assert.match(statusOf(p2), /地址检查繁忙，请稍后重试/);
 });
 
@@ -416,7 +445,7 @@ test('a save in flight survives the card leaving the viewport and is not cancell
   let release; const gate = new Promise(r => { release = r; });
   const f = setup({raw: load('v4-saved-off'), save: async (b, ctx) => { await gate; return saved(b, ctx); }});
   await f.open();
-  f.type('telecom-port', '444'); f.field('save-bottom').click(); await flush();
+  f.type('threshold', '555'); f.field('save-bottom').click(); await flush();
   assert.equal(f.writes.length, 1);
   f.ui.setVisible(AGENT, false); await flush();
   assert.ok(f.ui.snapshot().panel, 'the dialog stays');
@@ -436,7 +465,7 @@ test('M1: the guards are hidden unless asked for, and the stylesheet lets hidden
   const f = setup({raw: load('v4-saved-off'), save: saved, enable: toggled});
   await f.open();
   assert.deepEqual(guards(f), [], 'a clean dialog shows no question');
-  f.type('telecom-port','444');f.check('enabled',true);assert.deepEqual(guards(f),[]);f.field('save-bottom').click();
+  f.type('threshold','555');f.check('enabled',true);assert.deepEqual(guards(f),[]);f.field('save-bottom').click();
   assert.deepEqual(guards(f),['开启后会开始检测这些目标。请仅检测你有权检测的目标。']);
   f.byText(f.panel(), '取消').click();
   assert.deepEqual(guards(f), []);
@@ -462,11 +491,11 @@ test('M2: the focus starts inside the dialog even when the master switch is disa
   assert.equal(f.doc.activeElement, f.node.querySelector('.nq-link'), 'closing returns to the button that opened it');
 });
 
-test('M3: after switching to a literal address the ticks of the other family can be cleared, and nothing wrong can be newly ticked', async () => {
-  const f = setup({raw: load('v4-running'), save: saved});
+test('M3: with a literal address the ticks of the other family can be cleared, and nothing wrong can be newly ticked', async () => {
+  const raw4 = clone(load('v4-running')); raw4.slots[0].host = '93.184.216.34';
+  const f = setup({raw: raw4, save: saved});
   await f.open();
   for (const key of ['ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']) assert.equal(f.field(`telecom-${key}`).checked, true, key);
-  f.type('telecom-host', '93.184.216.34');
   for (const key of ['ipv6_tcp', 'ipv6_icmp']) { assert.equal(f.field(`telecom-${key}`).checked, true); assert.equal(f.field(`telecom-${key}`).disabled, false, `${key} can be cleared`); }
   f.field('save-bottom').click(); await flush();
   assert.equal(f.writes.length, 0, 'the mismatch still blocks saving');
@@ -475,13 +504,14 @@ test('M3: after switching to a literal address the ticks of the other family can
   f.field('save-bottom').click(); await flush();
   assert.equal(f.writes.length, 1);
   assert.deepEqual([f.writes[0].body.slots[0].ipv6_tcp, f.writes[0].body.slots[0].ipv6_icmp, f.writes[0].body.slots[0].ipv4_tcp], [false, false, true]);
-  // And the other way round, then back to a name.
-  const g = setup({raw: load('v4-running')});
+  // And the other way round.
+  const raw6 = clone(load('v4-running')); raw6.slots[0].host = '2606:4700::1111';
+  const g = setup({raw: raw6});
   await g.open();
-  g.type('telecom-host', '2606:4700::1111');
   for (const key of ['ipv4_tcp', 'ipv4_icmp']) { assert.equal(g.field(`telecom-${key}`).checked, true); assert.equal(g.field(`telecom-${key}`).disabled, false); }
-  g.type('telecom-host', 'example.net');
-  for (const key of ['ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']) assert.equal(g.field(`telecom-${key}`).disabled, false);
+  const h = setup({raw: load('v4-running')});
+  await h.open();
+  for (const key of ['ipv4_tcp', 'ipv4_icmp', 'ipv6_tcp', 'ipv6_icmp']) assert.equal(h.field(`telecom-${key}`).disabled, false);
 });
 
 test('M3: an IPv4-mapped IPv6 address counts as IPv4, as it does on the Server', () => {
@@ -505,19 +535,19 @@ test('M4: a refused save is never merged: the user is asked, "load the latest" d
   const f = conflictSetup();
   await f.open();
   const before = load('v4-running').slots[0];
-  f.type('telecom-region-text', '浙江');
+  f.type('threshold', '610');
   f.field('save-bottom').click(); await flush();
   assert.deepEqual(guards(f), ['配置已被其他页面修改']);
   assert.match(statusOf(f.panel()), /配置已被其他页面修改/);
   assert.equal(f.writes.length, 1, 'no automatic second write');
   const draft = f.ui.snapshot().panel.draft.slots[0];
-  assert.equal(draft.region, '浙江'); assert.equal(draft.host, before.host, 'the other page\'s address is not mixed into the draft');
+  assert.equal(f.ui.snapshot().panel.draft.slow_threshold_ms, '610'); assert.equal(draft.host, before.host, 'the other page\'s address is not mixed into the draft');
   assert.equal(draft.port, String(before.port)); assert.equal(draft.ipv4_icmp, before.ipv4_icmp);
-  assert.equal(f.field('telecom-host').value, before.host);
+  assert.equal(f.panel().querySelector('.nq-target-endpoint').textContent, `${before.host}:${before.port}`);
   f.field('guard-load-latest').click(); await flush();
   const now = f.ui.snapshot().panel;
   assert.equal(now.dirty, false); assert.equal(now.base, '7'); assert.equal(now.guard, null);
-  assert.equal(f.field('telecom-host').value, 'new.example.net'); assert.equal(f.field('telecom-port').value, '8443'); assert.equal(f.field('telecom-ipv4_icmp').checked, false);
+  assert.equal(f.panel().querySelector('.nq-target-endpoint').textContent, 'new.example.net:8443'); assert.equal(f.field('telecom-ipv4_icmp').checked, false);
   assert.match(statusOf(f.panel()), /已载入最新配置，本页草稿已放弃/);
   assert.equal(f.writes.length, 1);
 });
@@ -525,11 +555,11 @@ test('M4: a refused save is never merged: the user is asked, "load the latest" d
 test('M4: "cancel" keeps the draft and the dialog; saving it again is refused again instead of overwriting the other page', async () => {
   const f = conflictSetup();
   await f.open();
-  f.type('telecom-region-text', '浙江');
+  f.type('threshold', '610');
   f.field('save-bottom').click(); await flush();
   f.field('guard-conflict-cancel').click();
   assert.deepEqual(guards(f), []); assert.ok(f.panel(), 'the dialog stays');
-  assert.equal(f.field('telecom-region-text').value, '浙江');
+  assert.equal(f.field('threshold').value, '610');
   assert.equal(f.ui.snapshot().panel.dirty, true);
   f.field('save-bottom').click(); await flush();
   assert.equal(f.writes.length, 2);
@@ -540,7 +570,7 @@ test('M4: "cancel" keeps the draft and the dialog; saving it again is refused ag
 test('M4: a conflict while "save and switch on" stops there: no switch-on request', async () => {
   const off = clone(load('v4-saved-off')); const g = setup({raw: off, save: (_b, ctx) => (ctx.raw = Object.assign(clone(off), {settings_revision: '9', interval_ms: 90000}), ctx.reply(409, {error: {code: 'revision_conflict', message: 'x'}})), enable: toggled});
   await g.open();
-  g.type('telecom-port', '444'); g.check('enabled', true);
+  g.type('threshold', '610'); g.check('enabled', true);
   g.byText(g.panel(), '保存并开启').click(); await flush();
   assert.deepEqual(guards(g), ['配置已被其他页面修改']);
   assert.deepEqual(g.writes.map(w => w.kind), ['save']);
@@ -550,10 +580,10 @@ test('M4: a changed configuration found by a later read asks the same question; 
   let offset = 0;
   const f = setup({raw: load('v4-running'), clock: () => offset});
   await f.open();
-  f.type('telecom-region-text', '浙江');
+  f.type('threshold', '610');
   f.setRaw(remoteChange()); offset += 31000; f.ui.tick(); await flush();
   assert.deepEqual(guards(f), ['配置已被其他页面修改']);
-  assert.equal(f.field('telecom-host').value, load('v4-running').slots[0].host, 'the draft is untouched');
+  assert.equal(f.panel().querySelector('.nq-target-endpoint').textContent, `${load('v4-running').slots[0].host}:${load('v4-running').slots[0].port}`, 'the draft is untouched');
   f.field('guard-conflict-cancel').click();
   offset += 31000; f.ui.tick(); await flush();
   assert.deepEqual(guards(f), [], 'the same latest is not asked about again');
@@ -561,7 +591,7 @@ test('M4: a changed configuration found by a later read asks the same question; 
   const g = setup({raw: load('v4-running'), clock: () => offset});
   await g.open();
   g.setRaw(remoteChange()); offset += 31000; g.ui.tick(); await flush();
-  assert.deepEqual(guards(g), []); assert.equal(g.field('telecom-host').value, 'new.example.net');
+  assert.deepEqual(guards(g), []); assert.equal(g.panel().querySelector('.nq-target-endpoint').textContent, 'new.example.net:8443');
 });
 
 const configReads = f => f.requests.filter(r => r.method === 'GET' && r.url.endsWith('/v4/config')).length;
@@ -635,7 +665,7 @@ test('M7: a refresh while the dialog is saving does not start, and writes are ne
   const gate = {}; gate.promise = new Promise(r => { gate.release = r; });
   const f = setup({raw: load('v4-saved-off'), clock: () => offset, save: async (b, ctx) => { await gate.promise; return saved(b, ctx); }});
   await f.open();
-  f.type('telecom-port', '444'); f.field('save-bottom').click(); await flush();
+  f.type('threshold', '555'); f.field('save-bottom').click(); await flush();
   const reads = configReads(f);
   offset += 31000; f.ui.tick(); await flush();
   assert.equal(configReads(f), reads, 'no read while a save is in flight');
@@ -657,9 +687,9 @@ test('S2: a restarted Agent that was authorized shows "正在连接…"; a first
 
 test('R1: ICMP unsupported + a literal address of the other family: ticked boxes can always be unticked, the save succeeds, nothing wrong can be ticked again', async () => {
   for (const [literal, clear, keep] of [['93.184.216.34', ['ipv6_tcp', 'ipv6_icmp'], ['ipv4_tcp', 'ipv4_icmp']], ['2606:4700::1111', ['ipv4_tcp', 'ipv4_icmp'], ['ipv6_tcp', 'ipv6_icmp']]]) {
-    const f = setup({raw: load('v4-no-ipv6-no-icmp'), save: saved});
+    const raw = clone(load('v4-no-ipv6-no-icmp')); raw.slots[0].host = literal;
+    const f = setup({raw, save: saved});
     await f.open();
-    f.type('telecom-host', literal);
     for (const k of clear) { assert.equal(f.field(`telecom-${k}`).checked, true); assert.equal(f.field(`telecom-${k}`).disabled, false, `${literal}: ${k}`); }
     f.field('save-bottom').click(); await flush();
     assert.equal(f.writes.length, 0, 'the mismatch still blocks the save');
@@ -731,7 +761,7 @@ test('R3: the user\'s read is adopted when the queued automatic refresh is cance
     if (how === 'hidden') { // the page hiding stops every read, the user's too (old policy); showing it again reads for the open dialog
       f.doc.hidden = false; f.doc.dispatch('visibilitychange'); f.ui.setVisible(AGENT, true); await flush();
     }
-    assert.equal(f.field('telecom-host').value, 'changed.example.net', how);
+    assert.match(f.panel().querySelector('.nq-target-endpoint').textContent, /^changed\.example\.net:/, how);
     assert.equal(f.ui.snapshot().panel.base, '7', how);
     assert.equal(f.writes.length, 0);
     if (how !== 'hidden') assert.equal(configReads(f), before + 1, how + ': only the user\'s read ran');
@@ -747,9 +777,9 @@ test('R3: an older answer never overwrites a newer one, in either order, and a h
   offset = 31000; f.ui.tick(); await flush();    // GET 1: automatic, held (answers with the content of the moment it was asked: old)
   f.setRaw(changedRemote('7'));
   f.node.querySelector('.nq-link').click(); await flush(); // GET 2: the user's, new content, answered at once
-  assert.equal(f.field('telecom-host').value, 'changed.example.net');
+  assert.match(f.panel().querySelector('.nq-target-endpoint').textContent, /^changed\.example\.net:/);
   hold[0](); await flush(); // the old automatic answer arrives late
-  assert.equal(f.field('telecom-host').value, 'changed.example.net', 'the late old answer is dropped');
+  assert.match(f.panel().querySelector('.nq-target-endpoint').textContent, /^changed\.example\.net:/, 'the late old answer is dropped');
   assert.equal(f.ui.snapshot().panel.base, '7');
   assert.equal(f.writes.length, 0);
 });

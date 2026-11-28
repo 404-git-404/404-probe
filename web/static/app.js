@@ -49,7 +49,12 @@ const agentState = AgentState.create();
 const monitorCoordinator = NetworkQualityCore.coordinator();
 const networkQuality = NetworkQuality.create({csrf: () => mutationCSRFToken, coordinator: monitorCoordinator,
   onConfig: (id,config) => {latencyCharts.bindConfig(id,config);},
-  onFamily: id => latencyCharts.familyChanged(id)});
+  onFamily: id => latencyCharts.familyChanged(id),
+  onEditLibraryTarget: id => {
+    if (deviceDetails?.snapshot?.().open) document.querySelector('#device-details')?.close?.();
+    dashboardUI.openSettings('targets');
+    document.dispatchEvent(new CustomEvent('404-probe:edit-network-target', {detail: {id}}));
+  }});
 const latencyCharts = LatencyMini.create({coordinator: monitorCoordinator,
   family: id => networkQuality.familyOf(id), setFamily: (id,value) => networkQuality.setFamily(id,value), openSettings: (id,trigger) => networkQuality.openSettings(id,trigger)});
 const trafficCharts = TrafficChart.create({coordinator: monitorCoordinator});

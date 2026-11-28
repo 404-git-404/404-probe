@@ -13,7 +13,7 @@ const carriers=['电信','联通','移动','IIJ','NTT','PCCW','HE','Telia'];
 const regions=['上海','广州','北京','东京','大阪','香港','洛杉矶','法兰克福'];
 const base=load('v4-running');
 const object=(i,other=false)=>({
-  ...base.slots[0],slot:slots[i]||'obj-'+String(i).padStart(16,'0'),kind:'custom',
+  ...base.slots[0],slot:slots[i]||'obj-'+String(i).padStart(16,'0'),library_id:String(i+1).padStart(32,'0'),kind:'custom',
   region:other&&i===1?'深圳':regions[i],isp:carriers[i],host:['ct-sh','cu-gz','cm-bj','jp-kix','jp-nrt','hk','us','de'][i]+'.example.net',
   port:443,slot_enabled:true,show_on_card:i<3
 });
@@ -59,7 +59,13 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
   const browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM});
   let config=configFor([object(0),object(1),object(2)]);
   let revision=10, lastSave, fleetSize=8, detailCount=5;
+  const libraryTargets=Array.from({length:8},(_,i)=>({
+    id:String(i+1).padStart(32,'0'),region:regions[i],isp:carriers[i],
+    host:i<3?['ct-sh','cu-gz','cm-bj'][i]+'.example.net':'synthetic-'+(i-3)+'.example.net',
+    port:443,revision:1,used_by:i<3?[{agent_id:ID(0),name:machineName(0)}]:[]
+  }));
   const fixture=await start({n:8,handle({req,url,json,body}){
+    if(url.pathname==='/api/v1/web/network-targets'&&req.method==='GET'){json({targets:libraryTargets});return true;}
     const params=url.searchParams,family=params.get('family'),protocol=params.get('protocol');
     const [start,end]=range(params);
     if(url.pathname==='/api/v1/web/network-quality/fleet'){
@@ -289,14 +295,15 @@ test('R39 browser network views, charts and eight-object settings',async t=>{
       await dialog.locator('[data-nq-field="save-bottom"]:enabled').waitFor();
       for(let i=0;i<5;i++){
         await dialog.locator('[data-nq-field=add]').click();
+        const picker=page.locator('#nq-target-picker');
+        await picker.locator('.nq-picker-item').first().click();
+        await picker.waitFor({state:'detached'});
         const row=dialog.locator('.nq-slot:visible').last();
-        await row.getByRole('textbox',{name:'地区',exact:true}).fill(regions[i+3]);
-        await row.locator('input[aria-label="运营商"]').fill(carriers[i+3]);
-        await row.getByRole('textbox',{name:'目标地址',exact:true}).fill('synthetic-'+i+'.example.net');
         assert(await row.getByRole('checkbox',{name:'在卡片显示'}).isDisabled());
       }
       assert.equal(await dialog.locator('.nq-slot:visible').count(),8);
-      assert.equal(await dialog.locator('[data-nq-field=add]').isVisible(),false);
+      assert.equal(await dialog.locator('[data-nq-field=add]').isDisabled(),true);
+      assert.equal(await dialog.locator('[data-nq-field=add]').getAttribute('title'),'每台最多 8 个');
       await dialog.getByRole('checkbox',{name:'在卡片显示'}).nth(2).uncheck();
       const replacement=dialog.getByRole('checkbox',{name:'在卡片显示'}).nth(3);
       await replacement.check();

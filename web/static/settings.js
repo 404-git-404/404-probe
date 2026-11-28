@@ -131,6 +131,7 @@
         check.disabled = true;
         updateRegions();
         updateSkinControls();
+        updateTargetControls();
         passwordStatus('当前密码连续输错 5 次，已退出登录。3 秒后转到登录页…');
         setTimeout(() => location.assign('/login'), 3000);
         break;
@@ -157,6 +158,7 @@
       check.disabled = true;
       updateRegions();
       updateSkinControls();
+      updateTargetControls();
       passwordStatus('密码已修改。所有浏览器都已退出，3 秒后跳到登录页。', true);
       setTimeout(() => location.assign('/login'), 3000);
     } catch (error) {
@@ -602,12 +604,604 @@
     }
   });
 
+  // ---- Network target library ----
+  const ntPath = '/api/v1/web/network-targets';
+  const NT_LIMIT = 64;
+  const ntCount = get('nt-count');
+  const ntCreate = get('nt-create');
+  const ntStatus = get('nt-status');
+  const ntNotice = get('nt-notice');
+  const ntEmpty = get('nt-empty');
+  const ntTable = get('nt-table');
+  const ntTbody = get('nt-tbody');
+  const ntSkipReasons = {
+    full: '已满 8 个',
+    already: '已使用',
+    not_found: '设备不存在',
+    revoked: '已撤销',
+    removing: '正在删除',
+    unsupported: '不支持网络质量',
+  };
+  let ntTargets = [];
+  let ntLoaded = false;
+  let ntBusy = false;
+  let ntLoadSerial = 0;
+
+  const ntErrorLabel = code => window.NetworkQualityCore?.errorText?.[code] || '请检查此项';
+  function ntAgentName(id, fallback = '') {
+    if (fallback) return fallback;
+    const item = typeof agents !== 'undefined' ? agents.get(id) : null;
+    return item?.name || item?.state?.hostname || id || '未知设备';
+  }
+
+  function clearNtFeedback() {
+    if (ntStatus) {
+      ntStatus.textContent = '';
+      ntStatus.hidden = true;
+      ntStatus.classList.remove('settings-good', 'settings-error');
+    }
+    if (ntNotice) {
+      ntNotice.replaceChildren();
+      ntNotice.hidden = true;
+      ntNotice.removeAttribute('data-tone');
+    }
+  }
+
+  function setNtStatus(message, good = false) {
+    if (!ntStatus) return;
+    ntStatus.textContent = message;
+    ntStatus.hidden = !message;
+    ntStatus.classList.toggle('settings-good', good);
+    ntStatus.classList.toggle('settings-error', !good && Boolean(message));
+  }
+
+  function setNtNotice(paragraphs = [], items = [], tone = 'good') {
+    if (!ntNotice) return;
+    ntNotice.replaceChildren();
+    for (const line of paragraphs) {
+      if (!line) continue;
+      const p = document.createElement('p');
+      p.textContent = line;
+      ntNotice.append(p);
+    }
+    if (items.length) {
+      const ul = document.createElement('ul');
+      for (const text of items) {
+        const li = document.createElement('li');
+        li.textContent = text;
+        ul.append(li);
+      }
+      ntNotice.append(ul);
+    }
+    ntNotice.dataset.tone = tone;
+    ntNotice.hidden = ntNotice.childElementCount === 0;
+  }
+
+  function updateTargetControls() {
+    const full = ntTargets.length >= NT_LIMIT;
+    const disabled = locked || ntBusy || !csrf;
+    if (ntCount) ntCount.textContent = `${ntTargets.length} / ${NT_LIMIT}`;
+    if (ntCreate) {
+      ntCreate.disabled = disabled || full;
+      ntCreate.title = full ? `最多只能保存 ${NT_LIMIT} 个目标` : '';
+    }
+    if (ntTbody) {
+      for (const btn of ntTbody.querySelectorAll('button[data-nt-action]')) {
+        btn.disabled = disabled;
+      }
+    }
+  }
+
+  function renderTargets() {
+    if (!ntTbody || !ntTable || !ntEmpty) return;
+    ntEmpty.hidden = !ntLoaded || ntTargets.length > 0;
+    ntTable.hidden = ntTargets.length === 0;
+    const rows = ntTargets.map(target => {
+      const tr = document.createElement('tr');
+      tr.dataset.targetId = target.id;
+      const usedBy = Array.isArray(target.used_by) ? target.used_by : [];
+
+      const tdRegion = document.createElement('td');
+      tdRegion.textContent = target.region || '';
+
+      const tdIsp = document.createElement('td');
+      tdIsp.textContent = target.isp || '';
+
+      const tdHost = document.createElement('td');
+      const hostCode = document.createElement('code');
+      hostCode.className = 'targets-host';
+      hostCode.textContent = target.host || '';
+      tdHost.append(hostCode);
+
+      const tdPort = document.createElement('td');
+      tdPort.className = 'targets-port';
+      tdPort.textContent = String(target.port ?? '');
+
+      const tdUsed = document.createElement('td');
+      const usedSpan = document.createElement('span');
+      if (usedBy.length > 0) {
+        usedSpan.className = 'targets-used';
+        usedSpan.textContent = `${usedBy.length} 台`;
+        usedSpan.title = usedBy.map(a => ntAgentName(a.agent_id, a.name)).join('、');
+      } else {
+        usedSpan.className = 'targets-unused';
+        usedSpan.textContent = '未使用';
+      }
+      tdUsed.append(usedSpan);
+
+      const tdActions = document.createElement('td');
+      tdActions.className = 'targets-row-actions';
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'targets-action-btn';
+      editBtn.dataset.ntAction = 'edit';
+      editBtn.textContent = '编辑';
+      editBtn.addEventListener('click', () => openTargetEditor(target, editBtn));
+
+      const applyBtn = document.createElement('button');
+      applyBtn.type = 'button';
+      applyBtn.className = 'targets-action-btn';
+      applyBtn.dataset.ntAction = 'apply';
+      applyBtn.textContent = '应用到设备…';
+      applyBtn.addEventListener('click', () => openApplyDialog(target, applyBtn));
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'targets-action-btn targets-action-danger';
+      delBtn.dataset.ntAction = 'delete';
+      delBtn.textContent = '删除';
+      delBtn.addEventListener('click', () => deleteTarget(target, delBtn));
+
+      tdActions.append(editBtn, applyBtn, delBtn);
+      tr.append(tdRegion, tdIsp, tdHost, tdPort, tdUsed, tdActions);
+      return tr;
+    });
+    ntTbody.replaceChildren(...rows);
+    updateTargetControls();
+  }
+
+  async function loadTargets() {
+    if (!ntTbody) return [];
+    const serial = ++ntLoadSerial;
+    try {
+      const view = await request(ntPath);
+      if (serial !== ntLoadSerial) return ntTargets;
+      ntTargets = Array.isArray(view?.targets) ? view.targets : [];
+      ntLoaded = true;
+      renderTargets();
+      return ntTargets;
+    } catch {
+      if (serial !== ntLoadSerial) return ntTargets;
+      setNtStatus('读取网络目标失败，请稍后重试。');
+      return ntTargets;
+    }
+  }
+
+  function openTargetEditor(target = null, trigger = null) {
+    if (locked || !csrf) return;
+    document.getElementById('nt-edit-dialog')?.remove();
+    let current = target ? {...target, used_by: Array.isArray(target.used_by) ? [...target.used_by] : []} : null;
+    const isEdit = Boolean(current);
+    let submitting = false;
+
+    const dialog = document.createElement('dialog');
+    dialog.id = 'nt-edit-dialog';
+    dialog.className = 'dashboard-dialog nt-dialog';
+    document.body.append(dialog);
+
+    const form = document.createElement('form');
+    form.autocomplete = 'off';
+    const content = document.createElement('div');
+    content.className = 'shell-content';
+    const errorBanner = document.createElement('p');
+    errorBanner.className = 'dashboard-dialog-error';
+    errorBanner.setAttribute('role', 'alert');
+    errorBanner.hidden = true;
+
+    const grid = document.createElement('div');
+    grid.className = 'nt-form-grid';
+    const inputs = {};
+    const errors = {};
+    const fieldSpecs = [
+      ['region', '地区', '例如 华东', 32, current?.region || ''],
+      ['isp', '运营商', '电信 / 联通 / 移动', 32, current?.isp || ''],
+      ['host', '地址', '域名或 IP', 253, current?.host || ''],
+      ['port', '端口', '443', 5, current ? String(current.port ?? '') : '443'],
+    ];
+    for (const [key, labelText, placeholder, maxLength, initial] of fieldSpecs) {
+      const wrap = document.createElement('div');
+      wrap.className = 'nt-field';
+      const label = document.createElement('label');
+      label.htmlFor = 'nt-field-' + key;
+      label.textContent = labelText;
+      const input = document.createElement('input');
+      input.id = 'nt-field-' + key;
+      input.name = key;
+      input.type = 'text';
+      input.maxLength = maxLength;
+      input.autocomplete = 'off';
+      input.placeholder = placeholder;
+      input.value = initial;
+      if (key === 'isp') input.setAttribute('list', 'nt-isp-hints');
+      if (key === 'port') input.inputMode = 'numeric';
+      const err = document.createElement('small');
+      err.className = 'nt-field-error';
+      err.dataset.ntError = key;
+      err.setAttribute('role', 'alert');
+      input.addEventListener('input', () => {
+        err.textContent = '';
+        input.removeAttribute('aria-invalid');
+        errorBanner.textContent = '';
+        errorBanner.hidden = true;
+      });
+      inputs[key] = input;
+      errors[key] = err;
+      wrap.append(label, input, err);
+      grid.append(wrap);
+    }
+    content.append(errorBanner, grid);
+
+    const impact = document.createElement('p');
+    impact.className = 'nt-edit-impact';
+    function paintImpact() {
+      const n = current?.used_by?.length || 0;
+      impact.textContent = n > 0 ? `将同时修改 ${n} 台设备` : '';
+      impact.hidden = !isEdit || n === 0;
+    }
+    paintImpact();
+
+    const actions = document.createElement('div');
+    actions.className = 'shell-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = '取消';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'submit';
+    saveBtn.className = 'primary-action';
+    saveBtn.textContent = '保存';
+    actions.append(cancelBtn, saveBtn);
+
+    form.append(content, impact, actions);
+    dialog.append(form);
+
+    const shell = DialogShell.attach(dialog, {
+      size: 'small',
+      title: isEdit ? '编辑目标' : '新建目标',
+      busy: () => submitting,
+      read: () => [inputs.region.value, inputs.isp.value, inputs.host.value, inputs.port.value],
+      onclose: () => dialog.remove(),
+    });
+    cancelBtn.addEventListener('click', () => shell.requestClose());
+
+    function clearFieldErrors() {
+      errorBanner.textContent = '';
+      errorBanner.hidden = true;
+      for (const key of Object.keys(errors)) {
+        errors[key].textContent = '';
+        inputs[key].removeAttribute('aria-invalid');
+      }
+    }
+
+    function showDialogError(msg) {
+      errorBanner.textContent = msg;
+      errorBanner.hidden = !msg;
+    }
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (submitting || locked || !csrf) return;
+      clearFieldErrors();
+      const portText = inputs.port.value.trim();
+      const payload = {
+        region: inputs.region.value,
+        isp: inputs.isp.value,
+        host: inputs.host.value.trim(),
+        port: /^[0-9]+$/.test(portText) ? Number(portText) : 0,
+      };
+      submitting = true;
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      try {
+        let result;
+        if (isEdit) {
+          result = await request(`${ntPath}/${encodeURIComponent(current.id)}`, 'PUT', {
+            expected_revision: current.revision,
+            ...payload,
+          });
+        } else {
+          result = await request(ntPath, 'POST', payload);
+        }
+        submitting = false;
+        shell.markSaved();
+        shell.close();
+        clearNtFeedback();
+        await loadTargets();
+        window.dispatchEvent(new CustomEvent('404-probe:network-targets-changed'));
+        const saved = result?.target || payload;
+        const label = `${saved.region} ${saved.isp}`.trim();
+        const familyAdjusted = Array.isArray(result?.family_adjusted) ? result.family_adjusted : [];
+        const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
+        if (familyAdjusted.length || skipped.length) {
+          const lines = [isEdit ? `已保存目标「${label}」` : `已新建目标「${label}」`];
+          if (familyAdjusted.length) {
+            lines.push(`以下设备已自动关闭另一地址族的检测：${familyAdjusted.map(a => ntAgentName(a.agent_id, a.name)).join('、')}`);
+          }
+          if (skipped.length) {
+            const skippedNames = skipped.map(item => typeof item === 'string'
+              ? ntAgentName(item)
+              : ntAgentName(item?.agent_id, item?.name)).join('、');
+            lines.push(`以下设备未修改（已撤销 / 正在删除 / 不支持）：${skippedNames}`);
+          }
+          setNtNotice(lines, [], 'warn');
+        } else {
+          const updatedCount = Number(result?.updated_agents || 0);
+          setNtStatus(
+            isEdit
+              ? (updatedCount > 0 ? `已保存目标「${label}」，已同步修改 ${updatedCount} 台设备` : `已保存目标「${label}」`)
+              : `已新建目标「${label}」`,
+            true
+          );
+        }
+      } catch (error) {
+        submitting = false;
+        const details = error.details || {};
+        if (error.status === 409 && details.code === 'duplicate_target') {
+          showDialogError('已有相同的目标');
+        } else if (error.status === 409 && details.code === 'target_limit') {
+          showDialogError(`目标库已满（最多 ${NT_LIMIT} 个）`);
+        } else if (error.status === 409 && details.code === 'revision_conflict') {
+          showDialogError('目标已被别处修改，已刷新，请重试');
+          const refreshed = await loadTargets();
+          if (isEdit && current) {
+            const latest = refreshed.find(t => t.id === current.id);
+            if (latest) {
+              current = {...latest, used_by: Array.isArray(latest.used_by) ? [...latest.used_by] : []};
+              paintImpact();
+            } else {
+              showDialogError('目标已被别处删除，已刷新列表');
+              saveBtn.disabled = true;
+              cancelBtn.disabled = false;
+              return;
+            }
+          }
+        } else if (error.status === 400 && Array.isArray(details.details) && details.details.length) {
+          let unmatched = [];
+          for (const item of details.details) {
+            const text = ntErrorLabel(item?.code);
+            if (item?.field && errors[item.field]) {
+              errors[item.field].textContent = text;
+              inputs[item.field].setAttribute('aria-invalid', 'true');
+            } else {
+              unmatched.push(text);
+            }
+          }
+          if (unmatched.length) showDialogError([...new Set(unmatched)].join('；'));
+        } else if (error.status === 503) {
+          showDialogError('地址检查繁忙，请稍后重试');
+        } else if (error.status === 403) {
+          showDialogError(forbiddenSave);
+        } else {
+          showDialogError(genericSave);
+        }
+      } finally {
+        submitting = false;
+        if (dialog.isConnected) {
+          saveBtn.disabled = locked || !csrf;
+          cancelBtn.disabled = false;
+        }
+      }
+    });
+
+    shell.open(trigger);
+    inputs.region.focus({preventScroll: true});
+  }
+
+  async function deleteTarget(target, trigger) {
+    if (ntBusy || locked || !csrf) return;
+    const usedBy = Array.isArray(target.used_by) ? target.used_by : [];
+    const label = `${target.region} ${target.isp}`.trim();
+    const message = usedBy.length > 0
+      ? `删除目标「${label}」？\n将从以下 ${usedBy.length} 台设备移除：${usedBy.map(a => ntAgentName(a.agent_id, a.name)).join('、')}`
+      : `删除目标「${label}」？`;
+    const confirmed = await DialogShell.confirm({
+      title: '删除目标',
+      message,
+      confirmText: '删除',
+      danger: true,
+      trigger,
+    });
+    if (!confirmed) return;
+    ntBusy = true;
+    clearNtFeedback();
+    updateTargetControls();
+    try {
+      const result = await request(`${ntPath}/${encodeURIComponent(target.id)}`, 'DELETE', {
+        expected_revision: target.revision,
+      });
+      await loadTargets();
+      window.dispatchEvent(new CustomEvent('404-probe:network-targets-changed'));
+      const removedFrom = Number(result?.removed_from || 0);
+      setNtStatus(
+        removedFrom > 0 ? `已删除目标「${label}」（已从 ${removedFrom} 台设备移除）` : `已删除目标「${label}」`,
+        true
+      );
+    } catch (error) {
+      const details = error.details || {};
+      if (error.status === 409 && details.code === 'revision_conflict') {
+        await loadTargets();
+        setNtNotice(['目标已被别处修改，已刷新，请重试'], [], 'error');
+      } else if (error.status === 404) {
+        await loadTargets();
+        setNtStatus('该目标已不存在，已刷新列表。');
+      } else {
+        setNtStatus(error.status === 403 ? forbiddenSave : '删除目标失败，请重试。');
+      }
+    } finally {
+      ntBusy = false;
+      updateTargetControls();
+    }
+  }
+
+  function openApplyDialog(target, trigger) {
+    if (ntBusy || locked || !csrf) return;
+    document.getElementById('nt-apply-dialog')?.remove();
+    let submitting = false;
+    const usedIds = new Set((target.used_by || []).map(a => a.agent_id));
+    const deviceList = (typeof agents !== 'undefined' ? [...agents.values()] : [])
+      .sort((a, b) => (a.name || a.state?.hostname || a.agent_id).localeCompare(b.name || b.state?.hostname || b.agent_id, 'zh-CN'));
+
+    const dialog = document.createElement('dialog');
+    dialog.id = 'nt-apply-dialog';
+    dialog.className = 'dashboard-dialog nt-dialog';
+    document.body.append(dialog);
+
+    const content = document.createElement('div');
+    content.className = 'shell-content';
+    const errorBanner = document.createElement('p');
+    errorBanner.className = 'dashboard-dialog-error';
+    errorBanner.setAttribute('role', 'alert');
+    errorBanner.hidden = true;
+    content.append(errorBanner);
+
+    const listEl = document.createElement('div');
+    listEl.className = 'nt-apply-list';
+    const selectableBoxes = [];
+
+    if (!deviceList.length) {
+      const emptyNote = document.createElement('p');
+      emptyNote.className = 'dashboard-dialog-note';
+      emptyNote.textContent = '暂无可应用的设备。';
+      content.append(emptyNote);
+    } else {
+      for (const agent of deviceList) {
+        const isUsed = usedIds.has(agent.agent_id);
+        const row = document.createElement('label');
+        row.className = 'nt-apply-row';
+        row.dataset.agentId = agent.agent_id;
+        row.dataset.used = String(isUsed);
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.value = agent.agent_id;
+        box.checked = isUsed;
+        box.disabled = isUsed;
+        if (!isUsed) {
+          box.addEventListener('change', syncApplyButton);
+          selectableBoxes.push(box);
+        }
+        row.append(box);
+        if (typeof countryMark === 'function') {
+          row.append(countryMark(agent.country_code, agent.country_source, agent.country_lookup_enabled));
+        }
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'nt-apply-name';
+        nameSpan.textContent = agent.name || agent.state?.hostname || agent.agent_id;
+        nameSpan.title = nameSpan.textContent;
+        row.append(nameSpan);
+        if (isUsed) {
+          const badge = document.createElement('span');
+          badge.className = 'nt-apply-badge';
+          badge.textContent = '已使用';
+          row.append(badge);
+        }
+        listEl.append(row);
+      }
+      content.append(listEl);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'shell-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = '取消';
+    const applyBtn = document.createElement('button');
+    applyBtn.type = 'button';
+    applyBtn.className = 'primary-action';
+    applyBtn.textContent = '添加到所选设备';
+    applyBtn.disabled = true;
+    actions.append(cancelBtn, applyBtn);
+    dialog.append(content, actions);
+
+    const shell = DialogShell.attach(dialog, {
+      size: 'small',
+      title: '应用到设备',
+      subtitle: `${target.region} ${target.isp} · ${target.host}:${target.port}`,
+      busy: () => submitting,
+      guard: false,
+      onclose: () => dialog.remove(),
+    });
+    cancelBtn.addEventListener('click', () => shell.close());
+
+    function syncApplyButton() {
+      applyBtn.disabled = submitting || locked || !csrf || !selectableBoxes.some(box => box.checked);
+    }
+
+    applyBtn.addEventListener('click', async () => {
+      const selectedIds = selectableBoxes.filter(box => box.checked).map(box => box.value);
+      if (!selectedIds.length || submitting || locked || !csrf) return;
+      submitting = true;
+      errorBanner.hidden = true;
+      errorBanner.textContent = '';
+      syncApplyButton();
+      cancelBtn.disabled = true;
+      try {
+        const result = await request(`${ntPath}/${encodeURIComponent(target.id)}/apply`, 'POST', {agent_ids: selectedIds});
+        submitting = false;
+        shell.close();
+        clearNtFeedback();
+        await loadTargets();
+        window.dispatchEvent(new CustomEvent('404-probe:network-targets-changed'));
+        const added = Array.isArray(result?.added) ? result.added : [];
+        const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
+        const summary = `已添加到 ${added.length} 台`;
+        if (skipped.length) {
+          const skipLines = skipped.map(item => `${ntAgentName(item?.agent_id, item?.name)}：${ntSkipReasons[item?.reason] || item?.reason || '未添加'}`);
+          setNtNotice([summary], skipLines, added.length > 0 ? 'warn' : 'error');
+        } else {
+          setNtNotice([summary], [], 'good');
+        }
+      } catch (error) {
+        submitting = false;
+        errorBanner.textContent = error.status === 404
+          ? '该目标已不存在，请关闭后刷新。'
+          : error.status === 403 ? forbiddenSave : '应用失败，请重试。';
+        errorBanner.hidden = false;
+        cancelBtn.disabled = false;
+        syncApplyButton();
+      }
+    });
+
+    shell.open(trigger);
+    (selectableBoxes[0] || cancelBtn).focus({preventScroll: true});
+  }
+
+  ntCreate?.addEventListener('click', () => openTargetEditor(null, ntCreate));
+
+  document.addEventListener('404-probe:edit-network-target', async event => {
+    const targetId = event.detail?.id;
+    if (!targetId) return;
+    clearNtFeedback();
+    if (!sessionReady) initialize('targets');
+    try { await sessionReady; } catch { return; }
+    const list = await loadTargets();
+    const found = list.find(t => t.id === targetId);
+    if (found) {
+      openTargetEditor(found);
+    } else {
+      setNtStatus('目标库中找不到该目标，可能已被删除。');
+    }
+  });
+
+  window.addEventListener('404-probe:network-targets-changed', () => {
+    if (dashboardUI.page() === 'targets') void loadTargets();
+  });
+
   let sessionReady, versionReady, regionsReady;
   function initialize(section) {
     if (!sessionReady) sessionReady = readSession().then(() => {
       passwordButton.disabled = !csrf;
       updateRegions();
       updateSkinControls();
+      updateTargetControls();
       if (versionReady) check.disabled = !csrf;
     }, () => passwordStatus('读取会话失败，请刷新后重试。'));
 
@@ -617,6 +1211,9 @@
         showAbout(view);
       }, () => { updateError.textContent = '读取设置失败，仍可重新保存。'; });
       void Promise.all([sessionReady, versionReady]).then(() => { check.disabled = !csrf; });
+    }
+    if (section === 'targets') {
+      void loadTargets();
     }
     if (section === 'regions' && !regionsReady) {
       regionsReady = request(settingsPath + 'youtube-ad-free-regions').then(view => {

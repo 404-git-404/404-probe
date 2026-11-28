@@ -7,7 +7,7 @@
   const OUTDATED='页面已过期，请刷新',CONFLICT='配置已被其他页面修改',CONFIG_REFRESH_MS=30000,SUMMARY_FRESH_MS=25000;
   function create({document:doc=root.document,fetcher=(...args)=>root.fetch(...args),csrf=()=>'',unauthorized=()=>root.location.assign('/login'),
     state=root.AgentState,management=root.Management,Plot=root.uPlot,Observer=root.IntersectionObserver,Resize=root.ResizeObserver,
-    interval=root.setInterval,clear=root.clearInterval,now=()=>Date.now(),coordinator=null,historyHost=null,onConfig=null,onFamily=null}={}) {
+    interval=root.setInterval,clear=root.clearInterval,now=()=>Date.now(),coordinator=null,historyHost=null,onConfig=null,onFamily=null,onEditLibraryTarget=null}={}) {
     const cards=new Map(),queue=coordinator||C.coordinator({now}),dialogOwner={};
     let closed=false,panel=null,history=null,plot=null,resize=null,timer=null,wasHidden=doc.hidden;
     const dialog=doc.querySelector('#network-quality-history');
@@ -277,10 +277,10 @@
     const dirty=p=>C.isDirty(p.draft,p.baseDraft)||p.draftEnabled!==p.baseEnabled;
     const ispName=value=>C.isps.find(([key])=>key===value)?.[1]||value;
     const focusables=p=>[...p.node.querySelectorAll('button,input,select,summary')].filter(n=>!n.disabled&&!n.hidden&&(!n.closest||!n.closest('[hidden]'))&&!n.parentNode?.hidden);
-    function replaceDraft(p,draft,enabled){p.draft=C.clone(draft);p.baseDraft=C.clone(draft);p.baseEnabled=p.draftEnabled=enabled;p.labels=new Map(draft.slots.map(slot=>[slot.slot,{...slot}]));p.present=new Set(draft.slots.filter(slot=>slot.host||slot.slot_enabled||slot.slot.startsWith('obj-')).map(slot=>slot.slot));p.newSlots=new Set();}
+    function replaceDraft(p,draft,enabled){p.draft=C.clone(draft);p.baseDraft=C.clone(draft);p.baseEnabled=p.draftEnabled=enabled;}
     function openPanel(card,trigger) {
       if(panel&&!closePanel(false))return;
-      const config=card.config,draft=config?C.draftOf(config):{interval_ms:30000,slow_threshold_ms:String(C.THRESHOLD_DEFAULT),slots:C.slots.map(slot=>C.slotDraft({slot,kind:'builtin',region:'',isp:slot,host:'',port:0,slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false}))};
+      const config=card.config,draft=config?C.draftOf(config):{objects:true,interval_ms:30000,slow_threshold_ms:String(C.THRESHOLD_DEFAULT),slots:[]};
       const p=panel={card,trigger,config,base:config?.settings_revision,loaded:!!config,saving:false,toggling:false,guard:null,message:'',outdated:false,errors:{},node:el('dialog','nq-overlay')};replaceDraft(p,draft,!!config?.enabled);
       p.node.id='network-quality-settings';p.node.dataset.nqPanel='open';p.node.setAttribute('aria-labelledby','nq-dialog-title');doc.body.append(p.node);renderPanel();
       p.shell=root.DialogShell?.attach(p.node,{decorate:false,title:'网络质量设置',dirty:()=>dirty(p),busy:()=>p.saving||p.toggling,requestClose:()=>closePanel(true)});p.overflow=doc.body.style.overflow;
@@ -300,55 +300,280 @@
       if(!panel)return true;
       if((panel.saving||panel.toggling)&&!force){panel.message='正在提交，请等待结果';renderPanel();return false;}
       if(dirty(panel)&&!force){panel.shell?.requestClose();return false;}
-      const old=panel;panel=null;old.copyDialog?.close();queue.release(old.copyOwner);queue.release(old.card.panelReadOwner);old.card.configSerial++;old.card.reading=false;old.card.refreshing=null;
+      const old=panel;panel=null;old.copyDialog?.close();old.pickerDialog?.close();queue.release(old.copyOwner);queue.release(old.pickerOwner);queue.release(old.card.panelReadOwner);old.card.configSerial++;old.card.reading=false;old.card.refreshing=null;
       if(old.shell)old.shell.close();else{old.node.close();doc.body.style.overflow=old.overflow;}old.node.remove();if(old.trigger?.isConnected)old.trigger.focus({preventScroll:true});return true;
     }
     function changed(){if(panel){if(panel.guard==='conflict')panel.dismissed=panel.latest?.settings_revision;panel.guard=null;panel.message='';panel.errors={};renderPanel();}}
     const fieldError=(p,slot,field)=>{const code=p.errors[slot]?.[field]||C.hints(p.draft)[slot]?.[field];return code?(C.errorText[code]||'请检查此项'):'';};
     const draftOf=slot=>panel.draft.slots.find(s=>s.slot===slot);
-    function editLabels(p,slot){const original=p.labels.get(slot),v=p.slots.get(slot),row=draftOf(slot),region=v.regionText.value,isp=v.ispText.value;
-      if(original?.kind==='builtin'&&region===original.region&&isp===ispName(original.isp)){row.kind='builtin';row.region=original.region;row.isp=original.isp;}
-      else{row.kind='custom';row.region=region;row.isp=isp;}changed();
-    }
     function newObjectKey(rows) {
       for(let i=0;i<C.MAX_OBJECTS;i++) {
         const key='new-'+i;
         if(!rows.some(row=>row.slot===key))return key;
       }
     }
-    function addSlot(p){
-      const rows=p.draft.slots,blank=rows.find(row=>!p.present.has(row.slot));
-      const row=blank||{slot:newObjectKey(rows),show_on_card:false};
-      if(!blank){if(!p.draft.objects||rows.length>=C.MAX_OBJECTS)return;rows.push(row);}
-      const slot=row.slot;
-      Object.assign(row,{kind:'custom',region:'',isp:'',host:'',port:'443',slot_enabled:true,ipv4_tcp:true,ipv4_icmp:true,ipv6_tcp:true,ipv6_icmp:true});
-      p.present.add(slot);p.newSlots.add(slot);p.labels.set(slot,{...row});changed();p.slots.get(slot).regionText.focus({preventScroll:true});
+    function addTargetToDraft(p,target){
+      if(!p||p.draft.slots.length>=C.MAX_OBJECTS)return false;
+      if(target?.id&&p.draft.slots.some(row=>row.library_id===target.id))return false;
+      const key=newObjectKey(p.draft.slots);
+      if(!key)return false;
+      p.draft.slots.push(C.targetSlotDefaults(p.draft.slots,target,key));
+      changed();
+      return true;
     }
     function removeSlot(p,slot){
-      if(p.draft.objects)p.draft.slots=p.draft.slots.filter(row=>row.slot!==slot);
-      else Object.assign(draftOf(slot),{kind:'builtin',region:'',isp:slot,host:'',port:'',slot_enabled:false,ipv4_tcp:false,ipv4_icmp:false,ipv6_tcp:false,ipv6_icmp:false});
-      p.present.delete(slot);p.newSlots.delete(slot);changed();
+      p.draft.slots=p.draft.slots.filter(row=>row.slot!==slot);
+      changed();
     }
     function moveSlot(p,slot,delta){
-      const rows=p.draft.slots,from=rows.findIndex(row=>row.slot===slot);
-      let to=from+delta;
-      while(to>=0&&to<rows.length&&!p.present.has(rows[to].slot))to+=delta;
-      if(to<0||to>=rows.length)return;
+      const rows=p.draft.slots,from=rows.findIndex(row=>row.slot===slot),to=from+delta;
+      if(from<0||to<0||to>=rows.length)return;
       rows.splice(to,0,rows.splice(from,1)[0]);changed();
-      p.slots.get(slot)[delta<0?'up':'down'].focus();
+      p.slots.get(slot)?.[delta<0?'up':'down']?.focus?.();
+    }
+    async function jumpToLibraryTarget(p,libraryId,trigger){
+      if(!libraryId||p.saving||p.toggling)return;
+      if(dirty(p)){
+        const accepted=root.DialogShell?.confirm
+          ?await root.DialogShell.confirm({title:'放弃修改？',device:'网络质量设置',message:'改动还没保存，关掉就没了。',cancelText:'继续编辑',confirmText:'放弃修改',danger:true,trigger})
+          :true;
+        if(!accepted||panel!==p)return;
+      }
+      closePanel(true);
+      if(onEditLibraryTarget)onEditLibraryTarget(libraryId);
+      else if(typeof CustomEvent==='function')doc.dispatchEvent?.(new CustomEvent('404-probe:edit-network-target',{detail:{id:libraryId}}));
+    }
+    function openPicker(p){
+      if(p.pickerDialog?.open||p.saving||p.toggling||p.draft.slots.length>=C.MAX_OBJECTS)return;
+      const d=el('dialog','dashboard-dialog nq-picker-dialog');
+      d.id='nq-target-picker';
+      d.setAttribute('aria-label','添加目标');
+      const body=el('div','shell-content');
+      const search=el('input','nq-picker-search');
+      search.type='search';
+      search.placeholder='搜索地区、运营商或地址…';
+      search.setAttribute('aria-label','搜索目标');
+      search.dataset.nqPicker='search';
+      const status=el('p','dashboard-dialog-note','正在读取目标库…');
+      const list=el('div','nq-picker-list');
+
+      const createSection=el('div','nq-picker-create-wrap');
+      const newToggle=button('新建目标…',()=>{
+        createForm.hidden=!createForm.hidden;
+        if(!createForm.hidden){
+          createError.textContent='';
+          createError.hidden=true;
+          createInputs.region.focus({preventScroll:true});
+        }
+      },'nq-picker-new-toggle');
+      newToggle.dataset.nqPicker='new-toggle';
+
+      const createForm=el('form','nq-picker-create');
+      createForm.hidden=true;
+      createForm.autocomplete='off';
+      const createError=el('p','dashboard-dialog-error');
+      createError.setAttribute('role','alert');
+      createError.hidden=true;
+      const hints=el('datalist');
+      hints.id='nq-picker-isp-hints';
+      for(const label of ['电信','联通','移动']){const opt=el('option');opt.value=label;hints.append(opt);}
+      const createGrid=el('div','nt-form-grid');
+      const createInputs={},createErrors={};
+      for(const [key,labelText,placeholder,maxLength,initial]of [
+        ['region','地区','例如 华东',32,''],
+        ['isp','运营商','电信 / 联通 / 移动',32,''],
+        ['host','地址','域名或 IP',253,''],
+        ['port','端口','443',5,'443'],
+      ]){
+        const wrap=el('div','nt-field');
+        const label=el('label','',labelText);
+        label.htmlFor='nq-picker-'+key;
+        const input=el('input');
+        input.id='nq-picker-'+key;
+        input.name=key;
+        input.type='text';
+        input.maxLength=maxLength;
+        input.autocomplete='off';
+        input.placeholder=placeholder;
+        input.value=initial;
+        input.dataset.nqPickerField=key;
+        if(key==='isp')input.setAttribute('list','nq-picker-isp-hints');
+        if(key==='port')input.inputMode='numeric';
+        const err=el('small','nt-field-error');
+        err.dataset.nqPickerError=key;
+        err.setAttribute('role','alert');
+        input.addEventListener('input',()=>{err.textContent='';input.removeAttribute('aria-invalid');createError.textContent='';createError.hidden=true;});
+        createInputs[key]=input;
+        createErrors[key]=err;
+        wrap.append(label,input,err);
+        createGrid.append(wrap);
+      }
+      const createActions=el('div','nq-picker-create-actions');
+      const createCancel=button('取消',()=>{createForm.hidden=true;});
+      const createSubmit=el('button','primary-action','新建并添加');
+      createSubmit.type='submit';
+      createSubmit.dataset.nqPicker='create-submit';
+      createActions.append(createCancel,createSubmit);
+      createForm.append(createError,hints,createGrid,createActions);
+      createSection.append(newToggle,createForm);
+
+      body.append(search,status,list,createSection);
+      const actions=el('div','shell-actions');
+      const closeBtn=button('关闭',()=>closePicker());
+      actions.append(closeBtn);
+      d.append(body,actions);
+      doc.body.append(d);
+
+      p.pickerDialog=d;
+      p.pickerOwner={};
+      let allTargets=[],loaded=false,creating=false;
+      const usedLibraryIds=new Set(p.draft.slots.map(s=>s.library_id).filter(Boolean));
+      const shell=root.DialogShell?.attach(d,{title:'添加目标',size:'medium',subtitle:p.card.agent.name||'',busy:()=>creating,guard:false});
+      function closePicker(){if(shell)shell.close();else{d.close?.();if(d.open)d.open=false;d.dispatchEvent?.(new Event('close'));}}
+      d.addEventListener('close',()=>{queue.release(p.pickerOwner);if(p.pickerDialog===d)p.pickerDialog=null;d.remove();});
+
+      function renderPickerList(){
+        const full=allTargets.length>=64;
+        newToggle.disabled=creating||full||!csrf();
+        newToggle.title=full?'最多只能保存 64 个目标':'';
+        if(!loaded)return;
+        const available=allTargets.filter(t=>!usedLibraryIds.has(t.id));
+        const q=search.value.trim().toLocaleLowerCase();
+        const filtered=q?available.filter(t=>{
+          const hay=`${t.region} ${t.isp} ${t.host}:${t.port}`.toLocaleLowerCase();
+          return hay.includes(q);
+        }):available;
+        if(!allTargets.length){
+          status.textContent='目标库中还没有目标，可在下方新建。';
+          status.hidden=false;
+          list.replaceChildren();
+          return;
+        }
+        if(!available.length){
+          status.textContent='目标库中的目标都已添加到这台设备，可在下方新建。';
+          status.hidden=false;
+          list.replaceChildren();
+          return;
+        }
+        if(!filtered.length){
+          status.textContent='没有匹配的目标。';
+          status.hidden=false;
+          list.replaceChildren();
+          return;
+        }
+        status.hidden=true;
+        list.replaceChildren(...filtered.map(target=>{
+          const item=el('button','nq-picker-item');
+          item.type='button';
+          item.dataset.libraryId=target.id;
+          const main=el('span','nq-picker-main');
+          const name=el('strong','nq-picker-name',`${target.region} ${target.isp}`.trim());
+          const endpoint=el('span','nq-picker-endpoint',`${target.host}:${target.port}`);
+          main.append(name,endpoint);
+          const usage=el('span','nq-picker-usage',`使用中 ${Array.isArray(target.used_by)?target.used_by.length:0} 台`);
+          item.append(main,usage);
+          item.addEventListener('click',()=>{
+            if(creating||panel!==p)return;
+            addTargetToDraft(p,target);
+            closePicker();
+          });
+          return item;
+        }));
+      }
+
+      search.addEventListener('input',renderPickerList);
+      createForm.addEventListener('submit',async event=>{
+        event.preventDefault();
+        if(creating||!csrf()||panel!==p)return;
+        createError.textContent='';
+        createError.hidden=true;
+        for(const key of Object.keys(createErrors)){createErrors[key].textContent='';createInputs[key].removeAttribute('aria-invalid');}
+        const portText=createInputs.port.value.trim();
+        const payload={
+          region:createInputs.region.value,
+          isp:createInputs.isp.value,
+          host:createInputs.host.value.trim(),
+          port:/^[0-9]+$/.test(portText)?Number(portText):0,
+        };
+        creating=true;
+        createSubmit.disabled=true;
+        createCancel.disabled=true;
+        try{
+          const response=await fetcher('/api/v1/web/network-targets',{
+            method:'POST',cache:'no-store',
+            headers:{'Content-Type':'application/json','X-CSRF-Token':csrf()},
+            body:JSON.stringify(payload),
+          });
+          if(response.status===401){unauthorized();return;}
+          const body=await response.json().catch(()=>({}));
+          if(!response.ok){
+            const err=body?.error||body||{};
+            if(response.status===409&&err.code==='duplicate_target'){
+              createError.textContent='已有相同的目标';
+              createError.hidden=false;
+            }else if(response.status===409&&err.code==='target_limit'){
+              createError.textContent='目标库已满（最多 64 个）';
+              createError.hidden=false;
+            }else if(response.status===400&&Array.isArray(err.details)&&err.details.length){
+              const unmatched=[];
+              for(const detail of err.details){
+                const text=C.errorText[detail?.code]||'请检查此项';
+                if(detail?.field&&createErrors[detail.field]){
+                  createErrors[detail.field].textContent=text;
+                  createInputs[detail.field].setAttribute('aria-invalid','true');
+                }else unmatched.push(text);
+              }
+              if(unmatched.length){createError.textContent=[...new Set(unmatched)].join('；');createError.hidden=false;}
+            }else if(response.status===503){
+              createError.textContent='地址检查繁忙，请稍后重试';
+              createError.hidden=false;
+            }else{
+              createError.textContent=response.status===403?'保存被拒绝，请刷新后重试':'新建目标失败，请重试';
+              createError.hidden=false;
+            }
+            return;
+          }
+          const created=body?.target;
+          creating=false;
+          if(created&&panel===p){
+            addTargetToDraft(p,created);
+            if(typeof CustomEvent==='function')root.dispatchEvent?.(new CustomEvent('404-probe:network-targets-changed'));
+          }
+          closePicker();
+        }catch{
+          createError.textContent='新建目标失败，请重试';
+          createError.hidden=false;
+        }finally{
+          creating=false;
+          if(d.isConnected){createSubmit.disabled=false;createCancel.disabled=false;}
+        }
+      });
+
+      if(shell)shell.open(p.add);else{d.showModal?.();d.open=true;}
+      search.focus({preventScroll:true});
+      read(JSON.stringify(['network-targets']),p.pickerOwner,'/api/v1/web/network-targets').then(view=>{
+        if(panel!==p||p.pickerDialog!==d)return;
+        allTargets=Array.isArray(view?.targets)?view.targets:[];
+        loaded=true;
+        renderPickerList();
+      }).catch(error=>{
+        if(panel!==p||p.pickerDialog!==d||error?.name==='AbortError')return;
+        status.textContent='读取目标库失败，请关闭后重试。';
+        status.hidden=false;
+      });
     }
     function openCopy(p){
       if(p.copyDialog?.open||p.saving||p.toggling)return;const d=el('dialog','dialog-shell dialog-small'),body=el('div','shell-content'),choose=el('select'),status=el('p','nq-muted'),actions=el('div','shell-actions');d.setAttribute('aria-label','从其他设备复制');choose.setAttribute('aria-label','来源设备');
       for(const card of cards.values())if(card.id!==p.card.id&&!card.agent.revoked){const option=el('option','',card.agent.name||card.agent.state?.hostname||'未命名设备');option.value=card.id;choose.append(option);}
       let copying=false;const cancel=button('取消',()=>d.close()),apply=button('复制到当前草稿',async()=>{const id=choose.value;if(!id||!cards.has(id))return;copying=true;apply.disabled=true;status.textContent='正在读取来源设备…';
-        try{const raw=await read(JSON.stringify(['copy-config',id]),p.copyOwner,path(id)+'v4/config'),source=C.adapt(raw);if(panel!==p||!d.open||p.copyDialog!==d)return;if(!cards.has(id)||raw.agent_id!==id)throw Error('来源设备已不可用');
-          const copied=C.draftOf(source);const destination=p.draft.slots, objects=p.draft.objects, reserved=destination.slice();
-          const copiedSlots=copied.slots.slice(0,objects?C.MAX_OBJECTS:C.MAX_CARD_OBJECTS).map((row,i)=>{
-            const slot=objects?(destination[i]?.slot||newObjectKey(reserved)):C.slots[i];
-            if(!destination[i]&&objects)reserved.push({slot});
+        try{const raw=await read(JSON.stringify(['copy-config',id]),p.copyOwner,path(id)+'v4/config'),source=C.adapt(raw);if(panel!==p||!d.open||p.copyDialog!==d)return;if(!cards.has(id)||(raw.agent_id&&raw.agent_id!==id))throw Error('来源设备已不可用');
+          const copied=C.draftOf(source);const destination=p.draft.slots,reserved=destination.slice();
+          const copiedSlots=copied.slots.slice(0,C.MAX_OBJECTS).map((row,i)=>{
+            const slot=destination[i]?.slot||newObjectKey(reserved);
+            if(!destination[i])reserved.push({slot});
             return {...row,slot};
           });
-          p.draft={...copied,objects,slots:copiedSlots};p.labels=new Map(p.draft.slots.map(row=>[row.slot,{...row}]));p.present=new Set(p.draft.slots.filter(row=>row.host||row.slot_enabled||!C.slots.includes(row.slot)).map(row=>row.slot));p.newSlots=new Set();p.guard=null;p.errors={};p.message='已复制到当前草稿，保存后生效';d.close();renderPanel();
+          p.draft={...copied,objects:true,slots:copiedSlots};p.guard=null;p.errors={};p.message='已复制到当前草稿，保存后生效';d.close();renderPanel();
         }catch(error){if(panel===p&&d.open)status.textContent=error.message||'无法读取来源设备';}finally{copying=false;if(d.open)apply.disabled=!choose.value;}
       },'primary-action');apply.disabled=!choose.value;choose.addEventListener('change',()=>{apply.disabled=!choose.value;});status.textContent=choose.children.length?'只复制间隔、慢阈值和线路内容，会替换当前的线路设置；保存后才生效。':'没有其他可复制的设备。';body.append(choose,status);actions.append(cancel,apply);d.append(body,actions);doc.body.append(d);p.copyDialog=d;p.copyOwner={};
       const shell=root.DialogShell?.attach(d,{title:'从其他设备复制',size:'small',subtitle:p.card.agent.name||'',busy:()=>copying});d.addEventListener('close',()=>{queue.release(p.copyOwner);if(p.copyDialog===d)p.copyDialog=null;d.remove();});if(shell)shell.open(p.copyButton);else d.showModal();choose.focus({preventScroll:true});
@@ -362,27 +587,35 @@
       p.interval=el('select');p.interval.setAttribute('aria-label','检测间隔');p.interval.dataset.nqField='interval';for(const ms of C.intervals){const option=el('option','',ms/1000+' 秒');option.value=String(ms);p.interval.append(option);}p.interval.addEventListener('change',()=>{p.draft.interval_ms=Number(p.interval.value);changed();});settings.append(p.interval,el('span','','测一次'),el('span','','超过'));
       p.threshold=el('input');p.threshold.setAttribute('aria-label','慢阈值');p.threshold.dataset.nqField='threshold';p.threshold.inputMode='numeric';p.threshold.maxLength=4;p.threshold.addEventListener('input',()=>{p.draft.slow_threshold_ms=p.threshold.value;delete p.errors.threshold;p.guard=null;p.message='';renderPanel();});settings.append(p.threshold,el('span','','ms 算慢'));p.thresholdError=el('small','nq-field-error');p.masterNote=el('small','nq-muted');p.frequencyNote=el('small','nq-muted');body.append(settings,p.masterNote,p.frequencyNote,p.thresholdError);
       p.capabilityNote=el('p','nq-capability-note');body.append(p.capabilityNote);
-      const columns=el('div','nq-columns');for(const label of ['地区','运营商','目标地址','TCP 端口','测什么（默认全测）',''])columns.append(el('span','',label));body.append(columns);p.slots=new Map();
-      const suggestions=el('datalist');suggestions.id='nq-isp-hints';for(const label of ['电信','联通','移动']){const option=el('option');option.value=label;suggestions.append(option);}body.append(suggestions);
+      p.columns=el('div','nq-columns');for(const label of ['目标','测什么（默认全测）',''])p.columns.append(el('span','',label));body.append(p.columns);p.slots=new Map();
       p.rows=el('div','nq-object-rows');body.append(p.rows);
+      p.emptyRows=el('p','nq-empty-rows','尚未添加监测目标，点击下方“添加目标”从目标库选择。');body.append(p.emptyRows);
       p.cardLimit=el('p','nq-muted');p.cardLimit.setAttribute('role','status');body.append(p.cardLimit);
-      p.add=button('+ 添加线路',()=>addSlot(p),'nq-add');p.add.dataset.nqField='add';body.append(p.add,el('p','nq-footnote','亮着的就会测，点一下关掉。这台机器没有 IPv6 时自动跳过 v6；容器里测不了 ICMP 时会自动变灰。ICMP 可能被目标过滤，过滤时只看 TCP。'),el('p','nq-footnote','只检测你有权检测的目标。地区和运营商是你自己的标注，404-probe 不核对。'));
+      p.add=button('+ 添加目标',()=>openPicker(p),'nq-add');p.add.dataset.nqField='add';body.append(p.add,el('p','nq-footnote','亮着的就会测，点一下关掉。这台机器没有 IPv6 时自动跳过 v6；容器里测不了 ICMP 时会自动变灰。ICMP 可能被目标过滤，过滤时只看 TCP。'),el('p','nq-footnote','只检测你有权检测的目标。目标的地区、运营商、地址和端口在目标库中统一管理。'));
       p.messageNode=el('p','nq-status');p.messageNode.setAttribute('role','status');p.saveBottom=button('保存',()=>savePanel(),'nq-save');p.saveBottom.dataset.nqField='save-bottom';p.copyButton=button('从其他设备复制…',()=>openCopy(p),'nq-link');p.copyButton.dataset.nqField='copy';const cancel=button('取消',()=>{if(!p.saving&&!p.toggling)closePanel(true);},'nq-link');cancel.dataset.nqField='cancel';const foot=el('div','nq-dialog-foot');foot.append(p.copyButton,cancel,p.saveBottom);p.box.tabIndex=-1;p.box.append(header,p.guardEnable,p.guardConflict,body,p.messageNode,foot);n.append(p.box);
       let pressed=false;const outside=e=>{if(e.target!==n)return false;const r=n.getBoundingClientRect();return e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom;};n.addEventListener('pointerdown',e=>{pressed=e.button===0&&outside(e);});n.addEventListener('pointercancel',()=>{pressed=false;});n.addEventListener('click',e=>{const dismiss=pressed&&outside(e);pressed=false;if(dismiss&&!root.DialogShell)closePanel();});
     }
     function buildObjectRow(p,slot){
-      const set=el('fieldset','nq-slot');set.dataset.nqSlot=slot;const regionText=el('input'),ispText=el('input'),hostInput=el('input'),portInput=el('input'),errors=el('small','nq-field-error'),checks=new Map(),subNotes=new Map();errors.setAttribute('role','alert');
-        for(const [input,key,label,max]of [[regionText,'region-text','地区',64],[ispText,'isp-text','运营商',64],[hostInput,'host','目标地址',253],[portInput,'port','TCP 端口',5]]){input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',label);input.maxLength=max;input.autocomplete='off';}ispText.setAttribute('list','nq-isp-hints');portInput.inputMode='numeric';regionText.addEventListener('input',()=>editLabels(p,slot));ispText.addEventListener('input',()=>editLabels(p,slot));
-        hostInput.addEventListener('input',()=>{const row=draftOf(slot);row.host=hostInput.value;if(p.newSlots.has(slot)){const family=C.literalFamily(row.host);for(const [key,,fam]of C.subItems)row[key]=!family||family===fam;}p.guard=null;p.message='';delete p.errors[slot];renderPanel();});portInput.addEventListener('input',()=>{draftOf(slot).port=portInput.value;p.guard=null;p.message='';delete p.errors[slot];renderPanel();});
-        const subs=el('div','nq-subs');for(const [key,,family,protocol]of C.subItems){const label=el('label','nq-sub'),input=el('input');input.type='checkbox';input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase());input.addEventListener('change',()=>{draftOf(slot)[key]=input.checked;p.newSlots.delete(slot);changed();});label.append(input,el('span','',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase()));subs.append(label);checks.set(key,input);subNotes.set(key,label);}
-        const remove=button('×',()=>removeSlot(p,slot),'nq-remove');remove.setAttribute('aria-label','删除监测对象');remove.dataset.nqField=slot+'-remove';const resume=button('启用这条线路',()=>{draftOf(slot).slot_enabled=true;changed();},'nq-link');resume.dataset.nqField=slot+'-resume';const display=el('input'),displayLabel=el('label','nq-object-display'),actions=el('div','nq-object-actions');
-        display.type='checkbox';display.dataset.nqField=slot+'-show-on-card';display.addEventListener('change',()=>{draftOf(slot).show_on_card=display.checked;changed();});
-        displayLabel.append(display,el('span','','在卡片显示'));
-        const up=button('↑',()=>moveSlot(p,slot,-1)),down=button('↓',()=>moveSlot(p,slot,1));
-        up.setAttribute('aria-label','上移监测对象');down.setAttribute('aria-label','下移监测对象');
-        actions.append(displayLabel,up,down);
-        set.append(regionText,ispText,hostInput,portInput,subs,remove,actions,errors,resume);
-        return {set,regionText,ispText,hostInput,portInput,checks,subNotes,errors,resume,actions,display,up,down};
+      const set=el('fieldset','nq-slot');set.dataset.nqSlot=slot;
+      const info=el('div','nq-target-info'),name=el('strong','nq-target-name'),endpoint=el('span','nq-target-endpoint');
+      info.append(name,endpoint);
+      const errors=el('small','nq-field-error'),checks=new Map(),subNotes=new Map();errors.setAttribute('role','alert');
+      const subs=el('div','nq-subs');for(const [key,,family,protocol]of C.subItems){const label=el('label','nq-sub'),input=el('input');input.type='checkbox';input.dataset.nqField=slot+'-'+key;input.setAttribute('aria-label',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase());input.addEventListener('change',()=>{draftOf(slot)[key]=input.checked;changed();});label.append(input,el('span','',(family==='ipv4'?'v4 ':'v6 ')+protocol.toUpperCase()));subs.append(label);checks.set(key,input);subNotes.set(key,label);}
+      const remove=button('×',()=>removeSlot(p,slot),'nq-remove');remove.setAttribute('aria-label','删除监测对象');remove.dataset.nqField=slot+'-remove';
+      const slotEnabled=el('input'),enabledLabel=el('label','nq-object-enabled');
+      slotEnabled.type='checkbox';slotEnabled.dataset.nqField=slot+'-slot-enabled';
+      slotEnabled.addEventListener('change',()=>{draftOf(slot).slot_enabled=slotEnabled.checked;changed();});
+      enabledLabel.append(slotEnabled,el('span','','启用'));
+      const display=el('input'),displayLabel=el('label','nq-object-display'),actions=el('div','nq-object-actions');
+      display.type='checkbox';display.dataset.nqField=slot+'-show-on-card';display.addEventListener('change',()=>{draftOf(slot).show_on_card=display.checked;changed();});
+      displayLabel.append(display,el('span','','在卡片显示'));
+      const editLibrary=button('在目标库中编辑',()=>jumpToLibraryTarget(p,draftOf(slot)?.library_id,editLibrary),'nq-link nq-edit-library');
+      editLibrary.dataset.nqField=slot+'-edit-library';
+      const up=button('↑',()=>moveSlot(p,slot,-1)),down=button('↓',()=>moveSlot(p,slot,1));
+      up.setAttribute('aria-label','上移监测对象');down.setAttribute('aria-label','下移监测对象');
+      actions.append(enabledLabel,displayLabel,editLibrary,up,down);
+      set.append(info,subs,remove,actions,errors);
+      return {set,name,endpoint,checks,subNotes,errors,actions,slotEnabled,display,editLibrary,up,down};
     }
 
     function renderPanel(){if(!panel)return;const p=panel;if(!p.box)buildPanel(p);const config=p.config||p.card.config,locked=p.saving||p.toggling,value=(node,next)=>{if(doc.activeElement!==node&&node.value!==next)node.value=next;};
@@ -390,7 +623,7 @@
       p.masterNote.textContent=!config?'正在读取设置…':!config.supported?C.cardNotice(config)||'Agent 尚未支持':'';p.masterNote.hidden=!p.masterNote.textContent;value(p.interval,String(p.draft.interval_ms));value(p.threshold,String(p.draft.slow_threshold_ms));p.thresholdError.textContent=(C.errorText[p.errors.threshold||C.thresholdHint(p.draft)]||'');p.thresholdError.hidden=!p.thresholdError.textContent;p.frequencyNote.textContent=config&&config.effective_interval_ms!==config.interval_ms?'实际每隔 '+config.effective_interval_ms/1000+' 秒检测一次（当前负载限制）':'';p.frequencyNote.hidden=!p.frequencyNote.textContent;
       const noV6=config&&[...config.lanes.values()].some(l=>l.status==='no_ipv6'),icmpOff=new Set(['ipv4','ipv6'].filter(f=>config?.icmpSupport?.[f]==='unsupported'));
       p.capabilityNote.textContent=[noV6?'这台机器没有 IPv6，v6 会自动跳过':'',icmpOff.size?'这台机器不支持 '+[...icmpOff].map(f=>(f==='ipv4'?'v4':'v6')+' ICMP').join(' / ')+'，相关开关已置灰，已勾选的仍可取消':''].filter(Boolean).join('；');p.capabilityNote.hidden=!p.capabilityNote.textContent;
-      const slots=p.draft.slots, active=slots.filter(row=>p.present.has(row.slot)), shown=slots.filter(row=>row.show_on_card).length;
+      const slots=p.draft.slots,shown=slots.filter(row=>row.show_on_card).length;
       const current=new Set(slots.map(row=>row.slot));
       for(const [slot,v] of p.slots)if(!current.has(slot)){v.set.remove();p.slots.delete(slot);}
       let cursor=p.rows.firstChild;
@@ -399,15 +632,31 @@
         const v=p.slots.get(row.slot);
         if(v.set!==cursor)p.rows.insertBefore(v.set,cursor);
         cursor=v.set.nextSibling;
-        v.actions.hidden=!p.draft.objects;v.display.checked=!!row.show_on_card;
+        const label=[row.region,row.kind==='builtin'?ispName(row.isp):row.isp].filter(Boolean).join(' ')||'未命名目标';
+        const addr=row.host?(row.port?`${row.host}:${row.port}`:row.host):'';
+        if(v.name.textContent!==label)v.name.textContent=label;
+        v.name.title=label;
+        if(v.endpoint.textContent!==addr)v.endpoint.textContent=addr;
+        v.endpoint.title=addr;
+        v.slotEnabled.checked=!!row.slot_enabled;
+        v.slotEnabled.disabled=locked;
+        v.display.checked=!!row.show_on_card;
         v.display.disabled=locked||!row.show_on_card&&shown>=C.MAX_CARD_OBJECTS;
-        v.up.disabled=locked||active[0]===row;v.down.disabled=locked||active.at(-1)===row;
-        v.set.hidden=!p.present.has(row.slot);v.set.disabled=locked;value(v.regionText,row.region);value(v.ispText,row.kind==='builtin'?ispName(row.isp):row.isp);v.regionText.title=v.regionText.value;v.ispText.title=v.ispText.value;value(v.hostInput,row.host);value(v.portInput,row.port);const hints=['region','isp','host','port'].map(field=>fieldError(p,row.slot,field));v.errors.textContent=[...new Set(hints.filter(Boolean))].join(' · ');v.errors.hidden=!v.errors.textContent;v.resume.hidden=row.slot_enabled||!row.host;
+        v.editLibrary.disabled=locked||!row.library_id;
+        v.editLibrary.hidden=!row.library_id;
+        v.up.disabled=locked||slots[0]===row;v.down.disabled=locked||slots.at(-1)===row;
+        v.set.hidden=false;v.set.disabled=locked;
+        const hints=['library_id','region','isp','host','port','ipv4_tcp','ipv4_icmp','ipv6_tcp','ipv6_icmp'].map(field=>fieldError(p,row.slot,field));
+        v.errors.textContent=[...new Set(hints.filter(Boolean))].join(' · ');v.errors.hidden=!v.errors.textContent;
         const literal=C.disabledSubs(row.host);for(const [key,,family,protocol]of C.subItems){const input=v.checks.get(key),unsupported=protocol==='icmp'&&icmpOff.has(family);input.checked=!!row[key];input.disabled=locked||(literal[key]||unsupported)&&!row[key];input.title=literal[key]?'地址属于另一个地址族，请取消不匹配的勾选':unsupported?'当前环境不支持 ICMP；已选项仍可取消':'';v.subNotes.get(key).dataset.unavailable=String(unsupported);}
       }
-      p.cardLimit.textContent=p.draft.objects?(shown>=C.MAX_CARD_OBJECTS?'卡片已选满 3 个，取消勾选后可换选。':'卡片显示 '+shown+' / 3 个对象'):'';
+      p.columns.hidden=slots.length===0;
+      p.emptyRows.hidden=slots.length>0;
+      p.cardLimit.textContent=slots.length?(shown>=C.MAX_CARD_OBJECTS?'卡片已选满 3 个，取消勾选后可换选。':'卡片显示 '+shown+' / 3 个对象'):'';
       p.cardLimit.hidden=!p.cardLimit.textContent;
-      const remaining=(p.draft.objects?C.MAX_OBJECTS:C.MAX_CARD_OBJECTS)-p.present.size;p.add.textContent='+ 添加线路（还可加 '+remaining+' 条）';p.add.disabled=!remaining||locked;p.add.hidden=!remaining;p.copyButton.disabled=locked;p.messageNode.textContent=p.message||(p.outdated?OUTDATED:dirty(p)?'有未保存的修改':'');p.messageNode.hidden=!p.messageNode.textContent;p.saveBottom.textContent=p.saving?'保存中…':'保存';p.saveBottom.disabled=locked||p.outdated||!p.base||!csrf();
+      const full=slots.length>=C.MAX_OBJECTS;
+      p.add.textContent='+ 添加目标';p.add.disabled=locked||full;p.add.hidden=false;p.add.title=full?'每台最多 8 个':'';
+      p.copyButton.disabled=locked;p.messageNode.textContent=p.message||(p.outdated?OUTDATED:dirty(p)?'有未保存的修改':'');p.messageNode.hidden=!p.messageNode.textContent;p.saveBottom.textContent=p.saving?'保存中…':'保存';p.saveBottom.disabled=locked||p.outdated||!p.base||!csrf();
     }
     async function submit(p,suffix,payload){const card=p.card;card.configSerial++;card.reading=false;card.refreshing=null;queue.release(card.configOwner);queue.release(card.panelReadOwner);const raw=await write(card,suffix,payload);return {raw,config:C.adapt(raw)};}
     function failed(p,error){if(p.card.dead||panel!==p)return;p.saving=false;p.toggling=false;
@@ -424,7 +673,7 @@
       if(p.draftEnabled&&!p.baseEnabled&&!confirmedEnable){p.guard='enable';renderPanel();return;}
       let data;try{data=C.savePayload(p.draft,p.base);if(new TextEncoder().encode(JSON.stringify(data)).length>16384)throw Error('配置内容过长');}catch(error){p.message=error.message;renderPanel();return;}
       const wanted=p.draftEnabled;p.saving=true;p.guard=null;p.message='';p.errors={};let configurationSaved=false;renderPanel();
-      try{let {raw,config}=await submit(p,'v4/config',data);if(p.card.dead||panel!==p)return;configurationSaved=true;p.card.raw=raw;p.config=config;p.base=config.settings_revision;p.baseDraft=C.draftOf(config);p.baseEnabled=config.enabled;p.labels=new Map(p.baseDraft.slots.map(row=>[row.slot,{...row}]));bindConfig(p.card,config);
+      try{let {raw,config}=await submit(p,'v4/config',data);if(p.card.dead||panel!==p)return;configurationSaved=true;p.card.raw=raw;p.config=config;p.base=config.settings_revision;p.baseDraft=C.draftOf(config);p.baseEnabled=config.enabled;bindConfig(p.card,config);
         if(config.enabled!==wanted){const enabledResult=await submit(p,'v4/enabled',C.enabledPayload(config.settings_revision,wanted));if(p.card.dead||panel!==p)return;raw=enabledResult.raw;config=enabledResult.config;}
         p.saving=false;p.card.raw=raw;p.config=config;p.base=config.settings_revision;replaceDraft(p,C.draftOf(config),config.enabled);p.message=config.enabled?'已保存，已按新配置执行':'已保存（未开启检测）';bindConfig(p.card,config);renderPanel();
       }catch(error){if(configurationSaved&&panel===p){p.saving=false;p.partial='线路配置已保存；启用状态未确认。';p.message=p.partial+'正在读取实际状态。';if(error.status===409&&error.code==='revision_conflict')p.guard='conflict';renderPanel();loadConfig(p.card,true);}else failed(p,error);}
@@ -506,7 +755,7 @@
       },data,chart);
       if(Resize){resize=new Resize(()=>{if(history===h&&historyActive(h)&&plot)plot.setSize({width:width(),height:320});});resize.observe(chart);}
     }
-    function keydown(event){if(event.defaultPrevented||panel?.copyDialog?.open||doc.querySelector('#action-confirm[open]'))return;if(event.key==='Escape'&&panel&&!panel.shell){event.preventDefault();closePanel();}else if(event.key==='Tab'&&panel){
+    function keydown(event){if(event.defaultPrevented||panel?.copyDialog?.open||panel?.pickerDialog?.open||doc.querySelector('#action-confirm[open]'))return;if(event.key==='Escape'&&panel&&!panel.shell){event.preventDefault();closePanel();}else if(event.key==='Tab'&&panel){
       const nodes=focusables(panel),first=nodes[0],last=nodes.at(-1),active=doc.activeElement;
       if(!nodes.length){event.preventDefault();panel.box.focus();}
       else if(!panel.node.contains(active)){event.preventDefault();(event.shiftKey?last:first).focus();}
@@ -516,7 +765,9 @@
     function visibility(){if(wasHidden===doc.hidden)return;wasHidden=doc.hidden;if(doc.hidden){hideTips();for(const card of cards.values()){card.generation++;card.summaryLoading=false;queue.release(card.historyOwner);queue.release(card.configOwner);queue.release(card.panelReadOwner);card.configSerial++;card.reading=false;card.refreshing=null;}if(history){history.generation++;history.loading=false;queue.release(dialogOwner);destroyPlot();}if(timer){clear(timer);timer=null;}}
       else{if(!timer)timer=interval(tick,30000);tick();}}
     const themeChanged=()=>{if(history&&historyActive(history))renderHistory();};
+    const targetsChanged=()=>{if(closed)return;for(const card of cards.values()){card.configAt=0;if(effective(card))loadConfig(card,false,true);}if(panel)loadConfig(panel.card,true);};
     root.addEventListener?.('404-probe:themechange',themeChanged);
+    root.addEventListener?.('404-probe:network-targets-changed',targetsChanged);
     const cancelDialog=event=>{event.preventDefault();closeHistory();};
     const dialogClosed=()=>{if(!dialog.open)closeHistory();};const backdrop=event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeHistory();}};
     doc.addEventListener('keydown',keydown);doc.addEventListener('visibilitychange',visibility);
@@ -536,7 +787,7 @@
       historyTargets(id){const c=cards.get(id);return (c?.config?.targets||[]).filter(t=>t.id).map(t=>({...t,label:`${C.slotLabel(c.config,t.slot)} · ${t.protocol.toUpperCase()} · ${t.family==='ipv4'?'V4':'V6'}${t.status==='active'?'':' · 当前未检测'}`}));},
       ensureHistoryTargets(id){const c=cards.get(id);return c&&!c.config?loadConfig(c,true):Promise.resolve();},
       close(){root.removeEventListener?.('scroll',hideTips,true);root.removeEventListener?.('resize',hideTips);closed=true;if(timer)clear(timer);observer?.disconnect();closePanel(true);closeHistory();for(const c of [...cards.values()])retire(c);queue.release(dialogOwner);if(!coordinator)queue.close();
-      doc.removeEventListener('keydown',keydown);root.removeEventListener?.('404-probe:themechange',themeChanged);doc.removeEventListener('visibilitychange',visibility);
+      doc.removeEventListener('keydown',keydown);root.removeEventListener?.('404-probe:themechange',themeChanged);root.removeEventListener?.('404-probe:network-targets-changed',targetsChanged);doc.removeEventListener('visibilitychange',visibility);
       if(!observer){root.removeEventListener?.('scroll',fallbackVisibility);root.removeEventListener?.('resize',fallbackVisibility);}
       dialog.removeEventListener('cancel',cancelDialog);dialog.removeEventListener('close',dialogClosed);dialog.removeEventListener('click',backdrop);},
       // Production lifecycle hooks exposed for deterministic synthetic verification.

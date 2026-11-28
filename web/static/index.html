@@ -70,6 +70,7 @@
         <div class="panel-items">
           <button class="panel-item" data-settings="update" type="button">检查新版本</button>
           <button class="panel-item" data-settings="password" type="button">修改密码</button>
+          <button class="panel-item" data-settings="targets" type="button">网络目标</button>
           <button class="panel-item" data-settings="regions" type="button">YouTube 无广告地区名单</button>
           <button class="panel-item" data-settings="backup" type="button">备份</button>
           <button class="panel-item" data-settings="appearance" type="button">外观</button>
@@ -130,6 +131,37 @@
           <div class="settings-actions"><button id="pw-save" class="primary-action" type="submit" disabled>修改密码</button></div>
         </form>
         <p class="settings-note">忘记密码时：在 Server 上以 root 运行 <code>404-probe-install web-password reset</code>，所有浏览器都会退出。</p>
+      </section>
+      <section id="targets" hidden aria-labelledby="targets-title">
+        <div class="targets-head">
+          <div class="targets-head-main">
+            <h2 id="targets-title">网络目标</h2>
+            <p class="settings-note">在这里录入监测目标，各设备从这里选择。修改目标会同时修改所有使用它的设备。</p>
+          </div>
+          <div class="targets-head-actions">
+            <span id="nt-count" class="targets-count">0 / 64</span>
+            <button id="nt-create" class="primary-action" type="button" disabled>新建目标</button>
+          </div>
+        </div>
+        <p id="nt-status" class="settings-note" role="status" hidden></p>
+        <div id="nt-notice" class="settings-banner nt-notice" role="status" hidden></div>
+        <div id="nt-empty" class="targets-empty" hidden>还没有网络目标。新建一个，然后应用到设备。</div>
+        <div class="targets-table-wrap">
+          <table id="nt-table" class="targets-table" hidden>
+            <thead>
+              <tr>
+                <th>地区</th>
+                <th>运营商</th>
+                <th>地址</th>
+                <th>端口</th>
+                <th>使用中</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="nt-tbody"></tbody>
+          </table>
+        </div>
+        <datalist id="nt-isp-hints"><option value="电信"><option value="联通"><option value="移动"></datalist>
       </section>
       <section id="regions" hidden aria-labelledby="regions-title">
         <h2 id="regions-title">YouTube 无广告地区</h2>

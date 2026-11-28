@@ -25,6 +25,7 @@ function dom() {
     get textContent() { return this.ownText + this.children.map(c => c.textContent).join(''); }
     setAttribute(k, v) { this.attrs[k] = String(v); }
     getAttribute(k) { return this.attrs[k]; }
+    removeAttribute(k) { delete this.attrs[k]; }
     append(...nodes) { for (const n of nodes) { if (n.parent) n.parent.children = n.parent.children.filter(x => x !== n); n.parent = this; this.children.push(n); } }
     get firstElementChild() { return this.children[0] || null; }
     get lastElementChild() { return this.children.at(-1) || null; }
@@ -104,9 +105,20 @@ function v5Card(raw, family = 'ipv4', now = 1800000000000, over = {}) {
 function setup(options = {}) {
   const {doc, dialog} = dom(), requests = [], writes = [];
   let raw = clone(options.raw || load('v4-running')), gets = 0;
+  let library = clone(options.library || [
+    {id: '1'.repeat(32), region: '广东', isp: '移动', host: 'example.net', port: 443, revision: 1, used_by: []},
+    {id: '2'.repeat(32), region: '上海', isp: '电信', host: '93.184.216.34', port: 443, revision: 1, used_by: []},
+  ]);
   const fetcher = async (url, init = {}) => {
     const method = init.method || 'GET'; requests.push({url, method, body: init.body ? JSON.parse(init.body) : null});
     const reply = (status, value) => ({ok: status >= 200 && status < 300, status, statusText: String(status), json: async () => value});
+    if (url === '/api/v1/web/network-targets' && method === 'GET') return reply(200, {targets: clone(library)});
+    if (url === '/api/v1/web/network-targets' && method === 'POST') {
+      const b = JSON.parse(init.body);
+      const created = {id: String(library.length + 1).padStart(32, '0'), ...b, revision: 1, used_by: []};
+      library.push(created);
+      return reply(201, {target: created});
+    }
     if (url.endsWith('/v4/config') && method === 'GET' && options.readFail?.()) return reply(503, {error: {code: 'unavailable'}});
     if (url.endsWith('/v4/config') && method === 'GET' && options.readStatus) return reply(options.readStatus, {error: {code: 'client_outdated'}});
     if (url.endsWith('/v4/config') && method === 'GET') { const answer = clone(raw), hold = options.holdRead?.(gets++); if (hold) await hold; return reply(200, answer); }

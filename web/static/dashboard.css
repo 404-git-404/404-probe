@@ -138,6 +138,10 @@ body #dashboard-main{position:relative;width:100%;max-width:none;margin:0;min-wi
 .value-medal{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;cursor:help;user-select:none}
 .value-medal[hidden]{display:none!important}
 .value-medal svg{display:block;width:14px;height:14px}
+.value-medal .value-medal-ribbon{fill:var(--color-medal-ribbon)}
+.value-medal .value-medal-disc{fill:var(--color-medal)}
+.value-medal .value-medal-ring{fill:none;stroke:var(--color-medal-ribbon);stroke-width:.8}
+.value-medal .value-medal-star{fill:var(--color-card)}
 .status-row-faults{flex:0 0 auto;justify-content:flex-end}
 .status-item{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;max-width:none;font:11px/1.3 system-ui;white-space:nowrap}
 .status-item[hidden],.status-more[hidden]{display:none!important}
