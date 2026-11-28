@@ -261,6 +261,14 @@
     invalid_description: '说明不能超过 200 个字符',
     empty_variables: '至少需要 1 个有效颜色变量',
     invalid_json: '不是有效的 JSON 文件',
+    no_valid_variables: '至少需要 1 个有效颜色变量',
+    invalid_variables: '颜色变量必须是对象',
+    invalid_size: '皮肤文件不能超过 64 KB',
+  };
+  const skinLengthLabels = {
+    name: '名称需为 1–40 个字符',
+    author: '作者不能超过 40 个字符',
+    description: '说明不能超过 200 个字符',
   };
   let skinState = {active_id: 'default', skins: []};
   let skinBusy = false;
@@ -320,7 +328,8 @@
   function formatSkinDetail(item) {
     const mode = skinModeLabels[item?.mode] || item?.mode || '文件';
     const variable = item?.variable ? ' ' + item.variable : '';
-    const reason = skinReasonLabels[item?.reason] || item?.reason || '格式无效';
+    const reason = (item?.reason === 'invalid_length' && skinLengthLabels[item?.variable])
+      || skinReasonLabels[item?.reason] || item?.reason || '格式无效';
     return `${mode}${variable}：${reason}`;
   }
 
