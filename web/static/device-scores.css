@@ -61,53 +61,6 @@
 }
 .agent-card[data-score-overflow=true] .c7-head { position: relative; z-index: 2; }
 .c7 .c7-head { position: relative; }
-.value-ribbon[hidden] { display: none !important; }
-.value-ribbon-card {
-  position: absolute;
-  left: -25px;
-  top: -1px;
-  z-index: 4;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 68px;
-  height: 18px;
-  transform: rotate(-45deg);
-  transform-origin: center center;
-  cursor: help;
-  user-select: none;
-}
-.value-ribbon-card .value-ribbon-bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  filter: drop-shadow(0 1px 0 rgba(59,42,0,.45));
-}
-.value-ribbon-card .value-ribbon-text {
-  position: relative;
-  z-index: 1;
-  font: 800 9.5px/1 system-ui,-apple-system,"Segoe UI",sans-serif;
-  letter-spacing: .02em;
-  color: #3B2A00;
-  white-space: nowrap;
-}
-.value-ribbon-list {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  cursor: help;
-}
-.value-ribbon-list svg {
-  display: block;
-  width: 16px;
-  height: 16px;
-  filter: drop-shadow(0 1px 0 rgba(59,42,0,.35));
-}
 .score-slot-card { z-index: 3; }
 .score-stamp-list { --stamp-size: 34px; }
 .score-stamp-list[data-tier=none] { --stamp-size: 26px; }
@@ -128,7 +81,7 @@
   inset: 4%;
   border-radius: 50%;
   pointer-events: none;
-  background: linear-gradient(115deg,transparent 35%,rgba(255,255,255,.58) 50%,transparent 65%) 150% 0 / 250% 100%;
+  background: linear-gradient(115deg,transparent 35%,var(--color-score-glint) 50%,transparent 65%) 150% 0 / 250% 100%;
   opacity: .65;
 }
 .score-stamp[data-tier=SSS] svg { animation: score-hue 8s linear infinite; }
@@ -142,7 +95,7 @@
   width: 7px;
   height: 7px;
   pointer-events: none;
-  background: #fff;
+  background: var(--color-score-star);
   clip-path: polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);
   opacity: 0;
 }

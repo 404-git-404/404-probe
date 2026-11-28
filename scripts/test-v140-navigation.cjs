@@ -121,7 +121,8 @@ for(const theme of ['dark','light']){
         if(!await page.locator('#dashboard-devices').evaluate(n=>n.open)) await page.locator('#dashboard-devices > summary').click();
       };
       await page.evaluate(()=>dashboardData.reload());
-      await resetDevices();
+      await page.locator('#dashboard-direction').click();
+      await page.locator('#dashboard-direction').click();
       await settle(page);
       assert.equal(await page.locator('.agent-card h2').first().getAttribute('aria-label'),'Synthetic-001');
       assert(await card(page,0).locator('.dashboard-disk-warning').isVisible());

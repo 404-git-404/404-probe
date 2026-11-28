@@ -38,6 +38,38 @@
 #backup-key .settings-check{margin-top:.75rem}
 #panel-backup-failure{color:var(--color-danger-text)}
 #backup .settings-about{margin-top:1rem}
-@media(max-width:39rem){.backup-grid{grid-template-columns:minmax(0,1fr);gap:.3rem}.backup-grid input{margin-bottom:.35rem}}
+.appearance-block+.appearance-block{margin-top:1.15rem;padding-top:1rem;border-top:1px solid var(--color-line-soft)}
+.appearance-block h3{font-size:.95rem;margin:0 0 .5rem;color:var(--color-text)}
+.appearance-mode-group{display:inline-flex;border:1px solid var(--color-line-strong);border-radius:.5rem;overflow:hidden;background:var(--color-card)}
+.appearance-mode-group button{border:0;border-radius:0;padding:.42rem .9rem;background:transparent;color:var(--color-text);font:inherit;cursor:pointer;white-space:nowrap}
+.appearance-mode-group button+button{border-left:1px solid var(--color-line)}
+.appearance-mode-group button:not([aria-pressed=true]):is(:hover,:focus-visible){background:var(--color-surface-hover)}
+.appearance-mode-group button[aria-pressed=true]{background:var(--color-accent);color:var(--color-text-02);font-weight:650}
+.appearance-skins-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem;flex-wrap:wrap}
+.appearance-skins-head .settings-actions{margin-top:0}
+.settings-link-btn{display:inline-flex;align-items:center;justify-content:center;padding:.45rem .7rem;border:1px solid var(--color-line-strong);border-radius:.48rem;background:var(--color-card);color:var(--color-text);text-decoration:none;font:inherit;line-height:1.2;cursor:pointer;white-space:nowrap}
+.settings-link-btn:hover,.settings-link-btn:focus-visible{background:var(--color-surface-hover)}
+#skin-errors ul{margin:.35rem 0 0;padding-left:1.2rem;font-size:.85rem}
+#skin-errors li{margin:.15rem 0}
+.skin-list{display:grid;gap:.65rem;margin-top:.75rem}
+.skin-card{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.8rem .95rem;border:1px solid var(--color-line);border-radius:.6rem;background:var(--color-surface-module)}
+.skin-card[data-active=true]{border-color:var(--color-accent)}
+.skin-meta{min-width:0;flex:1 1 auto;display:grid;gap:.35rem}
+.skin-head{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+.skin-name{font-size:.95rem;font-weight:650;color:var(--color-text);overflow-wrap:anywhere}
+.skin-active-badge{display:inline-block;padding:.08rem .45rem;border-radius:999px;background:var(--color-accent-soft);color:var(--color-accent-text);font-size:.75rem;font-weight:650}
+.skin-author{font-size:.8rem;color:var(--color-text-muted)}
+.skin-desc{margin:0;font-size:.84rem;color:var(--color-text-secondary);line-height:1.45;overflow-wrap:anywhere}
+.skin-swatches{display:flex;flex-wrap:wrap;gap:.35rem 1rem;margin-top:.15rem}
+.skin-swatch-row{display:inline-flex;align-items:center;gap:.3rem}
+.skin-swatch-label{font-size:.75rem;color:var(--color-text-muted);margin-right:.1rem}
+.skin-swatch{width:15px;height:15px;border-radius:4px;border:1px solid var(--color-line-strong);box-shadow:inset 0 0 0 1px var(--color-swatch-ring);display:inline-block;flex:none}
+.skin-actions{display:flex;align-items:center;gap:.45rem;flex:none;flex-wrap:wrap}
+.skin-actions button{padding:.38rem .68rem;border:1px solid var(--color-line-strong);border-radius:.48rem;background:var(--color-card);color:var(--color-text);font:inherit;font-size:.85rem;cursor:pointer;white-space:nowrap}
+.skin-actions button:hover:not(:disabled){background:var(--color-surface-hover)}
+.skin-actions .settings-link-btn{padding:.38rem .68rem;font-size:.85rem}
+.skin-actions .skin-delete-btn{color:var(--color-danger-text);border-color:var(--color-line-18)}
+.skin-actions .skin-delete-btn:hover:not(:disabled){background:var(--color-surface-29);border-color:var(--color-danger)}
+@media(max-width:39rem){.backup-grid{grid-template-columns:minmax(0,1fr);gap:.3rem}.backup-grid input{margin-bottom:.35rem}.skin-card{flex-direction:column;align-items:stretch}.skin-actions{justify-content:flex-start}}
 
 @media(max-width:34rem){.settings-content section{padding:1rem}.settings-password-fields{grid-template-columns:minmax(0,1fr);gap:.3rem}.settings-password-fields label:not(:first-child){margin-top:.35rem}.settings-show{grid-column:1}.settings-region-list{grid-template-columns:1fr}}

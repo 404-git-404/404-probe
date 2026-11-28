@@ -1,7 +1,7 @@
 (function(root){
   'use strict';
   const M = root.DashboardModel;
-  const settings = ['update', 'password', 'regions', 'backup', 'about'];
+  const settings = ['update', 'password', 'regions', 'backup', 'appearance', 'about'];
 
   function create({document:doc=root.document,onchange=()=>{},onManage=()=>{},read=url=>root.fetch(url).then(r=>r.json())}={}){
     const preferences = M.preferences(), p = preferences.value, get = id => doc.getElementById(id);
@@ -174,10 +174,20 @@
           if(app.classList.contains('panel-collapsed')){
             setCollapsed(false);
             host.open=true;
-          }else{
-            host.open=page!=='devices'||!host.open;
+            clear();
+            return;
           }
-          clear();
+          if(page!=='devices'){
+            host.open=true;
+            clear();
+            return;
+          }
+          if(M.active(p)){
+            host.open=true;
+            clear();
+            return;
+          }
+          host.open=!host.open;
         });
       }else if(key==='settings'){
         host.querySelector('summary').addEventListener('click',event=>{
@@ -207,11 +217,6 @@
       if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey) return;
       event.preventDefault();navigate('backup',{closeMobile:true});onchange();
     });
-    const themeButtons = [...doc.querySelectorAll('[data-panel-theme]')];
-    function paintTheme(){for(const button of themeButtons) pressed(button,button.dataset.panelTheme===root.ProbeTheme.get());}
-    for(const button of themeButtons) button.addEventListener('click',()=>root.ProbeTheme.set(button.dataset.panelTheme));
-    root.addEventListener('404-probe:themechange',paintTheme);
-    paintTheme();
 
     function layout(){
       if(!phone.matches&&mobile.open) mobileShell.close();

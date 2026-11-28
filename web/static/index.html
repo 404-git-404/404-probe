@@ -72,7 +72,7 @@
           <button class="panel-item" data-settings="password" type="button">修改密码</button>
           <button class="panel-item" data-settings="regions" type="button">YouTube 无广告地区名单</button>
           <button class="panel-item" data-settings="backup" type="button">备份</button>
-          <div class="panel-item panel-appearance">外观 <span class="panel-theme" role="group" aria-label="外观"><button type="button" data-panel-theme="dark">深色</button><button type="button" data-panel-theme="light">浅色</button></span></div>
+          <button class="panel-item" data-settings="appearance" type="button">外观</button>
           <button class="panel-item" data-settings="about" type="button">关于</button>
           <hr>
           <button id="logout" class="panel-item" type="button" disabled>退出登录</button>
@@ -179,6 +179,34 @@
         <p id="backup-overdue" class="settings-error" role="status" hidden>超过 2 天没有成功备份。</p>
         <div class="settings-actions"><button id="backup-run" type="button" disabled>立即备份</button></div>
         <p id="backup-result" class="settings-note" role="status"></p>
+      </section>
+      <section id="appearance" hidden aria-labelledby="appearance-title">
+        <h2 id="appearance-title">外观</h2>
+        <div class="appearance-block">
+          <h3>颜色模式</h3>
+          <div id="appearance-mode" class="appearance-mode-group" role="group" aria-label="颜色模式">
+            <button type="button" data-appearance-mode="light" aria-pressed="false">浅色</button>
+            <button type="button" data-appearance-mode="dark" aria-pressed="false">深色</button>
+            <button type="button" data-appearance-mode="system" aria-pressed="false">跟随系统</button>
+          </div>
+          <p class="settings-note">仅对当前浏览器生效；选择“跟随系统”时会随系统深浅模式实时切换。</p>
+        </div>
+        <div class="appearance-block appearance-skins">
+          <div class="appearance-skins-head">
+            <div>
+              <h3>皮肤</h3>
+              <p class="settings-note">所有浏览器共用当前皮肤，最多保存 20 个。</p>
+            </div>
+            <div class="settings-actions">
+              <input id="skin-file-input" class="sr-only" type="file" accept=".json,application/json">
+              <button id="skin-import" type="button" disabled>导入皮肤…</button>
+              <a id="skin-example" class="settings-link-btn" href="/api/v1/web/skins/example" download>下载示例皮肤</a>
+            </div>
+          </div>
+          <p id="skin-status" class="settings-note" role="status" hidden></p>
+          <div id="skin-errors" class="settings-banner settings-error" role="alert" hidden></div>
+          <div id="skin-list" class="skin-list"></div>
+        </div>
       </section>
       <section id="about" hidden aria-labelledby="about-title">
         <h2 id="about-title">关于</h2>

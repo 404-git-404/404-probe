@@ -29,7 +29,7 @@
 
   const shown = score => typeof score?.score === 'number' && gradeNames.has(score.grade);
   const isHighValue = model => model?.high_value === true && shown(model?.overall);
-  function valueRibbonTip(model){
+  function valueMedalTip(model){
     if(model?.value_rank > 0 && model?.value_count > 0){
       return '高性价比 · 第 ' + model.value_rank + ' / ' + model.value_count + ' 名';
     }
@@ -210,42 +210,8 @@
     return items[agent?.agent_id];
   }
 
-  function valueRibbon(doc, size){
-    const ns = 'http://www.w3.org/2000/svg';
-    const node = element(doc, 'span', 'value-ribbon value-ribbon-' + size);
-    node.hidden = true;
-    node.setAttribute('role', 'img');
-    const svg = doc.createElementNS(ns, 'svg');
-    svg.setAttribute('aria-hidden', 'true');
-    const use = doc.createElementNS(ns, 'use');
-    if(size === 'card'){
-      svg.setAttribute('class', 'value-ribbon-bg');
-      svg.setAttribute('viewBox', '0 0 68 18');
-      use.setAttribute('href', '/score-stamps.svg#value-ribbon-card');
-      svg.append(use);
-      node.append(svg, element(doc, 'span', 'value-ribbon-text', '高性价比'));
-    }else{
-      svg.setAttribute('viewBox', '0 0 16 16');
-      use.setAttribute('href', '/score-stamps.svg#value-ribbon-icon');
-      svg.append(use);
-      node.append(svg);
-    }
-    return {node, update(model){
-      const show = isHighValue(model);
-      node.hidden = !show;
-      if(show){
-        const tip = valueRibbonTip(model);
-        node.title = tip;
-        node.setAttribute('aria-label', tip);
-      }else{
-        node.removeAttribute('title');
-        node.removeAttribute('aria-label');
-      }
-    }};
-  }
-
   function setOverflow(node, model){
-    const large = ['S','SS','SSS'].includes(model?.overall?.grade) || isHighValue(model);
+    const large = ['S','SS','SSS'].includes(model?.overall?.grade);
     if(node.dataset.scoreLarge===String(large)) return;
     node.dataset.scoreLarge = large;
     if(large && overflowObserver){
@@ -286,6 +252,6 @@
   },{capture:true,passive:true});
   root.addEventListener?.('resize',hide);
   root.addEventListener?.('pagehide',()=>{request?.abort();hide();});
-  root.DeviceScores = {stamp,valueRibbon,isHighValue,valueRibbonTip,networkBadge,forAgent,refresh,setOverflow,unobserve:node=>overflowObserver?.unobserve(node),version:()=>computedAt,
+  root.DeviceScores = {stamp,isHighValue,valueMedalTip,networkBadge,forAgent,refresh,setOverflow,unobserve:node=>overflowObserver?.unobserve(node),version:()=>computedAt,
     details:(doc,model)=>breakdown(doc,model,'overall','detail')};
 })(globalThis);

@@ -57,11 +57,11 @@ test('Devices row clears all filters, preserves sort and view, shows 28 vs 3 / 2
   await settle(page);
   assert.match(await page.locator('#dashboard-devices-count').textContent(),/^\d+ \/ 28$/);
 
-  // Clicking Devices row on devices page while drawer is open clears all filters, collapses drawer, and preserves sort + view.
+  // Rule 3: Clicking Devices row on devices page with active filters clears all filters, keeps drawer open, and preserves sort + view.
   assert.equal(await page.locator('#dashboard-devices').evaluate(n=>n.open),true);
   await page.locator('#dashboard-devices > summary').click();
   await settle(page);
-  assert.equal(await page.locator('#dashboard-devices').evaluate(n=>n.open),false);
+  assert.equal(await page.locator('#dashboard-devices').evaluate(n=>n.open),true);
   assert.equal(await page.locator('#dashboard-devices-count').textContent(),'28');
   assert.equal(await page.locator('#dashboard-devices > summary').getAttribute('aria-pressed'),'true');
   assert.equal(await page.locator('#dashboard-search').inputValue(),'');
@@ -82,7 +82,11 @@ test('Devices row clears all filters, preserves sort and view, shows 28 vs 3 / 2
     sort:'cpu',sortDir:'desc',viewMode:'list',
   });
 
-  // Clicking Devices row when drawer is closed expands it.
+  // Rule 4: Clicking Devices row on devices page with no filters while drawer is open collapses it.
+  await page.locator('#dashboard-devices > summary').click();
+  assert.equal(await page.locator('#dashboard-devices').evaluate(n=>n.open),false);
+
+  // Rule 5: Clicking Devices row when drawer is closed expands it.
   await page.locator('#dashboard-devices > summary').click();
   assert.equal(await page.locator('#dashboard-devices').evaluate(n=>n.open),true);
 

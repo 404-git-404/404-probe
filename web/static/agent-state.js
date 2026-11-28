@@ -73,6 +73,7 @@
     return 0;
   }
   function upgradeButtonHint(agent, server, busy = false) {
+    if (agent?.server_local) return '随 Server 一起升级';
     if (busy || (agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status))) return '正在升级，请等待完成';
     const order = compareReleaseVersions(agent.version, server.version);
     const rcAware = agent.upgrade_v2 && compareReleaseVersions(agent.version, 'v1.0.3-rc.1') !== null && compareReleaseVersions(agent.version, 'v1.0.3-rc.1') >= 0;

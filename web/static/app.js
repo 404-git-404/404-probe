@@ -157,6 +157,7 @@ upgradeReleaseSelect.addEventListener('change', () => { upgradeBetaConfirm.check
 upgradeBetaConfirm.addEventListener('change', refreshUpgradeSelection);
 
 async function openUpgradeAgentDialog(agent) {
+  if (agent?.server_local) return;
   upgradeShell.heading('升级 Agent',agent.name);
   upgradeCatalogController?.abort();
   const generation = ++upgradeCatalogGeneration;
@@ -1465,7 +1466,7 @@ function createAgentCard(initialAgent) {
     diskBadge.append(diskLabel,diskAck);
     let warnings=DashboardModel.flags(agent,serverBuild);
     const updateTags=()=>{
-      statusRow.update(StatusRow.items(agent,{catalog:dashboardData.catalog(),server:serverBuild,warnings}));
+      statusRow.update(StatusRow.items(agent,{catalog:dashboardData.catalog(),server:serverBuild,warnings,score:DeviceScores.forAgent(agent)}));
       const tone=DashboardModel.diskTone(agent),health=agent.state?.host_health;
       const reason=tone==='crit'?DashboardModel.diskFaults(health?.disk,{short:true})[0]:'';
       const label=agent.startup_disk_failure?DashboardModel.STARTUP_DISK_FAILURE_LABEL:
@@ -1547,18 +1548,15 @@ function createAgentCard(initialAgent) {
       planRenewal.close();
       deviceDetails.open(agent.agent_id,'overview',trigger);
     });
-    const valueRibbon = DeviceScores.valueRibbon(document,'card');
     const detailToggle = scoreStamp.button;
     detailToggle.classList.add('detail-toggle','score-detail');
     detailToggle.dataset.focusKey = 'manage';
     const updateScore = () => {
       const score = DeviceScores.forAgent(agent);
       scoreStamp.update(score);
-      valueRibbon.update(score);
       DeviceScores.setOverflow(card,score);
     };
     updateScore();
-    head.prepend(valueRibbon.node);
     head.append(scoreStamp.slot);
 
     const deadline = planDeadline(agent);
@@ -1683,7 +1681,7 @@ function createAgentDetails(initial){
     upgrade.textContent = '升级…';
     upgrade.dataset.focusKey = 'upgrade';
     const newer = AgentState.compareStableVersions(agent.version, serverBuild.version) === -1;
-    upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
+    upgrade.disabled = Boolean(agent.server_local) || !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
     upgrade.title = upgradeHint(agent);
     upgrade.addEventListener('click', () => openUpgradeAgentDialog(agent));
     const detailPanel = document.createElement('section');
@@ -1751,7 +1749,7 @@ function createAgentDetails(initial){
       stateAction.dataset.agentAction = agent.disabled_at ? 'enable' : 'disable';
       setCardText(stateAction, agent.disabled_at ? '恢复监控' : '暂停…');
       stateAction.disabled = !mutationCSRFToken || agent.revoked || agentState.busy(agent.agent_id, 'lifecycle') || agentState.blocked(agent.agent_id);
-      upgrade.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
+      upgrade.disabled = Boolean(agent.server_local) || !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || !agent.upgrade_capable || !serverBuild.upgrade_eligible || (!newer && !agent.upgrade_v2) || Boolean(agent.upgrade && !['succeeded', 'failed', 'rolled_back'].includes(agent.upgrade.status)) || agentState.busy(agent.agent_id, 'upgrade') || agentState.blocked(agent.agent_id);
       upgrade.title = upgradeHint(agent);
       setCardText(recheck, agent.google_status?.pending ? '检测中…' : '重新检测');
       recheck.disabled = !mutationCSRFToken || !agent.online || Boolean(agent.disabled_at) || agent.revoked || !agent.google_status?.supported || agent.google_status?.pending || agentState.busy(agent.agent_id, 'google') || agentState.blocked(agent.agent_id);

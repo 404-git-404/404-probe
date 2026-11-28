@@ -5,32 +5,44 @@ let browser;
 before(async()=>{browser=await chromium.launch({headless:true,executablePath:process.env.M02_CHROMIUM||(()=>{throw Error('Set M02_CHROMIUM to the required local dependency or artifact path');})()});});
 after(async()=>browser?.close());
 async function ui(run,options){const f=await open(browser,{...(process.env.V111_THEME_SOURCE?{source:process.env.V111_THEME_SOURCE}:{}),...options});try{await run(f);assert.deepEqual(f.errors,[]);}finally{await f.close();}}
-const theme=p=>p.evaluate(()=>({mode:ProbeTheme.get(),resolved:document.documentElement.dataset.theme}));
+const theme=p=>p.evaluate(()=>({mode:ProbeTheme.preference(),resolved:document.documentElement.dataset.theme}));
 const waitTheme=(p,value)=>p.waitForFunction(v=>document.documentElement.dataset.theme===v,value);
-test('two explicit modes alternate with current labels and persist through navigation/reload',()=>ui(async({page:p})=>{
+test('three modes cycle with current labels and persist through navigation/reload',()=>ui(async({page:p})=>{
  await scene(p,'Jobs');const button=p.locator('[data-theme-toggle]');
- for(const mode of ['light','dark','light','dark']){
-  const label='当前：'+(mode==='dark'?'深色':'浅色');assert.deepEqual(await theme(p),{mode,resolved:mode});assert.equal(await button.getAttribute('aria-label'),label);assert.equal(await button.getAttribute('title'),label);assert.equal(await button.textContent(),mode==='dark'?'☾':'☀');await button.click();
+ for(const [mode,resolved,label,icon] of [
+  ['light','light','当前：浅色','☀'],
+  ['dark','dark','当前：深色','☾'],
+  ['system','light','当前：跟随系统','◐'],
+  ['light','light','当前：浅色','☀'],
+ ]){
+  assert.deepEqual(await theme(p),{mode,resolved});assert.equal(await button.getAttribute('aria-label'),label);assert.equal(await button.getAttribute('title'),label);assert.equal(await button.textContent(),icon);await button.click();
  }
  await p.goto(new URL('/',p.url()).href);await p.evaluate(()=>ProbeTheme.set('dark'));await p.reload();await waitTheme(p,'dark');assert.equal(await p.evaluate(()=>localStorage.getItem('404-probe.theme.v1')),'dark');
- assert.equal(await p.locator('[data-panel-theme=dark]').getAttribute('aria-pressed'),'true');
+ await p.locator('#dashboard-settings > summary').click();await p.locator('[data-settings=appearance]').click();
+ assert.equal(await p.locator('[data-appearance-mode=dark]').getAttribute('aria-pressed'),'true');
  for(const path of ['/history.html?id='+'1'.padStart(32,'0'),'/jobs.html','/schedules.html']){await p.goto(new URL(path,p.url()).href);assert.equal(await p.locator('[data-theme-toggle]').count(),1);assert.deepEqual(await theme(p),{mode:'dark',resolved:'dark'});assert.equal(await p.locator('[data-theme-toggle]').getAttribute('title'),'当前：深色');assert.equal(await p.evaluate(()=>[...document.styleSheets].filter(s=>s.href?.endsWith('/style.css')).some(s=>[...s.cssRules].some(r=>r.cssText.startsWith('@view-transition')))),false);}
 }));
-test('legacy and absent preferences migrate once before paint; explicit preferences survive either OS appearance',async()=>{
+test('absent and system preferences follow OS live; explicit preferences survive either OS appearance',async()=>{
  for(const os of ['light','dark'])for(const saved of [null,'system','light','dark']){
-  const expected=saved==='light'||saved==='dark'?saved:os;
+  const expectedMode=saved==='light'||saved==='dark'?saved:'system';
+  const expectedResolved=saved==='light'||saved==='dark'?saved:os;
+  const flippedOS=os==='dark'?'light':'dark';
   await ui(async({page:p})=>{
-   assert.deepEqual(await theme(p),{mode:expected,resolved:expected});assert.equal(await p.evaluate(()=>localStorage.getItem('404-probe.theme.v1')),expected);
-   const boot=await p.evaluate(()=>__migrationBoot);assert.equal(boot.ready,'loading');assert.equal(boot.theme,expected);assert.equal(boot.saved,expected);assert.equal(boot.scheme,expected);assert.equal(boot.background,expected==='dark'?'rgb(14, 16, 18)':'rgb(247, 244, 239)');assert.equal(await p.evaluate(()=>__appearanceListeners),0);
-   await p.emulateMedia({colorScheme:os==='dark'?'light':'dark'});await p.waitForTimeout(20);assert.deepEqual(await theme(p),{mode:expected,resolved:expected});await p.reload();assert.deepEqual(await theme(p),{mode:expected,resolved:expected});
+   assert.deepEqual(await theme(p),{mode:expectedMode,resolved:expectedResolved});
+   const boot=await p.evaluate(()=>__migrationBoot);assert.equal(boot.ready,'loading');assert.equal(boot.theme,expectedResolved);assert.equal(boot.scheme,expectedResolved);assert.equal(boot.background,'');assert(await p.evaluate(()=>__appearanceListeners>=1));
+   await p.emulateMedia({colorScheme:flippedOS});
+   const afterFlip=expectedMode==='system'?flippedOS:expectedResolved;
+   await waitTheme(p,afterFlip);
+   assert.deepEqual(await theme(p),{mode:expectedMode,resolved:afterFlip});
+   await p.reload();await waitTheme(p,afterFlip);assert.deepEqual(await theme(p),{mode:expectedMode,resolved:afterFlip});
   },{theme:saved,colorScheme:os,prepare:async p=>p.addInitScript(()=>{
    window.__appearanceListeners=0;const match=window.matchMedia.bind(window);window.matchMedia=query=>{const media=match(query);if(query.includes('prefers-color-scheme')){const add=media.addEventListener.bind(media);media.addEventListener=(...args)=>{__appearanceListeners++;return add(...args);};}return media;};
    const observer=new MutationObserver(()=>{if(document.documentElement?.dataset.theme&&!window.__migrationBoot){__migrationBoot={ready:document.readyState,theme:document.documentElement.dataset.theme,saved:localStorage.getItem('404-probe.theme.v1'),scheme:document.documentElement.style.colorScheme,background:document.documentElement.style.backgroundColor};observer.disconnect();}});observer.observe(document,{subtree:true,attributes:true,attributeFilter:['data-theme']});
   })});
  }
 });
-test('same-origin tabs synchronize both themes and storage removal migrates to an explicit preference',()=>ui(async({page:p,context,f})=>{
- const other=await context.newPage();try{await other.goto(f.base);await other.waitForFunction(()=>typeof ProbeTheme!=='undefined');await p.evaluate(()=>ProbeTheme.set('dark'));await waitTheme(other,'dark');assert.equal(await other.locator('[data-panel-theme=dark]').getAttribute('aria-pressed'),'true');await other.evaluate(()=>ProbeTheme.set('light'));await waitTheme(p,'light');await p.evaluate(()=>localStorage.removeItem('404-probe.theme.v1'));await other.waitForFunction(()=>ProbeTheme.get()==='light'&&localStorage.getItem('404-probe.theme.v1')==='light');await waitTheme(p,'light');}finally{await other.close();}
+test('same-origin tabs synchronize themes and storage removal falls back to system preference',()=>ui(async({page:p,context,f})=>{
+ const other=await context.newPage();try{await other.goto(f.base);await other.waitForFunction(()=>typeof ProbeTheme!=='undefined');await other.locator('#dashboard-settings > summary').click();await other.locator('[data-settings=appearance]').click();await p.evaluate(()=>ProbeTheme.set('dark'));await waitTheme(other,'dark');assert.equal(await other.locator('[data-appearance-mode=dark]').getAttribute('aria-pressed'),'true');await other.evaluate(()=>ProbeTheme.set('light'));await waitTheme(p,'light');await p.evaluate(()=>localStorage.removeItem('404-probe.theme.v1'));await other.waitForFunction(()=>ProbeTheme.preference()==='system'&&ProbeTheme.get()==='light');await waitTheme(p,'light');}finally{await other.close();}
 }));
 // Detects explicit white/near-white backgrounds, but cannot detect removal of the
 // theme.js inline dark canvas write when the early sample is transparent. True

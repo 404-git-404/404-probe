@@ -96,7 +96,20 @@
     }
   }
 
-  function items(agent, {catalog, server, warnings, now} = {}) {
+  function items(agent, {catalog, server, warnings, now, score} = {}) {
+    const scoreModel = score !== undefined ? score : root.DeviceScores?.forAgent?.(agent);
+    const highValue = root.DeviceScores?.isHighValue
+      ? root.DeviceScores.isHighValue(scoreModel)
+      : Boolean(scoreModel?.high_value === true && typeof scoreModel?.overall?.score === 'number');
+    let medal = null;
+    if (highValue) {
+      const tip = root.DeviceScores?.valueMedalTip
+        ? root.DeviceScores.valueMedalTip(scoreModel)
+        : (scoreModel.value_rank > 0 && scoreModel.value_count > 0
+          ? '高性价比 · 第 ' + scoreModel.value_rank + ' / ' + scoreModel.value_count + ' 名'
+          : '高性价比');
+      medal = {title: tip};
+    }
     const tags = [];
     if (agent?.server_local) {
       tags.push({kind: 'server', label: 'Server', tone: 'server'});
@@ -168,7 +181,7 @@
         });
       }
     }
-    return {tags, faults};
+    return {medal, tags, faults};
   }
 
   function hideTooltip() {
@@ -482,6 +495,42 @@
     activePopover = {type: 'overflow', popover, button, controller, side, rowId};
   }
 
+  function createMedalNode(doc) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const node = el(doc, 'span', 'value-medal');
+    node.hidden = true;
+    node.setAttribute('role', 'img');
+    const svg = doc.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('aria-hidden', 'true');
+    const leftRibbon = doc.createElementNS(ns, 'path');
+    leftRibbon.setAttribute('d', 'M5.2 9.2L3.4 15.2l2.5-1.1 1.5 1.4.8-5.1Z');
+    leftRibbon.setAttribute('fill', 'var(--color-medal-ribbon)');
+    const rightRibbon = doc.createElementNS(ns, 'path');
+    rightRibbon.setAttribute('d', 'M10.8 9.2l1.8 6-2.5-1.1-1.5 1.4-.8-5.1Z');
+    rightRibbon.setAttribute('fill', 'var(--color-medal-ribbon)');
+    const disc = doc.createElementNS(ns, 'circle');
+    disc.setAttribute('cx', '8');
+    disc.setAttribute('cy', '6');
+    disc.setAttribute('r', '4.6');
+    disc.setAttribute('fill', 'var(--color-medal)');
+    const ring = doc.createElementNS(ns, 'circle');
+    ring.setAttribute('cx', '8');
+    ring.setAttribute('cy', '6');
+    ring.setAttribute('r', '3.1');
+    ring.setAttribute('fill', 'none');
+    ring.setAttribute('stroke', 'var(--color-medal-ribbon)');
+    ring.setAttribute('stroke-width', '0.8');
+    const star = doc.createElementNS(ns, 'path');
+    star.setAttribute('d', 'M8 3.7l.7 1.4 1.5.2-1.1 1.1.3 1.5L8 7.2l-1.4.7.3-1.5-1.1-1.1 1.5-.2Z');
+    star.setAttribute('fill', 'var(--color-card)');
+    svg.append(leftRibbon, rightRibbon, disc, ring, star);
+    node.append(svg);
+    return node;
+  }
+
   function create({document: doc = root.document, variant = 'card', onIgnore = null, onNavigateNetwork = null} = {}) {
     const rowId = ++rowSeq;
     const actions = {onIgnore, onNavigateNetwork};
@@ -490,6 +539,7 @@
     node.dataset.empty = 'true';
     const left = el(doc, 'div', 'status-row-side status-row-tags');
     const right = el(doc, 'div', 'status-row-side status-row-faults');
+    const medalNode = createMedalNode(doc);
     const leftMore = el(doc, 'button', 'status-more status-more-tags');
     leftMore.type = 'button';
     leftMore.hidden = true;
@@ -500,12 +550,16 @@
     rightMore.hidden = true;
     rightMore.setAttribute('aria-haspopup', 'dialog');
     rightMore.setAttribute('aria-expanded', 'false');
+    left.append(medalNode, leftMore);
+    right.append(rightMore);
     node.append(left, right);
 
-    let data = {tags: [], faults: []};
+    let data = {medal: null, tags: [], faults: []};
     let leftNodes = [], rightNodes = [];
     let signature = '';
     let frame = 0;
+    let fittedWidth = -1;
+    let fittedSignature = null;
 
     leftMore.addEventListener('click', event => {
       event.stopPropagation();
@@ -528,6 +582,11 @@
       frame = 0;
       const width = Math.floor(node.clientWidth) - 1;
       if (width <= 0) return;
+      if (width === fittedWidth && signature === fittedSignature) return;
+      fittedWidth = width;
+      fittedSignature = signature;
+
+      const hasMedal = !medalNode.hidden;
       const hasTags = leftNodes.length > 0;
       const hasFaults = rightNodes.length > 0;
       if (!hasTags && !hasFaults) {
@@ -540,7 +599,8 @@
       }
 
       const itemGap = variant === 'list' ? 3 : 4;
-      const sideGap = hasTags && hasFaults ? (variant === 'list' ? 4 : 6) : 0;
+      const hasLeft = hasMedal || hasTags;
+      const sideGap = hasLeft && hasFaults ? (variant === 'list' ? 4 : 6) : 0;
 
       for (const item of leftNodes) { item.hidden = false; item.classList.remove('is-truncated'); }
       for (const item of rightNodes) { item.hidden = false; item.classList.remove('is-truncated'); }
@@ -548,6 +608,7 @@
       rightMore.hidden = true;
 
       right.hidden = true;
+      const medalW = hasMedal ? Math.ceil(medalNode.getBoundingClientRect().width) : 0;
       const lw = leftNodes.map(item => Math.ceil(item.getBoundingClientRect().width));
       const tagMoreWidths = new Map();
       const measureLeftMore = count => {
@@ -586,18 +647,21 @@
       const minTagMore = hasTags ? measureLeftMore(lw.length) : 0;
       right.hidden = false;
       left.hidden = true;
-      let rFit = fitWith(rw, width, measureRightMore);
+      const maxRight = hasMedal ? Math.max(0, width - medalW - sideGap) : width;
+      let rFit = fitWith(rw, maxRight, measureRightMore);
       let lFit = {shown: 0, hidden: 0, used: 0};
       if (hasTags) {
-        let availL = hasFaults ? Math.max(0, width - rFit.used - sideGap) : width;
-        if (hasFaults && lw.length > 0 && availL < minTagMore && width > minTagMore + sideGap) {
-          rFit = fitWith(rw, Math.max(0, width - minTagMore - sideGap), measureRightMore);
-          availL = Math.max(0, width - rFit.used - sideGap);
+        const medalPrefix = hasMedal ? medalW + itemGap : 0;
+        let availL = (hasFaults ? Math.max(0, width - rFit.used - sideGap) : width) - medalPrefix;
+        if (hasFaults && lw.length > 0 && availL < minTagMore && width > medalPrefix + minTagMore + sideGap) {
+          rFit = fitWith(rw, Math.max(0, width - medalPrefix - minTagMore - sideGap), measureRightMore);
+          availL = Math.max(0, width - rFit.used - sideGap - medalPrefix);
         }
+        availL = Math.max(0, availL);
         left.hidden = false;
         right.hidden = true;
-        if (!hasFaults && lw.length === 1 && lw[0] > width) {
-          lFit = {shown: 1, hidden: 0, used: width};
+        if (!hasFaults && lw.length === 1 && lw[0] > availL) {
+          lFit = {shown: 1, hidden: 0, used: availL};
           leftNodes[0].classList.add('is-truncated');
         } else {
           lFit = fitWith(lw, availL, measureLeftMore);
@@ -632,7 +696,11 @@
 
     function scheduleFit() {
       const win = doc.defaultView || root;
-      if (node.clientWidth > 0) fit();
+      const width = Math.floor(node.clientWidth) - 1;
+      if (width > 0) {
+        if (width === fittedWidth && signature === fittedSignature) return;
+        fit();
+      }
       if (!frame && win.requestAnimationFrame) {
         frame = win.requestAnimationFrame(fit);
       }
@@ -648,12 +716,24 @@
       const nextSig = JSON.stringify(next);
       if (nextSig !== signature) {
         signature = nextSig;
-        data = {tags: next.tags || [], faults: next.faults || []};
+        fittedWidth = -1;
+        fittedSignature = null;
+        data = {medal: next.medal || null, tags: next.tags || [], faults: next.faults || []};
+        if (data.medal) {
+          const tip = data.medal.title || '高性价比';
+          medalNode.hidden = false;
+          medalNode.title = tip;
+          medalNode.setAttribute('aria-label', tip);
+        } else {
+          medalNode.hidden = true;
+          medalNode.removeAttribute('title');
+          medalNode.removeAttribute('aria-label');
+        }
         leftNodes = data.tags.map(item => renderTagNode(doc, item));
         rightNodes = data.faults.map(item => renderFaultNode(doc, item, variant, {forPopover: false, actions, rowId}));
-        left.replaceChildren(...leftNodes, leftMore);
+        left.replaceChildren(medalNode, ...leftNodes, leftMore);
         right.replaceChildren(...rightNodes, rightMore);
-        node.dataset.empty = String(!leftNodes.length && !rightNodes.length);
+        node.dataset.empty = String(!data.medal && !leftNodes.length && !rightNodes.length);
         node.dataset.signature = signature;
         if (activeTooltip && !activeTooltip.target.isConnected) hideTooltip();
         if (activePopover && activePopover.rowId === rowId) {

@@ -141,7 +141,7 @@
     }
     function objectLines(result){
       const machine=result.machines[0],histories=result.histories;
-      return machine.objects.map((object,i)=>({object,name:targetLabel(object,i),color:charts.colors[i],hidden:state.hidden.has(object.slot),
+      return machine.objects.map((object,i)=>({object,name:targetLabel(object,i),color:charts.color?charts.color(i):charts.colors[i],hidden:state.hidden.has(object.slot),
         line:machine.lines.find(line=>line.slot===object.slot),history:histories[i],points:histories[i]?.points||[],
         changes:histories[i]?.target_changes||[],semanticsChange:histories[i]?.semantics_change_at,
         alerts:result.alerts.filter(alert=>alert.slot===object.slot&&alert.family===state.family&&alert.protocol===state.protocol)}));
@@ -348,6 +348,9 @@
     }
     host.addEventListener('click',handleClick,{signal:events.signal});
     host.ownerDocument.addEventListener('device-scores-changed',updateScore,{signal:events.signal});
+    const paletteChanged=()=>{if(state.agent!=null&&lastResult&&!loading&&!loadError)repaint();};
+    root.addEventListener?.('404-probe:themechange',paletteChanged,{signal:events.signal});
+    root.addEventListener?.('404-probe:skinchange',paletteChanged,{signal:events.signal});
     nav?.addEventListener('click',handleClick,{signal:events.signal});
     host.addEventListener('change',e=>{
       if(e.target.matches('[data-net-smooth]')){state.smooth=e.target.checked;repaint();host.querySelector('[data-net-smooth]')?.focus();}
