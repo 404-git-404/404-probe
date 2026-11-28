@@ -52,22 +52,6 @@ func (s *Store) SaveQualityConfigV4(ctx context.Context, id string, request prot
 		}
 		proposal.SlowThresholdMS = request.SlowThresholdMS.Value
 	}
-	seen := map[string]bool{}
-	shown := 0
-	for _, slot := range request.Slots {
-		normalized, errs := protocol.NormalizeQualitySlot(slot)
-		if len(errs) != 0 || seen[normalized.Slot] || (!request.Objects && !protocol.QualitySlot(slot.Slot)) {
-			return protocol.QualityV4Config{}, ErrQualityInvalid
-		}
-		seen[normalized.Slot] = true
-		if slot.ShowOnCard {
-			shown++
-		}
-		proposal.Slots = append(proposal.Slots, normalized)
-	}
-	if request.Objects && shown > protocol.QualityMaxCardObjects {
-		return protocol.QualityV4Config{}, ErrQualityInvalid
-	}
 	pressure := s.qualityPressure(ctx)
 	budget := s.qualityBudget(ctx)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -97,6 +81,11 @@ func (s *Store) SaveQualityConfigV4(ctx context.Context, id string, request prot
 	if err != nil {
 		return protocol.QualityV4Config{}, err
 	}
+	slots, err := qualityLibrarySlotsTx(ctx, tx, request)
+	if err != nil {
+		return protocol.QualityV4Config{}, err
+	}
+	proposal.Slots = slots
 	if request.Objects {
 		previous := make(map[string]bool, len(rows))
 		for _, row := range rows {
@@ -105,11 +94,11 @@ func (s *Store) SaveQualityConfigV4(ctx context.Context, id string, request prot
 		for i := range proposal.Slots {
 			slot := &proposal.Slots[i]
 			if protocol.QualityNewObjectKey(slot.Slot) {
-				var key [8]byte
-				if _, err := rand.Read(key[:]); err != nil {
+				key, err := newQualityObjectID()
+				if err != nil {
 					return protocol.QualityV4Config{}, err
 				}
-				slot.Slot = "obj-" + hex.EncodeToString(key[:])
+				slot.Slot = key
 			} else if !previous[slot.Slot] {
 				return protocol.QualityV4Config{}, ErrQualityInvalid
 			}
@@ -206,28 +195,61 @@ func (s *Store) SetQualityEnabledV4(ctx context.Context, id string, request prot
 	return out, nil
 }
 
-// QualityV4SlotHosts returns the stored host of each slot, used to resolve only changed names.
-func (s *Store) QualityV4SlotHosts(ctx context.Context, id string) (map[string]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
+func newQualityObjectID() (string, error) {
+	var key [8]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return "", err
 	}
-	defer tx.Rollback()
-	cfg, err := qualityLoadConfigTx(ctx, tx, id)
-	if err != nil {
-		return nil, err
+	return "obj-" + hex.EncodeToString(key[:]), nil
+}
+
+type QualityLibraryFieldErrors struct {
+	Details []protocol.QualityFieldError
+}
+
+func (*QualityLibraryFieldErrors) Error() string { return ErrQualityInvalid.Error() }
+func (*QualityLibraryFieldErrors) Unwrap() error { return ErrQualityInvalid }
+
+func qualityLibrarySlotsTx(ctx context.Context, tx *sql.Tx, request protocol.QualityV4SaveRequest) ([]protocol.QualityV4Slot, error) {
+	seen := map[string]bool{}
+	var details []protocol.QualityFieldError
+	var slots []protocol.QualityV4Slot
+	shown := 0
+	for _, slot := range request.Slots {
+		if seen[slot.Slot] || (!request.Objects && !protocol.QualitySlot(slot.Slot)) {
+			details = append(details, protocol.QualityFieldError{Slot: slot.Slot, Field: "slot", Code: protocol.QualityErrInvalidRequest})
+		}
+		seen[slot.Slot] = true
+		if slot.ShowOnCard {
+			shown++
+		}
+		if slot.LibraryID != "" {
+			target, err := readNetworkTargetTx(ctx, tx, slot.LibraryID)
+			if errors.Is(err, ErrNetworkTargetNotFound) {
+				details = append(details, protocol.QualityFieldError{Slot: slot.Slot, Field: "library_id", Code: "library_not_found"})
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			setNetworkTargetFields(&slot, target)
+		} else if slot.Host != "" {
+			details = append(details, protocol.QualityFieldError{Slot: slot.Slot, Field: "library_id", Code: "library_required"})
+			continue
+		} else {
+			slot.Kind, slot.Port = "custom", 0
+		}
+		normalized, errs := protocol.NormalizeQualitySlot(slot)
+		details = append(details, errs...)
+		slots = append(slots, normalized)
 	}
-	rows, err := qualityLoadSlotsTx(ctx, tx, id, cfg)
-	if err != nil {
-		return nil, err
+	if request.Objects && shown > protocol.QualityMaxCardObjects {
+		details = append(details, protocol.QualityFieldError{Field: "show_on_card", Code: protocol.QualityErrInvalidRequest})
 	}
-	out := map[string]string{}
-	for _, row := range rows {
-		out[row.Slot] = row.Host
+	if len(details) != 0 {
+		return nil, &QualityLibraryFieldErrors{Details: details}
 	}
-	return out, nil
+	return slots, nil
 }
 
 type qualitySupportInfo struct {
@@ -327,7 +349,7 @@ func qualityV4ConfigTx(ctx context.Context, tx *sql.Tx, id string, now time.Time
 	var slotIDs []string
 	anyHost := false
 	for _, row := range rows {
-		out.Slots = append(out.Slots, row.QualityV4Slot)
+		out.Slots = append(out.Slots, row.displaySlot())
 		slotIDs = append(slotIDs, row.Slot)
 		slotByName[row.Slot] = row.QualityV4Slot
 		anyHost = anyHost || row.Host != ""

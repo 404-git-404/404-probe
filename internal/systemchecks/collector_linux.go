@@ -194,9 +194,14 @@ func rebootRequired() (string, bool) {
 	return protocol.CheckOK, false
 }
 
+const (
+	rebootPackageFileLimit = 16 << 10
+	rebootPackageLineLimit = 256
+)
+
 func readRebootPackages(paths ...string) ([]string, bool) {
 	for _, path := range paths {
-		f, _, err := openRegular(path, math.MaxInt64)
+		f, size, err := openRegular(path, math.MaxInt64)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -204,25 +209,34 @@ func readRebootPackages(paths ...string) ([]string, bool) {
 			return nil, false
 		}
 		defer f.Close()
-		reader := bufio.NewReader(f)
+		limited := &io.LimitedReader{R: f, N: rebootPackageFileLimit}
+		reader := bufio.NewReaderSize(limited, rebootPackageLineLimit)
 		var names []string
 		seen := make(map[string]bool, protocol.MaxRebootPackages)
+		fileTruncated, discard := size > rebootPackageFileLimit, false
 		for {
-			line, err := reader.ReadString('\n')
-			if err != nil && !errors.Is(err, io.EOF) {
+			fragment, err := reader.ReadSlice('\n')
+			if err != nil && err != bufio.ErrBufferFull && err != io.EOF {
 				return nil, false
 			}
-			name := strings.TrimSpace(line)
-			name = strings.ToValidUTF8(name[:min(len(name), protocol.MaxRebootPackageBytes)], "")
-			if name != "" && !seen[name] {
-				if len(names) == protocol.MaxRebootPackages {
-					return names, true
-				}
-				seen[name] = true
-				names = append(names, name)
+			// A partial final name at the file limit is not a complete package.
+			if err == io.EOF && limited.N == 0 && fileTruncated {
+				return names, true
 			}
-			if errors.Is(err, io.EOF) {
-				return names, false
+			if !discard {
+				name := strings.TrimSpace(string(fragment))
+				name = strings.ToValidUTF8(name[:min(len(name), protocol.MaxRebootPackageBytes)], "")
+				if name != "" && !seen[name] {
+					if len(names) == protocol.MaxRebootPackages {
+						return names, true
+					}
+					seen[name] = true
+					names = append(names, name)
+				}
+			}
+			discard = err == bufio.ErrBufferFull
+			if err == io.EOF {
+				return names, fileTruncated
 			}
 		}
 	}

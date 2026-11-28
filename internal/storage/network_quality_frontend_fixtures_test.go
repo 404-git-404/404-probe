@@ -37,6 +37,13 @@ func fixtureKit(t *testing.T) *v4Kit {
 	if err := s.AddAgent(context.Background(), fixtureAgent, "fixture", hash, time.Unix(100, 0)); err != nil {
 		t.Fatal(err)
 	}
+	for i, slot := range fixtureSlots() {
+		id := strings.Repeat(string(rune('a'+i)), 32)
+		if _, err := s.db.Exec(`INSERT INTO network_target_library(id,region,isp,host,port,revision) VALUES(?,?,?,?,?,1)`,
+			id, slot.Region, legacyQualityCarrier(slot.ISP), slot.Host, slot.Port); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return &v4Kit{t: t, s: s, id: fixtureAgent, now: time.Unix(1800000000, 0), epoch: 1, session: "fixture-session", ctx: context.Background()}
 }
 

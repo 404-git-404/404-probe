@@ -112,6 +112,7 @@ func QualityISPForSlot(slot string) string {
 type QualityV4Slot struct {
 	ShowOnCard  bool   `json:"show_on_card"`
 	Slot        string `json:"slot"`
+	LibraryID   string `json:"library_id"`
 	Kind        string `json:"kind"`
 	Region      string `json:"region"`
 	ISP         string `json:"isp"`

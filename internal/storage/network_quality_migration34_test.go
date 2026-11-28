@@ -340,7 +340,7 @@ func TestMigration34UserTargetsFromSchema33And32(t *testing.T) {
 					if err := rows.Scan(&slot, &kind, &region, &isp, &host, &port, &flags[0], &flags[1], &flags[2], &flags[3], &flags[4], &updated); err != nil {
 						t.Fatal(err)
 					}
-					if kind != "builtin" || isp != slot || host != "" || port.Valid || flags != [5]int{} || updated != old+1 || region != wantRegion[name][seen] {
+					if kind != "custom" || isp != legacyQualityCarrier(slot) || host != "" || port.Valid || flags != [5]int{} || updated != old+1 || region != wantRegion[name][seen] {
 						t.Errorf("%s/%s: kind=%s region=%q isp=%q host=%q port=%v flags=%v updated=%d", name, slot, kind, region, isp, host, port, flags, updated)
 					}
 					seen++

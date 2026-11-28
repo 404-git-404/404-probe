@@ -12,7 +12,7 @@ func (k *v4Kit) saveThreshold(expected string, interval int, threshold *protocol
 	if expected == "" {
 		expected = k.get().SettingsRevision
 	}
-	return k.s.SaveQualityConfigV4(k.ctx, k.id, protocol.QualityV4SaveRequest{ExpectedRevision: expected, IntervalMS: interval, Slots: v4Slots(slots...), SlowThresholdMS: threshold}, k.tick())
+	return k.s.SaveQualityConfigV4(k.ctx, k.id, protocol.QualityV4SaveRequest{ExpectedRevision: expected, IntervalMS: interval, Slots: k.librarySlots(v4Slots(slots...)), SlowThresholdMS: threshold}, k.tick())
 }
 
 func threshold(v int) *protocol.QualityThreshold {

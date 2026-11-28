@@ -11,8 +11,8 @@
     "port": 443,
     "endpoint_version": "da77651940715a2e",
     "status": "active",
-    "kind": "builtin",
-    "isp": "telecom"
+    "kind": "custom",
+    "isp": "电信"
   },
   "now": 1800000304000,
   "view": "1hour-card",

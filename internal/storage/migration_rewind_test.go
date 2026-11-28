@@ -51,8 +51,24 @@ func rewindNetworkStatusFixture(t *testing.T, db *sql.DB) {
 	dropColumnIfPresent(t, db, "agent_state", "observed_tx_rate")
 }
 
+func rewindNetworkTargetsAndSkinsFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_quality_slot_library;
+		DROP TABLE IF EXISTS skin_settings;
+		DROP TABLE IF EXISTS skins;
+		DELETE FROM schema_migrations WHERE version=49`); err != nil {
+		t.Fatal(err)
+	}
+	dropColumnIfPresent(t, db, "quality_slot_settings", "library_id")
+	dropColumnIfPresent(t, db, "quality_slot_settings", "legacy_label")
+	if _, err := db.Exec(`DROP TABLE IF EXISTS network_target_library`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func rewindSystemCheckIgnoresFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
+	rewindNetworkTargetsAndSkinsFixture(t, db)
 	dropColumnIfPresent(t, db, "tags", "color")
 	dropColumnIfPresent(t, db, "agents", "paused_contact_at")
 	if _, err := db.Exec(`DROP TABLE IF EXISTS deleted_agent_credentials;

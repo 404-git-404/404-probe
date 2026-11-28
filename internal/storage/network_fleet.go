@@ -204,7 +204,7 @@ func fillNetworkMachine(ctx context.Context, tx *sql.Tx, machine *NetworkMachine
 	var slotIDs []string
 	for _, object := range objects {
 		if !cardOnly || object.ShowOnCard {
-			machine.Objects = append(machine.Objects, object.QualityV4Slot)
+			machine.Objects = append(machine.Objects, object.displaySlot())
 			slotIDs = append(slotIDs, object.Slot)
 		}
 	}

@@ -19,7 +19,7 @@ func qualityWebRequest(t *testing.T, a *App, method, path, body string) *httptes
 	t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	session := addTestWebSession(t, a, r)
-	if method == http.MethodPut {
+	if method == http.MethodPut || method == http.MethodPost || method == http.MethodDelete {
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Origin", "https://probe.test")
 		r.Header.Set("Sec-Fetch-Site", "same-origin")

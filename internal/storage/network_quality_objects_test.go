@@ -29,7 +29,7 @@ func TestQualityObjectsRetainHistoryAndCardOrder(t *testing.T) {
 	}
 	save := func(slots []protocol.QualityV4Slot) (protocol.QualityV4Config, error) {
 		return k.s.SaveQualityConfigV4(k.ctx, k.id, protocol.QualityV4SaveRequest{
-			ExpectedRevision: k.get().SettingsRevision, IntervalMS: 30000, Slots: slots, Objects: true,
+			ExpectedRevision: k.get().SettingsRevision, IntervalMS: 30000, Slots: k.librarySlots(slots), Objects: true,
 		}, k.tick())
 	}
 	rows[3].ShowOnCard = true
@@ -103,12 +103,12 @@ func TestQualityObjectsRetainHistoryAndCardOrder(t *testing.T) {
 
 func TestMigration44PreservesLegacyQualityHistory(t *testing.T) {
 	k := v4Base(t, true)
-	rewindSystemCheckIgnoresFixture(t, k.s.db)
 	before := k.get()
 	measured := k.tick()
 	if receipt := k.upload(measured.Add(time.Second), k.sample(before, "telecom", "ipv4", "tcp", 1, measured, "success")); receipt[0] != "committed" {
 		t.Fatalf("upload: %v", receipt)
 	}
+	rewindSystemCheckIgnoresFixture(t, k.s.db)
 	for _, statement := range []string{
 		`ALTER TABLE quality_slot_settings DROP COLUMN position`,
 		`ALTER TABLE quality_slot_settings DROP COLUMN show_on_card`,
@@ -129,6 +129,9 @@ func TestMigration44PreservesLegacyQualityHistory(t *testing.T) {
 		t.Fatalf("schema version: %d, %v", version, err)
 	}
 	after := k.get()
+	for i := range before.Slots {
+		before.Slots[i].LibraryID = after.Slots[i].LibraryID
+	}
 	if !slices.Equal(before.Slots, after.Slots) || before.ConfigRevision != after.ConfigRevision || *before.Lanes[0].TargetID != *after.Lanes[0].TargetID {
 		t.Fatalf("migration changed slot identity or settings: %+v", after)
 	}

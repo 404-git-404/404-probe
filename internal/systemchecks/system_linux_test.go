@@ -46,9 +46,15 @@ func TestReadRebootPackages(t *testing.T) {
 	check(nil, false)
 	write(fallback, "fallback-package\n")
 	check([]string{"fallback-package"}, false)
-	long := strings.Repeat("a", 70_000)
-	write(primary, " linux-image-6.12.x-amd64\r\n\nlibc6\nlibc6\n \n"+long)
-	check([]string{"linux-image-6.12.x-amd64", "libc6", long[:protocol.MaxRebootPackageBytes]}, false)
+	long := strings.Repeat("a", 900)
+	write(primary, " linux-image-6.12.x-amd64\r\n\nlibc6\nlibc6\n \n"+long+"\nlibssl3\n")
+	check([]string{"linux-image-6.12.x-amd64", "libc6", long[:protocol.MaxRebootPackageBytes], "libssl3"}, false)
+	write(primary, strings.Repeat(" ", rebootPackageLineLimit)+"discarded\nkept\n")
+	check([]string{"kept"}, false)
+	write(primary, "libc6\n"+strings.Repeat(" ", rebootPackageFileLimit-8)+"cut-across-limit\nnot-read\n")
+	check([]string{"libc6"}, true)
+	write(primary, "libc6\n"+strings.Repeat("b", 70_000)+"\nnot-read\n")
+	check([]string{"libc6", strings.Repeat("b", protocol.MaxRebootPackageBytes)}, true)
 	var packages []string
 	for i := range protocol.MaxRebootPackages {
 		packages = append(packages, fmt.Sprintf("package-%d", i))

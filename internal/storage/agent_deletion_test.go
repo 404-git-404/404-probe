@@ -42,7 +42,7 @@ func TestDeleteOfflineAgentErasesHistory(t *testing.T) {
 		`INSERT OR REPLACE INTO agent_management_capabilities VALUES(?1,1,1,1,'session',1)`,
 		`INSERT INTO groups(id,name,name_key,sort_order,revision) VALUES(?2,'group','group',0,1)`,
 		`INSERT OR REPLACE INTO agent_organization VALUES(?1,?2,1)`,
-		`INSERT INTO tags(id,name,name_key,revision) VALUES(?2,'tag','tag',1)`,
+		`INSERT INTO tags(id,name,name_key,revision,color) VALUES(?2,'tag','tag',1,'blue')`,
 		`INSERT INTO agent_tags VALUES(?1,?2)`,
 		`INSERT INTO agent_outbound_snapshots(agent_id,available,payload_json,checked_at) VALUES(?1,1,'{}',1)`,
 		`INSERT INTO agent_plan_config(agent_id,revision) VALUES(?1,?2)`,
